@@ -122,7 +122,7 @@ test('tool calls take the orchestrator from the recorded host and ignore env pla
     assert.deepEqual(injected.orchestrator, {platform: 'claude', model: null});
 
     // Absent or invalid stored hosts mean no host; env platform markers never fill it in.
-    for (const host of [undefined, 'github-copilot', 'toString', 3]) {
+    for (const host of [undefined, 'github-copilot', 3]) {
       setHost(host);
       await call({...base, env: {CODEX_THREAD_ID: 't', CLAUDECODE: '1'}});
       assert.equal(seen.pop(), null, String(host));

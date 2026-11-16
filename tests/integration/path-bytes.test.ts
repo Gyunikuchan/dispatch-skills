@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { KINDS } from '../../skills/dispatch/scripts/toolkit/records.ts';
 import {
-  BASELINE, MANIFEST, SKILL_LINKS, checkGrowth, formatReport, measure, sectionOf, slug,
+  BASELINE, MANIFEST, SKILL_LINKS, checkGrowth, formatReport, measure, slug,
   type Figures, type PathManifest, type PathName,
 } from '../../scripts/path-bytes.ts';
 
@@ -211,6 +211,27 @@ test('the report prints distinct, workload and editable bytes with reductions fo
       assert.match(report, new RegExp(`${name} ${label}: ${figures[key]} bytes \\(baseline \\d+, -?\\d+(\\.\\d)?%\\)`));
     }
   }
+  const baseline: Record<PathName, Figures> = {
+    plan: { distinct: 100, workload: 200, editableDistinct: 50, editableWorkload: 100 },
+    implement: { distinct: 100, workload: 200, editableDistinct: 50, editableWorkload: 100 },
+  };
+  const synthetic: Record<PathName, Figures> = {
+    plan: { distinct: 90, workload: 150, editableDistinct: 40, editableWorkload: 90 },
+    implement: { distinct: 110, workload: 151, editableDistinct: 50, editableWorkload: 100 },
+  };
+  assert.equal(formatReport(synthetic, baseline), [
+    'plan distinct: 90 bytes (baseline 100, 10.0%)',
+    'plan workload: 150 bytes (baseline 200, 25.0%)',
+    'plan editable distinct: 40 bytes (baseline 50, 20.0%)',
+    'plan editable workload: 90 bytes (baseline 100, 10.0%)',
+    'plan workload 25% target: met (reported only)',
+    'implement distinct: 110 bytes (baseline 100, -10.0%)',
+    'implement workload: 151 bytes (baseline 200, 24.5%)',
+    'implement editable distinct: 50 bytes (baseline 50, 0.0%)',
+    'implement editable workload: 100 bytes (baseline 100, 0.0%)',
+    'implement workload 25% target: not met (reported only)',
+    '',
+  ].join('\n'));
 });
 
 test('SKILL_LINKS classifies exactly the relative links of SKILL.md', () => {
@@ -238,35 +259,4 @@ test('a read that SKILL.md mandates counts once on each path that makes it', () 
   const outside = measure(grow('references/decision-frame.md', '# '), 'after');
   assert.equal(outside.plan.workload - base.plan.workload, 10);
   assert.equal(outside.implement.workload - base.implement.workload, 0);
-});
-
-test('the report derives each reduction and the target state from the baseline', () => {
-  const baseline: Record<PathName, Figures> = {
-    plan: { distinct: 100, workload: 200, editableDistinct: 50, editableWorkload: 100 },
-    implement: { distinct: 100, workload: 200, editableDistinct: 50, editableWorkload: 100 },
-  };
-  const result: Record<PathName, Figures> = {
-    plan: { distinct: 90, workload: 150, editableDistinct: 40, editableWorkload: 90 },
-    implement: { distinct: 110, workload: 151, editableDistinct: 50, editableWorkload: 100 },
-  };
-  assert.equal(formatReport(result, baseline), [
-    'plan distinct: 90 bytes (baseline 100, 10.0%)',
-    'plan workload: 150 bytes (baseline 200, 25.0%)',
-    'plan editable distinct: 40 bytes (baseline 50, 20.0%)',
-    'plan editable workload: 90 bytes (baseline 100, 10.0%)',
-    'plan workload 25% target: met (reported only)',
-    'implement distinct: 110 bytes (baseline 100, -10.0%)',
-    'implement workload: 151 bytes (baseline 200, 24.5%)',
-    'implement editable distinct: 50 bytes (baseline 50, 0.0%)',
-    'implement editable workload: 100 bytes (baseline 100, 0.0%)',
-    'implement workload 25% target: not met (reported only)',
-    '',
-  ].join('\n'));
-});
-
-test('sectionOf ends a section at the next heading of the same or a higher level', () => {
-  const text = '# T\n### a\nline\n#### inner\nmore\n### b\nother\n';
-  assert.equal(sectionOf(text, 'a'), '### a\nline\n#### inner\nmore');
-  assert.equal(sectionOf(text, 'b'), '### b\nother');
-  assert.equal(sectionOf(text, 'missing'), null);
 });

@@ -12,6 +12,239 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
+
+const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
+
+const failure = (text: string, truncated = false) => {
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
+  return result.ok ? null : result.failure.kind;
+};
+
+const parseDetail = (text: string) => {
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
+  return result.ok ? null : result.failure.detail;
+};
+
+
+
+
+
+
+
+
+
+
+const MARK = 'unresolved-locus: ';
+const planLocus = '§ Work';
+const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
+  const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
+  assert.ok(result.ok);
+  return result.findings.map(item => item.locus);
+};
+
+
+
+
+
+
+
+
+// SECTION: Unknown tag recovery
+
+const planFinding = (tag: string, heading: string, defect: string) => ({
+  impact: 'degrades', trigger: 'realistic', locus: `§ ${heading}`, tag, defect, requiredChange: `revise ${heading} to address the gap`,
+});
+const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
+  const result = parseReport({ kind, source: 'agy[0]', text });
+  assert.ok(result.ok, result.ok ? '' : result.failure.detail);
+  return result.findings;
+};
+
+
+
+
+
+// SECTION: Diagnostics reports
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { fileURLToPath } from 'node:url';
+
+import {
+  CATEGORIES, COMPONENTS, DIAGNOSTIC_LIMITS, formatDuration, heuristics, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts,
+  type Finding, type InvocationFacts, type RunFacts, type Usage,
+} from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+
+const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
+
+const invocation = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => ({
+  phase: 'review', provider: 'codex', model: 'gpt-6-sol', effort: 'medium', mode: 'cli', surface: 'cli', launched: true, durationMs: 60_000, outcome: 'ok',
+  usage: { input: 1000, cacheRead: 2000, cacheWrite: 300, output: 40 }, ...overrides,
+});
+const bare = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => {
+  const { usage: _usage, ...rest } = invocation(overrides);
+  return rest;
+};
+const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
+  version: '0.7.1', build: 'ab'.repeat(32), os: 'windows', host: 'claude', verb: 'review', level: 'medium', outcome: 'complete',
+  phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000, driverMs: 45_000, hostMs: 60_000, userMs: 400 }],
+  invocations: [invocation()], reviews: [], ...overrides,
+});
+const observation = (overrides: Record<string, unknown> = {}) => ({
+  id: 'o1', component: 'scripts/toolkit/records.ts', category: 'instruction-clarity',
+  evidence: 'The `rule` frame reply template omits the allowed verdict values.', impact: 'Hosts send invalid rulings and need a second turn.',
+  proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
+});
+const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
+
+const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
+function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
+  assert.ok(finding, 'finding expected');
+  assert.equal(finding.category, category);
+  assert.ok(COMPONENTS.has(finding.component), `dispatch component: ${finding.component}`);
+  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) assert.ok(field.trim().length > 0);
+  return finding;
+}
+
+// SECTION: Layout, durations, and token columns
+
+
+
+// SECTION: Heuristics, severity, and model attribution
+
+
+
+const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
+const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
+
+
+
+
+
+
+
+// SECTION: Scope gate and redaction
+
+const LEAKS = [
+  'see /home/alice/repo/src/app.ts', 'at ~/work/app', 'path C:\\Users\\alice\\repo', 'path d:/work/repo', 'share \\\\server\\team\\x',
+  'docs at https://intranet.example/x', 'host www.example.org', 'host build.example.com', 'mail alice@example.com',
+  'session 123e4567-e89b-12d3-a456-426614174000', `hash ${'a1'.repeat(20)}`,
+];
+const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
+
+
+
+
+
+
+
+
+
+
+
+// SECTION: Finding origin
+
+const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
+const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
+
+
+
+
+
+
+
+
+// SECTION: Estimated cost rendering
+
+const PRICES = {
+  asOf: '2026-11-14', source: ['https://example.test/pricing'],
+  models: {
+    alpha: { rates: { input: 10, output: 20, cacheRead: 1 }, reasoning: 'output' },
+    beta: { rates: { input: 2, output: 4 } },
+    zero: { rates: { input: 0, output: 0 } },
+    tiered: { rates: { input: 1, output: 2 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 5, output: 10 } }] },
+    ttl: { rates: { input: 1, output: 1, cacheWrite5m: 1.25, cacheWrite1h: 2 } },
+  },
+};
+const pricer = resolvePricing(PRICES, undefined)!;
+const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) => renderDiagnostics(runs, priced ?? undefined).text;
+const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split('\n###')[0]!.split('\n').filter((line) => line.startsWith('|'));
+const overviewRows = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('| 1 · '));
+const lastCells = (line: string, n: number) => line.replace(/ \|$/, '').split(' | ').slice(-n);
+const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`))!, 2);
+const M = 1_000_000;
+const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
+  invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
+
+
+
+
+
+
+
+// SECTION: Cost folding under the byte cap
+
+const CAP = DIAGNOSTIC_LIMITS.reportBytes;
+const FOLD_PRICES = {
+  asOf: '2026-11-14', source: ['https://example.test/pricing'],
+  models: {
+    flat: { rates: { input: 4, output: 4 } },
+    wide: { rates: { input: 1, output: 1 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 4, output: 4 } }] },
+    free: { rates: { input: 0, output: 0 } },
+  },
+};
+const foldPricer = resolvePricing(FOLD_PRICES, undefined)!;
+const tableCells = (text: string, heading: string) => tableLines(text, heading).slice(2).map((line) => line.slice(2, -2).split(' | '));
+const overviewCells = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('|')).slice(2).map((line) => line.slice(2, -2).split(' | '));
+const byKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+const summaryCost = (text: string) => /^- Estimated cost \(host, subagents and CLI delegates\): (\S+) · /m.exec(text)?.[1];
+
+// Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
+type Source = { key: string; tokens: number; cost: Cost };
+const exactCost = (usd: number): Cost => ({ low: usd, high: usd, priced: true, reasons: new Set() });
+function sourceRow(index: number): { model: string; tokens: number; cost: Cost } {
+  const m = index % 7 + 1, quarter = 250_000 * m;
+  switch (index % 4) {
+    case 0: return { model: 'flat', tokens: quarter, cost: exactCost(m) };
+    case 1: return { model: 'wide', tokens: quarter, cost: { low: m / 4, high: m, priced: true, reasons: new Set(['tier unknown']) } };
+    case 2: return { model: 'mystery', tokens: 1000 * (index % 11 + 1), cost: { low: 0, high: 0, priced: false, reasons: new Set(['unpriced model']) } };
+    default: return { model: 'free', tokens: 1000 * (index % 13 + 1), cost: exactCost(0) };
+  }
+}
+const rankOrder = (rows: readonly Source[]) => [...rows].sort((a, b) => b.cost.high - a.cost.high || b.cost.low - a.cost.low || b.tokens - a.tokens || byKey(a.key, b.key));
+const totalOf = (rows: readonly Source[]) => formatCost(sumCost(rows.map((r) => r.cost)));
+const reasonsOf = (rows: readonly Source[]) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
+
+/** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
+function assertFolded(kept: readonly string[][], folded: readonly string[], keyOf: (cells: string[]) => string, all: readonly Source[], tokensColumn: number, costColumn: number): Source[] {
+  const keptKeys = kept.map(keyOf);
+  assert.equal(new Set(keptKeys).size, kept.length, 'kept rows are distinct');
+  assert.deepEqual([...keptKeys].sort(), rankOrder(all).slice(0, kept.length).map((r) => r.key).sort(), 'kept rows follow the rank');
+  const rest = all.filter((r) => !keptKeys.includes(r.key));
+  assert.equal(folded[0], `${rest.length} smaller rows`);
+  assert.equal(folded[tokensColumn], rest.reduce((n, r) => n + r.tokens, 0).toLocaleString('en-US'));
+  assert.equal(folded[costColumn], totalOf(rest));
+  return rest;
+}
+
 test('rejected MUST reports require exact explicit requested confirmations', () => {
   const parse = (confirmations?: unknown) => parseReport({kind:'code',source:'claude[0]',expectedRequestIds:['request-1'],text:JSON.stringify({status:'CLEAN',findings:[],...(confirmations === undefined ? {} : {confirmations})})});
   assert.equal(parse().ok,false);
@@ -20,8 +253,6 @@ test('rejected MUST reports require exact explicit requested confirmations', () 
   assert.equal(result.ok,true);
   if(result.ok) assert.equal(result.confirmations?.[0]?.decision,'agree');
 });
-
-const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
 test('family tags are scoped by review kind and unknown tags fall back to uncategorized', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
@@ -49,15 +280,6 @@ test('family tags are scoped by review kind and unknown tags fall back to uncate
   assert.equal(planArch.findings[0]?.category, 'architecture');
   assert.equal(planArch.findings[0]?.originalTag, undefined);
 });
-const failure = (text: string, truncated = false) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
-  return result.ok ? null : result.failure.kind;
-};
-
-const parseDetail = (text: string) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
-  return result.ok ? null : result.failure.detail;
-};
 
 test('derives severity from impact and trigger', () => {
   const table = {
@@ -200,14 +422,6 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
   assert.equal(failure(report([finding({ defect: '<invoke name="x">' })])), 'uncovered-scope');
 });
 
-const MARK = 'unresolved-locus: ';
-const planLocus = '§ Work';
-const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
-  const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
-  assert.ok(result.ok);
-  return result.findings.map(item => item.locus);
-};
-
 test('loose locus keeps findings: only the loose locus of a reply is marked, in every kind', () => {
   assert.deepEqual(parsedLoci('plan', [finding({ locus: 'A – T5 – Fix skill' }), finding({ locus: planLocus, defect: 'second defect' })]), [MARK + 'A – T5 – Fix skill', planLocus]);
   assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:L1-L9' }), finding({ defect: 'second defect' })]), [MARK + 'src/fetch.ts:L1-L9', 'src/fetch.ts:L12']);
@@ -285,17 +499,6 @@ test('review-sanitization: report text is sanitized before relay', () => {
   assert.ok(!defect.includes('\u001b'));
   assert.ok(!defect.includes('<!--'));
 });
-
-// SECTION: Unknown tag recovery
-
-const planFinding = (tag: string, heading: string, defect: string) => ({
-  impact: 'degrades', trigger: 'realistic', locus: `§ ${heading}`, tag, defect, requiredChange: `revise ${heading} to address the gap`,
-});
-const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
-  const result = parseReport({ kind, source: 'agy[0]', text });
-  assert.ok(result.ok, result.ok ? '' : result.failure.detail);
-  return result.findings;
-};
 
 test('collected findings preserve unknown tags across review kinds, sanitizing collisions', () => {
   // Plan review recovery
@@ -378,1185 +581,444 @@ test('original tag is sanitized and bounded', () => {
   assert.equal(parsedFindings('code', report([finding({ tag: 'x'.repeat(500) })]))[0]?.originalTag, 'x'.repeat(80));
 });
 
-// SECTION: Diagnostics reports
+test('heuristic H1 reports repeated failures with model attribution, fallback recovery and fix text', () => {
+  // merged from: H1 quota names model and fallback recoveries
+  {
 
-import fs from 'node:fs';
-import path from 'node:path';
+    const quotaFailure = (subject: string, slot: string, overrides: Partial<InvocationFacts> = {}) => invocation({
+      provider: 'agy', model: 'gemini-4-argon', outcome: 'quota', subject, slot, attempt: 1, ...overrides,
+    });
+    const quotaFinding = (invocations: InvocationFacts[]) => assertShape(
+      only(heuristics(facts({ invocations })), 'H1').find(item => item.evidence.startsWith('`quota`')),
+      'correctness',
+    );
+    const repeatedAttempts = quotaFinding([
+      quotaFailure('aaaaaaaaaaaaaaaa', 'agy[0]', { routingOutcome: 'next-model' }),
+      invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'aaaaaaaaaaaaaaaa', slot: 'agy[0]', attempt: 2 }),
+      quotaFailure('bbbbbbbbbbbbbbbb', 'agy[1]', { routingOutcome: 'next-model' }),
+      invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'bbbbbbbbbbbbbbbb', slot: 'agy[1]', attempt: 2 }),
+    ]);
+    assert.match(repeatedAttempts.evidence, /agy\/gemini-4-argon ×2/);
+    assert.match(repeatedAttempts.evidence, /2 recovered by fallback/);
+    assert.match(repeatedAttempts.proposedFix, /Reorder or remove the exhausted model alias, or check its quota/);
 
-import { fileURLToPath } from 'node:url';
+    const reserveFallback = quotaFinding([
+      quotaFailure('cccccccccccccccc', 'agy[2]', { routingOutcome: 'next-model' }),
+      quotaFailure('cccccccccccccccc', 'agy[2]', { attempt: 2, routingOutcome: 'reserve' }),
+      invocation({ provider: 'claude', model: 'sonnet', subject: 'cccccccccccccccc', slot: 'claude[0]', targetSlot: 'agy[2]' }),
+    ]);
+    assert.match(reserveFallback.evidence, /agy\/gemini-4-argon ×2/);
+    assert.match(reserveFallback.evidence, /2 recovered by fallback/);
 
-import {
-  CATEGORIES, COMPONENTS, DIAGNOSTIC_LIMITS, formatDuration, heuristics, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts,
-  type Finding, type InvocationFacts, type RunFacts, type Usage,
-} from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+    const unrecovered = quotaFinding([
+      quotaFailure('dddddddddddddddd', 'agy[3]'),
+      invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'dddddddddddddddd', slot: 'agy[3]', attempt: 2 }),
+      quotaFailure('eeeeeeeeeeeeeeee', 'agy[4]', { routingOutcome: 'stop' }),
+      invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'eeeeeeeeeeeeeeee', slot: 'agy[4]', attempt: 2 }),
+      quotaFailure('ffffffffffffffff', 'agy[5]', { routingOutcome: 'stop' }),
+      quotaFailure('gggggggggggggggg', 'agy[6]', { routingOutcome: 'next-model' }),
+      invocation({ provider: 'claude', model: 'sonnet', outcome: 'timeout', subject: 'gggggggggggggggg', slot: 'agy[6]', attempt: 2 }),
+      quotaFailure('hhhhhhhhhhhhhhhh', 'agy[7]', { routingOutcome: 'next-model' }),
+      invocation({ provider: 'claude', model: 'sonnet', surface: 'native', mode: 'native', outcome: 'native-pending', nativeState: 'pending', subject: 'hhhhhhhhhhhhhhhh', slot: 'claude[1]', targetSlot: 'agy[7]' }),
+      quotaFailure('iiiiiiiiiiiiiiii', 'agy[8]', { routingOutcome: 'next-mode' }),
+      invocation({ provider: 'claude', model: 'sonnet', outcome: 'ok', validationOutcome: 'invalid', subject: 'iiiiiiiiiiiiiiii', slot: 'agy[8]', attempt: 2 }),
+      quotaFailure('jjjjjjjjjjjjjjjj', 'agy[9]', { routingOutcome: 'next-model' }),
+      invocation({ provider: 'claude', model: 'sonnet', surface: 'native', launched: false, outcome: 'ok', nativeState: 'completed', subject: 'jjjjjjjjjjjjjjjj', slot: 'claude[2]', targetSlot: 'agy[9]' }),
+    ]);
+    assert.match(unrecovered.evidence, /agy\/gemini-4-argon ×7/);
+    assert.match(unrecovered.evidence, /0 recovered by fallback/);
 
-const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
 
-const invocation = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => ({
-  phase: 'review', provider: 'codex', model: 'gpt-6-sol', effort: 'medium', mode: 'cli', surface: 'cli', launched: true, durationMs: 60_000, outcome: 'ok',
-  usage: { input: 1000, cacheRead: 2000, cacheWrite: 300, output: 40 }, ...overrides,
-});
-const bare = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => {
-  const { usage: _usage, ...rest } = invocation(overrides);
-  return rest;
-};
-const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
-  version: '0.7.1', build: 'ab'.repeat(32), os: 'windows', host: 'claude', verb: 'review', level: 'medium', outcome: 'complete',
-  phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000, driverMs: 45_000, hostMs: 60_000, userMs: 400 }],
-  invocations: [invocation()], reviews: [], ...overrides,
-});
-const observation = (overrides: Record<string, unknown> = {}) => ({
-  id: 'o1', component: 'scripts/toolkit/records.ts', category: 'instruction-clarity',
-  evidence: 'The `rule` frame reply template omits the allowed verdict values.', impact: 'Hosts send invalid rulings and need a second turn.',
-  proposedFix: 'List the verdict values in the reply template and check them in validate.', ...overrides,
-});
-const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
-test('diagnostics config renders utility-subagents and redacts read-command locators', () => {
-  const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300000 } } };
-  const sanitized = sanitizeFacts(facts({ config }));
-  assert.deepEqual(sanitized.config?.['utility-subagents'], config['utility-subagents']);
-  const text = render([facts({ config })]);
-  assert.match(text, /"utility-subagents": \{/);
-  assert.match(text, /"effort": "low"/);
-  const redacted = sanitizeFacts(facts({ config: { 'read-commands': ['codegraph explore', 'tool /home/me/x', 'tool https://x.io'] } }));
-  assert.deepEqual(redacted.config?.['read-commands'], ['codegraph explore', '—', '—']);
-});
-test('pricing override snapshot keeps dotted ids and provider wildcards and drops unsafe keys and invalid entries', () => {
-  const entry = { rates: { input: 1, output: 5, cacheRead: 0.05 }, tiers: [{ abovePromptTokens: 272000, rates: { input: 2, output: 7.5, cacheRead: 0.1 } }], reasoning: 'output' };
-  const zero = { rates: { input: 0, output: 0 } };
-  const pricing = {
-    'gpt-6.1-terra': entry, 'lmstudio/*': zero, 'bedrock.claude-opus-5-5': zero,
-    'build.example.com': zero, 'C:\\canary': zero, 'bad-rate': { rates: { input: -1, output: 1 } }, 'bad-shape': 'x', 'Upper/*': zero,
-  };
-  const clean = sanitizeFacts(facts({ config: { pricing } })).config?.['pricing'];
-  assert.deepEqual(clean, { 'gpt-6.1-terra': entry, 'lmstudio/*': zero, 'bedrock.claude-opus-5-5': zero });
-  assert.deepEqual(sanitizeFacts(facts({ config: { pricing: 'cheap' } })).config?.['pricing'], {});
-  const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`model-${i}`, zero]));
-  assert.equal(Object.keys(sanitizeFacts(facts({ config: { pricing: many } })).config?.['pricing'] as object).length, 32);
-  const text = render([facts({ config: { pricing } })]);
-  assert.ok(text.includes('"gpt-6.1-terra"') && text.includes('"lmstudio/*"') && text.includes('"abovePromptTokens": 272000'), text);
-  assert.ok(!text.includes('build.example.com') && !text.includes('canary'));
-});
-test('diagnostics render one subject per phase cell and bound observed collection coverage', () => {
- const subject='1234567890abcdef';
- const generations=['1111222233334444','aaaabbbbccccdddd'];
- const text=render([facts({phases:[{key:'review-'+subject,name:'code review'}],invocations:[
-  invocation({phase:'review-'+subject,subject:generations[0]!,attempt:1,slot:'codex[0]'}),
-  invocation({phase:'review-'+subject,subject:generations[0]!,attempt:2,slot:'codex[0]'}),
-  invocation({phase:'review-'+subject,subject:generations[1]!,attempt:1,slot:'codex[0]'}),
- ]})]);
- for(const line of text.split('\n').filter(line=>line.startsWith('|')&&line.includes('subject')))assert.equal(line.match(/subject /g)?.length,1,line);
- for(const identity of [`${generations[0]}/1`,`${generations[0]}/2`,`${generations[1]}/1`])assert.ok(text.includes(`subject ${subject} · attempt ${identity} · slot codex[0]`),identity);
- const ask=render([facts({phases:[{key:'ask',name:'ask'}],invocations:[invocation({phase:'ask',subject:generations[0]!,attempt:3,slot:'codex[0]'})]})]);
- assert.ok(ask.includes(`ask · subject ${generations[0]} · attempt 3 · slot codex[0]`));
- assert.match(text,/Full collection coverage is unavailable/);
- assert.equal(sanitizeFacts(facts({collection:{completed:9_000_000}})).collection?.completed,1_000_000);
-});
-test('diagnostics distinguish invalid retro native completion and unavailable coverage', () => {
-  for (const observations of [{}, null, 'bad']) {
-    assert.equal((retroObservations(observations) as {state?: string}).state, 'invalid');
-    assert.match(render([facts({observations})]), /Host retro: invalid/);
   }
-  assert.match(render([facts({observations: []})]), /Host retro: empty/);
-  for (const retroState of ['missing','malformed','unreadable'] as const) assert.match(render([facts({retroState})]), new RegExp(`Host retro: ${retroState}`));
-  const text=render([facts({invocations:[bare({surface:'native',launched:false,nativeState:'completed',outcome:'ok',subject:'a'.repeat(16),attempt:0}),bare({surface:'native',launched:false,nativeState:'pending',outcome:'native-pending',attempt:0})]})]);
-  assert.match(text,/native completed/); assert.match(text,/native pending/);
-  assert.doesNotMatch(text,/attempt 0\b|\/0\b/);
-  assert.doesNotMatch(text,/ok \(not launched\)/);
-  assert.match(text,/launch coverage —/);
-  assert.match(render([facts({invocations:[invocation({usage:{input:0,output:0}})]})]),/measured tokens: 0 /);
-  const semantic=render([facts({invocations:[invocation({slot:'codex[0]',validationOutcome:'schema'}),invocation({slot:'codex[0]',validationOutcome:'schema'})]})]);
-  assert.match(semantic,/`schema`: 2 of 2 CLI attempts failed/);
-  assert.match(semantic,/ok · validation schema/);
-});
+  // merged from: heuristic H1 fires on repeated failures and suppresses isolated failures
+  {
 
-test('diagnostics render collection health and provenance within privacy limits', () => {
-  const text=render([facts({collection:{corrupt:2,incomplete:1,storageFailed:1},provenance:[{version:'1.2.3',build:'ab'.repeat(32),config:{diagnostics:true,'api-key':'secret-canary','read-delegates':{codex:{model:'/home/canary/model'}}}}]})]);
-  assert.match(text,/Collection health: partial/); assert.match(text,/corrupt 2/);assert.match(text,/incomplete 1/);assert.match(text,/storage-failed 1/);
-  assert.match(text,/dispatch 1\.2\.3 · build abababababab/);assert.match(text,/Total storage loss can be unobservable/);
-  assert.doesNotMatch(text,/canary|api-key|secret/);assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
-});
-const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
-function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
-  assert.ok(finding, 'finding expected');
-  assert.equal(finding.category, category);
-  assert.ok(COMPONENTS.has(finding.component), `dispatch component: ${finding.component}`);
-  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) assert.ok(field.trim().length > 0);
-  return finding;
-}
+    const cliFinding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
+    assert.equal(cliFinding.component, 'references/providers.md');
+    assert.match(cliFinding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
 
-// SECTION: Layout, durations, and token columns
+    const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
+    assert.deepEqual(only(heuristics(reserve), 'H1'), []);
+    const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
+    assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
 
-test('diagnostics report: renders summary shell with sections, version, and durations', () => {
-  const text = render([facts()]);
-  const at = ['## Summary', '## Overview', '## Findings', '## Appendix', '<details>'].map((marker) => text.indexOf(marker));
-  assert.ok(at.every((index) => index >= 0), `all sections present: ${at.join(',')}`);
-  assert.deepEqual([...at].sort((a, b) => a - b), at);
-  assert.match(text, /^- Build: dispatch 0\.7\.1 · build abababababab$/m);
-  const { version: _version, ...rest } = facts();
-  assert.match(render([{ ...rest, build: 'not-a-hash' }]), /^- Build: dispatch — · build —$/m);
-  assert.equal(formatDuration(3_723_000), '1h 2m 3s');
-  assert.equal(formatDuration(45_000), '45s');
-  assert.equal(formatDuration(400), '<1s');
-  assert.equal(formatDuration(undefined), '—');
-});
+    const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
+    assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
+    assert.equal(only(heuristics(run), 'H1').length > 0, true);
 
-test('diagnostics report: renders duration, token, and estimate columns with unavailable handling', () => {
-  const text = render([facts()]);
-  assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
-  assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
-  assert.match(text, /^- Runs: 1 · measured duration: 1h 2m 3s$/m);
-  assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
-  assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
-  assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-  const partial = render([facts({
-    phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000 }],
-    invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
-  })]);
-  assert.ok(partial.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), partial);
-  assert.ok(partial.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), partial);
-  assert.match(partial, /native and write —/);
+    const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
+    assert.equal(findings.length, 1);
+    assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);
+    for (const cls of ['quota', 'timeout', 'model-not-loaded', 'unclassified']) {
+      const [item] = only(heuristics(facts({ invocations: [invocation({ outcome: cls, slot: 'codex' }), invocation({ outcome: cls, slot: 'codex' })] })), 'H1');
+      assert.ok(item, cls);
+      assert.doesNotMatch(item.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
+    }
 
-  const estimated = render([facts({
-    invocations: [
-      invocation(),
-      bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, tokens: 5000 }),
-      invocation({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, usage: { input: 9000, output: 1000 } }),
-    ],
-  })]);
-  assert.match(estimated, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-  assert.match(estimated, /^- Estimated, excluded from measured totals: native and write ~15,000$/m);
-  assert.ok(estimated.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), estimated);
-  assert.ok(estimated.includes('| ~5,000 | native completed |'), estimated);
-});
-
-// SECTION: Heuristics, severity, and model attribution
-
-test('elapsed waits and partial usage remain explicit', () => {
-  const usage = normalizeUsage({ input: 3000, cacheRead: 2000, output: 40, reasoning: 20 }, 'includes-cache');
-  assert.ok(usage);
-  const run = facts({
-    invocations: [
-      invocation({ usage }),
-      bare({ provider: 'claude', outcome: 'timeout' }),
-      bare({ surface: 'native', mode: 'native', estimated: true }),
-    ],
-  });
-  const text = render([run]);
-  assert.match(text, /Provider CLI measured tokens: 3,040 \(input 1,000 · cache read 2,000 · cache write — · output 40\) · launch coverage 1\/2/);
-  assert.match(text, /native and write —/);
-  assert.match(text, /Full conversation totals are unavailable/);
-
-  assert.ok(text.includes('| — | native completed |'), 'unattested native usage stays unavailable');
-  const quota = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' })] })), 'H1')[0]!;
-  assert.match(quota.proposedFix, /Reorder or remove the exhausted model alias, or check its quota/);
-  assert.doesNotMatch(quota.proposedFix, /add another model alias/);
-  assert.doesNotMatch(quota.proposedFix, /each model has its own quota/);
-});
-
-test('H1 quota names model and fallback recoveries', () => {
-  const quotaFailure = (subject: string, slot: string, overrides: Partial<InvocationFacts> = {}) => invocation({
-    provider: 'agy', model: 'gemini-4-argon', outcome: 'quota', subject, slot, attempt: 1, ...overrides,
-  });
-  const quotaFinding = (invocations: InvocationFacts[]) => assertShape(
-    only(heuristics(facts({ invocations })), 'H1').find(item => item.evidence.startsWith('`quota`')),
-    'correctness',
-  );
-  const repeatedAttempts = quotaFinding([
-    quotaFailure('aaaaaaaaaaaaaaaa', 'agy[0]', { routingOutcome: 'next-model' }),
-    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'aaaaaaaaaaaaaaaa', slot: 'agy[0]', attempt: 2 }),
-    quotaFailure('bbbbbbbbbbbbbbbb', 'agy[1]', { routingOutcome: 'next-model' }),
-    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'bbbbbbbbbbbbbbbb', slot: 'agy[1]', attempt: 2 }),
-  ]);
-  assert.match(repeatedAttempts.evidence, /agy\/gemini-4-argon ×2/);
-  assert.match(repeatedAttempts.evidence, /2 recovered by fallback/);
-  assert.match(repeatedAttempts.proposedFix, /Reorder or remove the exhausted model alias, or check its quota/);
-
-  const reserveFallback = quotaFinding([
-    quotaFailure('cccccccccccccccc', 'agy[2]', { routingOutcome: 'next-model' }),
-    quotaFailure('cccccccccccccccc', 'agy[2]', { attempt: 2, routingOutcome: 'reserve' }),
-    invocation({ provider: 'claude', model: 'sonnet', subject: 'cccccccccccccccc', slot: 'claude[0]', targetSlot: 'agy[2]' }),
-  ]);
-  assert.match(reserveFallback.evidence, /agy\/gemini-4-argon ×2/);
-  assert.match(reserveFallback.evidence, /2 recovered by fallback/);
-
-  const unrecovered = quotaFinding([
-    quotaFailure('dddddddddddddddd', 'agy[3]'),
-    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'dddddddddddddddd', slot: 'agy[3]', attempt: 2 }),
-    quotaFailure('eeeeeeeeeeeeeeee', 'agy[4]', { routingOutcome: 'stop' }),
-    invocation({ provider: 'agy', model: 'gemini-3.8-flash', subject: 'eeeeeeeeeeeeeeee', slot: 'agy[4]', attempt: 2 }),
-    quotaFailure('ffffffffffffffff', 'agy[5]', { routingOutcome: 'stop' }),
-    quotaFailure('gggggggggggggggg', 'agy[6]', { routingOutcome: 'next-model' }),
-    invocation({ provider: 'claude', model: 'sonnet', outcome: 'timeout', subject: 'gggggggggggggggg', slot: 'agy[6]', attempt: 2 }),
-    quotaFailure('hhhhhhhhhhhhhhhh', 'agy[7]', { routingOutcome: 'next-model' }),
-    invocation({ provider: 'claude', model: 'sonnet', surface: 'native', mode: 'native', outcome: 'native-pending', nativeState: 'pending', subject: 'hhhhhhhhhhhhhhhh', slot: 'claude[1]', targetSlot: 'agy[7]' }),
-    quotaFailure('iiiiiiiiiiiiiiii', 'agy[8]', { routingOutcome: 'next-mode' }),
-    invocation({ provider: 'claude', model: 'sonnet', outcome: 'ok', validationOutcome: 'invalid', subject: 'iiiiiiiiiiiiiiii', slot: 'agy[8]', attempt: 2 }),
-    quotaFailure('jjjjjjjjjjjjjjjj', 'agy[9]', { routingOutcome: 'next-model' }),
-    invocation({ provider: 'claude', model: 'sonnet', surface: 'native', launched: false, outcome: 'ok', nativeState: 'completed', subject: 'jjjjjjjjjjjjjjjj', slot: 'claude[2]', targetSlot: 'agy[9]' }),
-  ]);
-  assert.match(unrecovered.evidence, /agy\/gemini-4-argon ×7/);
-  assert.match(unrecovered.evidence, /0 recovered by fallback/);
-
-});
-
-const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
-const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
-
-test('H8 names the handling module of repeated rejections and ignores one-offs', () => {
-  const verify = assertShape(h8(rejections('check', 'run', 'invalid-input'))[0], 'correctness');
-  assert.equal(verify.component, 'scripts/toolkit/check.ts');
-  assert.match(verify.evidence, /2 toolkit operations rejected \(check run: invalid-input ×2\)/);
-
-  const unknown = assertShape(h8(rejections('record', 'append', 'invalid-record'))[0], 'correctness');
-  assert.equal(unknown.component, 'scripts/toolkit/cli.ts');
-  assert.match(unknown.evidence, /record append: invalid-record ×2/);
-
-  const grouped = h8([...rejections('ledger', 'append', 'approval-stale'), ...rejections('ledger', 'query', 'invalid-input'), ...rejections('worktree', 'create', 'invalid-input')]);
-  assert.deepEqual(grouped.map(item => item.component).sort(), ['scripts/toolkit/ledger.ts', 'scripts/toolkit/writers.ts']);
-  assert.match(grouped.find(item => item.component === 'scripts/toolkit/ledger.ts')!.evidence, /4 toolkit operations rejected \(ledger append: approval-stale ×2, ledger query: invalid-input ×2\)/);
-
-  for (const name of TOOL_ACTIONS) {
-    const [tool, action] = name.split(' ') as [string, string];
-    const finding = assertShape(h8(rejections(tool, action, 'invalid-input'))[0], 'correctness');
-    assert.notEqual(finding.component, 'scripts/toolkit/cli.ts', `${name} has a module`);
   }
+  // merged from: diagnostics fix text for capacity and no-report
+  {
 
-  assert.deepEqual(h8(rejections('check', 'run', 'invalid-input', 1)), []);
-  assert.deepEqual(h8([...rejections('check', 'run', 'invalid-input', 1), ...rejections('check', 'run', 'user-only', 1)]), []);
-  assert.deepEqual(h8([...rejections('ledger', 'append', 'key-conflict', 1), ...rejections('ledger', 'query', 'key-conflict', 1)]), []);
-  const [mixed] = h8([...rejections('check', 'run', 'invalid-input'), ...rejections('check', 'run', 'user-only', 1)]);
-  assert.match(mixed!.evidence, /2 toolkit operations rejected \(check run: invalid-input ×2\)/);
-});
+    const h1 = (rows: InvocationFacts[]) => assertShape(only(heuristics(facts({ invocations: rows })), 'H1')[0], 'correctness');
+    const repeated = (row: Partial<InvocationFacts>) => [invocation({ ...row, slot: 'codex[0]' }), invocation({ ...row, slot: 'codex[0]' })];
+    const capacity = h1(repeated({ outcome: 'capacity' }));
+    const noReport = h1(repeated({ outcome: 'ok', validationOutcome: 'no-report' }));
+    const unclassified = h1(repeated({ outcome: 'unclassified' }));
+    assert.match(capacity.evidence, /`capacity`/);
+    assert.match(capacity.proposedFix, /provider capacity and retry delay/i);
+    assert.match(noReport.evidence, /`no-report`/);
+    assert.match(noReport.proposedFix, /required report JSON/i);
+    for (const finding of [capacity, noReport]) assert.notEqual(finding.proposedFix, unclassified.proposedFix, 'own fix text');
+    assert.notEqual(capacity.proposedFix, noReport.proposedFix);
 
-test('heuristic H1 fires on repeated failures and suppresses isolated failures', () => {
-  const cliFinding = assertShape(only(heuristics(facts({ invocations: [invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation({ outcome: 'timeout', durationMs: 60_000, slot: 'codex' }), invocation()] })), 'H1')[0], 'correctness');
-  assert.equal(cliFinding.component, 'references/providers.md');
-  assert.match(cliFinding.evidence, /`timeout`: 2 of 3 CLI attempts failed \(codex ×2\), 2m 0s of driver time/);
-
-  const reserve = facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ provider: 'gemini', slot: 'codex' })] });
-  assert.deepEqual(only(heuristics(reserve), 'H1'), []);
-  const unrelated = facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'gemini' }), invocation()] });
-  assert.deepEqual(only(heuristics(unrelated), 'H1'), []);
-
-  const run = sanitizeFacts(facts({ invocations: [invocation({ outcome: 'timeout', slot: 'codex[0]' }), invocation({ provider: 'gemini', outcome: 'quota', slot: 'codex[0]' })] }));
-  assert.deepEqual(run.invocations.map((row) => row.slot), ['codex[0]', 'codex[0]']);
-  assert.equal(only(heuristics(run), 'H1').length > 0, true);
-
-  const findings = only(heuristics(facts({ invocations: [invocation({ outcome: 'model-not-loaded', slot: 'codex' }), invocation({ outcome: 'model-not-loaded', provider: 'gemini', slot: 'codex' })] })), 'H1');
-  assert.equal(findings.length, 1);
-  assert.match(findings[0]!.evidence, /`model-not-loaded`: 2 of 2 CLI attempts failed/);
-  for (const cls of ['quota', 'timeout', 'model-not-loaded', 'unclassified']) {
-    const [item] = only(heuristics(facts({ invocations: [invocation({ outcome: cls, slot: 'codex' }), invocation({ outcome: cls, slot: 'codex' })] })), 'H1');
-    assert.ok(item, cls);
-    assert.doesNotMatch(item.proposedFix, /cascade|reserve.*route|route.*reserve|timeout|retry/i, cls);
   }
 });
 
-test('diagnostics fix text for capacity and no-report', () => {
-  const h1 = (rows: InvocationFacts[]) => assertShape(only(heuristics(facts({ invocations: rows })), 'H1')[0], 'correctness');
-  const repeated = (row: Partial<InvocationFacts>) => [invocation({ ...row, slot: 'codex[0]' }), invocation({ ...row, slot: 'codex[0]' })];
-  const capacity = h1(repeated({ outcome: 'capacity' }));
-  const noReport = h1(repeated({ outcome: 'ok', validationOutcome: 'no-report' }));
-  const unclassified = h1(repeated({ outcome: 'unclassified' }));
-  assert.match(capacity.evidence, /`capacity`/);
-  assert.match(capacity.proposedFix, /provider capacity and retry delay/i);
-  assert.match(noReport.evidence, /`no-report`/);
-  assert.match(noReport.proposedFix, /required report JSON/i);
-  for (const finding of [capacity, noReport]) assert.notEqual(finding.proposedFix, unclassified.proposedFix, 'own fix text');
-  assert.notEqual(capacity.proposedFix, noReport.proposedFix);
+test('diagnostics report: heuristic H4 fires above threshold and stays silent at boundaries', () => {
+  // merged from: diagnostics report: heuristic H4 fires for cache read share
+  {
+
+    const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 700, cacheRead: 300, output: 10 } })] })), 'H4')[0], 'token-economy');
+    assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
+
+  }
+  // merged from: diagnostics report: heuristic boundaries stay silent
+  {
+
+    const even = invocation({ usage: { input: 1000, cacheRead: 1000, output: 0 } });
+    const run = facts({
+      invocations: [even, { ...even, provider: 'claude' }],
+      reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 1 }, { phase: 'review', round: 2, accepted: 1, rejected: 1 }],
+      rejectedTools: [], relaunches: 0,
+    });
+    assert.deepEqual(heuristics(run), []);
+    assert.deepEqual(heuristics(facts()), []);
+
+  }
 });
 
-test('diagnostics report: heuristic H4 fires for cache read share', () => {
-  const finding = assertShape(only(heuristics(facts({ invocations: [invocation({ usage: { input: 700, cacheRead: 300, output: 10 } })] })), 'H4')[0], 'token-economy');
-  assert.match(finding.evidence, /codex: cache read 30% of input \(300 of 1,000 tokens\) across 1 invocation\./);
-});
+test('diagnostics amendment convergence: cap screening, reraises, escalations and wording', () => {
+  // merged from: diagnostics amendment convergence: evaluates caps, reraises, and escalations
+  {
 
-test('diagnostics report: heuristic boundaries stay silent', () => {
-  const even = invocation({ usage: { input: 1000, cacheRead: 1000, output: 0 } });
-  const run = facts({
-    invocations: [even, { ...even, provider: 'claude' }],
-    reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 1 }, { phase: 'review', round: 2, accepted: 1, rejected: 1 }],
-    rejectedTools: [], relaunches: 0,
-  });
-  assert.deepEqual(heuristics(run), []);
-  assert.deepEqual(heuristics(facts()), []);
-});
+    const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
+    assert.deepEqual(only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'), [], 'three rounds within cap 3 is normal convergence');
+    assert.deepEqual(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2'), [], 'plain continuation beyond cap 3 is designed');
+    assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 2, accepted: 1, rejected: 0 }] })), 'H2'), []);
 
-test('diagnostics report: orders findings by severity', () => {
-  const run = facts({
-    invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
-    reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
-    observations: [observation()],
-  });
-  const order = Object.keys(CATEGORIES);
-  const categories = heuristics(run).map((f) => order.indexOf(f.category));
-  assert.deepEqual([...categories].sort((a, b) => a - b), categories);
-  const headings = [...render([run]).matchAll(/^### \d+\. ([^·]+) ·/gm)].map((m) => m[1]!.trim());
-  assert.deepEqual([...new Set(headings)], ['Correctness / protocol', 'Token economy', 'Review convergence', 'Instruction clarity']);
-});
-
-test('diagnostics amendment convergence: evaluates caps, reraises, and escalations', () => {
-  const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
-  assert.deepEqual(only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'), [], 'three rounds within cap 3 is normal convergence');
-  assert.deepEqual(only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2'), [], 'plain continuation beyond cap 3 is designed');
-  assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 2, accepted: 1, rejected: 0 }] })), 'H2'), []);
-
-  const reraisedFinding = assertShape(only(heuristics(facts({ reviews: [
-    { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] },
-  ] })), 'H2')[0], 'review-convergence');
-  assert.match(reraisedFinding.evidence, /4 rounds/);
-  assert.match(reraisedFinding.evidence, /1 finding re-raised across rounds \(R1-F001\)/);
-
-  for (const kind of ['regression', 'deadlock'] as const) {
-    const escalationOnly = assertShape(only(heuristics(facts({ reviews: [
-      { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, escalation: { kind, ids: ['R1-F001'] } },
+    const reraisedFinding = assertShape(only(heuristics(facts({ reviews: [
+      { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, reraised: ['R1-F001'] },
     ] })), 'H2')[0], 'review-convergence');
-    assert.match(escalationOnly.evidence, kind === 'deadlock' ? /continued past the cap \(3\)/ : /regression escalation \(R1-F001\)/);
+    assert.match(reraisedFinding.evidence, /4 rounds/);
+    assert.match(reraisedFinding.evidence, /1 finding re-raised across rounds \(R1-F001\)/);
+
+    for (const kind of ['regression', 'deadlock'] as const) {
+      const escalationOnly = assertShape(only(heuristics(facts({ reviews: [
+        { phase: 'review', round: 4, accepted: 1, rejected: 0, cap: 3, escalation: { kind, ids: ['R1-F001'] } },
+      ] })), 'H2')[0], 'review-convergence');
+      assert.match(escalationOnly.evidence, kind === 'deadlock' ? /continued past the cap \(3\)/ : /regression escalation \(R1-F001\)/);
+    }
+    assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
+    const twoRoundReraised = assertShape(only(heuristics(facts({ reviews: [
+      { phase: 'review', round: 1, accepted: 1, rejected: 1 },
+      { phase: 'review', round: 2, accepted: 1, rejected: 0, reraised: ['R1-F001'] },
+    ] })), 'H2')[0], 'review-convergence');
+    assert.match(twoRoundReraised.evidence, /code review: 2 rounds; 1 finding re-raised across rounds \(R1-F001\)\./);
+    const twoRoundEscalated = assertShape(only(heuristics(facts({ reviews: [
+      { phase: 'review', round: 1, accepted: 1, rejected: 0 },
+      { phase: 'review', round: 2, accepted: 0, rejected: 0, escalation: { kind: 'regression', ids: ['R1-F001'] } },
+    ] })), 'H2')[0], 'review-convergence');
+    assert.match(twoRoundEscalated.evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
+
   }
-  assert.match(assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence, /code review: 3 rounds\./, 'an absent cap uses the fallback threshold');
-  const twoRoundReraised = assertShape(only(heuristics(facts({ reviews: [
-    { phase: 'review', round: 1, accepted: 1, rejected: 1 },
-    { phase: 'review', round: 2, accepted: 1, rejected: 0, reraised: ['R1-F001'] },
-  ] })), 'H2')[0], 'review-convergence');
-  assert.match(twoRoundReraised.evidence, /code review: 2 rounds; 1 finding re-raised across rounds \(R1-F001\)\./);
-  const twoRoundEscalated = assertShape(only(heuristics(facts({ reviews: [
-    { phase: 'review', round: 1, accepted: 1, rejected: 0 },
-    { phase: 'review', round: 2, accepted: 0, rejected: 0, escalation: { kind: 'regression', ids: ['R1-F001'] } },
-  ] })), 'H2')[0], 'review-convergence');
-  assert.match(twoRoundEscalated.evidence, /code review: 2 rounds; regression escalation \(R1-F001\)\./);
-});
+  // merged from: H2 wording separates designed continuation, cap arrival, and deadlock
+  {
 
-test('H2 wording separates designed continuation, cap arrival, and deadlock', () => {
-  const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({
-    phase: 'review', round: i + 1, accepted: 1, rejected: 0, cap: 3, ...(i === count - 1 ? last : {}),
-  }));
-  const h2 = (reviews: RunFacts['reviews']) => assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
+    const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) => Array.from({ length: count }, (_, i) => ({
+      phase: 'review', round: i + 1, accepted: 1, rejected: 0, cap: 3, ...(i === count - 1 ? last : {}),
+    }));
+    const h2 = (reviews: RunFacts['reviews']) => assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
 
-  const capEnded = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
-    ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}) }));
-  const findingCap = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
-  assert.match(findingCap.evidence, /cap reached/);
-  assert.doesNotMatch(findingCap.evidence, /deadlock/);
-  assert.equal(findingCap.proposedFix, 'Raise the round cap or narrow scope.');
+    const capEnded = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
+      ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}) }));
+    const findingCap = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
+    assert.match(findingCap.evidence, /cap reached/);
+    assert.doesNotMatch(findingCap.evidence, /deadlock/);
+    assert.equal(findingCap.proposedFix, 'Raise the round cap or narrow scope.');
 
-  const deadlocked = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
-    ...(round === 3 ? { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } } : {}) }));
-  const findingDeadlock = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
-  assert.match(findingDeadlock.evidence, /deadlock escalation \(R1-F001\)/);
-  assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
+    const deadlocked = [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3,
+      ...(round === 3 ? { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } } : {}) }));
+    const findingDeadlock = assertShape(only(heuristics(facts({ reviews: deadlocked })), 'H2')[0], 'review-convergence');
+    assert.match(findingDeadlock.evidence, /deadlock escalation \(R1-F001\)/);
+    assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
 
-  const continued = h2(rounds(4, { reraised: ['R1-F001'] }));
-  assert.match(continued.evidence, /continued past the cap \(3\)/);
-  assert.doesNotMatch(continued.evidence, /cap reached/);
-  assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
-  assert.equal(continued.impact, 'Each extra round adds voice launches and a host ruling turn.');
-  assert.equal(continued.proposedFix, 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
+    const continued = h2(rounds(4, { reraised: ['R1-F001'] }));
+    assert.match(continued.evidence, /continued past the cap \(3\)/);
+    assert.doesNotMatch(continued.evidence, /cap reached/);
+    assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
+    assert.equal(continued.impact, 'Each extra round adds voice launches and a host ruling turn.');
+    assert.equal(continued.proposedFix, 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
 
-  const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
-  assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);
-  assert.match(deadlockPast.evidence, /deadlock escalation \(R1-F001\)/);
-  assert.doesNotMatch(deadlockPast.evidence, /cap reached/);
-  assert.doesNotMatch(deadlockPast.proposedFix, /raise the (round )?cap/i);
-});
+    const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
+    assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);
+    assert.match(deadlockPast.evidence, /deadlock escalation \(R1-F001\)/);
+    assert.doesNotMatch(deadlockPast.evidence, /cap reached/);
+    assert.doesNotMatch(deadlockPast.proposedFix, /raise the (round )?cap/i);
 
-test('heuristic precision screens the review cap as a bounded integer', () => {
-  const capOf = (cap: unknown) => sanitizeFacts(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap } as never] })).reviews[0]?.cap;
-  assert.equal(capOf(3), 3);
-  for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
-});
-
-test('H9 points at launch reports', () => {
-  const finding = assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness');
-  assert.equal(finding.component, 'scripts/toolkit/brief.ts');
-  assert.match(finding.proposedFix, /writer launch reports/i);
-  assert.match(finding.proposedFix, /\.state\/briefs\/<task>-<launch>\.report\.md/);
-  assert.doesNotMatch(finding.proposedFix, /writer brief/i);
-});
-
-test('heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics', () => {
-  // H3 needs three findings
-  assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 2 }] })), 'H3'), [], 'two findings are too few to judge a rejection share');
-  const h3Findings = only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3');
-  assert.equal(h3Findings.length, 1);
-  assert.match(assertShape(h3Findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
-
-  // H5 needs three uncached samples and a share above two over n
-  const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
-  assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation()] })), 'H5'), [], 'with two invocations one always holds at least half');
-  const even = invocation({ usage: { input: 5000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
-  assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
-  const cached = invocation({ usage: { input: 1000, cacheRead: 900_000, output: 40 } });
-  assert.deepEqual(only(heuristics(facts({ invocations: [cached, invocation(), invocation()] })), 'H5'), [], 'cache reads do not make a launch dominate');
-  const zero = invocation({ outcome: 'quota', usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
-  assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation(), zero] })), 'H5'), [], 'zero-usage failures are not samples');
-  const h5Findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
-  assert.equal(h5Findings.length, 1);
-  assert.match(assertShape(h5Findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/);
-
-  // H1 ignores quota-store skips that never launched
-  const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
-  assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
-  const [h1Finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
-  assert.match(h1Finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./);
-
-  // H9 needs two relaunches
-  assert.deepEqual(only(heuristics(facts({ relaunches: 1 })), 'H9'), [], 'one relaunch without a cause is not a pattern');
-  assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
-});
-
-test('H5 impact names the voice exploration and proposes no byte caps', () => {
-  const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
-  const finding = assertShape(only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5')[0], 'token-economy');
-  assert.equal(finding.impact, 'One invocation dominates token spend; its own repository exploration likely drives most of it.');
-  assert.equal(finding.proposedFix, "Lower that slot's turn budget or effort, or assign it a cheaper model.");
-});
-
-test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
-  const codex = normalizeUsage({ input: 1000, cacheRead: 300, cacheWrite: 0, output: 50 }, 'includes-cache');
-  const claude = normalizeUsage({ input: 700, cacheRead: 300, cacheWrite: 0, output: 50 }, 'uncached');
-  assert.deepEqual(codex, { input: 700, cacheRead: 300, cacheWrite: 0, output: 50 });
-  assert.deepEqual(codex, claude);
-  const run = (provider: string, usage: Usage | undefined) => facts({ invocations: [invocation({ provider, ...(usage ? { usage } : {}) })] });
-  const [a, b] = [heuristics(run('codex', codex)), heuristics(run('claude', claude))];
-  assert.deepEqual(a.map((f) => [f.source, f.category, f.evidence.replace('codex', 'P')]), b.map((f) => [f.source, f.category, f.evidence.replace('claude', 'P')]));
-  assert.deepEqual(a.map((f) => f.source), ['H4']);
-  const measuredLine = (text: string) => /^- Provider CLI measured tokens: .*$/m.exec(text)?.[0];
-  assert.equal(measuredLine(render([run('codex', codex)])), measuredLine(render([run('claude', claude)])));
-  assert.equal(normalizeUsage({ input: 100, cacheRead: 300, output: 1 }, 'includes-cache')?.input, 0);
-});
-
-test('diagnostics report: renders per-model token rows across launch states', () => {
-  const split = render([facts({ invocations: [invocation({
-    provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'],
-    usage: { input: 150, output: 15, models: { 'claude-opus-5-5': { input: 100, output: 10 }, 'claude-haiku-5': { input: 50, output: 5 } } },
-  })] })]);
-  assert.ok(split.includes('| code review | claude | delegate | claude-haiku-5 | medium | 50 | — | — | 5 | — | 1/1 |'), split);
-  assert.ok(split.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), split);
-  assert.doesNotMatch(split, /\(configured\)/);
-  const mixed = render([facts({ invocations: [
-    invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 100, output: 10, models: { 'claude-opus-5-5': { input: 100, output: 10 } } } }),
-    bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
-  ] })]);
-  assert.ok(mixed.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), mixed);
-  const table = mixed.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
-  assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
-  const configured = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
-  assert.ok(configured.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), configured);
-
-  const multi = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(multi.includes('| code review | claude | delegate | — | medium | 100 | — | — | 10 | — | 1/1 |'), multi);
-  assert.doesNotMatch(multi, /\(configured\)/);
-});
-
-const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
-
-test('per model and effort rows: delegate keys keep their own effort and sum to invocation totals', () => {
-  const usage = {
-    input: 300, output: 40,
-    models: {
-      'opencode-go/deepseek-v4.1-flash#high': { input: 100, output: 10 },
-      'opencode-go/deepseek-v4.1-flash#max': { input: 120, output: 20 },
-      'opencode-go/muse-spark-1.3-contributor#low': { input: 80, output: 10 },
-    },
-  };
-  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', usage })] })]);
-  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-  assert.deepEqual(rows, [
-    '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | high | 100 | — | — | 10 | — | 1/1 | — |',
-    '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | max | 120 | — | — | 20 | — | 1/1 | — |',
-    '| code review | opencode | delegate | opencode-go/muse-spark-1.3-contributor | low | 80 | — | — | 10 | — | 1/1 | — |',
-  ]);
-  const counters = rows.map((line) => line.split(' | ').slice(5, 9).map((cell) => cell === '—' ? 0 : Number(cell)));
-  assert.deepEqual([
-    counters.reduce((n, row) => n + row[0]!, 0),
-    counters.reduce((n, row) => n + row[3]!, 0),
-  ], [usage.input, usage.output]);
-});
-
-test('per model and effort rows: unmatched key parts render unavailable with their counters', () => {
-  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
-    input: 15, output: 3,
-    models: {
-      '#Turbo_2': { input: 5, output: 1 },
-      'opencode-go/deepseek-v4.1-flash#': { input: 10, output: 2 },
-    },
-  } })] })]);
-  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-  assert.ok(rows.includes('| code review | opencode | delegate | — | — | 5 | — | — | 1 | — | 1/1 | — |'), text);
-  assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | — | 10 | — | — | 2 | — | 1/1 | — |'), text);
-  assert.equal(rows.length, 2, text);
-});
-
-test('per model and effort rows: host and subagent rows split per model and effort pair', () => {
-  const text = render([facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [
-    { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', input: 10, output: 1 },
-    { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'max', input: 20, output: 2 },
-    { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', input: 30, output: 3 },
-    { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'low', input: 40, output: 4 },
-  ] } })]);
-  const rows = stageRows(text).filter((line) => line.includes('| opencode | host |') || line.includes('| opencode | subagent |'));
-  assert.deepEqual(rows, [
-    '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | high | 10 | — | — | 1 | — | — | — |',
-    '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | max | 20 | — | — | 2 | — | — | — |',
-    '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | high | 30 | — | — | 3 | — | — | — |',
-    '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | low | 40 | — | — | 4 | — | — | — |',
-  ]);
-});
-
-test('per model and effort rows: local model tags render and emails stay rejected', () => {
-  const local = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'lmstudio/qwen3.8-27b@iq4_xs', effort: 'high', usage: {
-    input: 20, output: 2,
-    models: { 'lmstudio/qwen3.8-27b@iq4_xs#high': { input: 20, output: 2 } },
-  } })] })]);
-  assert.ok(local.includes('| code review | opencode | delegate | lmstudio/qwen3.8-27b@iq4_xs | high | 20 | — | — | 2 | — | 1/1 |'), local);
-  const email = render([facts({ invocations: [invocation({ provider: 'opencode', usage: { input: 10, output: 1, models: { 'user@example.com': { input: 10, output: 1 } } } })] })]);
-  assert.doesNotMatch(email, /user@example\.com/);
-  assert.ok(email.includes('| code review | opencode | delegate | gpt-6-sol (configured) | medium | 10 | — | — | 1 | — | 1/1 |'), email);
-});
-
-test('per model and effort rows: off-pattern model keys keep their own counters beside valid keys', () => {
-  const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
-    input: 30, output: 3,
-    models: {
-      'opencode-go/deepseek-v4.1-flash': { input: 10, output: 1 },
-      'bad model#high': { input: 20, output: 2 },
-    },
-  } })] })]);
-  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-  assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | medium | 10 | — | — | 1 | — | 1/1 | — |'), text);
-  assert.ok(rows.includes('| code review | opencode | delegate | — | high | 20 | — | — | 2 | — | 1/1 | — |'), text);
-  assert.equal(rows.length, 2, text);
-});
-
-test('per model and effort rows: keys rendering to the same pair merge their counters', () => {
-  const text = render([facts({ invocations: [invocation({ provider: 'opencode', usage: {
-    input: 30, output: 3,
-    models: {
-      'bad model#high': { input: 10, output: 1 },
-      'worse model#high': { input: 20, output: 2 },
-    },
-  } })] })]);
-  const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-  assert.deepEqual(rows, ['| code review | opencode | delegate | — | high | 30 | — | — | 3 | — | 1/1 | — |']);
-});
-
-// SECTION: Scope gate and redaction
-
-const LEAKS = [
-  'see /home/alice/repo/src/app.ts', 'at ~/work/app', 'path C:\\Users\\alice\\repo', 'path d:/work/repo', 'share \\\\server\\team\\x',
-  'docs at https://intranet.example/x', 'host www.example.org', 'host build.example.com', 'mail alice@example.com',
-  'session 123e4567-e89b-12d3-a456-426614174000', `hash ${'a1'.repeat(20)}`,
-];
-const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
-
-test('retro observations: validates ids, components, categories, content, and size', () => {
-  const ids = Array.from({ length: 21 }, (_, i) => `o${i + 1}`);
-  const result = retroObservations(ids.map((id) => observation({ id })));
-  assert.deepEqual(result.values.map((v) => v.id), ids.slice(0, 20));
-  assert.equal(result.rejected, 1);
-  assert.deepEqual(retroObservations([]), { state:'empty', values: [], rejected: 0 });
-  for (const component of ['src/app.ts', 'core/frame.ts', '../dispatch/scripts/toolkit/records.ts', 'skills/dispatch-plan/SKILL.md', 'README.md']) {
-    assert.deepEqual(retroObservations([observation({ component })]), { state:'collected', values: [], rejected: 1 }, component);
   }
-  assert.equal(retroObservations([observation({ component: 'skills/dispatch/scripts/toolkit/records.ts' })]).values[0]?.component, 'scripts/toolkit/records.ts');
-  const shipped = ['SKILL.md', ...['scripts', 'references'].flatMap((dir) => fs.readdirSync(path.join(SKILL_ROOT, dir), { recursive: true })
-    .map((entry) => path.join(dir, String(entry))).filter((file) => fs.statSync(path.join(SKILL_ROOT, file)).isFile()).map((file) => file.split(path.sep).join('/')))];
-  assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
-  for (const component of shipped) assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
-  assert.equal(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]).values.length, 1);
-  assert.equal(retroObservations([observation({component:'scripts/toolkit/review-identity.ts'})]).values[0]?.component,'scripts/toolkit/review-identity.ts');
-  assert.equal(retroObservations([observation({ component: 'references/templates/writer-brief.md' })]).values.length, 1);
-  for (const category of ['vibes', 'driver protocol', '', undefined]) assert.equal(retroObservations([observation({ category })]).rejected, 1, String(category));
-  for (const category of [...Object.keys(CATEGORIES), 'Token economy']) assert.equal(retroObservations([observation({ category })]).values.length, 1, category);
-  for (const id of ['', 'bad id', 'x'.repeat(49), 'a/b', 7]) assert.equal(retroObservations([observation({ id })]).rejected, 1, String(id));
-  assert.deepEqual(retroObservations([observation({ id: 'dup' }), observation({ id: 'dup' })]).rejected, 1);
-  for (const field of ['evidence', 'impact', 'proposedFix'] as const) {
-    for (const leak of LEAKS) assert.equal(retroObservations([observation({ [field]: leak })]).rejected, 1, `${field}: ${leak}`);
-    assert.equal(retroObservations([observation({ [field]: CLEAN })]).values[0]?.[field], CLEAN);
-  }
-  assert.equal(retroObservations([observation({ evidence: 'z'.repeat(512) })]).values.length, 1);
-  for (const evidence of ['z'.repeat(513), 'é'.repeat(257), '   ', 42]) assert.equal(retroObservations([observation({ evidence })]).rejected, 1, String(evidence).slice(0, 8));
-});
+  // merged from: heuristic precision screens the review cap as a bounded integer
+  {
 
-test('retro observations: sanitizes model and config facts', () => {
-  const raw = facts({
-    config: {
-      diagnostics: true, 'write-concurrency': 2, 'api-key': 'secret-canary',
-      'read-delegates': { codex: { sandbox: true, targets: [{ low: { model: 'gpt-6-sol', effort: 'medium' } }] } },
-      'write-subagents': { claude: { low: { model: '/opt/models/private' } } },
-    },
-    invocations: [
-      invocation({ model: 'C:\\models\\private', provider: 'Codex Cloud', effort: 'h i g h', reportedModels: ['gpt-6-sol-2026', 'https://host/model', 'user@example.com'] }),
-      invocation({ model: 'opencode-go/glm-5.3-flash', provider: 'opencode', effort: 'max' }),
-    ],
-  });
-  const clean = sanitizeFacts({ ...raw, invocations: [{ ...raw.invocations[0]!, resume: 'resume-canary' } as InvocationFacts, raw.invocations[1]!] });
-  assert.deepEqual(clean.config, {
-    diagnostics: true, 'write-concurrency': 2,
-    'read-delegates': { codex: { sandbox: true, targets: [{ low: { model: 'gpt-6-sol', effort: 'medium' } }] } },
-    'write-subagents': { claude: { low: { model: '—' } } },
-  });
-  const [bad, good] = clean.invocations;
-  assert.deepEqual([bad?.model, bad?.provider, bad?.effort, bad?.reportedModels], ['—', '—', '—', ['gpt-6-sol-2026']]);
-  assert.deepEqual([good?.model, good?.provider, good?.effort], ['opencode-go/glm-5.3-flash', 'opencode', 'max']);
-  assert.ok(!('resume' in bad!));
-});
+    const capOf = (cap: unknown) => sanitizeFacts(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap } as never] })).reviews[0]?.cap;
+    assert.equal(capOf(3), 3);
+    for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
 
-test('retro observations: rejects locators in ids models and config', () => {
-  for (const locator of ['123e4567-e89b-12d3-a456-426614174000', 'build.example.com']) {
-    const text = render([facts({
-      config: { 'read-delegates': { codex: { targets: [{ low: { model: locator } }] }, [locator]: { model: 'gpt-6-sol' } } },
-      invocations: [invocation({ model: locator, reportedModels: [locator, 'gpt-6-sol'], usage: { input: 10, output: 1, models: { [locator]: { input: 10, output: 1 } } } })],
-      reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 0, reraised: [locator, 'R1-F001'], escalation: { kind: 'deadlock', ids: [locator] } }],
-      observations: [observation({ id: locator })],
-    })]);
-    assert.ok(!text.includes(locator), `${locator} withheld:\n${text}`);
-    assert.match(text, /- Host retro: collected · 0 accepted · 1 rejected/, 'observation id');
-    assert.match(text, /code review: 1 round; 1 finding re-raised across rounds \(R1-F001\); deadlock escalation\./, 'review ids');
-    assert.ok(text.includes('— (reported: gpt-6-sol)'), 'model and reported-model keys');
-    assert.ok(text.includes('| code review | codex | delegate | — | medium | 10 | — | — | 1 | — | 1/1 |'), 'usage.models keys drop the per-model split');
-    assert.ok(text.includes('"model": "—"'), 'config strings');
-  }
-  const names = ['gemini-3.8-flash', 'gpt-6.1-sol', 'opencode-go/muse-spark-1.3-contributor', 'claude-opus-5-5'];
-  const text = render([facts({
-    config: { 'read-delegates': { codex: { targets: names.map((model) => ({ low: { model } })) } } },
-    invocations: names.map((model) => invocation({ model, reportedModels: [model], usage: { input: 10, output: 1, models: { [model]: { input: 10, output: 1 } } } })),
-  })]);
-  for (const name of names) {
-    assert.ok(text.includes(`| ${name} (reported: ${name}) |`), `model ${name}`);
-    assert.ok(text.includes(`| code review | codex | delegate | ${name} | medium | 10 |`), `usage key ${name}`);
-    assert.ok(text.includes(`"model": "${name}"`), `config ${name}`);
   }
 });
 
-test('diagnostics report: never renders resume objective or absolute paths', () => {
-  const run = {
-    ...facts(), objective: 'objective-canary', argument: 'argument-canary', sessionPath: 'C:/sessions/canary', version: '/opt/canary',
-    config: { diagnostics: true, 'canary-key': 'value', phases: { 'plan-review': { only: ['C:\\canary'] } } },
-    pins: '/home/canary', fault: { cls: 'timeout', effectId: 'C:/canary/effect', detail: 'canary detail' },
-    phases: [{ key: 'review', name: 'canary phase', outcome: 'complete', wallMs: 1000 }],
-    hostGaps: [{ await: '/canary', ms: 1000 }],
-    invocations: [{ ...invocation({ model: '/Users/canary/model', reportedModels: ['C:/canary'] }), resume: 'resume-canary', sessionId: 'canary-session', stdoutPath: 'C:/canary/out' }],
-    reviews: [{ phase: 'review', round: 1, reraised: ['C:/canary', 'F1'], escalation: { kind: 'deadlock', ids: ['/home/canary'] }, accepted: 0, rejected: 1 }],
-    rejectedEvents: [{ eventType: 'RULINGS', reason: 'bad path /Users/canary/repo/file.ts' }, { eventType: 'canary', reason: 'ok' }],
-    observations: [observation({ evidence: 'canary at /home/canary/x' }), observation({ id: 'o2', component: 'canary.ts' }), { ...observation({ id: 'o3' }), extra: 'canary-extra' }],
-  } as unknown as RunFacts;
-  const { text } = renderDiagnostics([run]);
-  assert.doesNotMatch(text, /canary/i);
-  assert.doesNotMatch(text,/host event/);
-  assert.match(text, /- Host retro: collected · 1 accepted · 2 rejected/);
-});
+test('heuristic precision: sample thresholds, impacts and fix text for H1, H3, H5 and H9', () => {
+  // merged from: heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics
+  {
 
-test('host rows preserve totals and notes, scrub labels, and surface unavailability', () => {
-  const run=facts({hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'m',effort:null,input:10,output:2,cacheRead:5,cacheWrite:2,reasoning:4},{stage:'plan',role:'subagent',model:'m',effort:null,input:20,output:3}],notes:{host:{'unparsed lines':2},subagent:{'read budget reached':1}}},invocations:[invocation({provider:'claude',usage:{input:7,output:1}})]});
-  (run.hostUsage!.rows[0] as unknown as Record<string,unknown>)['text']='secret transcript';
-  const text=render([run]);
-  assert.ok(text.includes('| claude | 37 | 5 | 2 | 6 | 4 | host measured (unparsed lines 2) · subagents measured (read budget reached 1) · delegates 1/1 |'));
-  assert.ok(text.includes('| plan | claude | host | m | — | 10 | 5 | 2 | 2 | 4 | — |'));
-  assert.ok(text.includes('| plan | claude | subagent | m | — | 20 | — | — | 3 | — | — |'));
-  assert.ok(text.includes('| code review | claude | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 1 | — | 1/1 |'));
-  assert.ok(text.includes('Overview token columns count CLI delegates only; Cost also counts host and subagent usage attributed by time.'));
-  assert.ok(text.includes('other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.'));
-  assert.ok(!text.includes('secret transcript'));
-  const invalidUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
-  const sanitized=render([facts({hostUsage:invalidUsage,invocations:[]})]);
-  assert.ok(sanitized.includes('| plan | claude | host | — | — | 4 | — | — | 1 | — | — |'));
-  assert.ok(sanitized.includes('host unavailable: read-error:EACCES'));
-  assert.ok(sanitized.includes('subagents not measured (unreadable files 2)'));
-  assert.ok(!sanitized.includes('C:/private'));
-});
+    // H3 needs three findings
+    assert.deepEqual(only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 2 }] })), 'H3'), [], 'two findings are too few to judge a rejection share');
+    const h3Findings = only(heuristics(facts({ reviews: [{ phase: 'review', round: 1, accepted: 1, rejected: 2 }] })), 'H3');
+    assert.equal(h3Findings.length, 1);
+    assert.match(assertShape(h3Findings[0], 'review-convergence').evidence, /code review round 1: 2 of 3 findings rejected \(67%\)/);
 
+    // H5 needs three uncached samples and a share above two over n
+    const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
+    assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation()] })), 'H5'), [], 'with two invocations one always holds at least half');
+    const even = invocation({ usage: { input: 5000, cacheRead: 9000, cacheWrite: 300, output: 60 } });
+    assert.deepEqual(only(heuristics(facts({ invocations: [even, invocation(), invocation()] })), 'H5'), [], 'a share at max(0.5, 2/n) stays silent');
+    const cached = invocation({ usage: { input: 1000, cacheRead: 900_000, output: 40 } });
+    assert.deepEqual(only(heuristics(facts({ invocations: [cached, invocation(), invocation()] })), 'H5'), [], 'cache reads do not make a launch dominate');
+    const zero = invocation({ outcome: 'quota', usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 } });
+    assert.deepEqual(only(heuristics(facts({ invocations: [big, invocation(), zero] })), 'H5'), [], 'zero-usage failures are not samples');
+    const h5Findings = only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5');
+    assert.equal(h5Findings.length, 1);
+    assert.match(assertShape(h5Findings[0], 'token-economy').evidence, /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/);
 
-test('Codex delegates keep their own platform under a Claude host and timing scope reports native timing', () => {
-  const run=facts({timingScope:'tool-calls',hostUsage:{platform:'claude',rows:[{stage:'plan',role:'host',model:'claude-model',effort:null,input:10,output:2}]},invocations:[invocation({provider:'claude',usage:{input:3,output:1}}),invocation({provider:'codex',usage:{input:7,output:4}})]});
-  const text=render([run]);
-  assert.ok(text.includes('| claude | 13 | — | — | 3 | — | host measured · delegates 1/1 |'));
-  assert.ok(text.includes('| codex | 7 | — | — | 4 | — | delegates 1/1 |'));
-  assert.ok(text.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 4 | — | 1/1 |'));
-  assert.match(text, /Timing scope:.*native\/writer timing/);
-});
+    // H1 ignores quota-store skips that never launched
+    const skip = invocation({ outcome: 'quota', launched: false, slot: 'codex' });
+    assert.deepEqual(only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), skip] })), 'H1'), []);
+    const [h1Finding] = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota', slot: 'codex' }), invocation({ outcome: 'quota', slot: 'codex' }), skip, skip] })), 'H1');
+    assert.match(h1Finding!.evidence, /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./);
 
-test('host platform edges render adapter coverage or explicit unavailability', () => {
-  const missing = render([facts({hostUsage:{platform:null,rows:[],unavailable:'no adapter'},invocations:[]})]);
-  assert.ok(missing.includes('| — | — | — | — | — | — | host unavailable: no adapter |'));
-  const onlyFs = {list:()=>[],stat:()=>null,read:()=>Buffer.alloc(0),decompress:null};
-  const hostUsage = readHostUsage('agy',{startMs:0,endMs:10,home:'unused',env:()=> 'thread',stages:[]},onlyFs,{agy:{sessionEnv:['CUSTOM_THREAD'],read:()=>({rows:[{stage:'plan',role:'host',model:'stub-model',effort:null,depth:0,atMs:0,reasoningInOutput:false,input:17,output:4,cacheRead:2}]})}});
-  const covered = render([facts({hostUsage,invocations:[]})]);
-  assert.ok(covered.includes('| agy | 17 | 2 | — | 4 | — | host measured |'));
-  assert.ok(covered.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
-});
-test('diagnostics report names each lifecycle step outcome and keeps raw details out', () => {
-  const step = (name: string, outcome: string, extra: Record<string, unknown> = {}) => ({ step: name, elapsedMs: 120, budgetMs: 5000, outcome, ...extra });
-  const hostile = { lifecycleSteps: [step('debug-config', 'timeout'), step('prepare', 'failed', { detail: '/home/me/.config/opencode' }), step('teardown', 'unconfirmed')] } as unknown as Partial<InvocationFacts>;
-  const text = render([facts({ invocations: [bare(hostile)] })]);
-  assert.match(text, /lifecycle debug-config timeout 120\/5000 ms, teardown unconfirmed 120\/5000 ms/);
-  assert.doesNotMatch(text, /prepare failed|home\/me|opencode/);
-});
+    // H9 needs two relaunches
+    assert.deepEqual(only(heuristics(facts({ relaunches: 1 })), 'H9'), [], 'one relaunch without a cause is not a pattern');
+    assert.match(assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness').evidence, /2 writer relaunches/);
 
-test('grounding phase retro observation passes gate and renders evidence in report', () => {
-  const item = {
-    id: 'grounding-spec',
-    component: 'references/grounding.md',
-    category: 'information-access' as const,
-    evidence: 'map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable',
-    impact: 'Keep the token limit at 150000.',
-    proposedFix: 'Keep the current discovery bounds.',
-  };
-  const gated = retroObservations([item]);
-  assert.equal(gated.state, 'collected');
-  assert.equal(gated.rejected, 0);
-  assert.equal(gated.values.length, 1);
-  assert.deepEqual(gated.values[0], item);
-
-  const text = render([facts({ observations: [item] })]);
-  assert.ok(text.includes('| 1 | spec | map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |'), text);
-});
-
-test('grounding retro items render only in the Overview Grounding table', () => {
-  const grounding = observation({ id: 'grounding-plan', component: 'references/grounding.md', category: 'information-access',
-    evidence: 'map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable', impact: 'Keep the token limit at 150000.', proposedFix: 'Keep the current discovery bounds.' });
-  const run = facts({ observations: [grounding, observation()] });
-  const text = render([run]);
-  assert.ok(text.includes('### Grounding\n\n| Run | Phase | Evidence | Assessment | Proposed change |\n| --- | --- | --- | --- | --- |\n'
-    + '| 1 | plan | map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |\n'), text);
-  assert.doesNotMatch(text, /grounding-plan/);
-  assert.match(text, /^- Source: host retro `o1` · run 1$/m, 'other retro items stay findings');
-  assert.doesNotMatch(text.slice(0, text.indexOf('## Overview')), /grounding/, 'summary top findings');
-  assert.equal(renderDiagnostics([run]).findings, 1);
-  assert.match(text, /- Host retro: collected · 2 accepted · 0 rejected/);
-  assert.match(render([facts()]), /### Grounding\n\n\| Run \|.*\n\| --- .*\n\| — \| — \| — \| — \| — \|\n/, 'empty table keeps a placeholder row');
-});
-
-// SECTION: Finding origin
-
-const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
-const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
-
-test('origin: a reply with a valid, absent or invalid origin stays valid and keeps only known values', () => {
-  const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
-  assert.deepEqual(drafts.map(draft => draft.origin), ['fix-induced', 'original', 'unknown', undefined, undefined]);
-});
-
-test('origin: collected origin follows the round table', () => {
-  const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
-  assert.deepEqual(collectFindings(1, drafts).map(entry => entry.origin), ['original', 'original', 'original', 'original', 'original']);
-  assert.deepEqual(collectFindings(2, drafts).map(entry => entry.origin), ['fix-induced', 'original', 'unknown', 'unknown', 'unknown']);
-});
-
-test('origin: duplicate findings merge to fix-induced within one reply and across replies', () => {
-  const duplicate = (origin?: string) => finding(origin === undefined ? {} : {origin});
-  assert.deepEqual(draftsOf(report([duplicate('original'), duplicate('fix-induced')])).map(draft => draft.origin), ['fix-induced']);
-  assert.deepEqual(draftsOf(report([duplicate('fix-induced'), duplicate('original')])).map(draft => draft.origin), ['fix-induced']);
-  assert.deepEqual(draftsOf(report([duplicate('unknown'), duplicate('original')])).map(draft => draft.origin), ['original']);
-  assert.deepEqual(draftsOf(report([duplicate(), duplicate('original')])).map(draft => draft.origin), ['original']);
-  const parse = (source: string, origin?: string) => { const result = parseReport({kind: 'code', source, text: report([finding(origin === undefined ? {} : {origin})])}); assert.ok(result.ok); return result.findings; };
-  const merged = collectFindings(2, [...parse('codex[0]', 'original'), ...parse('claude[0]', 'fix-induced')]);
-  assert.equal(merged[0]?.origin, 'fix-induced');
-  assert.equal(merged[1]?.dupOf, merged[0]?.id);
-  assert.equal(collectFindings(2, [...parse('codex[0]'), ...parse('claude[0]', 'original')])[0]?.origin, 'original');
-});
-
-test('bracketed model id renders its name in Tokens by stage', () => {
-  const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5[1m]', usage: {
-    input: 100, output: 10,
-    models: { 'claude-opus-5-5[1m]#high': { input: 100, output: 10 } },
-  } })] })]);
-  const rows = stageRows(text).filter((line) => line.includes('| claude | delegate |'));
-  assert.deepEqual(rows, [
-    '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 | — |',
-  ]);
-});
-
-test('key bound: sanitize bounds 40 model keys to 32 largest plus other', () => {
-  const models: Record<string, { input: number; output: number }> = {};
-  for (let i = 0; i < 40; i++) {
-    models[`m${String(i).padStart(2, '0')}#high`] = { input: (i + 1) * 10, output: 1 };
   }
-  const clean = sanitizeFacts(facts({ invocations: [invocation({ usage: { input: 8200, output: 40, models } })] }));
-  const kept = Object.keys(clean.invocations[0]?.usage?.models ?? {});
-  assert.equal(kept.length, 33);
-  assert.ok(kept.includes('other'));
-  assert.equal('m00#high' in (clean.invocations[0]?.usage?.models ?? {}), false);
-  assert.equal('m08#high' in (clean.invocations[0]?.usage?.models ?? {}), true);
-});
+  // merged from: H5 impact names the voice exploration and proposes no byte caps
+  {
 
-test('banded facts: round-trips valid bands, split, reasoningInOutput and phase, and drops invalid bands or over-total split', () => {
-  const valid = sanitizeFacts(facts({
-    hostUsage: {
-      platform: 'claude',
-      rows: [{
-        stage: 'plan', phase: 'plan', role: 'host', model: 'm', effort: 'high',
-        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: true,
-        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
-      } as never],
-    },
-    invocations: [invocation({
-      usage: {
-        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: false,
-        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
-      } as never,
-    })],
-  }));
-  const hRow = valid.hostUsage?.rows[0] as Record<string, unknown>;
-  assert.equal(hRow['phase'], 'plan');
-  assert.equal(hRow['cacheWrite5m'], 12);
-  assert.equal(hRow['cacheWrite1h'], 8);
-  assert.equal(hRow['reasoningInOutput'], true);
-  assert.ok(hRow['bands']);
-  const uRow = valid.invocations[0]?.usage as Record<string, unknown>;
-  assert.equal(uRow['cacheWrite5m'], 12);
-  assert.equal(uRow['cacheWrite1h'], 8);
-  assert.equal(uRow['reasoningInOutput'], false);
-  assert.ok(uRow['bands']);
+    const big = invocation({ usage: { input: 9000, cacheRead: 9000, output: 100 } });
+    const finding = assertShape(only(heuristics(facts({ invocations: [big, invocation(), invocation()] })), 'H5')[0], 'token-economy');
+    assert.equal(finding.impact, 'One invocation dominates token spend; its own repository exploration likely drives most of it.');
+    assert.equal(finding.proposedFix, "Lower that slot's turn budget or effort, or assign it a cheaper model.");
 
-  const invalid = sanitizeFacts(facts({
-    invocations: [invocation({
-      usage: {
-        input: 100, output: 10, cacheWrite: 10, cacheWrite5m: 8, cacheWrite1h: 5,
-        bands: { le100k: { input: 99, output: 10 }, bogus: { input: 1, output: 0 } },
-      } as never,
-    })],
-  }));
-  const badU = invalid.invocations[0]?.usage as Record<string, unknown>;
-  assert.equal('bands' in badU, false);
-  assert.equal('cacheWrite5m' in badU, false);
-  assert.equal('cacheWrite1h' in badU, false);
-});
-
-test('coverage list: sanitizes legacy string and renders reasons on measured and unmeasured invocations', () => {
-  const { usage: _u, ...unmeasuredCopilot } = invocation({ provider: 'copilot', coverage: 'no usage output' } as unknown as Partial<InvocationFacts>);
-  const legacy = sanitizeFacts(facts({ invocations: [unmeasuredCopilot] }));
-  assert.deepEqual(legacy.invocations[0]?.coverage, ['no usage']);
-
-  const text = render([facts({
-    invocations: [
-      unmeasuredCopilot,
-      invocation({ provider: 'claude', usage: { input: 50, output: 5 }, coverage: ['transcript unavailable'] }),
-    ],
-  })]);
-  assert.match(text, /\| claude \| 50 \| — \| — \| 5 \| — \| delegates 1\/1 transcript unavailable \|/);
-  assert.match(text, /\| copilot \| — \| — \| — \| — \| — \| delegates 0\/1 no usage \|/);
-  assert.match(text, /\| code review \| claude \| delegate \| .* \| 50 \| — \| — \| 5 \| — \| 1\/1 transcript unavailable \|/);
-  assert.match(text, /\| code review \| copilot \| delegate \| .* \| — \| — \| — \| — \| — \| 0\/1 no usage \|/);
-});
-
-// SECTION: Estimated cost rendering
-
-const PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    alpha: { rates: { input: 10, output: 20, cacheRead: 1 }, reasoning: 'output' },
-    beta: { rates: { input: 2, output: 4 } },
-    zero: { rates: { input: 0, output: 0 } },
-    tiered: { rates: { input: 1, output: 2 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 5, output: 10 } }] },
-    ttl: { rates: { input: 1, output: 1, cacheWrite5m: 1.25, cacheWrite1h: 2 } },
-  },
-};
-const pricer = resolvePricing(PRICES, undefined)!;
-const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) => renderDiagnostics(runs, priced ?? undefined).text;
-const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split('\n###')[0]!.split('\n').filter((line) => line.startsWith('|'));
-const overviewRows = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('| 1 · '));
-const lastCells = (line: string, n: number) => line.replace(/ \|$/, '').split(' | ').slice(-n);
-const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`))!, 2);
-const M = 1_000_000;
-const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
-  invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
-
-test('cost cells show estimated cost in the Summary, Overview, Tokens by platform and Tokens by stage', () => {
-  const run = facts({ invocations: [mega('alpha', 'high', M)] });
-  const text = costRender([run]);
-  assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$10\.00 · rates as of 2026-11-14 · priced 1 · unpriced 0$/m);
-  assert.deepEqual(phaseCost(text, 'code review'), ['~$10.00', 'alpha/high 100%']);
-  assert.ok(tableLines(text, '### Tokens by platform').some((line) => line.endsWith('| delegates 1/1 | ~$10.00 |')), text);
-  assert.ok(tableLines(text, '### Tokens by stage').some((line) => line.endsWith('| alpha (configured) | high | 1,000,000 | — | — | 0 | — | 1/1 | ~$10.00 |')), text);
-  assert.match(text, /\| Run \| Phase \| .* \| Coverage \| Cost \| Top models \|$/m);
-  assert.match(text, /\| Stage \| Platform \| Role \| Model \| Effort \| .* \| Coverage \| Cost \|$/m);
-  assert.match(text, /^\| Platform \| .* \| Coverage \| Cost \|$/m);
-
-  const plain = costRender([run], null);
-  assert.match(plain, /^- Estimated cost: not estimated \(rate table unavailable\)$/m);
-  assert.deepEqual(phaseCost(plain, 'code review'), ['—', '—']);
-  assert.ok(tableLines(plain, '### Tokens by platform').some((line) => line.endsWith('| delegates 1/1 | — |')), plain);
-  assert.ok(tableLines(plain, '### Tokens by stage').some((line) => line.endsWith('| 1/1 | — |')), plain);
-  const measured = (t: string) => /^- Provider CLI measured tokens: .*$/m.exec(t)?.[0];
-  assert.equal(measured(text), measured(plain));
-});
-
-test('cost cells keep unpriced units out of the sum', () => {
-  const cost = (invocations: InvocationFacts[]) => phaseCost(costRender([facts({ invocations })]), 'code review')[0];
-  assert.equal(cost([mega('beta', 'low', M), mega('mystery', 'low', M)]), '~$2.00');
-  assert.equal(cost([mega('mystery', 'low', M)]), '—');
-  const text = costRender([facts({ invocations: [mega('beta', 'low', M), mega('mystery', 'low', M), bare({ provider: 'codex' })] })]);
-  assert.match(text, /priced 1 · unpriced 2$/m);
-});
-
-test('phase cost sums CLI delegates and host rows by phase, with the rest in before first phase and a run total', () => {
-  const host = (phase: string | undefined, role: 'host' | 'subagent', model: string, input: number) =>
-    ({ stage: 'plan' as const, ...(phase ? { phase } : {}), role, model, effort: null, input, output: 0 });
-  const run = facts({
-    phases: [{ key: 'p1', name: 'plan', outcome: 'complete' }, { key: 'p2', name: 'implementation', outcome: 'complete' }],
-    hostUsage: { platform: 'claude', rows: [host('p1', 'host', 'alpha', M), host('p2', 'subagent', 'beta', M), host(undefined, 'host', 'alpha', M / 2), host('ghost', 'host', 'beta', M / 2)] },
-    invocations: [mega('alpha', 'low', M / 10, { phase: 'p2' }), mega('beta', 'low', M, { phase: 'orphan' })],
-  });
-  const text = costRender([run]);
-  const rows = overviewRows(text);
-  const costOf = (phase: string) => lastCells(rows.find((line) => line.includes(`| ${phase} |`))!, 2)[0];
-  assert.equal(costOf('plan'), '~$10.00');
-  assert.equal(costOf('implementation'), '~$3.00');
-  assert.equal(costOf('before first phase'), '~$8.00');
-  assert.equal(costOf('all phases'), '~$21.00');
-  assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$21\.00 · rates as of 2026-11-14 · priced 6 · unpriced 0$/m);
-  assert.ok(rows.find((line) => line.includes('| before first phase |'))!.includes('| — | — | — | — | 1 | 1,000,000 |'), 'only the orphan CLI invocation fills the token columns');
-  const none = costRender([facts({ hostUsage: { platform: 'claude', rows: [host('review', 'host', 'alpha', M)] }, invocations: [] })]);
-  assert.ok(!none.includes('before first phase'), 'a phased host row leaves no before first phase row');
-});
-
-test('phase cost adds reasoning at the output rate only when the platform reports it apart from output', () => {
-  const usage = { input: 0, output: M, reasoning: M };
-  const run = (provider: string, extra: Partial<Usage> = {}) => facts({ invocations: [mega('alpha', 'low', 0, { provider, usage: { ...usage, ...extra } })] });
-  const cost = (provider: string, extra?: Partial<Usage>) => phaseCost(costRender([run(provider, extra)]), 'code review')[0];
-  assert.equal(cost('opencode'), '~$40.00');
-  assert.equal(cost('agy'), '~$40.00');
-  assert.equal(cost('claude'), '~$20.00');
-  assert.equal(cost('codex'), '~$20.00');
-  assert.equal(cost('opencode', { reasoningInOutput: true }), '~$20.00');
-  assert.equal(cost('claude', { reasoningInOutput: false }), '~$40.00');
-  const host = (reasoningInOutput?: boolean) => facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [{ stage: 'code review', role: 'host', model: 'alpha', effort: null, input: 0, output: M, reasoning: M, ...(reasoningInOutput === undefined ? {} : { reasoningInOutput }) }] } });
-  assert.match(costRender([host()]), /^- Estimated cost .*: ~\$40\.00 ·/m);
-  assert.match(costRender([host(true)]), /^- Estimated cost .*: ~\$20\.00 ·/m);
-});
-
-test('top models rank keys by cost midpoint share, with exact strings for each edge', () => {
-  const top = (invocations: InvocationFacts[]) => phaseCost(costRender([facts({ invocations })]), 'code review')[1];
-  // range-priced key: tiered spans $1-$5 (midpoint 3) against alpha $10
-  assert.equal(top([mega('alpha', 'low', M), mega('tiered', 'high', M)]), 'alpha/low 77% · tiered/high 23%');
-  // an unpriced key takes no share and is flagged at the end
-  assert.equal(top([mega('alpha', 'low', M), mega('tiered', 'high', M), mega('mystery', 'low', 5)]), 'alpha/low 77% · tiered/high 23% + unpriced');
-  // an unpriced unit under a priced key, or a launched invocation without usage, still flags + unpriced
-  assert.equal(top([mega('alpha', 'low', M), bare({ provider: 'codex' })]), 'alpha/low 100% + unpriced');
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'low', 0, { usage: { input: 0, output: 0, cacheWrite: M } })]), 'alpha/low 100% + unpriced');
-  assert.equal(top([mega('zero', 'high', 300), bare({ provider: 'codex' })]), 'zero/high 100% (tokens) + unpriced');
-  // a native estimated row stays unpriced by design and adds no marker
-  assert.equal(top([mega('alpha', 'low', M), bare({ provider: 'claude', surface: 'native', launched: false, mode: 'native', estimated: true, tokens: 5000 })]), 'alpha/low 100%');
-  // shares total 100% by largest remainder
-  assert.equal(top([mega('alpha', 'low', 0.605 * M), mega('alpha', 'high', 0.395 * M)]), 'alpha/low 61% · alpha/high 39%');
-  // no priced key, or a zero priced total: token shares
-  assert.equal(top([mega('mystery', 'medium', 30), mega('lost', 'medium', 10)]), 'mystery/medium 75% · lost/medium 25% (tokens) + unpriced');
-  assert.equal(top([mega('zero', 'high', 300), mega('zero', 'low', 100)]), 'zero/high 75% · zero/low 25% (tokens)');
-  // more than three keys fold into other, floored at zero
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'high', M / 2), mega('beta', 'low', M), mega('beta', 'high', M / 2)]), 'alpha/low 56% · alpha/high 28% · beta/low 11% · other 5%');
-  // ties on midpoint break by tokens, then by key
-  assert.equal(top([mega('alpha', 'medium', M / 2), mega('beta', 'medium', 2.5 * M)]), 'beta/medium 50% · alpha/medium 50%');
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'high', M)]), 'alpha/high 50% · alpha/low 50%');
-  // a key without an effort prints bare, and units with one key share one share
-  assert.equal(top([mega('alpha', '—', M), mega('alpha', '—', M)]), 'alpha 100%');
-  // a row without usage has no top models
-  assert.equal(top([bare({ provider: 'codex' })]), '—');
-  assert.equal(top([mega('alpha', 'low', 0)]), '—');
-});
-
-test('cost coverage names each reason in Tokens by platform and in host and subagent stage rows', () => {
-  const platform = (text: string, name: string) => tableLines(text, '### Tokens by platform').find((line) => line.startsWith(`| ${name} |`))!;
-  const coverage = (line: string) => lastCells(line, 2)[0];
-  const run = facts({
-    invocations: [
-      mega('mystery', 'low', 10, { provider: 'unpriced' }),
-      mega('tiered', 'low', 150_000, { provider: 'tier' }),
-      invocation({ provider: 'ttl', model: 'ttl', usage: { input: 0, output: 0, cacheWrite: 1000 } }),
-      bare({ provider: 'copilot', coverage: ['no usage'] }),
-      mega('beta', 'low', 10, { provider: 'transcript', coverage: ['transcript unavailable'] }),
-      bare({ provider: 'claude', surface: 'native', launched: false, mode: 'native', estimated: true, tokens: 5000 }),
-    ],
-  });
-  const text = costRender([run]);
-  assert.equal(coverage(platform(text, 'unpriced')), 'delegates 1/1 · unpriced model');
-  assert.equal(coverage(platform(text, 'tier')), 'delegates 1/1 · tier unknown');
-  assert.equal(coverage(platform(text, 'ttl')), 'delegates 1/1 · cache TTL unknown');
-  assert.equal(coverage(platform(text, 'copilot')), 'delegates 0/1 no usage · unpriced model');
-  assert.equal(coverage(platform(text, 'transcript')), 'delegates 1/1 transcript unavailable');
-  assert.equal(platform(text, 'claude'), '| claude | — | — | — | — | — | no token breakdown | — |');
-  assert.match(text, /priced 3 · unpriced 3$/m);
-  const measured = (t: string) => /^- Provider CLI measured tokens: .*$/m.exec(t)?.[0];
-  assert.equal(measured(text), measured(costRender([run], null)), 'native estimates stay out of measured totals');
-
-  const hosted = costRender([facts({ invocations: [], hostUsage: { platform: 'claude', rows: [
-    { stage: 'plan', role: 'host', model: 'tiered', effort: null, input: 150_000, output: 0 },
-    { stage: 'plan', role: 'subagent', model: 'mystery', effort: null, input: 5, output: 0 },
-    { stage: 'plan', role: 'subagent', model: 'beta', effort: null, input: 5, output: 0 },
-  ] } })]);
-  const stages = tableLines(hosted, '### Tokens by stage');
-  assert.ok(stages.some((line) => line.startsWith('| plan | claude | host | tiered |') && line.endsWith('| tier unknown | ~$0.15–$0.75 |')), hosted);
-  assert.ok(stages.some((line) => line.startsWith('| plan | claude | subagent | mystery |') && line.endsWith('| unpriced model | — |')), hosted);
-  assert.ok(stages.some((line) => line.startsWith('| plan | claude | subagent | beta |') && line.endsWith('| — | ~$<0.01 |')), hosted);
-});
-
-// SECTION: Cost folding under the byte cap
-
-const CAP = DIAGNOSTIC_LIMITS.reportBytes;
-const FOLD_PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    flat: { rates: { input: 4, output: 4 } },
-    wide: { rates: { input: 1, output: 1 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 4, output: 4 } }] },
-    free: { rates: { input: 0, output: 0 } },
-  },
-};
-const foldPricer = resolvePricing(FOLD_PRICES, undefined)!;
-const tableCells = (text: string, heading: string) => tableLines(text, heading).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const overviewCells = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('|')).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const byKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const summaryCost = (text: string) => /^- Estimated cost \(host, subagents and CLI delegates\): (\S+) · /m.exec(text)?.[1];
-
-// Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
-type Source = { key: string; tokens: number; cost: Cost };
-const exactCost = (usd: number): Cost => ({ low: usd, high: usd, priced: true, reasons: new Set() });
-function sourceRow(index: number): { model: string; tokens: number; cost: Cost } {
-  const m = index % 7 + 1, quarter = 250_000 * m;
-  switch (index % 4) {
-    case 0: return { model: 'flat', tokens: quarter, cost: exactCost(m) };
-    case 1: return { model: 'wide', tokens: quarter, cost: { low: m / 4, high: m, priced: true, reasons: new Set(['tier unknown']) } };
-    case 2: return { model: 'mystery', tokens: 1000 * (index % 11 + 1), cost: { low: 0, high: 0, priced: false, reasons: new Set(['unpriced model']) } };
-    default: return { model: 'free', tokens: 1000 * (index % 13 + 1), cost: exactCost(0) };
   }
-}
-const rankOrder = (rows: readonly Source[]) => [...rows].sort((a, b) => b.cost.high - a.cost.high || b.cost.low - a.cost.low || b.tokens - a.tokens || byKey(a.key, b.key));
-const totalOf = (rows: readonly Source[]) => formatCost(sumCost(rows.map((r) => r.cost)));
-const reasonsOf = (rows: readonly Source[]) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
+  // merged from: H9 points at launch reports
+  {
 
-/** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
-function assertFolded(kept: readonly string[][], folded: readonly string[], keyOf: (cells: string[]) => string, all: readonly Source[], tokensColumn: number, costColumn: number): Source[] {
-  const keptKeys = kept.map(keyOf);
-  assert.equal(new Set(keptKeys).size, kept.length, 'kept rows are distinct');
-  assert.deepEqual([...keptKeys].sort(), rankOrder(all).slice(0, kept.length).map((r) => r.key).sort(), 'kept rows follow the rank');
-  const rest = all.filter((r) => !keptKeys.includes(r.key));
-  assert.equal(folded[0], `${rest.length} smaller rows`);
-  assert.equal(folded[tokensColumn], rest.reduce((n, r) => n + r.tokens, 0).toLocaleString('en-US'));
-  assert.equal(folded[costColumn], totalOf(rest));
-  return rest;
-}
+    const finding = assertShape(only(heuristics(facts({ relaunches: 2 })), 'H9')[0], 'correctness');
+    assert.equal(finding.component, 'scripts/toolkit/brief.ts');
+    assert.match(finding.proposedFix, /writer launch reports/i);
+    assert.match(finding.proposedFix, /\.state\/briefs\/<task>-<launch>\.report\.md/);
+    assert.doesNotMatch(finding.proposedFix, /writer brief/i);
 
-test('cost folding folds the lowest-ranked Tokens by stage rows into one trailing row', () => {
-  const rows = Array.from({ length: 3000 }, (_, index) => ({ ...sourceRow(index), effort: `e${String(index).padStart(4, '0')}` }));
-  const all: Source[] = rows.map((r) => ({ key: `${r.model}/${r.effort}`, tokens: r.tokens, cost: r.cost }));
-  const hostRows = rows.map((r) => ({ stage: 'plan' as const, phase: 'p', role: 'host' as const, model: r.model, effort: r.effort, input: r.tokens, output: 0 }));
-  const run = facts({ phases: [{ key: 'p', name: 'plan', outcome: 'complete' }], hostUsage: { platform: 'claude', rows: hostRows }, invocations: [] });
-  const text = renderDiagnostics([run], foldPricer).text;
-
-  assert.ok(Buffer.byteLength(text) <= CAP);
-  assert.ok(Buffer.byteLength(text) > CAP - 400, 'the largest row count that fits stays');
-  const stage = tableCells(text, '### Tokens by stage');
-  const folded = stage.at(-1)!, kept = stage.slice(0, -1);
-  assert.deepEqual(folded.slice(1, 5), ['—', '—', '—', '—'], 'dimension cells other than the count');
-  const rest = assertFolded(kept, folded, (cells) => `${cells[3]}/${cells[4]}`, all, 5, 11);
-  assert.deepEqual(folded[10]!.split(', ').sort(), reasonsOf(rest), 'Coverage unions the folded reasons');
-  assert.deepEqual(kept, [...kept].sort((a, b) => a[3]!.localeCompare(b[3]!) || a[4]!.localeCompare(b[4]!)), 'kept rows keep their normal order');
-  assert.ok(rest.some((r) => r.cost.priced && r.cost.low < r.cost.high), 'the fold reaches range-priced rows');
-  assert.ok(rest.some((r) => !r.cost.priced) && rest.some((r) => r.cost.priced && r.cost.high === 0), 'the fold holds unpriced and zero-rate rows');
-
-  const expected = totalOf(all);
-  assert.equal(summaryCost(text), expected, 'the Summary total predates folding');
-  assert.equal(overviewCells(text)[0]![13], expected);
-  assert.equal(tableCells(text, '### Tokens by platform')[0]![7], expected);
-  assert.ok(!overviewCells(text).flat().includes('smaller rows') && !tableCells(text, '### Tokens by platform').flat().some((cell) => /smaller rows/.test(cell)), 'later tables stay whole');
+  }
 });
 
-test('cost folding folds Overview phase rows for many review subjects and keeps the run total', () => {
-  const rows = Array.from({ length: 900 }, (_, index) => ({ ...sourceRow(index), key: `review-${index.toString(16).padStart(16, '0')}`, wallMs: 1000 * (index + 1) }));
-  const all: Source[] = rows.map(({ key, tokens, cost }) => ({ key, tokens, cost }));
-  const run = facts({
-    phases: rows.map((r) => ({ key: r.key, name: 'code review', outcome: 'complete', wallMs: r.wallMs })),
-    invocations: rows.map((r) => mega(r.model, 'low', r.tokens, { phase: r.key })),
-  });
-  const text = renderDiagnostics([run], foldPricer).text;
+test('per-model rows render delegate, host, subagent and edge keys with summed counters', () => {
+  // merged from: per model and effort rows: delegate keys keep their own effort and sum to invocation totals
+  {
 
-  assert.ok(Buffer.byteLength(text) <= CAP);
-  assert.match(text, /## Appendix\n\nOmitted at the report size limit\./);
-  const overview = overviewCells(text), subject = 'code review · subject ';
-  const everything = overview.find((cells) => cells[1] === 'all phases')!, folded = overview.at(-1)!;
-  const kept = overview.filter((cells) => cells[1]!.startsWith(subject));
-  assert.deepEqual([folded[0], folded[2]], ['—', '—'], 'dimension cells other than the count');
-  const rest = assertFolded(kept, folded.slice(1), (cells) => `review-${cells[1]!.slice(subject.length)}`, all, 7, 12);
-  assert.equal(folded[3], formatDuration(rows.filter((r) => rest.some((x) => x.key === r.key)).reduce((n, r) => n + r.wallMs, 0)));
-  assert.equal(folded[7], String(rest.length), 'Invocations sum');
-  assert.match(folded[14]!, /\d+%/, 'Top models covers the folded rows');
-  assert.equal(overview.filter((cells) => /smaller rows$/.test(cells[1]!)).length, 1);
+    const usage = {
+      input: 300, output: 40,
+      models: {
+        'opencode-go/deepseek-v4.1-flash#high': { input: 100, output: 10 },
+        'opencode-go/deepseek-v4.1-flash#max': { input: 120, output: 20 },
+        'opencode-go/muse-spark-1.3-contributor#low': { input: 80, output: 10 },
+      },
+    };
+    const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', usage })] })]);
+    const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+    assert.deepEqual(rows, [
+      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | high | 100 | — | — | 10 | — | 1/1 | — |',
+      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | max | 120 | — | — | 20 | — | 1/1 | — |',
+      '| code review | opencode | delegate | opencode-go/muse-spark-1.3-contributor | low | 80 | — | — | 10 | — | 1/1 | — |',
+    ]);
+    const counters = rows.map((line) => line.split(' | ').slice(5, 9).map((cell) => cell === '—' ? 0 : Number(cell)));
+    assert.deepEqual([
+      counters.reduce((n, row) => n + row[0]!, 0),
+      counters.reduce((n, row) => n + row[3]!, 0),
+    ], [usage.input, usage.output]);
 
-  const expected = totalOf(all);
-  assert.equal(everything[13], expected, 'the all phases row never folds and holds the run total');
-  assert.equal(summaryCost(text), expected);
-  assert.equal(tableCells(text, '### Tokens by platform')[0]![7], expected);
-  const stage = tableCells(text, '### Tokens by stage');
-  assert.deepEqual([stage.length, stage[0]![0], stage[0]![11]], [1, '4 smaller rows', expected], 'the earlier table folds to one row');
+  }
+  // merged from: per model and effort rows: unmatched key parts render unavailable with their counters
+  {
+
+    const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
+      input: 15, output: 3,
+      models: {
+        '#Turbo_2': { input: 5, output: 1 },
+        'opencode-go/deepseek-v4.1-flash#': { input: 10, output: 2 },
+      },
+    } })] })]);
+    const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+    assert.ok(rows.includes('| code review | opencode | delegate | — | — | 5 | — | — | 1 | — | 1/1 | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | — | 10 | — | — | 2 | — | 1/1 | — |'), text);
+    assert.equal(rows.length, 2, text);
+
+  }
+  // merged from: per model and effort rows: host and subagent rows split per model and effort pair
+  {
+
+    const text = render([facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [
+      { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', input: 10, output: 1 },
+      { stage: 'plan', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'max', input: 20, output: 2 },
+      { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'high', input: 30, output: 3 },
+      { stage: 'plan', role: 'subagent', model: 'opencode-go/muse-spark-1.3-contributor', effort: 'low', input: 40, output: 4 },
+    ] } })]);
+    const rows = stageRows(text).filter((line) => line.includes('| opencode | host |') || line.includes('| opencode | subagent |'));
+    assert.deepEqual(rows, [
+      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | high | 10 | — | — | 1 | — | — | — |',
+      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | max | 20 | — | — | 2 | — | — | — |',
+      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | high | 30 | — | — | 3 | — | — | — |',
+      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | low | 40 | — | — | 4 | — | — | — |',
+    ]);
+
+  }
+  // merged from: per model and effort rows: local model tags render and emails stay rejected
+  {
+
+    const local = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'lmstudio/qwen3.8-27b@iq4_xs', effort: 'high', usage: {
+      input: 20, output: 2,
+      models: { 'lmstudio/qwen3.8-27b@iq4_xs#high': { input: 20, output: 2 } },
+    } })] })]);
+    assert.ok(local.includes('| code review | opencode | delegate | lmstudio/qwen3.8-27b@iq4_xs | high | 20 | — | — | 2 | — | 1/1 |'), local);
+    const email = render([facts({ invocations: [invocation({ provider: 'opencode', usage: { input: 10, output: 1, models: { 'user@example.com': { input: 10, output: 1 } } } })] })]);
+    assert.doesNotMatch(email, /user@example\.com/);
+    assert.ok(email.includes('| code review | opencode | delegate | gpt-6-sol (configured) | medium | 10 | — | — | 1 | — | 1/1 |'), email);
+
+  }
+  // merged from: per model and effort rows: off-pattern model keys keep their own counters beside valid keys
+  {
+
+    const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', usage: {
+      input: 30, output: 3,
+      models: {
+        'opencode-go/deepseek-v4.1-flash': { input: 10, output: 1 },
+        'bad model#high': { input: 20, output: 2 },
+      },
+    } })] })]);
+    const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | medium | 10 | — | — | 1 | — | 1/1 | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | — | high | 20 | — | — | 2 | — | 1/1 | — |'), text);
+    assert.equal(rows.length, 2, text);
+
+  }
+  // merged from: per model and effort rows: keys rendering to the same pair merge their counters
+  {
+
+    const text = render([facts({ invocations: [invocation({ provider: 'opencode', usage: {
+      input: 30, output: 3,
+      models: {
+        'bad model#high': { input: 10, output: 1 },
+        'worse model#high': { input: 20, output: 2 },
+      },
+    } })] })]);
+    const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
+    assert.deepEqual(rows, ['| code review | opencode | delegate | — | high | 30 | — | — | 3 | — | 1/1 | — |']);
+
+  }
+  // merged from: bracketed model id renders its name in Tokens by stage
+  {
+
+    const text = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5[1m]', usage: {
+      input: 100, output: 10,
+      models: { 'claude-opus-5-5[1m]#high': { input: 100, output: 10 } },
+    } })] })]);
+    const rows = stageRows(text).filter((line) => line.includes('| claude | delegate |'));
+    assert.deepEqual(rows, [
+      '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 | — |',
+    ]);
+
+  }
 });
 
-test('cost folding folds Tokens by platform rows last, after earlier tables fold to one row each', () => {
-  const rows = Array.from({ length: 3000 }, (_, index) => ({ ...sourceRow(index), platform: `p${String(index).padStart(4, '0')}` }));
-  const all: Source[] = rows.map((r) => ({ key: r.platform, tokens: r.tokens, cost: r.cost }));
-  const text = renderDiagnostics([facts({ invocations: rows.map((r) => mega(r.model, 'low', r.tokens, { provider: r.platform })) })], foldPricer).text;
+test('grounding retro observations pass the gate and render only in the Overview Grounding table', () => {
+  // merged from: grounding phase retro observation passes gate and renders evidence in report
+  {
 
-  assert.ok(Buffer.byteLength(text) <= CAP);
-  const platform = tableCells(text, '### Tokens by platform');
-  const folded = platform.at(-1)!, kept = platform.slice(0, -1);
-  const rest = assertFolded(kept, folded, (cells) => cells[0]!, all, 1, 7);
-  assert.deepEqual(folded[6]!.split(' · ').sort(), ['delegates 1/1', ...reasonsOf(rest)].sort(), 'Coverage unions the folded segments');
-  assert.deepEqual(kept.map((cells) => cells[0]), kept.map((cells) => cells[0]!).sort(), 'kept rows keep their normal order');
+    const item = {
+      id: 'grounding-spec',
+      component: 'references/grounding.md',
+      category: 'information-access' as const,
+      evidence: 'map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable',
+      impact: 'Keep the token limit at 150000.',
+      proposedFix: 'Keep the current discovery bounds.',
+    };
+    const gated = retroObservations([item]);
+    assert.equal(gated.state, 'collected');
+    assert.equal(gated.rejected, 0);
+    assert.equal(gated.values.length, 1);
+    assert.deepEqual(gated.values[0], item);
 
-  const expected = totalOf(all);
-  assert.equal(summaryCost(text), expected);
-  const stage = tableCells(text, '### Tokens by stage'), overview = overviewCells(text);
-  assert.deepEqual([stage.length, stage[0]![0], stage[0]![11]], [1, '3000 smaller rows', expected]);
-  assert.deepEqual([overview.length, overview[0]![1], overview[0]![13]], [1, '1 smaller rows', expected]);
+    const text = render([facts({ observations: [item] })]);
+    assert.ok(text.includes('| 1 | spec | map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |'), text);
+
+  }
+  // merged from: grounding retro items render only in the Overview Grounding table
+  {
+
+    const grounding = observation({ id: 'grounding-plan', component: 'references/grounding.md', category: 'information-access',
+      evidence: 'map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable', impact: 'Keep the token limit at 150000.', proposedFix: 'Keep the current discovery bounds.' });
+    const run = facts({ observations: [grounding, observation()] });
+    const text = render([run]);
+    assert.ok(text.includes('### Grounding\n\n| Run | Phase | Evidence | Assessment | Proposed change |\n| --- | --- | --- | --- | --- |\n'
+      + '| 1 | plan | map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |\n'), text);
+    assert.doesNotMatch(text, /grounding-plan/);
+    assert.match(text, /^- Source: host retro `o1` · run 1$/m, 'other retro items stay findings');
+    assert.doesNotMatch(text.slice(0, text.indexOf('## Overview')), /grounding/, 'summary top findings');
+    assert.equal(renderDiagnostics([run]).findings, 1);
+    assert.match(text, /- Host retro: collected · 2 accepted · 0 rejected/);
+    assert.match(render([facts()]), /### Grounding\n\n\| Run \|.*\n\| --- .*\n\| — \| — \| — \| — \| — \|\n/, 'empty table keeps a placeholder row');
+
+  }
 });
 
-test('cost end to end: mixed-platform facts price in all four locations and survive an oversized report', () => {
-  const shipped = JSON.parse(fs.readFileSync(path.join(SKILL_ROOT, 'references/pricing.json'), 'utf8'));
-  const endPricer = resolvePricing(shipped, { 'lmstudio/*': { rates: { input: 0, output: 0 } } })!;
-  const lmstudio = 'lmstudio/qwen3.8-27b-ridge';
-  const phase = (key: string, name: string) => ({ key, name, outcome: 'complete' });
-  const run = (extra: InvocationFacts[] = []) => facts({
-    phases: [phase('plan', 'plan'), phase('review', 'code review')],
-    hostUsage: { platform: 'claude', rows: [
-      // two haiku requests of 90,000 and 110,000 prompt tokens, one on each side of the tier threshold
-      { stage: 'plan', phase: 'plan', role: 'host', model: 'claude-haiku-5-5', effort: 'low', input: 200_000, output: 0, bands: { le100k: { input: 90_000, output: 0 }, le200k: { input: 110_000, output: 0 } } },
-      { stage: 'plan', phase: 'plan', role: 'subagent', model: 'claude-sonnet-5-5', effort: null, input: 1_000_000, output: 100_000 },
-    ] },
-    invocations: [
-      // the grandchild subagent counts under the Codex delegate invocation as its own model key; bands keep both below the 272K tier
-      mega('gpt-6.1-terra', 'high', 0, { phase: 'review', usage: { input: 3_000_000, output: 100_000, models: {
-        'gpt-6.1-terra#high': { input: 1_000_000, output: 100_000, bands: { le100k: { input: 1_000_000, output: 100_000 } } },
-        'gpt-6-luna#low': { input: 2_000_000, output: 0, bands: { le100k: { input: 2_000_000, output: 0 } } },
-      } } }),
-      // OpenCode reports reasoning apart from output, so it adds at the output rate
-      mega('gemini-4-hydrogen', 'low', 0, { provider: 'opencode', phase: 'review', usage: { input: 0, output: 100_000, reasoning: 100_000 } }),
-      mega(lmstudio, 'low', 1_000_000, { provider: 'opencode', phase: 'review' }),
-      ...extra,
-    ],
-  });
-  const assertCosts = (text: string) => {
-    assert.equal(summaryCost(text), '~$6.26');
-    assert.deepEqual(overviewCells(text).map((cells) => [cells[1], cells[13]]), [['plan', '~$3.06'], ['code review', '~$3.20'], ['all phases', '~$6.26']]);
-    assert.deepEqual(tableCells(text, '### Tokens by platform').map((cells) => [cells[0], cells[7]]), [['claude', '~$3.06'], ['codex', '~$1.70'], ['opencode', '~$1.50']]);
-    const stages = tableLines(text, '### Tokens by stage');
-    const cost = (prefix: string, expected: string) => assert.ok(stages.some((line) => line.startsWith(prefix) && line.endsWith(` | ${expected} |`)), `${prefix} ${expected}\n${stages.join('\n')}`);
-    cost('| plan | claude | host | claude-haiku-5-5 | low |', '~$0.06');
-    cost('| plan | claude | subagent | claude-sonnet-5-5 |', '~$3.00');
-    cost('| code review | codex | delegate | gpt-6.1-terra | high |', '~$1.50');
-    cost('| code review | codex | delegate | gpt-6-luna | low |', '~$0.20');
-    cost('| code review | opencode | delegate | gemini-4-hydrogen (configured) |', '~$1.50');
-    cost(`| code review | opencode | delegate | ${lmstudio} (configured) |`, '~$0');
-  };
+test('origin stays valid, follows the round table and merges duplicates to fix-induced', () => {
+  // merged from: origin: a reply with a valid, absent or invalid origin stays valid and keeps only known values
+  {
 
-  const text = renderDiagnostics([run()], endPricer).text;
-  assert.ok(!text.includes('Omitted at the report size limit'));
-  assertCosts(text);
+    const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
+    assert.deepEqual(drafts.map(draft => draft.origin), ['fix-induced', 'original', 'unknown', undefined, undefined]);
 
-  const filler = Array.from({ length: 1500 }, () => mega(lmstudio, 'low', 1000, { provider: 'opencode', phase: 'review' }));
-  const large = renderDiagnostics([run(filler)], endPricer).text;
-  assert.ok(Buffer.byteLength(large) <= CAP);
-  assert.match(large, /## Appendix\n\nOmitted at the report size limit\./);
-  assert.ok(!large.includes('smaller rows'));
-  assertCosts(large);
+  }
+  // merged from: origin: collected origin follows the round table
+  {
+
+    const drafts = draftsOf(originReply('fix-induced', 'original', 'unknown', undefined, 'bogus'));
+    assert.deepEqual(collectFindings(1, drafts).map(entry => entry.origin), ['original', 'original', 'original', 'original', 'original']);
+    assert.deepEqual(collectFindings(2, drafts).map(entry => entry.origin), ['fix-induced', 'original', 'unknown', 'unknown', 'unknown']);
+
+  }
+  // merged from: origin: duplicate findings merge to fix-induced within one reply and across replies
+  {
+
+    const duplicate = (origin?: string) => finding(origin === undefined ? {} : {origin});
+    assert.deepEqual(draftsOf(report([duplicate('original'), duplicate('fix-induced')])).map(draft => draft.origin), ['fix-induced']);
+    assert.deepEqual(draftsOf(report([duplicate('fix-induced'), duplicate('original')])).map(draft => draft.origin), ['fix-induced']);
+    assert.deepEqual(draftsOf(report([duplicate('unknown'), duplicate('original')])).map(draft => draft.origin), ['original']);
+    assert.deepEqual(draftsOf(report([duplicate(), duplicate('original')])).map(draft => draft.origin), ['original']);
+    const parse = (source: string, origin?: string) => { const result = parseReport({kind: 'code', source, text: report([finding(origin === undefined ? {} : {origin})])}); assert.ok(result.ok); return result.findings; };
+    const merged = collectFindings(2, [...parse('codex[0]', 'original'), ...parse('claude[0]', 'fix-induced')]);
+    assert.equal(merged[0]?.origin, 'fix-induced');
+    assert.equal(merged[1]?.dupOf, merged[0]?.id);
+    assert.equal(collectFindings(2, [...parse('codex[0]'), ...parse('claude[0]', 'original')])[0]?.origin, 'original');
+
+  }
 });

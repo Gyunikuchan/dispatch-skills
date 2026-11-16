@@ -207,71 +207,44 @@ test('test cleanup commit accepts evidence from an unchanged earlier tree; statu
   } finally { r.cleanup(); }
 });
 
-test('test cleanup commit refuses after a changes path changed', async () => {
-  const r = await integrated(false, twoCriteriaSource);
-  try {
-    assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true);
-    fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'changed after check\n');
-    r.git(['add', 'src/file.ts'], r.integration);
-    r.git(['commit', '-m', 'change src'], r.integration);
-    const head = r.git(['rev-parse', 'HEAD'], r.integration);
-    fs.rmSync(path.join(r.integration, target));
-    const refused = await commit(r, removal);
-    assert.equal(refused.output.reason, 'test-cleanup-evidence-required');
-    assert.match(refused.output.summary, /\bSC1\b/);
-    assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
-    assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
-});
-
-test('test cleanup commit refuses after a tests path changed', async () => {
-  const r = await integrated(false, twoCriteriaSource);
-  try {
-    assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true);
-    fs.writeFileSync(path.join(r.integration, target), 'edited test\n');
-    r.git(['add', target], r.integration);
-    r.git(['commit', '-m', 'change test'], r.integration);
-    const head = r.git(['rev-parse', 'HEAD'], r.integration);
-    fs.rmSync(path.join(r.integration, target));
-    const refused = await commit(r, removal);
-    assert.equal(refused.output.reason, 'test-cleanup-evidence-required');
-    assert.match(refused.output.summary, /\bSC1\b/);
-    assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
-    assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
-});
-
-test('test cleanup commit refuses after an undeclared path changed', async () => {
-  const r = await integrated(false, twoCriteriaSource);
-  try {
-    assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true);
-    fs.writeFileSync(path.join(r.integration, 'src/undeclared-helper.ts'), 'helper\n');
-    r.git(['add', 'src/undeclared-helper.ts'], r.integration);
-    r.git(['commit', '-m', 'undeclared helper'], r.integration);
-    const head = r.git(['rev-parse', 'HEAD'], r.integration);
-    fs.rmSync(path.join(r.integration, target));
-    const refused = await commit(r, removal);
-    assert.equal(refused.output.reason, 'test-cleanup-evidence-required');
-    assert.match(refused.output.summary, /\bSC1\b/);
-    assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
-    assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
-});
-
-test('test cleanup commit treats a renamed tests path as changed', async () => {
-  const r = await integrated(false, twoCriteriaSource);
-  try {
-    assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true);
-    r.git(['mv', target, 'tests/other.test.ts'], r.integration);
-    r.git(['commit', '-m', 'rename step test to other test'], r.integration);
-    const head = r.git(['rev-parse', 'HEAD'], r.integration);
-    fs.rmSync(path.join(r.integration, 'tests/other.test.ts'));
-    const refused = await commit(r, removal);
-    assert.equal(refused.output.reason, 'test-cleanup-evidence-required');
-    assert.match(refused.output.summary, /\bSC1\b/);
-    assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
-    assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
+test('test cleanup commit refuses after a declared, renamed, or undeclared path changed', async () => {
+  const cases: { label: string; change: (r: Repo) => void }[] = [
+    { label: 'changes path', change: (r) => {
+      fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'changed after check\n');
+      r.git(['add', 'src/file.ts'], r.integration);
+      r.git(['commit', '-m', 'change src'], r.integration);
+    } },
+    { label: 'tests path', change: (r) => {
+      fs.writeFileSync(path.join(r.integration, target), 'edited test\n');
+      r.git(['add', target], r.integration);
+      r.git(['commit', '-m', 'change test'], r.integration);
+    } },
+    { label: 'undeclared path', change: (r) => {
+      fs.writeFileSync(path.join(r.integration, 'src/undeclared-helper.ts'), 'helper\n');
+      r.git(['add', 'src/undeclared-helper.ts'], r.integration);
+      r.git(['commit', '-m', 'undeclared helper'], r.integration);
+    } },
+    { label: 'renamed tests path', change: (r) => {
+      r.git(['mv', target, 'tests/other.test.ts'], r.integration);
+      r.git(['commit', '-m', 'rename step test to other test'], r.integration);
+      fs.rmSync(path.join(r.integration, 'tests/other.test.ts'));
+      return;
+    } },
+  ];
+  for (const { label, change } of cases) {
+    const r = await integrated(false, twoCriteriaSource);
+    try {
+      assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true, label);
+      change(r);
+      const head = r.git(['rev-parse', 'HEAD'], r.integration);
+      if (label !== 'renamed tests path') fs.rmSync(path.join(r.integration, target));
+      const refused = await commit(r, removal);
+      assert.equal(refused.output.reason, 'test-cleanup-evidence-required', label);
+      assert.match(refused.output.summary, /\bSC1\b/, label);
+      assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head, label);
+      assert.equal(cleanups(r).length, 0, label);
+    } finally { r.cleanup(); }
+  }
 });
 
 test('test cleanup commit treats a leading-whitespace path as distinct from a trimmed declared path', async () => {

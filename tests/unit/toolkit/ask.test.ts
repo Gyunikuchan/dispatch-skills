@@ -128,35 +128,19 @@ test('ask run follows native-first launch wave consume order', async () => {
     assert.equal(launched.value.cliWave, 'pending');
     assert.equal(launched.value.native.length, 1);
     assert.equal(f.launches.length, 0);
-    const waved = await f.call();
-    assert.equal(waved.output.reason, 'native-pending');
-    assert.equal(waved.value.cliWave, 'done');
-    assert.equal(f.launches.length, 0);
-    fs.writeFileSync(waved.value.native[0].replyPath, 'Native answer');
-    const done = await f.call();
-    assert.equal(done.exit, 0);
-    assert.equal(done.value.answers.length, 1);
-  } finally {f.cleanup();}
-});
-
-test('native pending summary states the launch order without an immediate rerun', async () => {
-  const f = fixture(); try {
-    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
-      claude: {targets: [{medium: {model: 'target'}}]},
-    }, phases: {ask: {targets: {medium: 1}}}}));
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    f.deps.liveness = {claude: true, agy: true};
-    const launched = await f.call();
-    assert.equal(launched.output.reason, 'native-pending');
-    assert.equal(launched.value.cliWave, 'pending');
     assert.match(launched.output.summary, /1 native slot/);
     const lower = launched.output.summary.toLowerCase();
     assert.ok(lower.indexOf('launch') >= 0 && lower.indexOf('launch') < lower.indexOf('rerun'), launched.output.summary);
     const waved = await f.call();
     assert.equal(waved.output.reason, 'native-pending');
     assert.equal(waved.value.cliWave, 'done');
+    assert.equal(f.launches.length, 0);
     assert.doesNotMatch(waved.output.summary, /at once/i);
     assert.doesNotMatch(waved.output.summary, /launch them now/i);
+    fs.writeFileSync(waved.value.native[0].replyPath, 'Native answer');
+    const done = await f.call();
+    assert.equal(done.exit, 0);
+    assert.equal(done.value.answers.length, 1);
   } finally {f.cleanup();}
 });
 

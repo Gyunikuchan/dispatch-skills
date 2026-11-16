@@ -5,6 +5,7 @@ import { SENTINEL, finding, opportunity, report, captured, recordTriage, unchang
 
 test('audit report init tracks both kinds and preserves statuses and notes on repeat', () => {
   const { root, file } = report(finding('A-1', 'high', 'fixed — abc123') + finding('A-2'), opportunity());
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## 3. Findings', '## 3. Findings  ').replace('## 4. Opportunities', '## 4. Opportunities\t'));
   captured(() => status.cmdInit(root, file)); captured(() => status.cmdInit(root, file));
   const text = fs.readFileSync(file, 'utf8');
   assert.equal(text.match(/^> Fix status:/gm)?.length, 1); assert.equal(text.match(/^> Opportunity status:/gm)?.length, 1);
@@ -41,9 +42,4 @@ test('audit report init rejects malformed sections and duplicate IDs before muta
   const missingCost = report(finding('A-1'), opportunity().replace('- **Cost**: state and frame changes.', ''));
   unchanged(missingCost.file, () => status.cmdInit(missingCost.root, missingCost.file), /Cost/);
 });
-test('audit report init Markdown heading whitespace does not hide opportunities', () => {
-  const { root, file } = report(finding('A-1'), opportunity());
-  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## 3. Findings', '## 3. Findings  ').replace('## 4. Opportunities', '## 4. Opportunities\t'));
-  captured(() => status.cmdInit(root, file));
-  assert.match(captured(() => status.cmdList(root, file, ['list'])), /O-1/);
-});
+

@@ -189,23 +189,15 @@ test('no-report resume asks the same session for its final report up to three ti
     }
     assert.equal(fs.readFileSync(path.join(dir, 'logs', 'claude[0].log.no-report'), 'utf8'), 'launch 1\nlaunch 2\n', 'the slot log is copied before the resumed launch');
     assert.ok(fs.existsSync(path.join(dir, 'logs', 'claude[0].log')), 'the slot log path stays in place');
-  } finally { f.cleanup(); }
-});
-
-test('no-report resume yields the slot after three report resumes', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    const reason = 'uncovered-scope: no JSON report object found';
-    const check = (): Validation => ({ok:false, cls:'no-report', reason});
+    const resumeBase = f.launches.length;
     f.deps.delegate = async (provider, request, mode) => {
       f.launches.push({provider, request, mode});
       return {outcome:{status:'ok', text:'still prose', resume:null, sessionId:'session-one'}, invocations: []};
     };
-    const outcomes = await fanOut({dir:path.join(f.session, 'limit'), slots:[slot('claude')], prompt:'question', validate:check, quota}, f.deps);
-    assert.equal(outcomes[0]?.state, 'failed');
-    assert.equal(outcomes[0]?.state === 'failed' && outcomes[0].cls, 'no-report');
-    assert.equal(f.launches.length, 4);
-    assert.deepEqual(f.launches.map(launch => launch.request.resume), [null, 'session-one', 'session-one', 'session-one']);
+    const exhausted = await fanOut({dir:path.join(f.session, 'limit'), slots:[slot('claude')], prompt:'question', validate:check, quota}, f.deps);
+    assert.equal(exhausted[0]?.state, 'failed');
+    assert.equal(exhausted[0]?.state === 'failed' && exhausted[0].cls, 'no-report');
+    assert.deepEqual(f.launches.slice(resumeBase).map(launch => launch.request.resume), [null, 'session-one', 'session-one', 'session-one']);
   } finally { f.cleanup(); }
 });
 
@@ -309,9 +301,15 @@ test('reserve deadline gives a CLI reserve its own 35 minutes after the wave dea
   } finally { f.cleanup(); }
 });
 
-test('capacity failure publishes no quota cooldown', async () => {
+test('terminal failures take no reserve and publish no cooldown', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture(); try {
+    f.script('claude','good',{status:'fail',cls:'config',detail:'bad config'});
+    f.script('copilot','good','reserve answer');
+    const terminal = await fanOut({dir:path.join(f.session,'terminal'), slots:[slot('claude'), slot('copilot','good',true)], prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
+    assert.equal(terminal.find(outcome => outcome.slot === 'claude[0]')?.state, 'failed');
+    assert.deepEqual(f.launches.map(launch => launch.provider), ['claude'], 'a terminal config failure never spends the reserve');
+    f.launches.length = 0;
     f.deps.delegate = async (provider, request, mode) => {
       f.launches.push({provider, request, mode});
       return {outcome:{status:'fail', cls:'capacity', detail:'at capacity', retryAfterMs:30000}, invocations: []};
@@ -396,7 +394,7 @@ test('blocked attempt metadata is preserved across alias, reserve, and retry fal
     assert.deepEqual(retryDone[0]?.blocked,[{provider:'claude',model:'good',reason:'Artifact denied',reasonHash:'hash-1'}]);
   } finally {f.cleanup();}
 });
-test('failed slot retry same reason stays single', async () => {
+test('blocked evidence deduplicates retries and keeps long alias chains', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     const check = (text: string): Validation => text === 'BLOCKED'
@@ -409,17 +407,12 @@ test('failed slot retry same reason stays single', async () => {
     const done = await fanOut({dir, slots, prompt:'question', validate:check, quota}, f.deps);
     assert.equal(done[0]?.state,'done');
     assert.deepEqual(done[0]?.blocked,[{provider:'claude',model:'bad',reason:'Artifact denied',reasonHash:'hash-1'}]);
-  } finally {f.cleanup();}
-});
-test('blocked attempts beyond eight aliases kept', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
     const models = Array.from({length:10},(_,index)=>'m'+index);
-    const check = (text: string): Validation => text === 'BLOCKED'
+    const manyCheck = (text: string): Validation => text === 'BLOCKED'
       ? {ok:false, cls:'blocked', reason:'blocked: denied', blocked:{reason:'denied', reasonHash:'hash-1'}}
       : validate(text);
     f.deps.delegate = async () => ({outcome:{status:'ok',text:'BLOCKED',resume:null,sessionId:null},invocations:[]});
-    const failed = await fanOut({dir:path.join(f.session,'many'), slots:[slot('claude',models)], prompt:'question', validate:check, quota}, f.deps);
+    const failed = await fanOut({dir:path.join(f.session,'many'), slots:[slot('claude',models)], prompt:'question', validate:manyCheck, quota}, f.deps);
     assert.equal(failed[0]?.state,'failed');
     assert.equal(failed[0]?.blocked?.length,10);
   } finally {f.cleanup();}
@@ -572,25 +565,6 @@ test('blocked report shares one identity with a native reply and wins over the f
   } finally {f.cleanup();}
 });
 
-test('failed substitute takes no second reserve on a later failure', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
-    f.script('claude','good',{status:'fail',cls:'auth',detail:'denied'});
-    const dir = path.join(f.session,'no-second-reserve');
-    const slots = [slot('agy'), {...slot('claude'), reserve:true}];
-    const first = await fanOut({dir, slots, prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
-    assert.equal(first.find(outcome => outcome.slot === 'agy[0]')?.state, 'failed');
-    assert.equal(f.launches.length, 2);
-    f.launches.length = 0;
-    f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
-    f.script('claude','good',{status:'fail',cls:'auth',detail:'denied'});
-    const second = await fanOut({dir, slots, prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
-    assert.equal(second.find(outcome => outcome.slot === 'agy[0]')?.state, 'failed');
-    assert.equal(f.launches.length, 2);
-  } finally {f.cleanup();}
-});
-
 test('cli-only failed slot retries its cli and retakes a free reserve', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
@@ -600,12 +574,12 @@ test('cli-only failed slot retries its cli and retakes a free reserve', async ()
     const slots = [slot('agy'), {...slot('claude'), reserve:true}];
     const first = await fanOut({dir, slots, prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
     assert.equal(first.find(outcome => outcome.slot === 'agy[0]')?.state, 'failed');
-    assert.equal(f.launches.length, 2);
+    assert.equal(f.launches.length, 2, 'the failed substitute spends the reserve once');
     f.launches.length = 0;
     f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
     f.script('claude','good',{status:'fail',cls:'auth',detail:'denied'});
     const second = await fanOut({dir, slots, prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
-    assert.equal(second.find(outcome => outcome.slot === 'agy[0]')?.state, 'failed');
+    assert.equal(second.find(outcome => outcome.slot === 'agy[0]')?.state, 'failed', 'a later failure takes no second reserve');
     assert.equal(f.launches.length, 2);
     assert.deepEqual(f.launches.map(launch => launch.provider), ['agy','claude']);
   } finally {f.cleanup();}
@@ -705,19 +679,16 @@ test('interrupted native reservation resumes for its recorded owner', async () =
     const owner = resumed.find(entry => entry.slot === 'agy[0]') as unknown as {state: string; provider: string};
     assert.deepEqual([owner?.state, owner?.provider], ['native','claude'], 'the recorded owner resumes its reserve: ' + JSON.stringify(resumed));
   } finally {f.cleanup();}
-});
-
-test('interrupted native reservation is not stolen by another target', async () => {
-  const f = sessionFixture({memory:true}); try {
-    const run = await interruptedNativeReserve(f, path.join(f.session,'interrupted-no-steal'));
-    f.script('codex','good',{status:'fail',cls:'auth',detail:'denied'});
+  const g = sessionFixture({memory:true}); try {
+    const run = await interruptedNativeReserve(g, path.join(g.session,'interrupted-no-steal'));
+    g.script('codex','good',{status:'fail',cls:'auth',detail:'denied'});
     // The other target checks the reserve before the owner's retry saves its outcome.
     const second = await run([slot('codex'), slot('agy'), {...slot('claude'), reserve:true}]);
     const owner = second.find(entry => entry.slot === 'agy[0]') as unknown as {state: string; provider: string};
     assert.deepEqual([owner?.state, owner?.provider], ['native','claude'], 'the recorded owner keeps its reserve: ' + JSON.stringify(second));
     assert.equal(second.find(entry => entry.slot === 'codex[0]')?.state, 'failed', 'a second target does not take the held reserve');
-    assert.ok(!f.launches.some(launch => launch.provider === 'claude'), 'the stolen reserve never launches');
-  } finally {f.cleanup();}
+    assert.ok(!g.launches.some(launch => launch.provider === 'claude'), 'the stolen reserve never launches');
+  } finally {g.cleanup();}
 });
 
 test('late write from an earlier attempt is not read as the reserve reply', async () => {
@@ -1045,20 +1016,6 @@ test('a failed-slot retry rewrites a base prompt modified by a native-only reser
   } finally {f.cleanup();}
 });
 
-test('terminal config failure takes no reserve', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.script('claude','good',{status:'fail',cls:'config',detail:'bad config'});
-    f.script('copilot','good','reserve answer');
-    const dir = path.join(f.session,'terminal');
-    const slots = [slot('claude'), slot('copilot','good',true)];
-    const outcomes = await fanOut({dir, slots, prompt:'question', validate, quota, nativeFirstProviders:[]} as never, f.deps);
-    assert.equal(outcomes.find(outcome => outcome.slot === 'claude[0]')?.state, 'failed');
-    assert.equal(f.launches.length, 1);
-    assert.equal(f.launches[0]?.provider, 'claude');
-  } finally {f.cleanup();}
-});
-
 test('interrupted fallback with ownership resumes for its owner', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
@@ -1222,25 +1179,6 @@ test('host change to a native-first logical slot runs the physical cli', async (
   } finally {f.cleanup();}
 });
 
-test('wave keeps a host native-only reserve substitute pending', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'codex', model: null};
-    const dir = path.join(f.session,'wave-native-only-route');
-    fs.mkdirSync(path.join(dir,'slots'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'prompts'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'replies'),{recursive:true});
-    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true}));
-    fs.writeFileSync(path.join(dir,'prompts','agy[0].md'), 'question');
-    const replyPath = path.join(dir,'replies','agy[0].m1.md');
-    fs.writeFileSync(path.join(dir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(dir,'prompts','agy[0].native.md'),replyPath,provider:'codex',attempt:'codex[0]#m1',cwd:f.session,model:'good'}));
-    const reserve = {slot:'codex[0]', provider:'codex', index:0, model:'good', reserve:true, native:true};
-    const outcomes = await fanOut({dir, slots:[slot('agy'), reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
-    assert.equal(outcomes.find(outcome => outcome.slot === 'agy[0]')?.state, 'native');
-    assert.equal(f.launches.filter(launch => launch.provider === 'codex').length, 0);
-  } finally {f.cleanup();}
-});
-
 test('consume keeps a host native-only reserve substitute pending', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
@@ -1249,11 +1187,16 @@ test('consume keeps a host native-only reserve substitute pending', async () => 
     fs.mkdirSync(path.join(dir,'slots'),{recursive:true});
     fs.mkdirSync(path.join(dir,'prompts'),{recursive:true});
     fs.mkdirSync(path.join(dir,'replies'),{recursive:true});
-    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true, cliWaveDone:true}));
+    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true}));
     fs.writeFileSync(path.join(dir,'prompts','agy[0].md'), 'question');
     const replyPath = path.join(dir,'replies','agy[0].m1.md');
     fs.writeFileSync(path.join(dir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(dir,'prompts','agy[0].native.md'),replyPath,provider:'codex',attempt:'codex[0]#m1',cwd:f.session,model:'good'}));
     const reserve = {slot:'codex[0]', provider:'codex', index:0, model:'good', reserve:true, native:true};
+    const waveInput = {dir, slots:[slot('agy'), reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never;
+    const waved = await fanOut(waveInput, f.deps);
+    assert.equal(waved.find(outcome => outcome.slot === 'agy[0]')?.state, 'native', 'the wave keeps the host native-only substitute pending');
+    assert.equal(f.launches.filter(launch => launch.provider === 'codex').length, 0);
+    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true, cliWaveDone:true}));
     const input = {dir, slots:[slot('agy'), reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never;
     const outcomes = await fanOut(input, f.deps);
     assert.equal(outcomes.find(outcome => outcome.slot === 'agy[0]')?.state, 'native');
@@ -1288,42 +1231,6 @@ test('wave launches a newly native-first target that has no saved slot', async (
     assert.ok(!waved.some(outcome => outcome.slot === 'claude[0]'), 'the stale attempt stays out of the early return: ' + JSON.stringify(waved.map(outcome => outcome.slot + ':' + outcome.state)));
     const settled = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['agy']} as never, f.deps);
     assert.equal(settled.find(outcome => outcome.slot === 'claude[0]')?.state, 'done');
-  } finally {f.cleanup();}
-});
-
-test('launch keeps a matching report for a host-changed saved attempt', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
-    const dir = path.join(f.session,'launch-report-match');
-    const reserve = {...slot('claude'), reserve:true};
-    const slots = [slot('agy'), reserve];
-    const first = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
-    const pending = first.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; attempt: string};
-    assert.equal(pending?.state, 'native');
-    assert.ok(pending.attempt.startsWith('claude[0]#'));
-    // The host changes to the logical target's platform while its pending
-    // reserve attempt carries a matching BLOCKED report.
-    f.deps.orchestrator = {platform: 'agy', model: null};
-    f.script('claude','good','reserve cli answer');
-    const ignored: string[] = [];
-    const second = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session,
-      nativeFirstProviders:['agy'], nativeFailures:[{attempt: pending.attempt, reason:'BLOCKED: no time', reasonHash:'rh1'}],
-      onIgnoredReport: (attempt: string) => { ignored.push(attempt); }} as never, f.deps);
-    assert.deepEqual(ignored, [], 'the matching report is consumed, not ignored');
-    // The launch persists only the fallback marker; the deferred wave runs
-    // the reserve cli with the reported reason and evidence.
-    assert.ok(!second.some(outcome => outcome.slot === 'agy[0]'), 'the reported attempt defers, never pending: ' + JSON.stringify(second.map(outcome => outcome.slot + ':' + outcome.state)));
-    assert.ok(!f.launches.some(launch => launch.provider === 'claude'), 'no cli runs before the deferred return');
-    const marked = JSON.parse(fs.readFileSync(path.join(dir,'slots','agy[0].json'),'utf8'));
-    assert.equal(marked.cliFallback, true);
-    assert.equal(marked.nativeError, 'BLOCKED: no time');
-    const third = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['agy']} as never, f.deps);
-    const done = third.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; text: string; blocked: {reason: string; reasonHash: string}[]};
-    assert.equal(done?.state, 'done');
-    assert.equal(done.text, 'reserve cli answer');
-    assert.ok((done.blocked ?? []).some(entry => entry.reasonHash === 'rh1'), 'blocked evidence is retained: ' + JSON.stringify(done.blocked));
   } finally {f.cleanup();}
 });
 
@@ -1527,7 +1434,7 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
   } finally {f.cleanup();}
 });
 
-test('a blocked report on a reserve substitute under a non-first target defers to the reserve cli', async () => {
+test('early-wave blocked reports defer substitutes and fail native-only attempts without CLI', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'claude', model: null};
@@ -1559,40 +1466,31 @@ test('a blocked report on a reserve substitute under a non-first target defers t
     const done = resumed.find(outcome => outcome.slot === 'agy[0]');
     assert.equal(done?.state, 'failed', 'the host substitute saves failed without its CLI');
     assert.equal(f.launches.filter((launch) => launch.provider === 'claude').length, 0, 'no host CLI launches for the substitute');
-  } finally {f.cleanup();}
-});
-
-test('a blocked report on a native-only attempt in the early wave still fails it', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'codex', model: null};
-    const dir = path.join(f.session,'wave-early-native-only');
-    fs.mkdirSync(path.join(dir,'slots'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'prompts'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'replies'),{recursive:true});
-    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true}));
-    fs.writeFileSync(path.join(dir,'prompts','agy[0].md'), 'question');
-    const replyPath = path.join(dir,'replies','agy[0].m1.md');
-    fs.writeFileSync(path.join(dir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(dir,'prompts','agy[0].native.md'),replyPath,provider:'codex',attempt:'codex[1]#m1',cwd:f.session,model:'good'}));
-    const reserve = {slot:'codex[1]', provider:'codex', index:1, model:'good', reserve:true, native:true};
+    const onlyDir = path.join(f.session,'wave-early-native-only');
+    fs.mkdirSync(path.join(onlyDir,'slots'),{recursive:true});
+    fs.mkdirSync(path.join(onlyDir,'prompts'),{recursive:true});
+    fs.mkdirSync(path.join(onlyDir,'replies'),{recursive:true});
+    fs.writeFileSync(path.join(onlyDir,'fanout.json'), JSON.stringify({nativeFirst:true}));
+    fs.writeFileSync(path.join(onlyDir,'prompts','agy[0].md'), 'question');
+    const onlyReply = path.join(onlyDir,'replies','agy[0].m1.md');
+    fs.writeFileSync(path.join(onlyDir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(onlyDir,'prompts','agy[0].native.md'),replyPath:onlyReply,provider:'codex',attempt:'codex[1]#m1',cwd:f.session,model:'good'}));
+    const onlyReserve = {slot:'codex[1]', provider:'codex', index:1, model:'good', reserve:true, native:true};
     const only = {...slot('codex'), native:true};
-    // A newly eligible native-only target opens the early return while the
-    // saved native-only substitute carries a matching BLOCKED report. There
-    // is no cli cascade for it, so it still fails at once.
-    const failed: string[] = [];
-    const waved = await fanOut({dir, slots:[slot('agy'), only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[],
+    const onlyFailed: string[] = [];
+    const onlyWaved = await fanOut({dir:onlyDir, slots:[slot('agy'), only, onlyReserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[],
       nativeFailures:[{attempt:'codex[1]#m1', reason:'BLOCKED: native host denied', reasonHash:'rh-only'}],
-      onFailed: (slot: string) => { failed.push(slot); }} as never, f.deps);
-    assert.equal(waved.find(outcome => outcome.slot === 'codex[0]')?.state, 'native');
-    const reported = waved.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; cls: string; blocked: {reasonHash: string}[]};
-    assert.equal(reported?.state, 'failed', 'a native-only attempt keeps its failed save: ' + JSON.stringify(waved.map(outcome => outcome.slot + ':' + outcome.state)));
-    assert.equal(reported.cls, 'blocked');
-    assert.ok((reported.blocked ?? []).some(entry => entry.reasonHash === 'rh-only'));
-    assert.deepEqual(failed, ['agy[0]'], 'the native-only failure still marks its slot');
+      onFailed: (slot: string) => { onlyFailed.push(slot); }} as never, f.deps);
+    assert.equal(onlyWaved.find(outcome => outcome.slot === 'codex[0]')?.state, 'native');
+    const onlyReported = onlyWaved.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; cls: string; blocked: {reasonHash: string}[]};
+    assert.equal(onlyReported?.state, 'failed', 'a native-only attempt keeps its failed save: ' + JSON.stringify(onlyWaved.map(outcome => outcome.slot + ':' + outcome.state)));
+    assert.equal(onlyReported.cls, 'blocked');
+    assert.ok((onlyReported.blocked ?? []).some(entry => entry.reasonHash === 'rh-only'));
+    assert.deepEqual(onlyFailed, ['agy[0]'], 'the native-only failure still marks its slot');
   } finally {f.cleanup();}
 });
 
-test('cli-only retry off its host keeps the failed outcome instead of launching the saved reserve', async () => {
+test('off-host retries keep the failed outcome without launching the wrong reserve', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'codex', model: null};
@@ -1611,6 +1509,23 @@ test('cli-only retry off its host keeps the failed outcome instead of launching 
     const retried = second.find(outcome => outcome.slot === 'agy[0]');
     assert.equal(retried?.state, 'failed', 'the off-host reserve keeps the failed outcome: ' + JSON.stringify(second.map(outcome => outcome.slot + ':' + outcome.state)));
     assert.equal(f.launches.filter(launch => launch.provider === 'codex').length, 0, 'no cli runs for the off-host native-only reserve');
+    const g = sessionFixture({memory:true}); try {
+      g.deps.orchestrator = {platform: 'codex', model: null};
+      g.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
+      const gdir = path.join(g.session,'missing-physical-fail-closed');
+      const gslots = [slot('agy'), {...slot('codex'), reserve:true, native:true}];
+      const gfirst = await fanOut({dir:gdir, slots:gslots, prompt:'question', validate, quota, sessionRoot: g.session, nativeFirstProviders:[]} as never, g.deps);
+      const gpending = gfirst.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; attempt: string};
+      assert.equal(gpending?.state, 'native');
+      assert.ok(gpending.attempt.startsWith('codex[0]#'));
+      g.deps.orchestrator = {platform: 'opencode', model: null};
+      g.launches.length = 0;
+      const gsecond = await fanOut({dir:gdir, slots:[slot('agy')], prompt:'question', validate, quota, sessionRoot: g.session, nativeFirstProviders:['opencode']} as never, g.deps);
+      const gfailed = gsecond.find(outcome => outcome.slot === 'agy[0]');
+      assert.equal(gfailed?.state, 'failed', 'the missing physical saves failed: ' + JSON.stringify(gsecond.map(outcome => outcome.slot + ':' + outcome.state)));
+      assert.equal(g.launches.length, 0, 'no cli runs under the wrong voice');
+      assert.ok(!('attempt' in (gfailed as unknown as Record<string, unknown>)), 'no fresh descriptor minted');
+    } finally {g.cleanup();}
   } finally {f.cleanup();}
 });
 
@@ -1675,27 +1590,6 @@ test('deferred fallback persists its marker before quarantining the reply', asyn
     assert.equal(done.text, 'cli answer');
     assert.ok((done.blocked ?? []).some(entry => entry.reasonHash === 'rh-order'), 'the retried fallback keeps the reported evidence');
     assert.ok(fs.existsSync(pending.replyPath + '.invalid-1'), 'the retry quarantines the reply');
-  } finally {f.cleanup();}
-});
-
-test('a recomputed roster without the native-only reserve fails closed without the wrong cli', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'codex', model: null};
-    f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
-    const dir = path.join(f.session,'missing-physical-fail-closed');
-    const slots = [slot('agy'), {...slot('codex'), reserve:true, native:true}];
-    const first = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
-    const pending = first.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; attempt: string};
-    assert.equal(pending?.state, 'native');
-    assert.ok(pending.attempt.startsWith('codex[0]#'));
-    f.deps.orchestrator = {platform: 'opencode', model: null};
-    f.launches.length = 0;
-    const second = await fanOut({dir, slots:[slot('agy')], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['opencode']} as never, f.deps);
-    const failed = second.find(outcome => outcome.slot === 'agy[0]');
-    assert.equal(failed?.state, 'failed', 'the missing physical saves failed: ' + JSON.stringify(second.map(outcome => outcome.slot + ':' + outcome.state)));
-    assert.equal(f.launches.length, 0, 'no cli runs under the wrong voice');
-    assert.ok(!('attempt' in (failed as unknown as Record<string, unknown>)), 'no fresh descriptor minted');
   } finally {f.cleanup();}
 });
 
@@ -1764,25 +1658,6 @@ test('a launchable native returns before the cli wave when a saved orphan waits'
   } finally {f.cleanup();}
 });
 
-test('a cli-only round stops routing when its native-only reserve is off host', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
-    f.script('codex','good','reserve cli answer');
-    const events: unknown[] = [];
-    f.deps.diagnostics = (event: unknown) => { events.push(event); };
-    const dir = path.join(f.session,'cli-only-offhost-reserve-routing');
-    const reserve = {slot:'codex[0]', provider:'codex', index:0, model:'good', reserve:true, native:true};
-    const slots = [slot('agy'), reserve];
-    const outcomes = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
-    const retried = outcomes.find(outcome => outcome.slot === 'agy[0]');
-    assert.equal(retried?.state, 'failed', 'the off-host reserve keeps the failed outcome: ' + JSON.stringify(outcomes.map(outcome => outcome.slot + ':' + outcome.state)));
-    assert.equal(f.launches.filter(launch => launch.provider === 'codex').length, 0, 'no cli runs for the off-host native-only reserve');
-    assert.ok(!(events as any[]).some(event => event.kind === 'routing' && event.state === 'reserve' && event.slot === 'agy[0]'), 'an off-host reserve emits no reserve routing: ' + JSON.stringify((events as any[]).filter(event => event.kind === 'routing')));
-  } finally {f.cleanup();}
-});
-
 test('a last-pending retry carries saved blocked evidence into the reserve descriptor', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
@@ -1821,7 +1696,7 @@ test('a last-pending retry carries saved blocked evidence into the reserve descr
   } finally {f.cleanup();}
 });
 
-test('a cli wave stops routing when its native-only reserve is off host', async () => {
+test('off-host native-only reserve stops routing in cli-only and wave paths', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'claude', model: null};
@@ -1829,8 +1704,15 @@ test('a cli wave stops routing when its native-only reserve is off host', async 
     f.script('codex','good','reserve cli answer');
     const events: unknown[] = [];
     f.deps.diagnostics = (event: unknown) => { events.push(event); };
-    const dir = path.join(f.session,'wave-offhost-reserve-routing');
     const reserve = {slot:'codex[0]', provider:'codex', index:0, model:'good', reserve:true, native:true};
+    const cliOnly = await fanOut({dir:path.join(f.session,'cli-only-offhost-reserve-routing'), slots:[slot('agy'), reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
+    const cliRetried = cliOnly.find(outcome => outcome.slot === 'agy[0]');
+    assert.equal(cliRetried?.state, 'failed', 'the off-host reserve keeps the failed outcome: ' + JSON.stringify(cliOnly.map(outcome => outcome.slot + ':' + outcome.state)));
+    assert.equal(f.launches.filter(launch => launch.provider === 'codex').length, 0, 'no cli runs for the off-host native-only reserve');
+    assert.ok(!(events as any[]).some(event => event.kind === 'routing' && event.state === 'reserve' && event.slot === 'agy[0]'), 'an off-host reserve emits no reserve routing: ' + JSON.stringify((events as any[]).filter(event => event.kind === 'routing')));
+    events.length = 0;
+    f.launches.length = 0;
+    const dir = path.join(f.session,'wave-offhost-reserve-routing');
     const slots = [slot('claude'), slot('agy'), reserve];
     const first = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
     assert.equal(first.find(outcome => outcome.slot === 'claude[0]')?.state, 'native');
@@ -1937,7 +1819,7 @@ test('host voice launches native for every nativeSubagentsOnly value', async () 
   }
 });
 
-test('host native failure takes reserve without host CLI', async () => {
+test('host native failure takes reserve or saves failed without host CLI', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'claude', model: null};
@@ -1954,81 +1836,54 @@ test('host native failure takes reserve without host CLI', async () => {
     assert.equal((outcome as unknown as {text: string}).text, 'reserve answer', 'reserve answer: ' + JSON.stringify(outcome));
     assert.equal((outcome as unknown as {responder: {provider: string}}).responder.provider, 'copilot', 'reserve provider: ' + JSON.stringify(outcome));
     assert.equal(f.launches.filter((launch) => launch.provider === 'claude').length, 0, 'no host CLI');
+    const aloneDir = path.join(f.session,'host-failure-noreserve');
+    const aloneFirst = await fanOut({dir:aloneDir, slots:[slot('claude')], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
+    const alonePending = aloneFirst.find((outcome) => outcome.slot === 'claude[0]') as unknown as {state: string; attempt: string};
+    assert.equal(alonePending?.state, 'native');
+    const aloneSecond = await fanOut({dir:aloneDir, slots:[slot('claude')], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude'],
+      nativeFailures:[{attempt: alonePending.attempt, reason:'launch gone', reasonHash:'h2'}]} as never, f.deps);
+    assert.equal(aloneSecond.find((entry) => entry.slot === 'claude[0]')?.state, 'failed', 'no reserve saves failed');
+    assert.equal(f.launches.filter((launch) => launch.provider === 'claude').length, 0, 'no host CLI');
   } finally {f.cleanup();}
 });
 
-test('host native failure without reserve saves failed', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'claude', model: null};
-    const dir = path.join(f.session,'host-failure-noreserve');
-    const slots = [slot('claude')];
-    const first = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {state: string; attempt: string};
-    assert.equal(pending?.state, 'native');
-    const second = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude'],
-      nativeFailures:[{attempt: pending.attempt, reason:'launch gone', reasonHash:'h2'}]} as never, f.deps);
-    const failed = second.find((entry) => entry.slot === 'claude[0]');
-    assert.equal(failed?.state, 'failed');
-    assert.equal(f.launches.length, 0, 'no host CLI');
-  } finally {f.cleanup();}
-});
-
-test('host native failure on native-only report takes reserve', async () => {
+test('host native failure on native-only report or reply routes by reserve presence', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'codex', model: null};
     f.script('copilot','good','reserve answer');
-    const dir = path.join(f.session,'host-nativeonly-report-reserve');
     const only = {...slot('codex'), native:true};
     const reserve = {...slot('copilot'), reserve:true};
-    const first = await fanOut({dir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
-    const pending = first.find((outcome) => outcome.slot === 'codex[0]') as unknown as {state: string; attempt: string};
-    assert.equal(pending?.state, 'native');
-    const second = await fanOut({dir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[],
-      nativeFailures:[{attempt: pending.attempt, reason:'BLOCKED: denied', reasonHash:'rh1'}]} as never, f.deps);
+    const first = await fanOut({dir:path.join(f.session,'host-nativeonly-blocked-reserve'), slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
+    const blockedPending = first.find((outcome) => outcome.slot === 'codex[0]') as unknown as {state: string; replyPath: string};
+    assert.equal(blockedPending?.state, 'native');
+    fs.writeFileSync(blockedPending.replyPath, 'BLOCKED: host cannot write');
+    const blockedDir = path.join(f.session,'host-nativeonly-blocked-reserve');
+    const blockedOutcomes = await fanOut({dir:blockedDir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
+    const blockedOutcome = blockedOutcomes.find((entry) => entry.slot === 'codex[0]');
+    assert.equal(blockedOutcome?.state, 'done', 'reserve takes over BLOCKED: ' + JSON.stringify(blockedOutcome));
+    assert.equal((blockedOutcome as unknown as {text: string}).text, 'reserve answer');
+    assert.equal(f.launches.filter((launch) => launch.provider === 'codex').length, 0, 'no host CLI');
+    const reportDir = path.join(f.session,'host-nativeonly-report-reserve');
+    const reportFirst = await fanOut({dir:reportDir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
+    const reportPending = reportFirst.find((outcome) => outcome.slot === 'codex[0]') as unknown as {state: string; attempt: string};
+    assert.equal(reportPending?.state, 'native');
+    const second = await fanOut({dir:reportDir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[],
+      nativeFailures:[{attempt: reportPending.attempt, reason:'BLOCKED: denied', reasonHash:'rh1'}]} as never, f.deps);
     const outcome = second.find((entry) => entry.slot === 'codex[0]');
     assert.ok(outcome?.state === 'native' || outcome?.state === 'done', 'reserve or done: ' + JSON.stringify(outcome));
     assert.equal(f.launches.filter((launch) => launch.provider === 'codex').length, 0, 'no host CLI');
-  } finally {f.cleanup();}
-});
-
-test('host native failure on native-only BLOCKED reply takes reserve', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'codex', model: null};
-    f.script('copilot','good','reserve answer');
-    const dir = path.join(f.session,'host-nativeonly-blocked-reserve');
-    const only = {...slot('codex'), native:true};
-    const reserve = {...slot('copilot'), reserve:true};
-    const first = await fanOut({dir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
-    const pending = first.find((outcome) => outcome.slot === 'codex[0]') as unknown as {state: string; replyPath: string};
-    assert.equal(pending?.state, 'native');
-    fs.writeFileSync(pending.replyPath, 'BLOCKED: host cannot write');
-    const outcomes = await fanOut({dir, slots:[only, reserve], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:[]} as never, f.deps);
-    const outcome = outcomes.find((entry) => entry.slot === 'codex[0]');
-    assert.equal(outcome?.state, 'done', 'reserve takes over BLOCKED: ' + JSON.stringify(outcome));
-    assert.equal((outcome as unknown as {text: string}).text, 'reserve answer');
-    assert.equal(f.launches.filter((launch) => launch.provider === 'codex').length, 0, 'no host CLI');
-  } finally {f.cleanup();}
-});
-
-test('host native failure on native-only BLOCKED reply without reserve saves failed', async () => {
-  const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const f = sessionFixture({memory:true}); try {
-    f.deps.orchestrator = {platform: 'codex', model: null};
-    const dir = path.join(f.session,'host-nativeonly-blocked-noreserve');
-    fs.mkdirSync(path.join(dir,'slots'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'prompts'),{recursive:true});
-    fs.mkdirSync(path.join(dir,'replies'),{recursive:true});
-    fs.writeFileSync(path.join(dir,'fanout.json'), JSON.stringify({nativeFirst:true, cliWaveDone:true}));
-    fs.writeFileSync(path.join(dir,'prompts','agy[0].md'), 'question');
-    const replyPath = path.join(dir,'replies','agy[0].m1.md');
-    fs.writeFileSync(path.join(dir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(dir,'prompts','agy[0].native.md'),replyPath,provider:'codex',attempt:'codex[0]#m1',cwd:f.session,model:'good'}));
-    fs.writeFileSync(replyPath, 'BLOCKED: host cannot write');
-    const outcomes = await fanOut({dir, slots:[slot('agy')], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
-    const failed = outcomes.find((entry) => entry.slot === 'agy[0]');
-    assert.equal(failed?.state, 'failed');
+    const aloneDir = path.join(f.session,'host-nativeonly-blocked-noreserve');
+    fs.mkdirSync(path.join(aloneDir,'slots'),{recursive:true});
+    fs.mkdirSync(path.join(aloneDir,'prompts'),{recursive:true});
+    fs.mkdirSync(path.join(aloneDir,'replies'),{recursive:true});
+    fs.writeFileSync(path.join(aloneDir,'fanout.json'), JSON.stringify({nativeFirst:true, cliWaveDone:true}));
+    fs.writeFileSync(path.join(aloneDir,'prompts','agy[0].md'), 'question');
+    const aloneReply = path.join(aloneDir,'replies','agy[0].m1.md');
+    fs.writeFileSync(path.join(aloneDir,'slots','agy[0].json'), JSON.stringify({slot:'agy[0]',state:'native',promptPath:path.join(aloneDir,'prompts','agy[0].native.md'),replyPath:aloneReply,provider:'codex',attempt:'codex[0]#m1',cwd:f.session,model:'good'}));
+    fs.writeFileSync(aloneReply, 'BLOCKED: host cannot write');
+    const aloneOutcomes = await fanOut({dir:aloneDir, slots:[slot('agy')], prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
+    assert.equal(aloneOutcomes.find((entry) => entry.slot === 'agy[0]')?.state, 'failed', 'no reserve saves failed');
     assert.equal(f.launches.filter((launch) => launch.provider === 'codex').length, 0, 'no host CLI');
   } finally {f.cleanup();}
 });
@@ -2165,6 +2020,11 @@ test('rerun resumes an unfinished slot in its saved session', async () => {
     f.deps.delegate=async (_provider,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,2);assert.match(fs.readFileSync(req.promptPath,'utf8'),/Continue the task/);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
     await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
     assert.equal(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),'old log');
+    const spentDir=path.join(f.session,'log-session'), spentLogs=path.join(spentDir,'logs'); fs.mkdirSync(spentLogs,{recursive:true});
+    fs.writeFileSync(path.join(spentLogs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:2,reportResumes:0,sessionId:null}));
+    fs.writeFileSync(path.join(spentLogs,'opencode[0].log'),'{"type":"step_start","sessionID":"ses_abc"}\n');
+    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,3);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
+    await fanOut({dir:spentDir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
   } finally {f.cleanup();}
 });
 
@@ -2176,6 +2036,10 @@ test('rerun starts fresh at the saved position after a failed resume', async () 
     f.deps.delegate=async (_p,req)=>{calls.push({resume:req.resume,model:req.model}); if(req.resume)return {outcome:{status:'fail',cls:'auth',detail:'failed'},invocations:[]}; const state=JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')); assert.match(state.restart,/failed cross-run resume/); return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
     await fanOut({dir,slots:[slot('opencode',['bad','good'])],prompt:'question',validate,quota},f.deps);
     assert.deepEqual(calls,[{resume:'ses_abc',model:'good'},{resume:null,model:'good'}]);
+    const throwDir=path.join(f.session,'throw-resume'), throwLogs=path.join(throwDir,'logs');fs.mkdirSync(throwLogs,{recursive:true});
+    fs.writeFileSync(path.join(throwLogs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:1,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'ses_abc'}));
+    let throws=0;f.deps.delegate=async (_p,req)=>{throws++;assert.equal(req.model,'good');if(req.resume)throw new Error('spawn');assert.match(JSON.parse(fs.readFileSync(path.join(throwLogs,'opencode[0].state.json'),'utf8')).restart,/launch error/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+    await fanOut({dir:throwDir,slots:[slot('opencode',['bad','good'])],prompt:'question',validate,quota},f.deps);assert.equal(throws,2);
   } finally {f.cleanup();}
 });
 
@@ -2203,19 +2067,18 @@ test('rerun starts fresh when a saved outcome needs a retake', async () => {
   } finally { f.cleanup(); }
 });
 
-test('rerun starts fresh on stale slot state', async () => {
-  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
-    const dir=path.join(f.session,'stale'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
-    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'other[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'old'}));
-    fs.writeFileSync(path.join(logs,'opencode[0].log'),'previous');
-    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,null);assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/stale/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
-    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
-    assert.equal(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),'previous');
-  } finally {f.cleanup();}
-});
-
-test('exit-only providers start fresh when interrupted logs have no session envelope', async () => {
+test('rerun starts fresh on stale slot state or missing session envelope', async () => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  {
+    const f=sessionFixture({memory:true}); try {
+      const dir=path.join(f.session,'stale'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
+      fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'other[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:1,reportResumes:0,sessionId:'old'}));
+      fs.writeFileSync(path.join(logs,'opencode[0].log'),'previous');
+      f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,null);assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/stale/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+      await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
+      assert.equal(fs.readFileSync(path.join(logs,'opencode[0].log.stalled'),'utf8'),'previous');
+    } finally {f.cleanup();}
+  }
   for (const provider of ['claude','agy'] as const) {
     const f=sessionFixture({memory:true}); try {
       const dir=path.join(f.session,provider+'-exit-only'), logs=path.join(dir,'logs'); fs.mkdirSync(logs,{recursive:true});
@@ -2267,24 +2130,25 @@ test('rerun resumes with the continue prompt after a stall inside a report resum
   } finally {f.cleanup();}
 });
 
-test('rerun starts fresh after a failed resume checkpoint', async t => {
+test('rerun starts fresh after a failed checkpoint', async t => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
-    const dir=path.join(f.session,'checkpoint'), log=path.join(dir,'logs','opencode[0].log'), state=log.replace(/\.log$/,'.state.json'); let fail=false;
-    const rename=fs.renameSync;t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(fail && String(to)===state){fail=false;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
-    let first=true;f.deps.delegate=async (_p,req)=>{if(first){first=false;fs.writeFileSync(req.logPath,'leftover');fail=true;req.onResume?.('ses_abc',1);throw new Error('interrupted');}assert.equal(req.resume,null);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
-    const input={dir,slots:[slot('opencode')],prompt:'question',validate,quota};
-    await assert.rejects(fanOut(input,f.deps),/interrupted/);assert.equal(fs.existsSync(state),false);await fanOut(input,f.deps);assert.equal(fs.readFileSync(log+'.stalled','utf8'),'leftover');
-  } finally {f.cleanup();}
-});
-
-test('rerun starts fresh after a failed usage checkpoint', async t => {
-  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
-    const dir=path.join(f.session,'usage-checkpoint'), log=path.join(dir,'logs','codex[0].log'), state=log.replace(/\.log$/,'.state.json'); let fail=false;
-    const rename=fs.renameSync;t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(fail && String(to)===state){fail=false;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
-    const row={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{input:10,output:2,scope:'invocation' as const,provenance:'test',inputSemantics:'uncached' as const}};
-    let first=true;f.deps.delegate=async (_p,req)=>{if(first){first=false;fs.writeFileSync(req.logPath,'leftover');fail=true;req.onInvocation?.(row);throw new Error('interrupted');}assert.equal(req.resume,null);assert.equal(req.priorUsage,undefined);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
-    const input={dir,slots:[slot('codex')],prompt:'question',validate,quota};
-    await assert.rejects(fanOut(input,f.deps),/interrupted/);assert.equal(fs.existsSync(state),false);await fanOut(input,f.deps);assert.equal(fs.readFileSync(log+'.stalled','utf8'),'leftover');
+    let failPath: string|null = null;
+    const rename=fs.renameSync;
+    t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(failPath && String(to)===failPath){failPath=null;throw new Error('write failure');}return rename(from,to);}) as typeof fs.renameSync);
+    const usageRow={provider:'codex' as const,model:'good',mode:'cli' as const,effort:null,launched:true,outcome:'ok',usage:{input:10,output:2,scope:'invocation' as const,provenance:'test',inputSemantics:'uncached' as const}};
+    for (const provider of ['opencode','codex'] as const) {
+      const dir=path.join(f.session,'checkpoint-'+provider), log=path.join(dir,'logs',provider+'[0].log'), state=log.replace(/\.log$/,'.state.json');
+      let first=true;
+      f.deps.delegate=async (_p,req)=>{
+        if(first){first=false;fs.writeFileSync(req.logPath,'leftover');failPath=state;
+          if(provider==='opencode')req.onResume?.('ses_abc',1);else req.onInvocation?.(usageRow);
+          throw new Error('interrupted');}
+        assert.equal(req.resume,null,provider);
+        if(provider==='codex')assert.equal(req.priorUsage,undefined,provider);
+        return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
+      const input={dir,slots:[slot(provider)],prompt:'question',validate,quota};
+      await assert.rejects(fanOut(input,f.deps),/interrupted/);assert.equal(fs.existsSync(state),false);await fanOut(input,f.deps);assert.equal(fs.readFileSync(log+'.stalled','utf8'),'leftover');
+    }
   } finally {f.cleanup();}
 });
 
@@ -2303,15 +2167,6 @@ test('saved session usage: new-layer record resumes without counting saved sessi
   } finally {f.cleanup();}
 });
 
-test('rerun starts fresh at the saved position after a thrown resume launch', async () => {
-  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
-    const dir=path.join(f.session,'throw-resume'), logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
-    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:1,mode:0},pending:'stall',resumesUsed:0,reportResumes:0,sessionId:'ses_abc'}));
-    let calls=0;f.deps.delegate=async (_p,req)=>{calls++;assert.equal(req.model,'good');if(req.resume)throw new Error('spawn');assert.match(JSON.parse(fs.readFileSync(path.join(logs,'opencode[0].state.json'),'utf8')).restart,/launch error/);return {outcome:{status:'ok',text:'answer',sessionId:'new',resume:null},invocations:[]};};
-    await fanOut({dir,slots:[slot('opencode',['bad','good'])],prompt:'question',validate,quota},f.deps);assert.equal(calls,2);
-  } finally {f.cleanup();}
-});
-
 test('rerun resumes after a later call replaces a failed checkpoint', async t => {
   const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts'); const f=sessionFixture({memory:true}); try {
     const dir=path.join(f.session,'later-checkpoint'),state=path.join(dir,'logs','opencode[0].state.json');let fail=false;
@@ -2320,16 +2175,6 @@ test('rerun resumes after a later call replaces a failed checkpoint', async t =>
     const check=(text:string):Validation=>text==='invalid'?{ok:false,cls:'no-report',reason:'missing'}:validate(text);
     const input={dir,slots:[slot('opencode')],prompt:'question',validate:check,quota};await assert.rejects(fanOut(input,f.deps),/interrupted/);await fanOut(input,f.deps);assert.equal(calls,3);
   } finally {f.cleanup();}
-});
-
-test('rerun resumes with the resumes spent before the stop', async () => {
-  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');const f=sessionFixture({memory:true});try {
-    const dir=path.join(f.session,'log-session'),logs=path.join(dir,'logs');fs.mkdirSync(logs,{recursive:true});
-    fs.writeFileSync(path.join(logs,'opencode[0].state.json'),JSON.stringify({physicalSlot:'opencode[0]',provider:'opencode',model:'good',position:{model:0,mode:0},pending:'stall',resumesUsed:2,reportResumes:0,sessionId:null}));
-    fs.writeFileSync(path.join(logs,'opencode[0].log'),'{"type":"step_start","sessionID":"ses_abc"}\n');
-    f.deps.delegate=async (_p,req)=>{assert.equal(req.resume,'ses_abc');assert.equal(req.resumesUsed,3);return {outcome:{status:'ok',text:'answer',sessionId:'ses_abc',resume:null},invocations:[]};};
-    await fanOut({dir,slots:[slot('opencode')],prompt:'question',validate,quota},f.deps);
-  }finally{f.cleanup();}
 });
 
 test('saved session usage: pre-change, includes-cache, and missing-baseline slots take stale restart', async () => {

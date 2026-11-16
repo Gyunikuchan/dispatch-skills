@@ -75,7 +75,7 @@ const designResult = parseDesign(DESIGN);
 assert.ok(designResult.ok);
 const design = designResult.design;
 
-test('design increments parse visible behaviour bullets and ignore details summaries', () => {
+test('design increments parse behaviour bullets and warn on missing or file-count-only behaviour', () => {
   const source = DESIGN.replace('<details>\n\n- Outcome', '<details>\n\n<summary>Hidden increment details</summary>\n\n- Outcome');
   const result = parseDesign(source);
   assert.ok(result.ok, JSON.stringify(result));
@@ -84,17 +84,15 @@ test('design increments parse visible behaviour bullets and ignore details summa
     ['I02 behaviour is implemented.'],
   ]);
   assert.ok(!result.warnings.some((item) => item.code === 'increment-behaviour'));
-});
 
-test('design increments warn when behaviour is missing or only a file count', () => {
   const sources = [
     DESIGN.replace('- I01 behaviour is implemented.\n', ''),
     DESIGN.replace('- I01 behaviour is implemented.', '- 2 modified files.'),
   ];
-  for (const source of sources) {
-    const result = parseDesign(source);
-    assert.ok(result.ok, JSON.stringify(result));
-    assert.ok(result.warnings.some((item) => item.code === 'increment-behaviour'), JSON.stringify(result.warnings));
+  for (const missing of sources) {
+    const warned = parseDesign(missing);
+    assert.ok(warned.ok, JSON.stringify(warned));
+    assert.ok(warned.warnings.some((item) => item.code === 'increment-behaviour'), JSON.stringify(warned.warnings));
   }
   const accepted = parseDesign(DESIGN.replace('- I01 behaviour is implemented.', '- 2 files are compared by content before delivery.'));
   assert.ok(accepted.ok);
@@ -120,6 +118,10 @@ test('design: parses graph, details, and Execution Status', () => {
     { id: 'I02', state: 'ready', nextAction: 'implement:I02' },
   ]);
   assert.equal(design.executionStatus?.nextAction, 'implement:I02');
+
+  const quoted = parseDesign(DESIGN.replace('| src/parse.ts |', '| `src/parse.ts`, `src/util/` |'));
+  assert.ok(quoted.ok);
+  assert.deepEqual(quoted.design.increments[0]!.paths, ['src/parse.ts', 'src/util/']);
 });
 
 test('design: graph cycles are rejected', () => {
@@ -281,10 +283,4 @@ test('design human layout: At a Glance is required first and long paragraphs war
   assert.ok(long.design.governedText.includes(glance.trim()));
   assert.ok(!long.design.governedText.includes('## Execution Status'));
   assert.ok(!long.design.governedText.includes('## Review Findings & Resolutions'));
-});
-
-test('increment graph paths drop Markdown backticks and surrounding whitespace', () => {
-  const result = parseDesign(DESIGN.replace('| src/parse.ts |', '| `src/parse.ts`, `src/util/` |'));
-  assert.ok(result.ok);
-  assert.deepEqual(result.design.increments[0]!.paths, ['src/parse.ts', 'src/util/']);
 });

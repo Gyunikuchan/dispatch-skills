@@ -27,7 +27,9 @@ test('delegates-failure-classes: every class has a disposition; integrity and co
 // SECTION: Model and mode cascade
 
 test('delegates-model-array-cascade: cascade classes advance to the next model', () => {
-  for (const cls of ['auth', 'timeout', 'quota', 'capacity', 'no-report'] as const) {
+  // One ordinary representative plus auth/quota, which ADR 0001 explicitly keeps cascading;
+  // cascade membership for the remaining classes is pinned by the dispositions test above.
+  for (const cls of ['auth', 'timeout', 'quota'] as const) {
     assert.deepEqual(next(cls, { model: 0, mode: 0 }, agy), { kind: 'next-model', position: { model: 1, mode: 0 } }, cls);
   }
   assert.deepEqual(next('sandbox-unsupported', { model: 0, mode: 0 }, agy), { kind: 'terminal', scope: 'slot', reason: 'agy[0] failed: sandbox-unsupported' });

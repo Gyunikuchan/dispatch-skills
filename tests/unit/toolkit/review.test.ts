@@ -645,32 +645,36 @@ test('first round saves current cap', async () => {
   } finally { f.cleanup(); }
 });
 
-test('orphan ceiling resolution grants nothing', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: rewrite the plan', { key: ceilingId(PLAN_REVIEW, 4) + ':orphan' });
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.deepEqual(foldLedger(f.session).records.at(-1)!.data, { id: ceilingId(PLAN_REVIEW, 4), state: 'open', summary: 'ceiling 4 reached' });
-  } finally { f.cleanup(); }
-});
+test('ceiling resolution grants once through the matching open key', async () => {
+  // Orphan resolution with a non-open key grants nothing.
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: rewrite the plan', { key: ceilingId(PLAN_REVIEW, 4) + ':orphan' });
+      const result = await f.call();
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'review-ceiling');
+      assert.deepEqual(foldLedger(f.session).records.at(-1)!.data, { id: ceilingId(PLAN_REVIEW, 4), state: 'open', summary: 'ceiling 4 reached' });
+    } finally { f.cleanup(); }
+  }
 
-test('repeat ceiling resolution grants once', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await openCeiling(f, PLAN_REVIEW, 4);
-    await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: first decision', { key: ceilingId(PLAN_REVIEW, 4) + ':resolved-1' });
-    await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: repeated decision', { key: ceilingId(PLAN_REVIEW, 4) + ':resolved-2' });
-    await seedAcceptedRound(f, 5);
-    await seedAcceptedRound(f, 6);
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.equal(foldLedger(f.session).records.at(-1)!.data['id'], ceilingId(PLAN_REVIEW, 6));
-  } finally { f.cleanup(); }
+  // A repeated resolution for the same open ceiling grants only once.
+  {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      await openCeiling(f, PLAN_REVIEW, 4);
+      await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: first decision', { key: ceilingId(PLAN_REVIEW, 4) + ':resolved-1' });
+      await resolveCeiling(f, PLAN_REVIEW, 4, 're-author: repeated decision', { key: ceilingId(PLAN_REVIEW, 4) + ':resolved-2' });
+      await seedAcceptedRound(f, 5);
+      await seedAcceptedRound(f, 6);
+      const result = await f.call();
+      assert.equal(result.exit, 4);
+      assert.equal(result.output.reason, 'review-ceiling');
+      assert.equal(foldLedger(f.session).records.at(-1)!.data['id'], ceilingId(PLAN_REVIEW, 6));
+    } finally { f.cleanup(); }
+  }
 });
 
 test('cap past without ceiling starts round', async () => {
@@ -1206,47 +1210,72 @@ test('explicit pins override saved roster on an admitted repository rerun', asyn
   } finally { f.cleanup(); }
 });
 
-test('review run refuses with host-sandboxed under sandboxed claude host and proceeds when unsandboxed', async () => {
-  const f = await fixture();
-  try {
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
-    const refused = await f.call();
-    assert.equal(refused.exit, 4);
-    assert.equal(refused.output.reason, 'host-sandboxed');
-    assert.match(refused.output.summary, /dangerouslyDisableSandbox/);
-    assert.match(refused.output.summary, /sandbox\.excludedCommands/);
-    assert.doesNotMatch(refused.output.summary, /sandbox:\s*false/i);
-    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
-    assert.equal(f.launches.length, 0);
+test('review run refuses with host-sandboxed under sandboxed claude host', async () => {
+  // Sandboxed host refuses before creating review state and proceeds when unsandboxed.
+  {
+    const f = await fixture();
+    try {
+      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+      f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+      const refused = await f.call();
+      assert.equal(refused.exit, 4);
+      assert.equal(refused.output.reason, 'host-sandboxed');
+      assert.match(refused.output.summary, /dangerouslyDisableSandbox/);
+      assert.match(refused.output.summary, /sandbox\.excludedCommands/);
+      assert.doesNotMatch(refused.output.summary, /sandbox:\s*false/i);
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
+      assert.equal(f.launches.length, 0);
 
-    const env = {...f.deps.env};
-    delete env['SANDBOX_RUNTIME'];
-    delete env['SANDBOX'];
-    f.deps.env = env;
-    const rerun = await f.call();
-    assert.equal(rerun.exit, 4);
-    assert.equal(rerun.output.reason, 'native-pending');
-    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
-  } finally { f.cleanup(); }
+      const env = {...f.deps.env};
+      delete env['SANDBOX_RUNTIME'];
+      delete env['SANDBOX'];
+      f.deps.env = env;
+      const rerun = await f.call();
+      assert.equal(rerun.exit, 4);
+      assert.equal(rerun.output.reason, 'native-pending');
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
+    } finally { f.cleanup(); }
+  }
+
+  // A native-first-only roster still refuses once --native-failed marks the slot failed.
+  {
+    const f = await fixture();
+    try {
+      configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}});
+      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+      f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+      const nativeOnly = await f.call();
+      assert.equal(nativeOnly.exit, 4);
+      assert.equal(nativeOnly.output.reason, 'native-pending');
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
+
+      fs.rmSync(path.join(f.session, '.state', 'reviews'), {recursive: true, force: true});
+      f.lines.length = 0;
+      const refusedExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'claude', '--native-failed', 'claude[0]=failed'], f.deps);
+      assert.equal(refusedExit, 4);
+      assert.equal(f.output().reason, 'host-sandboxed');
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
+    } finally { f.cleanup(); }
+  }
+  // A native-first-only roster still refuses once --native-failed marks the slot failed.
+  {
+    const f = await fixture();
+    try {
+      configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}});
+      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+      f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
+      const nativeOnly = await f.call();
+      assert.equal(nativeOnly.exit, 4);
+      assert.equal(nativeOnly.output.reason, 'native-pending');
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
+
+      fs.rmSync(path.join(f.session, '.state', 'reviews'), {recursive: true, force: true});
+      f.lines.length = 0;
+      const refusedExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'claude', '--native-failed', 'claude[0]=failed'], f.deps);
+      assert.equal(refusedExit, 4);
+      assert.equal(f.output().reason, 'host-sandboxed');
+      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
+    } finally { f.cleanup(); }
+  }
 });
 
-test('review run refuses with host-sandboxed for native-first-only roster when --native-failed is given', async () => {
-  const f = await fixture();
-  try {
-    configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
-    const nativeOnly = await f.call();
-    assert.equal(nativeOnly.exit, 4);
-    assert.equal(nativeOnly.output.reason, 'native-pending');
-    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
-
-    fs.rmSync(path.join(f.session, '.state', 'reviews'), {recursive: true, force: true});
-    f.lines.length = 0;
-    const refusedExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'claude', '--native-failed', 'claude[0]=failed'], f.deps);
-    assert.equal(refusedExit, 4);
-    assert.equal(f.output().reason, 'host-sandboxed');
-    assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
-  } finally { f.cleanup(); }
-});

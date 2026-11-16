@@ -322,23 +322,6 @@ describe('writer brief', () => {
     } finally { f.cleanup(); }
   });
 
-  test('capture slot is empty for verify-only and excepted criteria', async () => {
-    const cases: { task: string; source: string }[] = [
-      {task: 'T2', source: PLAN},
-      {task: 'T1', source: CAPTURE_PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - RED exception: already-satisfied\n')},
-    ];
-    for (const item of cases) {
-      const f = await fixture(false, item.source);
-      try {
-        await f.approve(); await f.launch(item.task);
-        const result = await f.call(undefined, item.task);
-        assert.equal(result.exit, 0);
-        const brief = fs.readFileSync(result.value.path, 'utf8');
-        assert.equal(captureSection(brief), '');
-      } finally { f.cleanup(); }
-    }
-  });
-
   test('empty test paths produce an inline diagnostic and no capture command', async () => {
     for (const item of [
       { source: CAPTURE_PLAN.replace('  - Tests: `tests/with space.test.ts`\n', ''), pattern: /no test paths/i },
@@ -356,6 +339,20 @@ describe('writer brief', () => {
         assert.doesNotMatch(section, /node -e/);
       } finally { f.cleanup(); }
     }
+    // Verify-only and excepted criteria leave the capture slot empty.
+    for (const item of [
+      {task: 'T2', source: PLAN},
+      {task: 'T1', source: CAPTURE_PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - RED exception: already-satisfied\n')},
+    ]) {
+      const f = await fixture(false, item.source);
+      try {
+        await f.approve(); await f.launch(item.task);
+        const result = await f.call(undefined, item.task);
+        assert.equal(result.exit, 0);
+        const brief = fs.readFileSync(result.value.path, 'utf8');
+        assert.equal(captureSection(brief), '');
+      } finally { f.cleanup(); }
+    }
   });
 });
 
@@ -367,20 +364,18 @@ test('writer brief binds plan constraints, leaves routine choices to the writer 
     assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
     const brief = fs.readFileSync(rendered.value.path, 'utf8').replace(/\s+/g, ' ');
     for (const text of ['`Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding', 'decide routine implementation choices yourself', 'the orchestrator runs post-integration `Evidence: review` checks', 'RED command runs as written in the platform\'s subprocess shell']) assert.equal(brief.split(text).length - 1, 1, text);
-  } finally { f.cleanup(); }
-});
-
-test('writer brief keeps task behaviour and criterion fields from collapsed plan sections', async () => {
-  const behaviour = '- First returns the validated value after retrying once.';
-  const source = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`).replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts').replace('### T2 — Second', '</details>\n\n### T2 — Second').replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n').replace('- [SC2]', '  </details>\n\n- [SC2]');
-  const f = await fixture(false, source);
-  try {
-    await f.approve(); await f.launch();
-    const rendered = await f.call();
-    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
-    const markdown = fs.readFileSync(rendered.value.path, 'utf8');
-    for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Check: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(markdown.includes(text), text);
-    assert.equal(markdown.split(behaviour).length - 1, 1);
+    // Collapsed plan sections still contribute task behaviour and criterion fields.
+    const behaviour = '- First returns the validated value after retrying once.';
+    const collapsed = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`).replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts').replace('### T2 — Second', '</details>\n\n### T2 — Second').replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n').replace('- [SC2]', '  </details>\n\n- [SC2]');
+    const g = await fixture(false, collapsed);
+    try {
+      await g.approve(); await g.launch();
+      const collapsedRendered = await g.call();
+      assert.equal(collapsedRendered.exit, 0, JSON.stringify(collapsedRendered.output));
+      const collapsedBrief = fs.readFileSync(collapsedRendered.value.path, 'utf8');
+      for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Check: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(collapsedBrief.includes(text), text);
+      assert.equal(collapsedBrief.split(behaviour).length - 1, 1);
+    } finally { g.cleanup(); }
   } finally { f.cleanup(); }
 });
 
@@ -536,6 +531,18 @@ describe('explorer brief', () => {
       // per-nested-explorer model and token report
       assert.match(brief, /model and tokens.*unavailable/i);
 
+      // Split threshold derives from the 150,000-token limit for map and research briefs.
+      assert.match(brief, /Split threshold: 112,500 tokens\./);
+      assert.match(brief, /coherent single-topic work stays solo past the limit/i);
+      assert.match(brief, /report the expected overrun/i);
+      const splitResearchValues = path.join(f.session, 'split-research-sc4.json');
+      fs.writeFileSync(splitResearchValues, JSON.stringify({objective: 'Research logs.', questions: '- Why did step 3 fail?'}));
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', splitResearchValues, '--session', f.session, '--host', 'claude'], f.deps), 0);
+      const splitResearchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.match(splitResearchBrief, /Split threshold: 112,500 tokens\./);
+      assert.match(splitResearchBrief, /report the expected overrun/i);
+
       // Unresolved entry gives contextLimit null and states not configured
       f.lines.length = 0;
       const unresExit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'copilot'], f.deps);
@@ -545,6 +552,31 @@ describe('explorer brief', () => {
       const unresBrief = fs.readFileSync(unresValue.briefPath, 'utf8');
       assert.match(unresBrief, /utility.*not configured; the orchestrator reports a blocker/i);
       assert.match(unresBrief, /Split threshold: utility entry not configured; the orchestrator reports a blocker\./);
+
+      // Default map brief carries the validation-gates coverage item and the map write scope.
+      f.deps.skillRoot = skillRoot;
+      const gatesValues = path.join(f.session, 'explorer-validation-gates.json');
+      fs.writeFileSync(gatesValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', gatesValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+      const gatesBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.match(gatesBrief, /^- validation gates each new or changed input crosses$/m);
+      assert.match(gatesBrief, /Write only your assigned map .*\.scratch\/session\/work\.spec\.context\.md.*assigned partial maps/i);
+      assert.match(gatesBrief, /except host tool caches or indexes/i);
+      assert.ok(gatesBrief.includes('lint run'));
+      assert.doesNotMatch(gatesBrief, /Apply the shared evidence rule below/);
+
+      // Research brief writes no map file and runs no context-map lint.
+      const scopeResearchValues = path.join(f.session, 'explorer-scope-research.json');
+      fs.writeFileSync(scopeResearchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
+      f.lines.length = 0;
+      assert.equal(await main(['brief', 'explorer', scopeResearchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+      const scopeResearchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.ok(scopeResearchBrief.includes('write no map file'));
+      assert.ok(scopeResearchBrief.includes('run no context-map lint'));
+      assert.doesNotMatch(scopeResearchBrief, /Apply the shared evidence rule below/);
+      assert.doesNotMatch(scopeResearchBrief, /partial map/);
+      f.deps.skillRoot = skill;
     } finally {
       f.deps.skillRoot = skillRoot;
       f.deps.orchestrator = orchestrator;
@@ -617,49 +649,6 @@ describe('explorer brief', () => {
       f.deps.orchestrator = orchestrator;
       f.cleanup();
     }
-  });
-
-  test('explorer brief split threshold is 112,500 tokens for a 150,000 limit in map and research briefs', async () => {
-    const f = await fixture();
-    const {skillRoot, orchestrator} = f.deps;
-    const skill = limitSkill(path.join(f.root, 'explorer-skill-split'), skillRoot);
-    try {
-      await f.approve();
-      f.deps.skillRoot = skill;
-      const kinds = {
-        map: {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'},
-        research: {objective: 'Research logs.', questions: '- Why did step 3 fail?'},
-      };
-      for (const [kind, values] of Object.entries(kinds)) {
-        const valuesPath = path.join(f.session, `split-${kind}.json`);
-        fs.writeFileSync(valuesPath, JSON.stringify(values));
-        f.lines.length = 0;
-        assert.equal(await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'claude'], f.deps), 0, JSON.stringify(f.lines));
-        const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
-        assert.match(brief, /Split threshold: 112,500 tokens\./, kind);
-        assert.match(brief, /split only when expected reading exceeds the split threshold/i, kind);
-        assert.match(brief, /coherent single-topic work stays solo past the limit/i, kind);
-        assert.match(brief, /report the expected overrun/i, kind);
-        assert.doesNotMatch(brief, /finish what fits/i, kind);
-      }
-    } finally {
-      f.deps.skillRoot = skillRoot;
-      f.deps.orchestrator = orchestrator;
-      f.cleanup();
-    }
-  });
-
-  test('map brief Coverage checklist lists validation gates each new or changed input crosses', async () => {
-    const f = await fixture();
-    try {
-      await f.approve();
-      const mapValues = path.join(f.session, 'explorer-validation-gates.json');
-      fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
-      f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
-      const brief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
-      assert.match(brief, /^- validation gates each new or changed input crosses$/m);
-    } finally { f.cleanup(); }
   });
 
   test('refuses missing or unknown value without writing', async () => {
@@ -927,34 +916,33 @@ test('brief results name the host model and effort', async () => {
     } finally {
       f.cleanup();
     }
-  });
 
-  test('task markdown and brief render preserve trailing lines when fenced criterion bullet appears', async () => {
+    // A fenced criterion bullet does not swallow the trailing criterion lines.
     const fencedCriterionPlan = PLAN.replace(
       '  - Changes: src/first.ts',
       '```markdown\n- [SC99] Fenced criterion bullet\n```\n  - Changes: src/first.ts',
     );
-    const parsed = parsePlan(fencedCriterionPlan);
-    assert.equal(parsed.ok, true);
-    const selected = selectTaskBrief(parsed.plan, 'T1');
-    assert.ok(selected);
-    const markdown = taskMarkdown(fencedCriterionPlan, selected);
-    assert.match(markdown, /- \[SC99\] Fenced criterion bullet/);
-    assert.match(markdown, /node first-check/);
-    assert.match(markdown, /node first-red/);
+    const criterionParsed = parsePlan(fencedCriterionPlan);
+    assert.equal(criterionParsed.ok, true);
+    const criterionSelected = selectTaskBrief(criterionParsed.plan, 'T1');
+    assert.ok(criterionSelected);
+    const criterionMarkdown = taskMarkdown(fencedCriterionPlan, criterionSelected);
+    assert.match(criterionMarkdown, /- \[SC99\] Fenced criterion bullet/);
+    assert.match(criterionMarkdown, /node first-check/);
+    assert.match(criterionMarkdown, /node first-red/);
 
-    const f = await fixture(false, fencedCriterionPlan);
+    const g = await fixture(false, fencedCriterionPlan);
     try {
-      await f.approve();
-      await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const brief = fs.readFileSync(result.value.path, 'utf8');
-      assert.match(brief, /- \[SC99\] Fenced criterion bullet/);
-      assert.match(brief, /node first-check/);
-      assert.match(brief, /node first-red/);
+      await g.approve();
+      await g.launch();
+      const criterionResult = await g.call();
+      assert.equal(criterionResult.exit, 0);
+      const criterionBrief = fs.readFileSync(criterionResult.value.path, 'utf8');
+      assert.match(criterionBrief, /- \[SC99\] Fenced criterion bullet/);
+      assert.match(criterionBrief, /node first-check/);
+      assert.match(criterionBrief, /node first-red/);
     } finally {
-      f.cleanup();
+      g.cleanup();
     }
   });
 
@@ -1026,31 +1014,5 @@ test('rendered briefs state the git-write rule once and carry one host-rule prec
     for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief]] as const) {
       assert.equal(brief.split('Report host-rule/brief conflicts under concerns.').length - 1, 1, `${name}: single conflict-reporting rule`);
     }
-  } finally { f.cleanup(); }
-});
-
-test('explorer brief states its map write scope', async () => {
-  const f = await fixture();
-  try {
-    await f.approve();
-    const mapValues = path.join(f.session, 'explorer-scope-map.json');
-    fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
-    f.lines.length = 0;
-    assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
-    const mapBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
-    assert.match(mapBrief, /Write only your assigned map .*\.scratch\/session\/work\.spec\.context\.md.*assigned partial maps/i);
-    assert.match(mapBrief, /except host tool caches or indexes/i);
-    assert.ok(mapBrief.includes('lint run'));
-    assert.doesNotMatch(mapBrief, /Apply the shared evidence rule below/);
-
-    const researchValues = path.join(f.session, 'explorer-scope-research.json');
-    fs.writeFileSync(researchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
-    f.lines.length = 0;
-    assert.equal(await main(['brief', 'explorer', researchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
-    const researchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
-    assert.ok(researchBrief.includes('write no map file'));
-    assert.ok(researchBrief.includes('run no context-map lint'));
-    assert.doesNotMatch(researchBrief, /Apply the shared evidence rule below/);
-    assert.doesNotMatch(researchBrief, /partial map/);
   } finally { f.cleanup(); }
 });

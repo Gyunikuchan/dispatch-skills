@@ -288,29 +288,28 @@ test('codex keeps earlier child rows but stops that thread after later read fail
   const result = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, read: (file, max) => { if (file.includes('00-00-03-child.jsonl')) throw Error('private'); return fs.read(file, max); } });
   assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.ok(!fs.reads.some(file => file.includes('00-00-04-child.jsonl')));
 });
-test('codex discovery stat failure blocks newer same-thread totals while retaining earlier rows', () => {
-  const host1 = rollout('00-01', 'host'); const host2 = rollout('00-02', 'host'); const host3 = rollout('00-03', 'host');
-  const child1 = rollout('00-04', 'child'); const child2 = rollout('00-05', 'child'); const child3 = rollout('00-06', 'child');
-  const fs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
-  const result = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs, stat: file => { if (file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl')) throw Object.assign(Error('private'), { code: 'EACCES' }); return fs.stat(file); } });
-  assert.equal(result.unavailable, 'read-error:EACCES'); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
-});
-test('codex with inaccessible host-search directory avoids uncertain attribution', () => {
-  const host = rollout('00-01', 'host'); const hidden = '/home/.codex/sessions/1969/12/31/rollout-1969-12-31T00-00-01-other.jsonl'; const fs = memoryFs({ [host]: lines(context, event(1)), [hidden]: 'x' });
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, list: dir => { if (/1969[\\/]12[\\/]31$/.test(dir)) throw Object.assign(Error('private'), { code: 'EACCES' }); return fs.list(dir); } });
-  assert.equal(result.unavailable, 'read-error:EACCES'); assert.deepEqual(result.rows, []); assert.deepEqual(fs.reads, []);
-});
 test('codex omits a readable child when another date directory cannot be searched', () => {
   const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child'); const hidden = '/home/.codex/sessions/1970/01/02/rollout-1970-01-02T00-00-01-other.jsonl';
   const fs = memoryFs({ [host]: lines(context, event(1)), [child]: lines(meta('host'), context, event(2)), [hidden]: 'x' }); let dateLists = 0;
   const result = codex.read({ ...query, budget: { remaining: 10000 } }, { ...fs, list: dir => { if (/1970[\\/]01[\\/]02$/.test(dir) && ++dateLists === 2) throw Error('private'); return fs.list(dir); } });
   assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 0); assert.equal(result.notes?.subagent?.['unreadable files'], 1);
+
+  // An inaccessible host-search directory avoids uncertain attribution the same way.
+  const hostOnly = rollout('00-01', 'host'); const olderHidden = '/home/.codex/sessions/1969/12/31/rollout-1969-12-31T00-00-01-other.jsonl';
+  const blockedFs = memoryFs({ [hostOnly]: lines(context, event(1)), [olderHidden]: 'x' });
+  const blocked = codex.read({ ...query, budget: { remaining: 10000 } }, { ...blockedFs, list: dir => { if (/1969[\\/]12[\\/]31$/.test(dir)) throw Object.assign(Error('private'), { code: 'EACCES' }); return blockedFs.list(dir); } });
+  assert.equal(blocked.unavailable, 'read-error:EACCES'); assert.deepEqual(blocked.rows, []); assert.deepEqual(blockedFs.reads, []);
 });
 test('codex reports and blocks listed host and child files that vanish before discovery stat', () => {
   const host1 = rollout('00-01', 'host'); const host2 = rollout('00-02', 'host'); const host3 = rollout('00-03', 'host'); const child1 = rollout('00-04', 'child'); const child2 = rollout('00-05', 'child'); const child3 = rollout('00-06', 'child');
   const fs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs, stat: file => file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl') ? null : fs.stat(file) });
   assert.equal(result.unavailable, 'read-error:ENOENT'); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
+
+  // A discovery stat throw blocks the same thread the same way as a vanished file.
+  const throwingFs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
+  const threw = codex.read({ ...query, budget: { remaining: 100000 } }, { ...throwingFs, stat: file => { if (file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl')) throw Object.assign(Error('private'), { code: 'EACCES' }); return throwingFs.stat(file); } });
+  assert.equal(threw.unavailable, 'read-error:EACCES'); assert.equal(threw.notes?.subagent?.['unreadable files'], 1); assert.equal(threw.rows.filter(row => row.role === 'host').length, 1); assert.equal(threw.rows.filter(row => row.role === 'subagent').length, 1);
 
   let calls = 0;
   const singleHost = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });

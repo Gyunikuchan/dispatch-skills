@@ -48,27 +48,25 @@ test('opencode host usage keeps each message model and effort for host and neste
   assert.ok(!JSON.stringify(result).includes(opencodeDbPath('/home', session)));
 });
 
-test('opencode host usage notes skipped messages and a row cap', () => {
-  const result = readHostUsage('opencode', input, port(() => ({
+test('opencode host usage notes skipped messages and row and session caps', () => {
+  const rows = readHostUsage('opencode', input, port(() => ({
     messages: [message(0, 1000, 'm', null, 1, 1)],
     skipped: 2,
     truncated: 'rows',
   })));
 
-  assert.equal(result.unavailable, undefined);
-  assert.equal(result.notes?.host?.['unparsed lines'], 2);
-  assert.equal(result.notes?.host?.['read budget reached'], 1);
-});
+  assert.equal(rows.unavailable, undefined);
+  assert.equal(rows.notes?.host?.['unparsed lines'], 2);
+  assert.equal(rows.notes?.host?.['read budget reached'], 1);
 
-test('opencode host usage notes a session cap as too many candidates', () => {
-  const result = readHostUsage('opencode', input, port(() => ({
+  const sessions = readHostUsage('opencode', input, port(() => ({
     messages: [message(0, 1000, 'm', null, 1, 1)],
     skipped: 0,
     truncated: 'sessions',
   })));
 
-  assert.equal(result.notes?.subagent?.['too many candidates'], 1);
-  assert.equal(result.notes?.host, undefined);
+  assert.equal(sessions.notes?.subagent?.['too many candidates'], 1);
+  assert.equal(sessions.notes?.host, undefined);
 });
 
 test('opencode host usage maps read failures to allowlisted reasons without leaking locators', () => {

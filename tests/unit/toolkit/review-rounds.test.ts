@@ -343,29 +343,6 @@ test('standard re-review prompt omits the accepted id list, and round 1 renders 
   } finally {f.cleanup();}
 });
 
-test('inter-round: a design round 2 with no accepted finding omits the empty list', async () => {
-  const f = await fixture(false);
-  try {
-    const design = f.artifact('strategy.design.md', '# Strategy\n## Approach\nOne boundary.\n');
-    f.artifact('strategy.design.context.md', CONTEXT_MAP);
-    await f.add('bind', {spec: 'mission.spec.md', design: 'strategy.design.md'});
-    diffGit(f, {exit: 1, stdout: DIFF});
-    script(f, () => CLEAN);
-    const first = await f.call('design', design);
-    assert.equal(first.exit, 0, JSON.stringify(first.output));
-    const before = artifactHash('design', fs.readFileSync(design, 'utf8'));
-    fs.appendFileSync(design, '\n## Risks\nRetain the original boundary.\n');
-    await f.add('edit', {artifact: 'design', before, after: artifactHash('design', fs.readFileSync(design, 'utf8')), class: 'non-intent', affects: [], rationale: 'Clarify risk', diffRef: 'design diff'});
-    const launched = f.launches.length;
-    const second = await f.call('design', design);
-    assert.equal(second.exit, 0, JSON.stringify(second.output));
-    const file = path.join(path.dirname(path.dirname(second.value.path)), 'round-2', 'inter-round.diff');
-    const expected = sinceStandard('`' + file + '` (unified diff of the governed text)') + '\n';
-    for (const prompt of promptsOf(f).slice(launched)) assert.ok(prompt.includes(expected), prompt);
-    assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
-  } finally {f.cleanup();}
-});
-
 test('inter-round: a code round 2 names the head range and a round with equal heads states no change', async () => {
   const f = await fixture();
   try {

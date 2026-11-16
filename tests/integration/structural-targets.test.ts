@@ -118,6 +118,9 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   assert.ok(cleanupBrief <= 1870, `test-cleanup brief template ${cleanupBrief} exceeds 1870 budget`);
   const cleanup = cleanupBrief + cleanupQuality;
   assert.ok(cleanup <= 9523, `test-cleanup pack ${cleanup} exceeds 9523 budget`);
+  // NOTE: The hand-filled brief needs its own budget for the child authority and reply contract.
+  const incrementBrief = templateBytes('increment-orchestrator-brief.md');
+  assert.ok(incrementBrief <= 4096, `increment orchestrator brief ${incrementBrief} exceeds 4096 bytes`);
 });
 
 test('ledger authority is limited to approval, exceptions and user-selected levels', () => {
@@ -175,10 +178,4 @@ test('ledger authority is limited to approval, exceptions and user-selected leve
       assert.doesNotThrow(() => validateRecord({ ...record, by: 'orchestrator' }), label);
     }
   }
-});
-
-// NOTE: The hand-filled brief needs its own budget for the child authority and reply contract.
-test('increment orchestrator brief stays within its byte budget', () => {
-  const bytes = fs.statSync(path.join(root, 'skills/dispatch/references/templates/increment-orchestrator-brief.md')).size;
-  assert.ok(bytes <= 4096, `increment orchestrator brief ${bytes} exceeds 4096 bytes`);
 });

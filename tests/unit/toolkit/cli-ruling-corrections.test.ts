@@ -104,19 +104,11 @@ describe('severity corrections through the CLI', () => {
       assert.equal(noImpact.exit, 1);
       assert.equal(noImpact.output.reason, 'invalid-record');
       assert.match(noImpact.output.summary, /impact/);
-    } finally { h.cleanup(); }
-  });
 
-  test('correction refused: a malformed or escaping subject', async () => {
-    const h = correctionHarness();
-    try {
-      await h.ready();
-      h.seed(PLAN, [SHOULD_FINDING]);
-      const subjects = ['review:..:R1-F001', 'review:plan-work.plan'];
-      for (const subject of subjects) {
-        const result = await h.ruling(subject, {impact: 'blocks', trigger: 'realistic'});
-        assert.equal(result.exit, 1, subject);
-        assert.equal(result.output.reason, 'invalid-record', subject);
+      for (const subject of ['review:..:R1-F001', 'review:plan-work.plan']) {
+        const malformed = await h.ruling(subject, {impact: 'blocks', trigger: 'realistic'});
+        assert.equal(malformed.exit, 1, subject);
+        assert.equal(malformed.output.reason, 'invalid-record', subject);
       }
     } finally { h.cleanup(); }
   });

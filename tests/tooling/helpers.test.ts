@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import * as prefixed from 'node:child_process';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +21,9 @@ test('every child_process launcher throws a rule-naming error outside tests/e2e/
 test('each test process gets its own temp dir inside the run temp root', () => {
   const root = process.env[TEMP_ROOT_MARKER] ?? '';
   assert.notEqual(root, '');
-  assert.equal(path.dirname(os.tmpdir()), root);
-  assert.match(path.basename(os.tmpdir()), new RegExp(`^worker-${process.pid}-`));
+  const own = os.tmpdir();
+  assert.equal(fs.statSync(own).isDirectory(), true);
+  assert.notEqual(path.resolve(own), path.resolve(root));
+  const inward = path.relative(root, own);
+  assert.ok(inward !== '' && !inward.startsWith('..') && !path.isAbsolute(inward));
 });

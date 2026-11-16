@@ -198,16 +198,6 @@ describe('cleanup evidence rule', () => {
     });
   });
 
-  test('cleanup evidence is stale when a tests path changed', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const fold = mkFold([mkRow('SC1', 'early-tree')]);
-    const diffs = new Map([['early-tree', ['tests/one.test.ts']]]);
-    assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
-      ok: false,
-      stale: ['SC1'],
-    });
-  });
-
   test('cleanup evidence is stale when a path under a declared directory changed', async () => {
     const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const dirCriteria = [

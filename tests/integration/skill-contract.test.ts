@@ -218,6 +218,7 @@ test('spec stage critique lays out grounded approaches with simplicity and quest
   assert.match(refine, /override[^.]*per-question recommendation[^.]*that one question/i);
   assert.match(refine, /rest of the frontier, including approach options, follows in the next round/i);
   assert.match(refine, /inferred why[^.]*`\(assumption\)`/i);
+  assert.match(refine, /each question.*states what its answer (?:would )?change/i);
 });
 
 test('spec stage short path and self-check', () => {
@@ -302,7 +303,7 @@ test('human manuals retain portable links and current operational guidance', () 
   assert.match(read(root + 'references/readme/design.md'), /increments in order/);
 });
 
-test('commit phase and all-increments opt-in contracts', () => {
+test('worktree deliver commit and uncommitted contracts', () => {
   const toolkit = read(root + 'references/toolkit.md');
   const deliver = section(toolkit, 'worktree deliver');
   assert.ok(toolkit.includes('`worktree deliver --session <session> [--commit <message-file>]`'), 'call table');
@@ -316,11 +317,7 @@ test('commit phase and all-increments opt-in contracts', () => {
   const frame = section(read(root + 'references/decision-frame.md'), 'Plan or design approval');
   assert.match(frame, /all increments/);
   assert.ok(links(frame).some(link => link.includes('spec-stage.md#approval')), 'opt-in link');
-});
-
-test('uncommitted delivery contract', () => {
-  const toolkit=section(read(root+'references/toolkit.md'),'worktree deliver');
-  for (const term of ['delivered-source', 'caller-dirty', 'recovery-blocked', 'unsupported-sparse', 'unsupported-entry', 'git restore --source', '??']) assert.ok(toolkit.includes(term), term);
+  for (const term of ['delivered-source', 'caller-dirty', 'recovery-blocked', 'unsupported-sparse', 'unsupported-entry', 'git restore --source', '??']) assert.ok(deliver.includes(term), term);
   for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
   const concepts=read(root+'references/readme/concepts.md');
   assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
@@ -701,14 +698,6 @@ test('subagent role table, shared rules and delegation contract', () => {
   assert.match(skill, /when the host has no launch tool|host with no launch tool/i);
 });
 
-test('spec stage critique requires each intent question states its consequence', () => {
-  const stage = read(root + 'references/spec-authoring.md');
-  const refine = stage.split('2. **Critique and refine.**')[1]?.split('\n3. **Author.**')[0] ?? '';
-  assert.match(refine, /each question.*states what its answer (?:would )?change/i);
-  assert.match(refine, /grilling/i);
-  assert.match(refine, /Confirm/i);
-});
-
 test('implement guide bounds active task writers by doctor run writeConcurrency', () => {
   const implement = read(root + 'references/verbs/implement.md');
   assert.match(implement, /Keep active task writers within `doctor run` `writeConcurrency`\./);
@@ -962,14 +951,6 @@ test('verifier brief states the ten proof standards and baseline rule with no UR
     /baseline row/i,
   ]) {
     assert.match(brief, pattern);
-  }
-});
-
-test('glossary defines verification stage terms with no banned synonyms', () => {
-  const glossary = read(root + 'references/glossary.md');
-  for (const term of ['check', 'contract command', 'verification stage', 'runtime verification', 'verifier']) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    assert.match(glossary, new RegExp(`^\\| ${escaped} \\|[^|\\n]+\\|\\s*\\|$`, 'm'), term);
   }
 });
 

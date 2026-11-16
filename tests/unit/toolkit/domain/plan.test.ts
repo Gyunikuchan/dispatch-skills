@@ -314,7 +314,7 @@ test('task-plan: parses tasks with summary, prerequisites, criteria, owned paths
   assert.deepEqual(result.plan.changes.map((change) => change.path), ['src/contract.ts', 'src/reader.ts', 'src/writer.ts', 'docs/contract.md']);
 });
 
-test('task behaviour: records visible bullets and ignores collapsed detail', () => {
+test('task behaviour records visible bullets and excludes visuals', () => {
   const source = PLAN.replace('### T1 — Cap fetch retries', [
     '### T1 — Cap fetch retries',
     '- The retry loop stops after three attempts.',
@@ -337,6 +337,59 @@ test('task behaviour: records visible bullets and ignores collapsed detail', () 
     'Callers receive the final error.',
   ]);
   assert.ok(!result.warnings.some((item) => item.code === 'task-behaviour'));
+
+  const tableTask = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '| Attempt | Delay |',
+      '| --- | --- |',
+      '| 1 | 100ms |',
+    ].join('\n'),
+  );
+  assert.ok(parsePlan(tableTask).ok, JSON.stringify(parsePlan(tableTask)));
+
+  const diagramTask = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  Attempt --> Exhausted',
+      '```',
+      '',
+      'Text summary: Attempt sequence leading to exhaustion.',
+    ].join('\n'),
+  );
+  assert.ok(parsePlan(diagramTask).ok, JSON.stringify(parsePlan(diagramTask)));
+
+  const visualSource = PLAN.replace(
+    '### T1 — Cap fetch retries',
+    [
+      '### T1 — Cap fetch retries',
+      '- The retry loop stops after three attempts.',
+      '',
+      '| Attempt | Delay |',
+      '| --- | --- |',
+      '| 1 | 100ms |',
+      '',
+      '```mermaid',
+      'flowchart LR',
+      '  Attempt --> Exhausted',
+      '```',
+      '',
+      'Text summary: Attempt sequence leading to exhaustion.',
+    ].join('\n'),
+  );
+  const visualResult = parsePlan(visualSource);
+  assert.ok(visualResult.ok, JSON.stringify(visualResult));
+  assert.deepEqual(visualResult.plan.tasks[0]?.behaviour, [
+    'The retry loop stops after three attempts.',
+  ]);
 });
 
 test('task behaviour: warns on hidden, missing, count-only, and placeholder bullets', () => {
@@ -375,62 +428,7 @@ test('task behaviour: warns on hidden, missing, count-only, and placeholder bull
   assert.ok(!emptySummary.ok && emptySummary.defects.some((item) => item.code === 'task-map'));
 });
 
-test('task visuals pass lint and stay out of task behaviour', () => {
-  const tableTask = PLAN.replace(
-    '### T1 — Cap fetch retries',
-    [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '| Attempt | Delay |',
-      '| --- | --- |',
-      '| 1 | 100ms |',
-    ].join('\n'),
-  );
-  assert.ok(parsePlan(tableTask).ok, JSON.stringify(parsePlan(tableTask)));
-
-  const diagramTask = PLAN.replace(
-    '### T1 — Cap fetch retries',
-    [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  Attempt --> Exhausted',
-      '```',
-      '',
-      'Text summary: Attempt sequence leading to exhaustion.',
-    ].join('\n'),
-  );
-  assert.ok(parsePlan(diagramTask).ok, JSON.stringify(parsePlan(diagramTask)));
-
-  const source = PLAN.replace(
-    '### T1 — Cap fetch retries',
-    [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '| Attempt | Delay |',
-      '| --- | --- |',
-      '| 1 | 100ms |',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  Attempt --> Exhausted',
-      '```',
-      '',
-      'Text summary: Attempt sequence leading to exhaustion.',
-    ].join('\n'),
-  );
-  const result = parsePlan(source);
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.plan.tasks[0]?.behaviour, [
-    'The retry loop stops after three attempts.',
-  ]);
-});
-
-test('task-plan: rejects graph defects', () => {
+test('task-plan: rejects graph and mapping defects', () => {
   const cases: [string, string, string][] = [
     ['untasked entry', '## Proposed Changes\n\n### T1 — Define the shared contract', 'task-ownership'],
     ['malformed heading', '### T2 — Read through the contract', 'task-heading'],
@@ -447,9 +445,7 @@ test('task-plan: rejects graph defects', () => {
   };
   for (const [name, from, code] of cases) assert.ok(defects(TASKS.replace(from, replacements[name] ?? '')).some((item) => item === code), name);
   for (const summary of ['TBD', 'Same.']) assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', `| T2 | Read through the contract | ${summary} | T1 | SC2 |`)).includes('task-summary'), summary);
-});
 
-test('task-plan: rejects mapping defects', () => {
   assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC1 |')).includes('task-criteria'), 'double-mapped');
   assert.ok(defects(TASKS.replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2, SC9 |')).includes('task-criteria'), 'unknown criterion');
   assert.ok(defects(TASKS.replace('  - Integration: spans reader and writer tasks.\n', '')).includes('task-criteria'), 'unmapped criterion');
@@ -509,7 +505,7 @@ const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
 const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return [...(result.ok ? [] : result.defects), ...result.warnings].filter((item) => item.code === code); };
 
-test('grouped delete registers every path, accepting bare and backticked paths', () => {
+test('grouped delete registers every path and flags duplicates', () => {
   const source = withDelete('src/old-a.ts, src/old-b.ts');
   const plan = parsed(source);
   const deletes = plan.changes.filter((change) => change.action === 'DELETE');
@@ -521,9 +517,7 @@ test('grouped delete registers every path, accepting bare and backticked paths',
 
   const backticked = parsed(withDelete('`src/old-a.ts`, `src/old-b.ts`'));
   assert.deepEqual(backticked.changes.filter((change) => change.action === 'DELETE').map((change) => change.path), ['src/old-a.ts', 'src/old-b.ts']);
-});
 
-test('grouped delete flags a duplicate path', () => {
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/old-a.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/old-a.ts" appears more than once.']);
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/fetch.ts" appears more than once.']);
 });
@@ -611,17 +605,14 @@ test('ignores reference-only paths for overlap', () => {
 
 // SECTION: Seams
 
-test('parses seams', () => {
-  assert.deepEqual(parsed(PLAN).seams, []);
-  const source = PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: `tests/fetch.test.ts`, `node --test --test-name-pattern="a,b" tests/e2e.test.ts`\n');
-  assert.deepEqual(parsed(source).seams, ['tests/fetch.test.ts', 'node --test --test-name-pattern="a,b" tests/e2e.test.ts']);
-  assert.deepEqual(parsed(PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: none\n')).seams, []);
-});
-
 const seamWarnings = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'missing-seams');
 const withSeams = (declaration: string) => PLAN.replace('## Verification Plan\n', `## Verification Plan\n${declaration}`);
 
-test('seam advisory validates declarations, rejecting decoys and empty declarations while permitting explicit none', () => {
+test('seam advisory parses declarations, rejecting decoys and empty declarations while permitting explicit none', () => {
+  assert.deepEqual(parsed(PLAN).seams, []);
+  const declared = PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: `tests/fetch.test.ts`, `node --test --test-name-pattern="a,b" tests/e2e.test.ts`\n');
+  assert.deepEqual(parsed(declared).seams, ['tests/fetch.test.ts', 'node --test --test-name-pattern="a,b" tests/e2e.test.ts']);
+  assert.deepEqual(parsed(PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: none\n')).seams, []);
   for (const source of [PLAN, withSeams('- Seams:\n'), withSeams('- Seams: ``, ,\n')]) {
     const warnings = seamWarnings(source);
     assert.equal(warnings.length, 1);
@@ -725,54 +716,35 @@ test('undeclared test path warning: a test-like Changes path outside every Tests
 const CHECK_LINE = '  - Check: `node --test tests/fetch.test.ts`\n';
 const checkTestsWarnings = (source: string) => warningsOf(source, 'criterion-check-tests');
 
-test('criterion-check-tests warns when a Check names a test file that no Tests path lists', () => {
+test('criterion-check-tests warns only when a Check names a test file that no Tests path lists', () => {
   const source = PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/other.test.ts`\n');
   const found = checkTestsWarnings(source);
   assert.equal(found.length, 1);
   assert.equal(found[0]?.severity, 'warning');
   assert.equal(found[0]?.line, criterionLine(source, '  - Check: `node --test tests/other.test.ts`'));
   assert.match(found[0]?.message ?? '', /tests\/fetch\.test\.ts/);
-});
-
-test('criterion-check-tests passes an aggregate Check that names no test path', () => {
-  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `npm test`\n')), []);
-});
-
-test('criterion-check-tests passes when Tests lists only support files', () => {
-  const source = PLAN.replace(TESTS_LINE, '  - Tests: tests/helpers/fetch.ts\n')
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `npm test`\n')), [], 'aggregate Check without test paths');
+  const supportOnly = PLAN.replace(TESTS_LINE, '  - Tests: tests/helpers/fetch.ts\n')
     .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts\n', '  - Changes: src/fetch.ts, tests/fetch.test.ts, tests/helpers/fetch.ts\n')
     .replace(NEW_FETCH_TEST, `${NEW_FETCH_TEST}\n#### [NEW] tests/helpers/fetch.ts\n- Purpose: shares the retry fixture.`);
-  assert.deepEqual(checkTestsWarnings(source), []);
-});
-
-test('criterion-check-tests accepts ./-prefixed and quoted Check paths', () => {
-  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test "./tests/fetch.test.ts"`\n')), []);
-});
-
-test('criterion-check-tests keeps a quoted Tests path with a space whole', () => {
+  assert.deepEqual(checkTestsWarnings(supportOnly), [], 'support-only Tests');
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test "./tests/fetch.test.ts"`\n')), [], './-prefixed Check path');
   const spaced = 'tests/fetch case.test.ts';
-  const source = PLAN.replace('#### [NEW] tests/fetch.test.ts', `#### [NEW] \`${spaced}\``)
+  const spacedSource = PLAN.replace('#### [NEW] tests/fetch.test.ts', `#### [NEW] \`${spaced}\``)
     .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts', `  - Changes: src/fetch.ts, \`${spaced}\``)
     .replace(TESTS_LINE, `  - Tests: \`${spaced}\`\n`)
     .replace(CHECK_LINE, `  - Check: \`node --test "${spaced}"\`\n`);
-  assert.deepEqual(checkTestsWarnings(source), []);
-});
-
-test('criterion-check-tests counts a Tests file named in a second Check of the same criterion', () => {
-  const source = PLAN.replace(CHECK_LINE, `  - Check: \`node --test tests/other.test.ts\`\n${CHECK_LINE}`);
-  assert.deepEqual(checkTestsWarnings(source), []);
-});
-
-test('criterion-check-tests counts a Check directory that contains its Tests file', () => {
-  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/`\n')), []);
-  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests`\n')), []);
+  assert.deepEqual(checkTestsWarnings(spacedSource), [], 'quoted Tests path with a space');
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, `  - Check: \`node --test tests/other.test.ts\`\n${CHECK_LINE}`)), [], 'Tests file named in a second Check');
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/`\n')), [], 'Check directory with trailing slash');
+  assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests`\n')), [], 'Check directory without trailing slash');
 });
 
 const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');
 const withPattern = (pattern: string) => PLAN.replace('`node --test tests/fetch.test.ts`', `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``);
 const withFinding = (id: string) => PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);
 
-test('plan validation: keeps plan IDs out of test selectors and files', () => {
+test('plan IDs stay out of test selectors and files while criteria and findings register', () => {
   const verifyFound = namedDefects(withPattern('sc1 caps'));
   assert.equal(verifyFound.length, 1);
   assert.match(verifyFound[0]?.message ?? '', /names plan ID SC1; name the behavior instead\.$/);
@@ -783,9 +755,7 @@ test('plan validation: keeps plan IDs out of test selectors and files', () => {
   assert.equal(namedDefects(withFinding('R1-F001').replace('`node --test tests/fetch.test.ts`', '`node --test --test-name-pattern="R1-F001" tests/fetch.test.ts`')).length, 1);
 
   for (const name of ['SC10', 'ESC1', 'R1-F001']) assert.deepEqual(namedDefects(withPattern(name)), [], name);
-});
 
-test('records criterion and finding IDs as plan IDs', () => {
   assert.deepEqual(parsed(withFinding('R2-F003')).planIds, ['R2-F003', 'SC1', 'SC2']);
 });
 

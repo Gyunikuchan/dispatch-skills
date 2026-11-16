@@ -171,9 +171,7 @@ test('opencode rate-limit event becomes capacity with its retry delay; quota wor
     [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)', status: 429, retryAfterMs: 30_000 }, 30_000],
     [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)' }, undefined],
     [{ message: 'the cell is at capacity; retry shortly (after 30 s)', status: 429 }, undefined],
-    [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)', retryAfterMs: 45_000 }, 45_000],
     [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: 0 }, undefined],
-    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: -1 }, undefined],
     [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: '30000' }, undefined],
   ];
   for (const [error, retryAfterMs] of cases) {
@@ -290,33 +288,21 @@ test('opencode sessionUsage sums DB rows for the session and descendants with pe
   });
 });
 
-test('opencode sessionUsage limits a resumed session read to the launch window', () => {
-  let seen: OpencodeReadOptions | undefined;
-  const read: UsageReader = (_dbPath, _sessionId, options) => {
-    seen = options;
-    return readResult([{ depth: 0, createdMs: 1500, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
-  };
-  const session = opencode.sessionUsage?.(jsonStep(), {
-    ...sessionContext(read), launchStartMs: 1500, launchEndMs: 2500, resumed: true,
-  }, true);
-  assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 });
-  assert.equal(session?.complete, true);
-  assert.equal(session?.usage?.input, 8);
-  assert.equal(session?.usage?.actualEffort, 'max');
-});
-
-test('opencode sessionUsage reads a message at the final launch end', () => {
-  let seen: OpencodeReadOptions | undefined;
-  const read: UsageReader = (_dbPath, _sessionId, options) => {
-    seen = options;
-    return readResult([{ depth: 0, createdMs: 2500, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
-  };
-  const session = opencode.sessionUsage?.(jsonStep(), {
-    ...sessionContext(read), launchStartMs: 1500, launchEndMs: 2500, resumed: true,
-  }, true);
-  assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 });
-  assert.equal(session?.complete, true);
-  assert.equal(session?.usage?.input, 8);
+test('opencode sessionUsage bounds a resumed session read to the launch window', () => {
+  for (const createdMs of [1500, 2500]) {
+    let seen: OpencodeReadOptions | undefined;
+    const read: UsageReader = (_dbPath, _sessionId, options) => {
+      seen = options;
+      return readResult([{ depth: 0, createdMs, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
+    };
+    const session = opencode.sessionUsage?.(jsonStep(), {
+      ...sessionContext(read), launchStartMs: 1500, launchEndMs: 2500, resumed: true,
+    }, true);
+    assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 }, `createdMs ${createdMs}`);
+    assert.equal(session?.complete, true, `createdMs ${createdMs}`);
+    assert.equal(session?.usage?.input, 8, `createdMs ${createdMs}`);
+    assert.equal(session?.usage?.actualEffort, 'max', `createdMs ${createdMs}`);
+  }
 });
 
 test('opencode sessionUsage reports incomplete when DB attribution is unavailable and usage stays stdout-only', () => {

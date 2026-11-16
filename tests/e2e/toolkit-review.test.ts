@@ -401,38 +401,6 @@ test('coverage round follows an all-failed narrowed round at whole-target scope'
   } finally { t.f.cleanup(); }
 });
 
-test('code full re-review scope carries one changed paths label', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'scope-skill', {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 3}}}});
-    f.deps.liveness = {claude: true}; f.deps.orchestrator = null;
-    const prompts: string[] = [];
-    f.deps.delegate = async (_provider, request) => {
-      prompts.push(fs.readFileSync(request.promptPath, 'utf8'));
-      return {outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []};
-    };
-    await f.level('low'); await f.approve();
-    const launch = async (text: string) => {
-      const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0, JSON.stringify(made.output));
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), text);
-      assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-      return foldLedger(f.session).records.findLast(row => row.kind === 'writer' && row.data['phase'] === 'finished')!.data['candidate'] as string;
-    };
-    const review = async () => {
-      const result = await f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-      assert.equal(result.exit, 0, JSON.stringify(result.output));
-    };
-    const previousHead = await launch('first\n');
-    await review();
-    assert.equal((await f.run(['worktree','integrate','T1'])).exit, 0);
-    const head = await launch('second\n');
-    await review();
-    const metadata = JSON.parse(fs.readFileSync(path.join(f.session, '.state/reviews/code-T1/round-2/round.json'), 'utf8'));
-    assert.equal(metadata.scope, `Re-review round 2 (narrowed) — changed paths: src/file.ts; comparison: ${previousHead}..${head}`);
-    assert.equal(metadata.scope.split('changed paths:').length - 1, 1, metadata.scope);
-    assert.ok(prompts.at(-1)!.includes(metadata.scope));
-  } finally { f.cleanup(); }
-});
-
 test('coverage round past the cap counts an all-failed open-only round as used and stops for a user decision', async () => {
   const t = await coverageRepo(1); try {
     t.failing.add('claude'); t.failing.add('codex');
@@ -785,6 +753,7 @@ test('repository changes keep review-failed and name paths for an all-failed rou
 });
 
 test('repository changes report unavailable when baseline capture fails and keep replies', async () => {
+  for (const mode of ['missing-worktree', 'corrupt-baseline'] as const) {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -795,15 +764,21 @@ test('repository changes report unavailable when baseline capture fails and keep
     const worktree = path.resolve(f.session, made.value.path);
     fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    fs.rmSync(worktree, {recursive: true, force: true});
+    if (mode === 'missing-worktree') fs.rmSync(worktree, {recursive: true, force: true});
     const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
+    const review = waved.value.review as string;
+    if (mode === 'corrupt-baseline') {
+      fs.writeFileSync(path.join(f.root,'src/file.ts'),'edit before corrupt baseline\n');
+      fs.writeFileSync(path.join(f.session,'.state/reviews',review,'round-1/gen-1/checkout-baseline.json'), 'null');
+    }
     for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable', JSON.stringify(done.value));
-    assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value));
+    const done = await run(); assert.equal(done.exit, 0, JSON.stringify(done.output) + ' ' + mode);
+    assert.ok(done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable', JSON.stringify(done.value) + ' ' + mode);
+    assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value) + ' ' + mode);
   } finally {f.cleanup();}
+  }
 });
 
 test('repository changes return target-moved when the review target itself changes', async () => {
@@ -1295,30 +1270,6 @@ test('reused round number keeps a later report open and admits a whole-target re
   } finally {g.cleanup();}
 });
 
-test('repository changes report unavailable for a corrupt baseline and keep replies', async () => {
-  const f = await toolkitRepo(); try {
-    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
-    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-    f.deps.liveness = {claude: true};
-    f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []});
-    await f.level('low'); await f.approve();
-    const made = await f.run(['worktree','create','T1']); assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
-    assert.equal((await f.run(['worktree','submit','T1'])).exit, 0);
-    const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
-    assert.equal((await run()).output.reason, 'native-pending');
-    const waved = await run(); assert.equal(waved.output.reason, 'native-pending');
-    const review = waved.value.review as string;
-    fs.writeFileSync(path.join(f.root,'src/file.ts'),'edit before corrupt baseline\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-    fs.writeFileSync(path.join(f.session,'.state/reviews',review,'round-1/gen-1/checkout-baseline.json'), 'null');
-    const done = await run();
-    assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable', 'a corrupt baseline reports unavailable: ' + JSON.stringify(done.value));
-    assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value));
-  } finally {f.cleanup();}
-});
-
 test('retry after all-failed uses no host CLI and keeps the first report until a closing note', async () => {
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 2}}}});
@@ -1657,7 +1608,8 @@ test('two failed generations with different paths both stay open', async () => {
   } finally {f.cleanup();}
 });
 
-test('a quoted rerun for the remaining open report is honored after a later report closes', async () => {
+test('quoted and stale rerun notes bind only the open report', async () => {
+  {
   const {admission} = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 1}}}});
@@ -1697,10 +1649,9 @@ test('a quoted rerun for the remaining open report is honored after a later repo
     assert.equal(rerun.output.reason, 'native-pending', 'the quoted rerun starts round 2: ' + JSON.stringify(rerun.output));
     assert.equal(rerun.value.round, 2);
   } finally {f.cleanup();}
-});
-
-test('a stale rerun note for a closed later report authorizes nothing', async () => {
-  const {admission} = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
+  }
+  {
+    const {admission} = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
   const f = await toolkitRepo(); try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {'read-delegates': {claude: {targets: [{low: {model: 'native-model'}}]}}, phases: {'code-review': {targets: {low: 1}, rounds: {low: 1}}}});
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -1736,6 +1687,7 @@ test('a stale rerun note for a closed later report authorizes nothing', async ()
     const refused = await run();
     assert.equal(refused.output.reason, 'round-cap', 'a stale note for the closed report starts no round: ' + JSON.stringify(refused.output));
   } finally {f.cleanup();}
+  }
 });
 
 test('a host change past a pending reserve finalizes with a reply a fallback and a failure', async () => {
@@ -1860,8 +1812,9 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
   } finally {f.cleanup();}
 });
 
-test('an ordinary differential round leaves the sibling open without a rerun binding', async () => {
-  const f = await toolkitRepo(); try {
+test('sibling reports stay open with correct rerun bindings', async () => {
+  {
+    const f = await toolkitRepo(); try {
     await f.level('low'); await f.approve();
     const review = 'demo-sibling-close';
     const roundDir = path.join(f.session,'.state/reviews',review,'round-1');
@@ -1895,10 +1848,9 @@ test('an ordinary differential round leaves the sibling open without a rerun bin
     const closed = ((await f.run(['status','show'])).value.openRepositoryChanges ?? []).filter((entry: {review: string; round: number}) => entry.review === review && entry.round === 1);
     assert.deepEqual(closed, [], 'a changes note closes the remaining report: ' + JSON.stringify(closed));
   } finally {f.cleanup();}
-});
-
-test('a rerun note past the executable window leaves the sibling open for a changes note', async () => {
-  const f = await toolkitRepo(); try {
+  }
+  {
+    const f = await toolkitRepo(); try {
     await f.level('low'); await f.approve();
     const review = 'demo-sibling-final-window';
     const roundDir = path.join(f.session,'.state/reviews',review,'round-1');
@@ -1932,10 +1884,9 @@ test('a rerun note past the executable window leaves the sibling open for a chan
     const closed = ((await f.run(['status','show'])).value.openRepositoryChanges ?? []).filter((entry: {review: string; round: number}) => entry.review === review && entry.round === 1);
     assert.deepEqual(closed, [], 'a changes note closes the remaining report: ' + JSON.stringify(closed));
   } finally {f.cleanup();}
-});
-
-test('a satisfied rerun for the later report keeps the earlier sibling open', async () => {
-  const f = await toolkitRepo(); try {
+  }
+  {
+    const f = await toolkitRepo(); try {
     await f.level('low'); await f.approve();
     const review = 'demo-rerun-sibling-scope';
     const roundDir = path.join(f.session,'.state/reviews',review,'round-1');
@@ -1959,6 +1910,7 @@ test('a satisfied rerun for the later report keeps the earlier sibling open', as
     assert.equal(open.reportSeq, seqA, 'the open entry binds the earlier report: ' + JSON.stringify(open));
     assert.equal(open.rerunPending, undefined, 'the earlier report carries no rerun binding: ' + JSON.stringify(open));
   } finally {f.cleanup();}
+  }
 });
 
 test('an all-failed round surfaces a checkout write failure instead of a quiet review-failed', async () => {

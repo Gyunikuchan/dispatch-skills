@@ -5,8 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
-import { ADAPTERS, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
-import { readOpencodeMessages } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
+import { nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, readTranscript, stageAt } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
 
@@ -24,24 +23,19 @@ test('registry requires a registered host and its declared safe session id', () 
     codex: { sessionEnv: ['CODEX_THREAD_ID'], read: q => ({ rows: [{ stage: 'spec', role: 'host', model: 'm', effort: null, depth: 0, atMs: 0, reasoningInOutput: true, input: q.budget.remaining, output: 0 }] }) },
   });
   assert.equal(result.rows[0]?.input, MAX_TOTAL_BYTES);
-});
 
-test('registry covers every host platform and accepts OpenCode host ids', () => {
-  assert.deepEqual(Object.keys(ADAPTERS).sort(), ['agy', 'claude', 'codex', 'opencode']);
-  assert.equal(typeof nodeHostUsageFs.opencodeMessages, 'function');
-  assert.equal(nodeHostUsageFs.opencodeMessages, readOpencodeMessages);
-  let calls = 0;
-  const read = (id: string | undefined) => readHostUsage('opencode', { ...input, env: () => id }, {
+  let openCalls = 0;
+  const openRead = (id: string | undefined) => readHostUsage('opencode', { ...input, env: () => id }, {
     ...memoryFs({}),
-    opencodeMessages: () => { calls++; return { messages: [], skipped: 0, truncated: null }; },
+    opencodeMessages: () => { openCalls++; return { messages: [], skipped: 0, truncated: null }; },
   });
-  assert.equal(read(undefined).unavailable, 'no host id');
-  assert.equal(read('ses_session-1').unavailable, 'no usage records');
-  assert.equal(calls, 1);
+  assert.equal(openRead(undefined).unavailable, 'no host id');
+  assert.equal(openRead('ses_session-1').unavailable, 'no usage records');
+  assert.equal(openCalls, 1);
   for (const id of ['ses/1', 'ses_1.2', '../ses_1']) {
-    assert.equal(read(id).unavailable, 'invalid host id');
+    assert.equal(openRead(id).unavailable, 'invalid host id');
   }
-  assert.equal(calls, 1);
+  assert.equal(openCalls, 1);
 });
 
 test('reader caps growing plain files and decoded compressed data', () => {
@@ -95,10 +89,6 @@ test('adapter exceptions expose allowlisted codes without their messages', () =>
   assert.equal(invoke('EACCES').unavailable, 'read-error:EACCES');
   assert.equal(invoke('SECRET').unavailable, 'read-error:EUNKNOWN');
   assert.ok(!JSON.stringify(invoke('SECRET')).includes('secret'));
-});
-
-test('events before all stage milestones use the first stage', () => {
-  assert.equal(stageAt([{ stage: 'spec', atMs: 100 }, { stage: 'plan', atMs: 200 }], 0), 'spec');
 });
 
 test('node filesystem treats paths beneath regular files as absent', () => {
@@ -234,4 +224,5 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
   assert.equal((result.rows[2] as { phase?: string }).phase, 'phase-b');
   assert.equal(result.rows[2]?.input, 30);
   assert.ok((result.rows[1] as { bands?: unknown }).bands);
+  assert.equal(stageAt([{ stage: 'spec', atMs: 100 }, { stage: 'plan', atMs: 200 }], 0), 'spec');
 });
