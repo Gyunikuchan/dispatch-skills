@@ -116,18 +116,18 @@ Use the strongest available model for the orchestrator, because cheap explorers 
   "pricing": {
     "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
     "my-model": {
-      "reasoning": "output",
       "rates": { "input": 0.5, "output": 2, "cacheRead": 0.05 },
-      "tiers": [{ "abovePromptTokens": 100000, "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }]
+      "tiers": [{ "abovePromptTokens": 100000, "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }],
+      "periods": [{ "from": "2026-12-01", "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }]
     }
   }
 }
 ```
 
 - **Key:** a model id without its `provider/` prefix or version suffix, or `provider/*`. For `opencode-go/muse-spark-1.3-contributor`, use `muse-spark-1.3-contributor`. Keys match without regard to case. A key replaces the shipped key of the same name.
-- **`rates`:** USD per 1M tokens. `input` and `output` are required; `cacheRead`, `cacheWrite5m` and `cacheWrite1h` are optional. Each value is a number of 0 or more. List every counter rate that the model's route reports: usage with a nonzero counter that has no rate renders unpriced. A cache write that the source does not split by lifetime needs both `cacheWrite5m` and `cacheWrite1h`.
+- **`rates`:** USD per 1M tokens. `input` and `output` are required; `cacheRead`, `cacheWrite5m` and `cacheWrite1h` are optional. Each value is a number of 0 or more. List every counter rate that the model's route reports: usage with a nonzero counter that has no rate renders unpriced. A cache write that the source does not split by lifetime needs both `cacheWrite5m` and `cacheWrite1h`. Reasoning that a source reports apart from output (OpenCode and Antigravity) always bills at the output rate.
 - **`tiers`:** optional. Each tier holds `abovePromptTokens` (a positive integer, ascending across tiers) and `rates` with the same keys as the base `rates`. A request whose prompt (uncached input, cache read and cache write) is above the threshold takes that tier's rates for all its tokens.
-- **`reasoning`:** Optional. `"output"` is the only rule and the default: reasoning that the source reports apart from output (OpenCode and Antigravity) bills at the output rate.
+- **`periods`:** optional array of dated rate changes (`from`: `YYYY-MM-DD` UTC, ascending and unique; `rates` and optional `tiers` with the same shape as the base entry). Base `rates` and `tiers` apply before the first `from`; the latest period with `from` on or before the run's UTC start date applies (and a period without `tiers` has no tiers).
 
 Dispatch matches each model id in this order:
 
@@ -137,7 +137,7 @@ Dispatch matches each model id in this order:
 
 An id with no match is unpriced. For example, `bedrock.claude-opus-5-5`, `us.anthropic.claude-opus-5-5-v1:0` and `claude-opus-5-5@20261001` use the `claude-opus-5-5` rate, and `lmstudio/qwen3.8-27b-ridge` uses the `lmstudio/*` entry above. Bedrock and Vertex ids use first-party rates; add an entry when your partner rates differ.
 
-Dispatch ignores a malformed entry (unknown key, missing `input` or `output`, negative or non-numeric rate, tiers out of order or with different keys, or `reasoning` other than `"output"`). `doctor run` lists each one in `config.warnings`; the configuration stays valid and no launch is blocked. For the cost columns, tier ranges and coverage reasons, see [`diagnostics render`](../toolkit.md#diagnostics-render).
+Dispatch ignores a malformed entry (unknown key, missing `input` or `output`, negative or non-numeric rate, tiers out of order or with different keys, or invalid/non-ascending `periods`). `doctor run` lists each one in `config.warnings`; the configuration stays valid and no launch is blocked. For the cost columns, tier ranges and cost reasons, see [`diagnostics render`](../toolkit.md#diagnostics-render).
 
 ## Provider-specific settings
 

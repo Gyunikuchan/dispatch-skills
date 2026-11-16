@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { formatCost, resolvePricing, sumCost, type Cost, type Pricer } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { REVIEW_TAGS_BY_KIND, collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
@@ -172,79 +171,6 @@ const draftsOf = (text: string) => { const result = parseReport({kind: 'code', s
 
 
 
-// SECTION: Estimated cost rendering
-
-const PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    alpha: { rates: { input: 10, output: 20, cacheRead: 1 }, reasoning: 'output' },
-    beta: { rates: { input: 2, output: 4 } },
-    zero: { rates: { input: 0, output: 0 } },
-    tiered: { rates: { input: 1, output: 2 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 5, output: 10 } }] },
-    ttl: { rates: { input: 1, output: 1, cacheWrite5m: 1.25, cacheWrite1h: 2 } },
-  },
-};
-const pricer = resolvePricing(PRICES, undefined)!;
-const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) => renderDiagnostics(runs, priced ?? undefined).text;
-const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split('\n###')[0]!.split('\n').filter((line) => line.startsWith('|'));
-const overviewRows = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('| 1 · '));
-const lastCells = (line: string, n: number) => line.replace(/ \|$/, '').split(' | ').slice(-n);
-const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`))!, 2);
-const M = 1_000_000;
-const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
-  invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
-
-
-
-
-
-
-
-// SECTION: Cost folding under the byte cap
-
-const CAP = DIAGNOSTIC_LIMITS.reportBytes;
-const FOLD_PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    flat: { rates: { input: 4, output: 4 } },
-    wide: { rates: { input: 1, output: 1 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 4, output: 4 } }] },
-    free: { rates: { input: 0, output: 0 } },
-  },
-};
-const foldPricer = resolvePricing(FOLD_PRICES, undefined)!;
-const tableCells = (text: string, heading: string) => tableLines(text, heading).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const overviewCells = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('|')).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const byKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const summaryCost = (text: string) => /^- Estimated cost \(host, subagents and CLI delegates\): (\S+) · /m.exec(text)?.[1];
-
-// Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
-type Source = { key: string; tokens: number; cost: Cost };
-const exactCost = (usd: number): Cost => ({ low: usd, high: usd, priced: true, reasons: new Set() });
-function sourceRow(index: number): { model: string; tokens: number; cost: Cost } {
-  const m = index % 7 + 1, quarter = 250_000 * m;
-  switch (index % 4) {
-    case 0: return { model: 'flat', tokens: quarter, cost: exactCost(m) };
-    case 1: return { model: 'wide', tokens: quarter, cost: { low: m / 4, high: m, priced: true, reasons: new Set(['tier unknown']) } };
-    case 2: return { model: 'mystery', tokens: 1000 * (index % 11 + 1), cost: { low: 0, high: 0, priced: false, reasons: new Set(['unpriced model']) } };
-    default: return { model: 'free', tokens: 1000 * (index % 13 + 1), cost: exactCost(0) };
-  }
-}
-const rankOrder = (rows: readonly Source[]) => [...rows].sort((a, b) => b.cost.high - a.cost.high || b.cost.low - a.cost.low || b.tokens - a.tokens || byKey(a.key, b.key));
-const totalOf = (rows: readonly Source[]) => formatCost(sumCost(rows.map((r) => r.cost)));
-const reasonsOf = (rows: readonly Source[]) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
-
-/** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
-function assertFolded(kept: readonly string[][], folded: readonly string[], keyOf: (cells: string[]) => string, all: readonly Source[], tokensColumn: number, costColumn: number): Source[] {
-  const keptKeys = kept.map(keyOf);
-  assert.equal(new Set(keptKeys).size, kept.length, 'kept rows are distinct');
-  assert.deepEqual([...keptKeys].sort(), rankOrder(all).slice(0, kept.length).map((r) => r.key).sort(), 'kept rows follow the rank');
-  const rest = all.filter((r) => !keptKeys.includes(r.key));
-  assert.equal(folded[0], `${rest.length} smaller rows`);
-  assert.equal(folded[tokensColumn], rest.reduce((n, r) => n + r.tokens, 0).toLocaleString('en-US'));
-  assert.equal(folded[costColumn], totalOf(rest));
-  return rest;
-}
-
 test('diagnostics config renders utility-subagents and redacts read-command locators', () => {
   const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300000 } } };
   const sanitized = sanitizeFacts(facts({ config }));
@@ -257,7 +183,7 @@ test('diagnostics config renders utility-subagents and redacts read-command loca
 });
 
 test('pricing override snapshot keeps dotted ids and provider wildcards and drops unsafe keys and invalid entries', () => {
-  const entry = { rates: { input: 1, output: 5, cacheRead: 0.05 }, tiers: [{ abovePromptTokens: 272000, rates: { input: 2, output: 7.5, cacheRead: 0.1 } }], reasoning: 'output' };
+  const entry = { rates: { input: 1, output: 5, cacheRead: 0.05 }, tiers: [{ abovePromptTokens: 272000, rates: { input: 2, output: 7.5, cacheRead: 0.1 } }] };
   const zero = { rates: { input: 0, output: 0 } };
   const pricing = {
     'gpt-6.1-terra': entry, 'lmstudio/*': zero, 'bedrock.claude-opus-5-5': zero,
@@ -331,7 +257,7 @@ test('diagnostics report: renders summary shell with sections, version, and dura
 test('diagnostics report: renders duration, token, and estimate columns with unavailable handling', () => {
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
-  assert.ok(text.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
+  assert.ok(text.includes('| 1 · review · medium | code review · review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
   assert.match(text, /^- Runs: 1 · measured duration: 1h 2m 3s$/m);
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
@@ -340,21 +266,19 @@ test('diagnostics report: renders duration, token, and estimate columns with una
     phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000 }],
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
   })]);
-  assert.ok(partial.includes('| 1 · review · medium | code review | complete | 1h 2m 3s | — | — | — | 2 | 500 | — | — | 20 | 1/2 |'), partial);
-  assert.ok(partial.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 |'), partial);
-  assert.match(partial, /native and write —/);
+  assert.ok(partial.includes('| 1 · review · medium | code review · review | complete | 1h 2m 3s | 2 | 500 | — | — | 20 | 1/2 |'), partial);
+  assert.ok(partial.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 | — | — |'), partial);
 
-  const estimated = render([facts({
+  const legacy = render([facts({
     invocations: [
-      invocation(),
-      bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, tokens: 5000 }),
-      invocation({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native', estimated: true, usage: { input: 9000, output: 1000 } }),
+      { ...invocation(), estimated: true, tokens: 5000 } as unknown as InvocationFacts,
+      { ...bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native' }), estimated: true, tokens: 5000 } as unknown as InvocationFacts,
     ],
   })]);
-  assert.match(estimated, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
-  assert.match(estimated, /^- Estimated, excluded from measured totals: native and write ~15,000$/m);
-  assert.ok(estimated.includes('| 3 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), estimated);
-  assert.ok(estimated.includes('| ~5,000 | native completed |'), estimated);
+  assert.match(legacy, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
+  assert.doesNotMatch(legacy, /Estimated, excluded from measured totals/);
+  assert.doesNotMatch(legacy, /~5,000/);
+  assert.ok(legacy.includes('| 2 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), legacy);
 });
 
 test('elapsed waits and partial usage remain explicit', () => {
@@ -364,12 +288,11 @@ test('elapsed waits and partial usage remain explicit', () => {
     invocations: [
       invocation({ usage }),
       bare({ provider: 'claude', outcome: 'timeout' }),
-      bare({ surface: 'native', mode: 'native', estimated: true }),
+      bare({ surface: 'native', mode: 'native' }),
     ],
   });
   const text = render([run]);
   assert.match(text, /Provider CLI measured tokens: 3,040 \(input 1,000 · cache read 2,000 · cache write — · output 40\) · launch coverage 1\/2/);
-  assert.match(text, /native and write —/);
   assert.match(text, /Full conversation totals are unavailable/);
 
   assert.ok(text.includes('| — | native completed |'), 'unattested native usage stays unavailable');

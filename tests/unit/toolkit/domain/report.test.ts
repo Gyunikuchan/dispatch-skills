@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { formatCost, resolvePricing, sumCost, type Cost, type Pricer } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { REVIEW_TAGS_BY_KIND, collectFindings, matchFinding, parseReport } from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
@@ -171,79 +170,6 @@ const draftsOf = (text: string) => { const result = parseReport({kind: 'code', s
 
 
 
-
-// SECTION: Estimated cost rendering
-
-const PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    alpha: { rates: { input: 10, output: 20, cacheRead: 1 }, reasoning: 'output' },
-    beta: { rates: { input: 2, output: 4 } },
-    zero: { rates: { input: 0, output: 0 } },
-    tiered: { rates: { input: 1, output: 2 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 5, output: 10 } }] },
-    ttl: { rates: { input: 1, output: 1, cacheWrite5m: 1.25, cacheWrite1h: 2 } },
-  },
-};
-const pricer = resolvePricing(PRICES, undefined)!;
-const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) => renderDiagnostics(runs, priced ?? undefined).text;
-const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split('\n###')[0]!.split('\n').filter((line) => line.startsWith('|'));
-const overviewRows = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('| 1 · '));
-const lastCells = (line: string, n: number) => line.replace(/ \|$/, '').split(' | ').slice(-n);
-const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`))!, 2);
-const M = 1_000_000;
-const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
-  invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
-
-
-
-
-
-
-
-// SECTION: Cost folding under the byte cap
-
-const CAP = DIAGNOSTIC_LIMITS.reportBytes;
-const FOLD_PRICES = {
-  asOf: '2026-11-14', source: ['https://example.test/pricing'],
-  models: {
-    flat: { rates: { input: 4, output: 4 } },
-    wide: { rates: { input: 1, output: 1 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 4, output: 4 } }] },
-    free: { rates: { input: 0, output: 0 } },
-  },
-};
-const foldPricer = resolvePricing(FOLD_PRICES, undefined)!;
-const tableCells = (text: string, heading: string) => tableLines(text, heading).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const overviewCells = (text: string) => text.split('## Overview')[1]!.split('### Grounding')[0]!.split('\n').filter((line) => line.startsWith('|')).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const byKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const summaryCost = (text: string) => /^- Estimated cost \(host, subagents and CLI delegates\): (\S+) · /m.exec(text)?.[1];
-
-// Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
-type Source = { key: string; tokens: number; cost: Cost };
-const exactCost = (usd: number): Cost => ({ low: usd, high: usd, priced: true, reasons: new Set() });
-function sourceRow(index: number): { model: string; tokens: number; cost: Cost } {
-  const m = index % 7 + 1, quarter = 250_000 * m;
-  switch (index % 4) {
-    case 0: return { model: 'flat', tokens: quarter, cost: exactCost(m) };
-    case 1: return { model: 'wide', tokens: quarter, cost: { low: m / 4, high: m, priced: true, reasons: new Set(['tier unknown']) } };
-    case 2: return { model: 'mystery', tokens: 1000 * (index % 11 + 1), cost: { low: 0, high: 0, priced: false, reasons: new Set(['unpriced model']) } };
-    default: return { model: 'free', tokens: 1000 * (index % 13 + 1), cost: exactCost(0) };
-  }
-}
-const rankOrder = (rows: readonly Source[]) => [...rows].sort((a, b) => b.cost.high - a.cost.high || b.cost.low - a.cost.low || b.tokens - a.tokens || byKey(a.key, b.key));
-const totalOf = (rows: readonly Source[]) => formatCost(sumCost(rows.map((r) => r.cost)));
-const reasonsOf = (rows: readonly Source[]) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
-
-/** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
-function assertFolded(kept: readonly string[][], folded: readonly string[], keyOf: (cells: string[]) => string, all: readonly Source[], tokensColumn: number, costColumn: number): Source[] {
-  const keptKeys = kept.map(keyOf);
-  assert.equal(new Set(keptKeys).size, kept.length, 'kept rows are distinct');
-  assert.deepEqual([...keptKeys].sort(), rankOrder(all).slice(0, kept.length).map((r) => r.key).sort(), 'kept rows follow the rank');
-  const rest = all.filter((r) => !keptKeys.includes(r.key));
-  assert.equal(folded[0], `${rest.length} smaller rows`);
-  assert.equal(folded[tokensColumn], rest.reduce((n, r) => n + r.tokens, 0).toLocaleString('en-US'));
-  assert.equal(folded[costColumn], totalOf(rest));
-  return rest;
-}
 
 test('rejected MUST reports require exact explicit requested confirmations', () => {
   const parse = (confirmations?: unknown) => parseReport({kind:'code',source:'claude[0]',expectedRequestIds:['request-1'],text:JSON.stringify({status:'CLEAN',findings:[],...(confirmations === undefined ? {} : {confirmations})})});
@@ -846,9 +772,9 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
     const text = render([facts({ invocations: [invocation({ provider: 'opencode', model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', usage })] })]);
     const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
     assert.deepEqual(rows, [
-      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | high | 100 | — | — | 10 | — | 1/1 | — |',
-      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | max | 120 | — | — | 20 | — | 1/1 | — |',
-      '| code review | opencode | delegate | opencode-go/muse-spark-1.3-contributor | low | 80 | — | — | 10 | — | 1/1 | — |',
+      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | high | 100 | — | — | 10 | — | 1/1 | — | — |',
+      '| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | max | 120 | — | — | 20 | — | 1/1 | — | — |',
+      '| code review | opencode | delegate | opencode-go/muse-spark-1.3-contributor | low | 80 | — | — | 10 | — | 1/1 | — | — |',
     ]);
     const counters = rows.map((line) => line.split(' | ').slice(5, 9).map((cell) => cell === '—' ? 0 : Number(cell)));
     assert.deepEqual([
@@ -868,8 +794,8 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
       },
     } })] })]);
     const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-    assert.ok(rows.includes('| code review | opencode | delegate | — | — | 5 | — | — | 1 | — | 1/1 | — |'), text);
-    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | — | 10 | — | — | 2 | — | 1/1 | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | — | — | 5 | — | — | 1 | — | 1/1 | — | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | — | 10 | — | — | 2 | — | 1/1 | — | — |'), text);
     assert.equal(rows.length, 2, text);
 
   }
@@ -884,10 +810,10 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
     ] } })]);
     const rows = stageRows(text).filter((line) => line.includes('| opencode | host |') || line.includes('| opencode | subagent |'));
     assert.deepEqual(rows, [
-      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | high | 10 | — | — | 1 | — | — | — |',
-      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | max | 20 | — | — | 2 | — | — | — |',
-      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | high | 30 | — | — | 3 | — | — | — |',
-      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | low | 40 | — | — | 4 | — | — | — |',
+      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | high | 10 | — | — | 1 | — | — | — | — |',
+      '| plan | opencode | host | opencode-go/deepseek-v4.1-flash | max | 20 | — | — | 2 | — | — | — | — |',
+      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | high | 30 | — | — | 3 | — | — | — | — |',
+      '| plan | opencode | subagent | opencode-go/muse-spark-1.3-contributor | low | 40 | — | — | 4 | — | — | — | — |',
     ]);
 
   }
@@ -915,8 +841,8 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
       },
     } })] })]);
     const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | medium | 10 | — | — | 1 | — | 1/1 | — |'), text);
-    assert.ok(rows.includes('| code review | opencode | delegate | — | high | 20 | — | — | 2 | — | 1/1 | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | opencode-go/deepseek-v4.1-flash | medium | 10 | — | — | 1 | — | 1/1 | — | — |'), text);
+    assert.ok(rows.includes('| code review | opencode | delegate | — | high | 20 | — | — | 2 | — | 1/1 | — | — |'), text);
     assert.equal(rows.length, 2, text);
 
   }
@@ -931,7 +857,7 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
       },
     } })] })]);
     const rows = stageRows(text).filter((line) => line.includes('| opencode | delegate |'));
-    assert.deepEqual(rows, ['| code review | opencode | delegate | — | high | 30 | — | — | 3 | — | 1/1 | — |']);
+    assert.deepEqual(rows, ['| code review | opencode | delegate | — | high | 30 | — | — | 3 | — | 1/1 | — | — |']);
 
   }
   // merged from: bracketed model id renders its name in Tokens by stage
@@ -943,7 +869,7 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
     } })] })]);
     const rows = stageRows(text).filter((line) => line.includes('| claude | delegate |'));
     assert.deepEqual(rows, [
-      '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 | — |',
+      '| code review | claude | delegate | claude-opus-5-5[1m] | high | 100 | — | — | 10 | — | 1/1 | — | — |',
     ]);
 
   }
@@ -985,7 +911,7 @@ test('grounding retro observations pass the gate and render only in the Overview
     assert.doesNotMatch(text.slice(0, text.indexOf('## Overview')), /grounding/, 'summary top findings');
     assert.equal(renderDiagnostics([run]).findings, 1);
     assert.match(text, /- Host retro: collected · 2 accepted · 0 rejected/);
-    assert.match(render([facts()]), /### Grounding\n\n\| Run \|.*\n\| --- .*\n\| — \| — \| — \| — \| — \|\n/, 'empty table keeps a placeholder row');
+    assert.doesNotMatch(render([facts()]), /### Grounding/, 'empty grounding table is omitted');
 
   }
 });

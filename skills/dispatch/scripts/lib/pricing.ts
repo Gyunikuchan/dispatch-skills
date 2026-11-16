@@ -11,13 +11,15 @@ import { splitUsageKey, type Counters } from './usage/rows.ts';
 
 /** USD per 1M tokens. */
 export type Rates = { input: number; output: number; cacheRead?: number; cacheWrite5m?: number; cacheWrite1h?: number };
-export type PriceEntry = { rates: Rates; tiers?: { abovePromptTokens: number; rates: Rates }[]; reasoning?: 'output' };
-export type CostReason = 'unpriced model' | 'no token breakdown' | 'tier unknown' | 'cache TTL unknown';
+export type Tier = { abovePromptTokens: number; rates: Rates };
+export type Period = { from: string; rates: Rates; tiers?: Tier[] };
+export type PriceEntry = { rates: Rates; tiers?: Tier[]; periods?: Period[] };
+export type CostReason = 'unpriced model' | 'no usage' | 'tier unknown' | 'cache TTL unknown';
 /** USD; `low` equals `high` unless a tier or cache TTL is unknown. */
 export type Cost = { low: number; high: number; priced: boolean; reasons: Set<CostReason> };
 export type Pricer = {
   meta: { asOf: string; source: readonly string[] };
-  price(model: string, usage: Counters & { bands?: Bands }, reasoningInOutput?: boolean): Cost;
+  price(model: string, usage: Counters & { bands?: Bands }, reasoningInOutput?: boolean, onDate?: string): Cost;
 };
 
 // SECTION: Validation
@@ -34,31 +36,65 @@ function ratesProblem(v: unknown, where: string): string | undefined {
   return ['input', 'output'].map((key) => v[key] === undefined ? `${where}.${key} missing` : undefined).find(Boolean);
 }
 
+const rateKeys = (r: unknown) => Object.keys(r as object).sort().join();
+
+function isIsoDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(v);
+}
+
+function tiersProblem(tiers: unknown, baseRates: unknown, where: string): string | undefined {
+  if (tiers === undefined) return undefined;
+  if (!Array.isArray(tiers)) return `${where} not an array`;
+  // Tiers share the base rate keys so a lookup never mixes tiers.
+  let previous = 0;
+  for (const [i, tier] of tiers.entries()) {
+    const slot = `${where}[${i}]`;
+    if (!isRecord(tier) || Object.keys(tier).some((key) => key !== 'abovePromptTokens' && key !== 'rates')) {
+      return `${slot} must hold only abovePromptTokens and rates`;
+    }
+    const at = tier['abovePromptTokens'];
+    if (!Number.isSafeInteger(at) || (at as number) <= previous) {
+      return `${slot}.abovePromptTokens must be a positive integer above the previous tier`;
+    }
+    previous = at as number;
+    const tierBad = ratesProblem(tier['rates'], `${slot}.rates`);
+    if (tierBad) return tierBad;
+    if (rateKeys(tier['rates']) !== rateKeys(baseRates)) return `${slot}.rates keys differ from rates`;
+  }
+  return undefined;
+}
+
+function periodsProblem(periods: unknown): string | undefined {
+  if (periods === undefined) return undefined;
+  if (!Array.isArray(periods)) return 'periods not an array';
+  let previous: string | undefined;
+  for (const [i, period] of periods.entries()) {
+    const slot = `periods[${i}]`;
+    if (!isRecord(period) || Object.keys(period).some((key) => key !== 'from' && key !== 'rates' && key !== 'tiers')) {
+      return `${slot} must hold only from, rates and tiers`;
+    }
+    const from = period['from'];
+    if (!isIsoDate(from)) return `${slot}.from must be a valid YYYY-MM-DD date`;
+    if (previous !== undefined && from <= previous) return `${slot}.from must be after the previous period`;
+    previous = from;
+    const rateBad = ratesProblem(period['rates'], `${slot}.rates`);
+    if (rateBad) return rateBad;
+    const tierBad = tiersProblem(period['tiers'], period['rates'], `${slot}.tiers`);
+    if (tierBad) return tierBad;
+  }
+  return undefined;
+}
+
 /** The first reason an entry is invalid, or undefined when it is valid. */
 function entryProblem(entry: unknown): string | undefined {
   if (!isRecord(entry)) return 'not an object';
-  const extra = Object.keys(entry).find((key) => !['rates', 'tiers', 'reasoning'].includes(key));
+  const extra = Object.keys(entry).find((key) => !['rates', 'tiers', 'periods'].includes(key));
   if (extra) return `unknown key ${extra}`;
-  const bad = ratesProblem(entry['rates'], 'rates');
-  if (bad) return bad;
-  if (entry['reasoning'] !== undefined && entry['reasoning'] !== 'output') return 'reasoning must be "output"';
-  const tiers = entry['tiers'];
-  if (tiers === undefined) return undefined;
-  if (!Array.isArray(tiers)) return 'tiers not an array';
-  // Tiers share the base rate keys so a lookup never mixes tiers.
-  const keys = (r: unknown) => Object.keys(r as object).sort().join();
-  let previous = 0;
-  for (const [i, tier] of tiers.entries()) {
-    const where = `tiers[${i}]`;
-    if (!isRecord(tier) || Object.keys(tier).some((key) => key !== 'abovePromptTokens' && key !== 'rates')) return `${where} must hold only abovePromptTokens and rates`;
-    const at = tier['abovePromptTokens'];
-    if (!Number.isSafeInteger(at) || (at as number) <= previous) return `${where}.abovePromptTokens must be a positive integer above the previous tier`;
-    previous = at as number;
-    const tierBad = ratesProblem(tier['rates'], `${where}.rates`);
-    if (tierBad) return tierBad;
-    if (keys(tier['rates']) !== keys(entry['rates'])) return `${where}.rates keys differ from rates`;
-  }
-  return undefined;
+  return ratesProblem(entry['rates'], 'rates')
+    ?? tiersProblem(entry['tiers'], entry['rates'], 'tiers')
+    ?? periodsProblem(entry['periods']);
 }
 
 /** One message per malformed override entry, naming the key and the reason. */
@@ -101,9 +137,9 @@ export function resolvePricing(table: unknown, override: unknown): Pricer | unde
     }
     return best === undefined ? undefined : models.get(best);
   };
-  return { meta: { asOf: table['asOf'], source: table['source'] as string[] }, price: (model, usage, reasoningInOutput) => {
+  return { meta: { asOf: table['asOf'], source: table['source'] as string[] }, price: (model, usage, reasoningInOutput, onDate) => {
     const id = splitUsageKey(String(model)).model;
-    return priceUsage(id === OTHER_KEY ? undefined : find(id), usage, reasoningInOutput);
+    return priceUsage(id === OTHER_KEY ? undefined : find(id), usage, reasoningInOutput, onDate);
   } };
 }
 
@@ -126,9 +162,20 @@ const NONE: Counters = { input: 0, output: 0 };
 const unpriced = (): Cost => ({ low: 0, high: 0, priced: false, reasons: new Set<CostReason>(['unpriced model']) });
 const tokens = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
 const promptOf = (c: Counters): number => tokens(c.input) + tokens(c.cacheRead) + tokens(c.cacheWrite);
-const tierRates = (entry: PriceEntry, tier: number): Rates => tier ? entry.tiers![tier - 1]!.rates : entry.rates;
+type RateSet = { rates: Rates; tiers?: Tier[] };
+const tierRates = (set: RateSet, tier: number): Rates => tier ? set.tiers![tier - 1]!.rates : set.rates;
 /** Tier index for a prompt size: 0 is the base rate; tier N applies above its threshold. */
-const tierAt = (entry: PriceEntry, prompt: number): number => entry.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
+const tierAt = (set: RateSet, prompt: number): number => set.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
+
+function activeRateSet(entry: PriceEntry, onDate: string | undefined): RateSet {
+  if (!onDate || !/^\d{4}-\d{2}-\d{2}$/.test(onDate) || !entry.periods?.length) return entry;
+  let active: RateSet = entry;
+  for (const period of entry.periods) {
+    if (period.from <= onDate) active = period;
+    else break;
+  }
+  return active;
+}
 
 /** Cost of one counter set at one rate object in USD per 1M tokens; undefined when a nonzero counter has no rate. */
 function rated(c: Counters, r: Rates, reasoningApart: boolean): { low: number; high: number; ttl: boolean } | undefined {
@@ -144,21 +191,22 @@ function rated(c: Counters, r: Rates, reasoningApart: boolean): { low: number; h
   return { low: base + rest * low, high: base + rest * high, ttl: low !== high };
 }
 
-function priceUsage(entry: PriceEntry | undefined, usage: Counters & { bands?: Bands }, reasoningInOutput: boolean | undefined): Cost {
+function priceUsage(entry: PriceEntry | undefined, usage: Counters & { bands?: Bands }, reasoningInOutput: boolean | undefined, onDate: string | undefined): Cost {
   if (!entry) return unpriced();
+  const active = activeRateSet(entry, onDate);
   const apart = reasoningInOutput === false;
   // Each band prices at the tiers its prompt range spans; an aggregate spans every tier up to its own prompt size.
   const spans: { c: Counters; first: number; last: number }[] = [];
   for (const [i, band] of BANDS.entries()) {
     const c = usage?.bands?.[band];
-    if (c) spans.push({ c, first: tierAt(entry, i ? BAND_EDGES[i - 1]! + 1 : 0), last: tierAt(entry, BAND_EDGES[i] ?? Infinity) });
+    if (c) spans.push({ c, first: tierAt(active, i ? BAND_EDGES[i - 1]! + 1 : 0), last: tierAt(active, BAND_EDGES[i] ?? Infinity) });
   }
-  if (!spans.length) spans.push({ c: usage ?? NONE, first: 0, last: tierAt(entry, promptOf(usage ?? NONE)) });
+  if (!spans.length) spans.push({ c: usage ?? NONE, first: 0, last: tierAt(active, promptOf(usage ?? NONE)) });
 
   let low = 0, high = 0;
   const reasons = new Set<CostReason>();
   for (const { c, first, last } of spans) {
-    const options = Array.from({ length: last - first + 1 }, (_, i) => rated(c, tierRates(entry, first + i), apart));
+    const options = Array.from({ length: last - first + 1 }, (_, i) => rated(c, tierRates(active, first + i), apart));
     if (options.some((option) => !option)) return unpriced();
     low += Math.min(...options.map((o) => o!.low)) / MTOK;
     high += Math.max(...options.map((o) => o!.high)) / MTOK;

@@ -6,7 +6,8 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { heuristics, normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { resolvePricing } from '../../../skills/dispatch/scripts/lib/pricing.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
@@ -310,14 +311,17 @@ test('review yield renders per slot outcomes', async () => {
     assert.deepEqual(row('claude'), {
       kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 2, SHOULD: 2, CONSIDER: 0},
       accepted: 2, rejected: 1, deferred: 0, duplicate: 0, unruled: 1, tokens: 1000, measured: 1, launched: 1,
+      attempts: [{provider: 'claude', model: 'model-a', effort: null, usage: {input: 1000, output: 0}}],
     });
     assert.deepEqual(row('codex'), {
       kind: 'provider', provider: 'codex', model: 'model-b', raised: {MUST: 1, SHOULD: 1, CONSIDER: 1},
       accepted: 1, rejected: 0, deferred: 1, duplicate: 1, unruled: 0, tokens: 500, measured: 1, launched: 1,
+      attempts: [{provider: 'codex', model: 'model-b', effort: null, usage: {input: 500, output: 0}}],
     });
     assert.deepEqual(row('agy'), {
       kind: 'provider', provider: 'agy', model: 'model-c', raised: {MUST: 0, SHOULD: 0, CONSIDER: 0},
       accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 1,
+      attempts: [{provider: 'agy', model: 'model-c', effort: null}],
     });
     assert.deepEqual(row('codex', 'native'), {
       kind: 'native', provider: 'codex', model: null, raised: {MUST: 1, SHOULD: 0, CONSIDER: 0},
@@ -329,11 +333,11 @@ test('review yield renders per slot outcomes', async () => {
     });
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /### Review yield by slot/);
-    assert.match(report, /^\| claude \| model-a \| 2 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 1 \| 1,000 \| 500 \|$/m);
-    assert.match(report, /^\| codex \| model-b \| 1 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 500 \| 500 \|$/m);
-    assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| — \|$/m);
-    assert.match(report, /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
-    assert.match(report, /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 2 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 1 \| 1,000 \| 500 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| codex \| model-b \| 1 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 500 \| 500 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| 0 accepted \| — \| 0 accepted \| — \|$/m);
+    assert.match(report, /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \| — \| — \| — \|$/m);
+    assert.match(report, /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -382,8 +386,14 @@ test('review yield counts every reserve alias attempt', async () => {
     assert.deepEqual(facts.slotYield, [{
       kind: 'provider', provider: 'copilot', model: 'model-r', raised: {MUST: 2, SHOULD: 0, CONSIDER: 0},
       accepted: 2, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 900, measured: 4, launched: 4,
+      attempts: [
+        {provider: 'claude', model: 'model-a', effort: null, usage: {input: 100, output: 0}},
+        {provider: 'copilot', model: 'model-r', effort: null, usage: {input: 300, output: 0}},
+        {provider: 'copilot', model: 'model-r', effort: null, usage: {input: 300, output: 0}},
+        {provider: 'copilot', model: 'model-r', effort: null, usage: {input: 200, output: 0}},
+      ],
     }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 900 \| 450 \|$/m);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 900 \| 450 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -413,8 +423,13 @@ test('review yield credits the last attempted responder across captures', async 
     assert.deepEqual(facts.slotYield, [{
       kind: 'provider', provider: 'claude', model: 'model-a', raised: {MUST: 0, SHOULD: 0, CONSIDER: 0},
       accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, tokens: 600, measured: 3, launched: 3,
+      attempts: [
+        {provider: 'claude', model: 'model-a', effort: null, usage: {input: 100, output: 0}},
+        {provider: 'claude', model: 'model-b', effort: null, usage: {input: 200, output: 0}},
+        {provider: 'claude', model: 'model-a', effort: null, usage: {input: 300, output: 0}},
+      ],
     }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 600 \| — \|$/m);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 600 \| 0 accepted \| — \| 0 accepted \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -446,8 +461,8 @@ test('review yield responder change across rounds', async () => {
       ['claude', 'model-a', 100, 1, 1, 2], ['codex', 'model-b', 200, 1, 1, 1],
     ]);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 partial \| 100 partial \|$/m);
-    assert.match(report, /^\| codex \| model-b \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 200 \| 200 \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 partial \| 100 partial \| — \| — \| — \|$/m);
+    assert.match(report, /^\| codex \| model-b \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 200 \| 200 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -467,11 +482,11 @@ test('token table groups by effort and persists reasoning tokens', () => {
     assert.deepEqual(facts.invocations.find(i => i.provider === 'claude')?.usage, { input: 100, output: 10, cacheRead: 20, cacheWrite: 3, reasoning: 7 });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(table, /### Tokens by stage/);
-    assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \| Cost \|$/m);
-    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \| — \|$/m);
-    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \| — \|$/m);
-    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage \| — \|$/m);
-    assert.match(table, /^\| — \| claude \| delegate \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \| — \|$/m);
+    assert.match(table, /^\| Stage \| Platform \| Role \| Model \| Effort \| Uncached input \| Cache read \| Cache write \| Output \| Reasoning \| Coverage \| Cost notes \| Cost \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| low \| 100 \| — \| — \| 10 \| — \| 1\/1 \| — \| — \|$/m);
+    assert.match(table, /^\| — \| codex \| delegate \| gpt \(configured\) \| high \| 200 \| — \| — \| 20 \| — \| 1\/1 \| — \| — \|$/m);
+    assert.match(table, /^\| — \| copilot \| delegate \| auto \(configured\) \| high \| — \| — \| — \| — \| — \| 0\/1 no usage \| — \| — \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| m \(configured\) \| high \| 100 \| 20 \| 3 \| 10 \| 7 \| 1\/1 \| — \| — \|$/m);
     assert.doesNotMatch(table, /^\| — \| codex \| delegate \| all models \|/m);
   } finally { f.cleanup(); }
 });
@@ -500,8 +515,8 @@ test('Claude per model reasoning survives the observer capture', async () => {
       beta: {input: 5, output: 1, reasoning: 4},
     });
     const table = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(table, /^\| — \| claude \| delegate \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \| — \|$/m);
-    assert.match(table, /^\| — \| claude \| delegate \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \| — \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| alpha \| high \| 10 \| — \| — \| 2 \| 3 \| 1\/1 \| — \| — \|$/m);
+    assert.match(table, /^\| — \| claude \| delegate \| beta \| high \| 5 \| — \| — \| 1 \| 4 \| 1\/1 \| — \| — \|$/m);
     assert.doesNotMatch(table, /^\| — \| claude \| delegate \| aggregate \|/m);
   } finally { f.cleanup(); }
 });
@@ -526,6 +541,41 @@ test('origin: a nonzero fix-induced count renders the column', async () => {
     assert.equal(facts.slotYield?.find((row) => row.provider === 'claude')?.fixInduced, 2);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /^\| Provider \| Model \| MUST \| SHOULD \| CONSIDER \| Fix-induced \| Accepted /m);
-    assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| — \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| 0 accepted \| — \| 0 accepted \| — \|$/m);
   } finally { f.cleanup(); }
+});
+
+test('review yield renders Cost, Cost / accepted, Cost notes and 0 accepted cells', () => {
+  const pricer = resolvePricing({
+    asOf: '2026-11-16', source: ['https://example.test/pricing'],
+    models: {
+      alpha: { rates: { input: 2, output: 10 } },
+    },
+  }, undefined)!;
+  const text = renderDiagnostics([{
+    phases: [], invocations: [], reviews: [],
+    slotYield: [
+      {
+        kind: 'provider', provider: 'claude', model: 'alpha',
+        raised: { MUST: 2, SHOULD: 0, CONSIDER: 0 },
+        accepted: 2, rejected: 0, deferred: 0, duplicate: 0, unruled: 0,
+        tokens: 1_000_000, measured: 1, launched: 2,
+        attempts: [
+          { provider: 'claude', model: 'alpha', effort: 'high', usage: { input: 1_000_000, output: 0 } },
+          { provider: 'claude', model: 'alpha', effort: 'high' },
+        ],
+      },
+      {
+        kind: 'provider', provider: 'codex', model: 'alpha',
+        raised: { MUST: 0, SHOULD: 1, CONSIDER: 0 },
+        accepted: 0, rejected: 1, deferred: 0, duplicate: 0, unruled: 0,
+        tokens: 1_000_000, measured: 1, launched: 1,
+        attempts: [
+          { provider: 'codex', model: 'alpha', effort: 'low', usage: { input: 1_000_000, output: 0 } },
+        ],
+      },
+    ],
+  }], pricer).text;
+  assert.match(text, /^\| claude \| alpha \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1,000,000 partial \| 500,000 partial \| ~\$2\.00 partial \| ~\$1\.00 partial \| no usage \|$/m);
+  assert.match(text, /^\| codex \| alpha \| 0 \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 1,000,000 \| 0 accepted \| ~\$2\.00 \| 0 accepted \| — \|$/m);
 });

@@ -37,7 +37,7 @@ test('diagnostics retain privacy and measurement guidance', () => {
   const concepts = read('references/readme/concepts.md');
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
   assert.ok(concepts.includes('Native timing and usage'));
-  for (const term of ['unavailable value, not zero', 'Measured totals exclude `~` figures', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
+  for (const term of ['unavailable value, not zero', 'cost estimate in USD', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
 });
 
 test('diagnostics instructions specify grounding retro items and yield format', () => {

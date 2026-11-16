@@ -63,12 +63,12 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 
 ## Understand diagnostics coverage
 
-In `diagnostics.md`, `—` marks an unavailable value, not zero, and `~` marks estimates; Measured totals exclude `~` figures. Cost cells carry `~` because they are estimates; [the toolkit reference](../toolkit.md#diagnostics-render) defines the cost columns. After fixing a missing rate, render again to reprice stored usage without a new run.
+In `diagnostics.md`, `—` marks an unavailable value, not zero, and `~` marks a cost estimate in USD; measured token totals include billed reasoning where reported apart from output. [The toolkit reference](../toolkit.md#diagnostics-render) defines `Cost notes`, `Coverage`, and the cost columns. After fixing a missing rate, render again to reprice stored usage without a new run.
 
 | Reason | Meaning | What to do |
 |---|---|---|
-| `unpriced model` | No rate matched the model id, usage held more than 32 model/effort keys (`other`), a counter rate is missing, or a delegate reported no usage. | Add a [`pricing` entry](configuration.md#override-rates-for-cost-estimates) with every counter rate the route reports, then render again. |
-| `no token breakdown` | A native estimate holds one token total without an input/output split, so it stays unpriced. | None; host subagent usage measures the same work. |
+| `unpriced model` | No rate matched the model id, usage held more than 32 model/effort keys (`other`), or a counter rate is missing. | Add a [`pricing` entry](configuration.md#override-rates-for-cost-estimates) with every counter rate the route reports, then render again. |
+| `no usage` | A launched delegate reported no usage, or the provider reports none (such as Copilot). | Check delegate session logs if unexpected; Copilot reports no usage. |
 | `tier unknown` | Usage lacked per-request data across a tier threshold; cost is shown as a range. | Read the range as bounds; session-data launches price exactly. |
 | `cache TTL unknown` | A cache write lacks a 5m/1h split and the two rates differ; cost is shown as a range. | Read as bounds, or set both lifetime rates in `pricing` if your rate is flat. |
 

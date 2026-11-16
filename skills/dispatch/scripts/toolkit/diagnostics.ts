@@ -4,8 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
-import { tokenTotal, type Milestone, type HostStage, type PhaseMilestone } from '../lib/usage/rows.ts';
-import { addYield, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
+import { type Milestone, type HostStage, type PhaseMilestone } from '../lib/usage/rows.ts';
+import { addYield, billedTokens, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
@@ -183,16 +183,18 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
       const provider = responder?.provider ?? last?.provider ?? roster?.provider;
       if (!provider) continue;
       const rosterModel = typeof roster?.model === 'string' ? roster.model : Array.isArray(roster?.model) ? roster.model[0] ?? null : null;
+      const recentCli = recent.filter((row) => row.surface === 'cli' && row.launched);
       const value: SlotYieldFacts = {
         kind: native ? 'native' : 'provider', provider, model: native ? null : responder?.model ?? last?.model ?? rosterModel,
         raised: emptyRaised(), accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0,
-        measured: recent.filter((row) => row.surface === 'cli' && row.launched && !row.estimated && row.usage).length,
+        measured: recentCli.filter((row) => row.usage).length,
         launched: attempts.filter((row) => row.surface === 'cli' && row.launched).length,
+        ...(recentCli.length ? { attempts: recentCli.map((row) => ({ provider: row.provider, model: row.model, effort: row.effort ?? null, ...(row.usage ? { usage: row.usage } : {}) })) } : {}),
       };
       let tokens: number | undefined, fixInduced = 0;
-      for (const row of recent) {
-        if (row.surface !== 'cli' || !row.launched || row.estimated || !row.usage) continue;
-        tokens = (tokens ?? 0) + tokenTotal(row.usage);
+      for (const row of recentCli) {
+        if (!row.usage) continue;
+        tokens = (tokens ?? 0) + billedTokens(row.usage, row.provider, row.usage.reasoningInOutput);
       }
       if (tokens !== undefined) value.tokens = tokens;
       for (const item of round.findings?.findings ?? []) {
@@ -359,6 +361,15 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   collection.storageFailed=Math.min(1_000_000,[...storageFailures.values()].reduce((sum,n)=>sum+n,0));
   collection.partial=Math.min(1_000_000,collection.corrupt+collection.unreadable+collection.incomplete+collection.storageFailed);
   const level=latest(fold,'level')?.data['level'],host=measured.find(row=>row.host)?.host;
+  const hosts=[...new Set(measured.map(row=>row.host).filter((h): h is string => typeof h === 'string' && h.length > 0))];
+  const starts=measured.map(c=>c.capture?.start).filter((s): s is number => typeof s === 'number' && Number.isFinite(s) && s > 0 && s <= 8_640_000_000_000_000);
+  let createdAt: unknown = hostContext?.manifest.createdAt;
+  if (createdAt === undefined) {
+    try { createdAt = readJson<{createdAt?: unknown}>(path.join(session, 'manifest.json'))?.createdAt; } catch { /* ignore */ }
+  }
+  const createdMs = typeof createdAt === 'string' ? Date.parse(createdAt) : NaN;
+  const startMsForDate = starts.length ? Math.min(...starts) : Number.isFinite(createdMs) && Math.abs(createdMs) <= 8_640_000_000_000_000 ? createdMs : undefined;
+  const startedAt = startMsForDate === undefined ? undefined : new Date(startMsForDate).toISOString().slice(0, 10);
   const slotYield=slotYieldFacts(rounds,invocations,fold);
   let hostUsage: RunFacts['hostUsage'];
   if(hostContext) {
@@ -370,7 +381,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   }
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
-    ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),
+    ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),...(hosts.length?{hosts}:{}),...(startedAt?{startedAt}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
     ...(slotYield.length?{slotYield}:{}),...(hostUsage?{hostUsage}:{}),

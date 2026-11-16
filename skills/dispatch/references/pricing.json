@@ -1,78 +1,64 @@
 {
-  "asOf": "2026-11-15",
+  "asOf": "2026-11-16",
   "source": ["https://platform.claude.com/docs/en/about-claude/pricing", "https://developers.openai.com/api/docs/pricing", "https://aistudio.google.com/docs/pricing", "https://openrouter.ai/api/v1/models"],
   "models": {
     "claude-fable-5-2": {
-      "reasoning": "output",
       "rates": { "input": 8, "output": 40, "cacheRead": 0.2, "cacheWrite5m": 10, "cacheWrite1h": 16 }
     },
     "claude-mythos-5-2": {
-      "reasoning": "output",
       "rates": { "input": 8, "output": 40, "cacheRead": 0.2, "cacheWrite5m": 10, "cacheWrite1h": 16 }
     },
     "claude-opus-5-5": {
-      "reasoning": "output",
       "rates": { "input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite5m": 5, "cacheWrite1h": 8 }
     },
     "claude-sonnet-5-5": {
-      "reasoning": "output",
       "rates": { "input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite5m": 2.5, "cacheWrite1h": 4 }
     },
     "claude-haiku-5-5": {
-      "reasoning": "output",
       "rates": { "input": 0.1, "output": 0.5, "cacheRead": 0.01, "cacheWrite5m": 0.125, "cacheWrite1h": 0.2 },
       "tiers": [{ "abovePromptTokens": 100000, "rates": { "input": 0.5, "output": 2.5, "cacheRead": 0.05, "cacheWrite5m": 0.625, "cacheWrite1h": 1 } }]
     },
     "gpt-6-astra": {
-      "reasoning": "output",
       "rates": { "input": 10, "output": 50, "cacheRead": 1 },
       "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 20, "output": 75, "cacheRead": 2 } }]
     },
     "gpt-6.1-sol": {
-      "reasoning": "output",
       "rates": { "input": 2, "output": 10, "cacheRead": 0.1 },
       "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 4, "output": 15, "cacheRead": 0.2 } }]
     },
     "gpt-6.1-terra": {
-      "reasoning": "output",
       "rates": { "input": 1, "output": 5, "cacheRead": 0.05 },
       "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 2, "output": 7.5, "cacheRead": 0.1 } }]
     },
     "gpt-6-luna": {
-      "reasoning": "output",
       "rates": { "input": 0.1, "output": 0.5, "cacheRead": 0.01 },
       "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 0.2, "output": 0.75, "cacheRead": 0.02 } }]
     },
     "gemini-3.8-flash": {
-      "reasoning": "output",
-      "rates": { "input": 0.75, "output": 3.75, "cacheRead": 0.075 }
+      "rates": { "input": 0.75, "output": 3.75, "cacheRead": 0.075 },
+      "periods": [{ "from": "2027-01-01", "rates": { "input": 1.5, "output": 7.5, "cacheRead": 0.15 } }]
     },
     "gemini-4-hydrogen": {
-      "reasoning": "output",
       "rates": { "input": 1.5, "output": 7.5, "cacheRead": 0.075 }
     },
     "gemini-4-carbon": {
-      "reasoning": "output",
-      "rates": { "input": 2, "output": 10, "cacheRead": 0.1 }
+      "rates": { "input": 2, "output": 10, "cacheRead": 0.1 },
+      "periods": [{ "from": "2026-12-01", "rates": { "input": 4, "output": 20, "cacheRead": 0.2 } }]
     },
     "gemini-4-argon": {
-      "reasoning": "output",
-      "rates": { "input": 2, "output": 10, "cacheRead": 0.1 }
+      "rates": { "input": 2, "output": 10, "cacheRead": 0.1 },
+      "periods": [{ "from": "2026-12-01", "rates": { "input": 4, "output": 20, "cacheRead": 0.2 } }]
     },
     "muse-spark-1.3-contributor": {
-      "reasoning": "output",
       "rates": { "input": 0.1, "output": 0.2, "cacheRead": 0.002 }
     },
     "deepseek-v4.1-flash": {
-      "reasoning": "output",
-      "rates": { "input": 0.0507, "output": 0.2028, "cacheRead": 0.001014 }
+      "rates": { "input": 0.14, "output": 0.42, "cacheRead": 0.0042 }
     },
     "glm-5.3-flash": {
-      "reasoning": "output",
       "rates": { "input": 0.0399, "output": 0.0784, "cacheRead": 0.03 }
     },
     "minimax-m3.1-flash": {
-      "reasoning": "output",
       "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.015 }
     }
   }

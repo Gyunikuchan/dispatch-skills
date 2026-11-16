@@ -305,11 +305,16 @@ test('doctor pricing override problems are warnings that never fail the report',
     };
     let report = await run(JSON.stringify(base));
     assert.deepEqual([report.ok, report.config.problems, report.config.warnings], [true, [], []]);
-    report = await run(JSON.stringify({ ...base, pricing: { 'house-model': { rates: { input: 1, output: 1 } }, bad: { rates: { output: 1 } }, worse: 5 } }));
+    report = await run(JSON.stringify({ ...base, pricing: { 'house-model': { rates: { input: 1, output: 1 } }, bad: { rates: { output: 1 } }, worse: 5, legacy: { rates: { input: 1, output: 1 }, reasoning: 'output' }, badPeriod: { rates: { input: 1, output: 1 }, periods: [{ from: '2026-13-01', rates: { input: 2, output: 2 } }] } } }));
     assert.equal(report.ok, true);
     assert.equal(report.reason, undefined);
     assert.deepEqual(report.config.problems, []);
-    assert.deepEqual(report.config.warnings, ['pricing.bad: rates.input missing', 'pricing.worse: not an object']);
+    assert.deepEqual(report.config.warnings, [
+      'pricing.bad: rates.input missing',
+      'pricing.worse: not an object',
+      'pricing.legacy: unknown key reasoning',
+      'pricing.badPeriod: periods[0].from must be a valid YYYY-MM-DD date',
+    ]);
     report = await run(JSON.stringify({ ...base, pricing: 'cheap' }));
     assert.deepEqual([report.ok, report.config.warnings], [true, ['pricing: not an object']]);
     report = await run('{"unknown":true,"pricing":{"bad":1}}');

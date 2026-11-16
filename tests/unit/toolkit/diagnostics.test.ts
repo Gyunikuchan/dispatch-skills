@@ -698,3 +698,61 @@ test('host phase: sessionFacts builds phase milestones including interleaved A, 
     f.cleanup();
   }
 });
+
+test('sessionFacts records startedAt, hosts and slot yield billed tokens and attempts across rounds', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const review = 'plan-yield-attempts';
+    for (const round of [1, 2]) {
+      const roundDir = path.join(f.session, '.state', 'reviews', review, `round-${round}`);
+      writeJson(path.join(roundDir, 'round.json'), {
+        round, generation: 1, cap: 4, level: 'high',
+        roster: [{ slot: 'opencode[0]', provider: 'opencode', index: 0, native: false, reserve: false, model: 'model-a' }],
+        scope: 'Full', startSeq: 0, spec: { path: 'spec.md', hash: 'sha256:' + 'a'.repeat(64) }, target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
+      });
+      writeJson(path.join(roundDir, 'gen-1', 'slots', 'opencode[0].json'), {
+        slot: 'opencode[0]', state: 'done', text: 'ok', responder: { slot: 'opencode[0]', provider: 'opencode', model: 'model-a', native: false },
+      });
+    }
+    const sub1 = crypto.createHash('sha256').update(path.join(f.session, '.state', 'reviews', review, 'round-1', 'gen-1')).digest('hex').slice(0, 16);
+    const sub2 = crypto.createHash('sha256').update(path.join(f.session, '.state', 'reviews', review, 'round-2', 'gen-1')).digest('hex').slice(0, 16);
+    writeJson(path.join(f.session, '.state', 'diagnostics', 'run-1.json'), {
+      capture: { state: 'completed', start: 0, end: 1 }, host: 'claude', phases: [], reviews: [],
+      invocations: [{ phase: 'plan-review', subject: sub1, attempt: 1, provider: 'opencode', model: 'model-a', effort: 'low', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'opencode[0]', usage: { input: 100, output: 20, reasoning: 30 } }],
+    });
+    writeJson(path.join(f.session, '.state', 'diagnostics', 'run-2.json'), {
+      capture: { state: 'completed', start: Date.parse('2026-12-05T10:00:00Z'), end: Date.parse('2026-12-05T10:01:00Z') }, host: 'agy', phases: [], reviews: [],
+      invocations: [{ phase: 'plan-review', subject: sub2, attempt: 1, provider: 'opencode', model: 'model-a', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', slot: 'opencode[0]', usage: { input: 200, output: 10, reasoning: 40, reasoningInOutput: true } }],
+    });
+
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    assert.equal(facts.startedAt, '2026-12-05');
+    assert.deepEqual(facts.hosts, ['claude', 'agy']);
+    assert.equal(facts.slotYield?.length, 1);
+    const row = facts.slotYield![0]!;
+    assert.equal(row.tokens, 360);
+    assert.equal(row.attempts?.length, 2);
+    assert.deepEqual(row.attempts?.map((a) => [a.provider, a.model, a.effort]), [['opencode', 'model-a', 'low'], ['opencode', 'model-a', null]]);
+
+    // Capture without positive start falls back to manifest createdAt
+    const f2 = sessionFixture({ memory: true });
+    try {
+      const manifestPath = path.join(f2.session, 'manifest.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      manifest.createdAt = '2026-11-20T08:00:00Z';
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      writeJson(path.join(f2.session, '.state', 'diagnostics', 'run-0.json'), {
+        capture: { state: 'completed', start: 0, end: 1 }, phases: [], reviews: [], invocations: [],
+      });
+      assert.equal(sessionFacts(f2.session, { records: [], lastSeq: 0, torn: null }, 'complete').startedAt, '2026-11-20');
+
+      // Out-of-range capture start does not throw RangeError and falls back to manifest createdAt
+      writeJson(path.join(f2.session, '.state', 'diagnostics', 'run-0.json'), {
+        capture: { state: 'completed', start: 1e100, end: 1 }, phases: [], reviews: [], invocations: [],
+      });
+      assert.equal(sessionFacts(f2.session, { records: [], lastSeq: 0, torn: null }, 'complete').startedAt, '2026-11-20');
+    } finally { f2.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
+});

@@ -301,18 +301,18 @@ test('cost cells render from the skill rate table and fall back to not estimated
     const render = (withHost: boolean) => fs.readFileSync(optionalDiagnostics(f.session, fold, 'complete', withHost ? host : undefined)!, 'utf8');
     const table = path.join(skill, 'references', 'pricing.json');
     const shipped = fs.readFileSync(new URL('../../../skills/dispatch/references/pricing.json', import.meta.url), 'utf8');
-    const stageRow = (text: string) => text.split('\n').find((line) => line.startsWith('| — | claude | delegate | claude-sonnet-5-5'))!;
+    const stageRow = (text: string) => text.split('### Tokens by stage')[1]!.split('\n').find((line) => line.startsWith('| — | claude | delegate | claude-sonnet-5-5'))!;
 
     assert.match(render(true), /^- Estimated cost: not estimated \(rate table unavailable\)$/m, 'missing table');
-    assert.ok(stageRow(render(true)).endsWith('| 1/1 | — |'));
+    assert.ok(stageRow(render(true)).endsWith('| 1/1 | — | — |'));
     fs.mkdirSync(path.dirname(table), { recursive: true });
     fs.writeFileSync(table, '{ not json');
     assert.match(render(true), /not estimated/, 'unreadable table');
     fs.writeFileSync(table, shipped);
     assert.match(render(false), /not estimated/, 'no host');
     const text = render(true);
-    assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-15 · priced 1 · unpriced 0$/m);
-    assert.ok(stageRow(text).endsWith('| 1/1 | ~$2.00 |'), stageRow(text));
+    assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-16 · priced 1 · unpriced 0$/m);
+    assert.ok(stageRow(text).endsWith('| 1/1 | — | ~$2.00 |'), stageRow(text));
 
     writeJson(path.join(skill, 'config.local.jsonc'), { pricing: { 'claude-sonnet-5-5': { rates: { input: 1, output: 1 } }, bad: 'x' } });
     assert.match(render(true), /^- Estimated cost .*: ~\$1\.00 ·/m, 'override replaces the shipped rate and a malformed entry is ignored');
@@ -357,7 +357,7 @@ test('diagnostics render reads host usage only while enabled', async () => {
     f.lines.splice(0); fs.writeFileSync(config,'{"diagnostics":true}'); assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0);
     const rendered=fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8');
     assert.equal(reads,1); assert.match(rendered,/\| claude \| 12 \|/);
-    assert.match(rendered,/^\| spec \| claude \| host \| m \| — \| 12 \| — \| — \| 3 \| — \| — \| — \|$/m);
+    assert.match(rendered,/^\| spec \| claude \| host \| m \| — \| 12 \| — \| — \| 3 \| — \| — \| — \| — \|$/m);
     assert.doesNotMatch(rendered,/secret transcript/);
     f.lines.splice(0); f.deps.hostUsageFs.list=()=>{throw Object.assign(new Error('private'),{code:'EACCES'});};
     assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
@@ -413,6 +413,59 @@ test('diagnostics render warns on missing host retro only when enabled', async (
     value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
     assert.equal(value.warning, undefined);
     assert.ok(!output.summary.includes('merge retro notes'));
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('Overview labels tool-action phases, folds empty rows and omits empty timing columns', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    writeJson(path.join(f.session, '.state', 'diagnostics', 'run-1.json'), {
+      capture: { state: 'completed', start: 1000, end: 5000 },
+      phases: [
+        { key: 'ledger-append', name: 'implementation', outcome: 'ok', wallMs: 1000 },
+        { key: 'lint-run', name: 'implementation', outcome: 'ok', wallMs: 2000 },
+        { key: 'check-run', name: 'implementation', outcome: 'ok', wallMs: 1000 },
+      ],
+      invocations: [
+        { phase: 'check-run', attempt: 1, provider: 'claude', model: 'm', mode: 'cli', surface: 'cli', launched: true, outcome: 'ok', usage: { input: 10, output: 5 } },
+      ],
+      reviews: [],
+    });
+    const fold = { records: [], lastSeq: 0, torn: null };
+    const facts = sessionFacts(f.session, fold, 'complete', { manifest: readManifest(f.session), deps: f.deps });
+    const text = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    const overviewSection = text.split('## Overview')[1]!.split('### Tokens by platform')[0]!;
+    assert.match(overviewSection, /\| implementation · check-run \|/);
+    assert.match(overviewSection, /\| 2 empty phases \|/);
+    assert.match(overviewSection, /\| all phases \|/);
+    // Driver, Host, User wait columns omitted when no row has a value; Wall is kept
+    const header = overviewSection.split('\n').find((l) => l.startsWith('| Run |'))!;
+    assert.ok(header.includes('| Wall |') && !header.includes('| Driver |') && !header.includes('| Host |') && !header.includes('| User wait |'), header);
+    // Summed wallMs of the 2 empty phases (1000 + 2000 = 3000 -> 3s)
+    assert.match(overviewSection, /\| 2 empty phases \| — \| 3s \|/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('legend defines symbols and units, and empty Grounding and Top findings are omitted', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const fold = { records: [], lastSeq: 0, torn: null };
+    const facts = sessionFacts(f.session, fold, 'complete', { manifest: readManifest(f.session), deps: f.deps });
+    const text = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
+    assert.match(text, /`—` marks an unavailable value/);
+    assert.match(text, /`~` marks a cost estimate in USD/);
+    assert.match(text, /a priced unit has a computed cost; an unpriced unit lacks a rate or usage/i);
+    assert.doesNotMatch(text, /### Grounding/);
+    assert.doesNotMatch(text, /Top findings:/);
+    assert.match(text, /## Findings\n\nNo findings\./);
+    const overviewSection = text.split('## Overview')[1]!.split('### Tokens by platform')[0]!;
+    const table = overviewSection.split('\n').filter((l) => l.startsWith('|'));
+    assert.equal(table[0], '| Run | Phase | Outcome | Invocations | Input | Cache read | Cache write | Output | Coverage | Cost | Top models |');
+    assert.equal(table[1], '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
   } finally {
     f.cleanup();
   }

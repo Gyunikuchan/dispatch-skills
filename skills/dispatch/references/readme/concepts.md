@@ -52,13 +52,13 @@ Internal task and integration commits stay in Dispatch's worktrees; final delive
 
 ## Optional session diagnostics
 
-When `diagnostics` is `true`, Dispatch writes a cumulative `diagnostics.md` retrospective at each verb's final handoff (or `report complete`) with per-platform/stage time, tokens, review outcomes, and estimated `~$` costs (using `references/pricing.json` and any [`pricing` overrides](configuration.md#override-rates-for-cost-estimates)). Your host agent merges terse retro notes itself and may use a research explorer when investigating logs or chat. The report stays in the session folder and is never uploaded automatically.
+When `diagnostics` is `true`, Dispatch writes a cumulative `diagnostics.md` retrospective at each verb's final handoff (or `report complete`) with ranked `Cost drivers`, per-platform/stage time, tokens, review outcomes, and estimated `~$` costs (using `references/pricing.json` and any [`pricing` overrides](configuration.md#override-rates-for-cost-estimates)). Your host agent merges terse retro notes itself and may use a research explorer when investigating logs or chat. The report stays in the session folder and is never uploaded automatically.
 
 <details>
 <summary>How token &amp; cost measurement works</summary>
 
 - **Delegate usage:** Captured CLI attempts retain reported provider usage; Dispatch reads each Claude, Codex, OpenCode, and Antigravity delegate's own session data (including nested subagents), falling back to reported totals if incomplete.
-- **Host usage:** Claude Code, Codex, and OpenCode host transcripts measure host and native subagent tokens at any nesting depth for the current host thread only (OpenCode reads `opencode.db`). Other host threads are excluded.
+- **Host usage:** Claude Code, Codex, OpenCode, and Antigravity host transcripts measure host and native subagent tokens at any nesting depth for the current host thread only (OpenCode reads `opencode.db`). When a session switches hosts, Summary lists every host and names which host's thread the host rows measure; other host threads are unmeasured.
 - **Unavailable metrics:** Native timing and usage recorded per Dispatch slot, and unsupported measurements, render as `—`. See [Troubleshooting](troubleshooting.md#understand-diagnostics-coverage) for measurement limits and [the toolkit reference](../toolkit.md#diagnostics-render) for cost columns.
 
 </details>

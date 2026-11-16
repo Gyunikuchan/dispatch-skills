@@ -209,39 +209,79 @@ test('cost pricing sums unit costs, formats them with an estimate mark and marks
   assert.equal(formatCost({ ...exact, low: 1.234, high: 1.234 }), '~$1.23');
 });
 
+test('cost pricing selects the active rate period by UTC date and falls back to base rates', () => {
+  const pricer = custom({
+    staged: {
+      rates: { input: 1, output: 2 },
+      tiers: [{ abovePromptTokens: 100_000, rates: { input: 2, output: 4 } }],
+      periods: [
+        { from: '2026-12-01', rates: { input: 3, output: 6 }, tiers: [{ abovePromptTokens: 100_000, rates: { input: 5, output: 10 } }] },
+        { from: '2027-01-01', rates: { input: 10, output: 20 } },
+      ],
+    },
+    flat: { rates: { input: 4, output: 8 } },
+  });
+  const usage = { input: 1_000_000, output: 0 };
+  const tiered = { input: 150_000, output: 0, bands: { le200k: { input: 150_000, output: 0 } } };
+
+  // Undefined or before first period uses base rates and base tiers.
+  near(pricer.price('staged', usage).low, 1);
+  near(pricer.price('staged', usage, undefined, '2026-11-30').low, 1);
+  near(pricer.price('staged', tiered, undefined, '2026-11-30').low, perMillion(150_000, 2));
+
+  // On and after first period `from` uses that period's rates and tiers.
+  near(pricer.price('staged', usage, undefined, '2026-12-01').low, 3);
+  near(pricer.price('staged', usage, undefined, '2026-12-15').low, 3);
+  near(pricer.price('staged', tiered, undefined, '2026-12-01').low, perMillion(150_000, 5));
+
+  // Period without tiers has no tiers even when base entry has tiers.
+  near(pricer.price('staged', tiered, undefined, '2027-01-01').low, perMillion(150_000, 10));
+  assert.equal(pricer.price('staged', tiered, undefined, '2027-06-01').reasons.size, 0);
+
+  // Undated entry prices identically for any date.
+  near(pricer.price('flat', usage, undefined, '2026-11-30').low, 4);
+  near(pricer.price('flat', usage, undefined, '2027-01-01').low, 4);
+});
+
 // SECTION: Shipped rate table
 
 const rates = (input: number, output: number, cacheRead: number, cacheWrite5m?: number, cacheWrite1h?: number) =>
   ({ input, output, cacheRead, ...(cacheWrite5m === undefined ? {} : { cacheWrite5m, cacheWrite1h }) });
 const tier = (abovePromptTokens: number, r: object) => ({ tiers: [{ abovePromptTokens, rates: r }] });
 const EXPECTED = {
-  'claude-fable-5-2': { reasoning: 'output', rates: rates(8, 40, 0.20, 10, 16) },
-  'claude-mythos-5-2': { reasoning: 'output', rates: rates(8, 40, 0.20, 10, 16) },
-  'claude-opus-5-5': { reasoning: 'output', rates: rates(4, 20, 0.20, 5, 8) },
-  'claude-sonnet-5-5': { reasoning: 'output', rates: rates(2, 10, 0.10, 2.50, 4) },
-  'claude-haiku-5-5': { reasoning: 'output', rates: rates(0.10, 0.50, 0.01, 0.125, 0.20), ...tier(100_000, rates(0.50, 2.50, 0.05, 0.625, 1)) },
-  'gpt-6-astra': { reasoning: 'output', rates: rates(10, 50, 1), ...tier(272_000, rates(20, 75, 2)) },
-  'gpt-6.1-sol': { reasoning: 'output', rates: rates(2, 10, 0.10), ...tier(272_000, rates(4, 15, 0.20)) },
-  'gpt-6.1-terra': { reasoning: 'output', rates: rates(1, 5, 0.05), ...tier(272_000, rates(2, 7.50, 0.10)) },
-  'gpt-6-luna': { reasoning: 'output', rates: rates(0.10, 0.50, 0.01), ...tier(272_000, rates(0.20, 0.75, 0.02)) },
-  'gemini-3.8-flash': { reasoning: 'output', rates: rates(0.75, 3.75, 0.075) },
-  'gemini-4-hydrogen': { reasoning: 'output', rates: rates(1.50, 7.50, 0.075) },
-  'gemini-4-carbon': { reasoning: 'output', rates: rates(2, 10, 0.10) },
-  'gemini-4-argon': { reasoning: 'output', rates: rates(2, 10, 0.10) },
-  'muse-spark-1.3-contributor': { reasoning: 'output', rates: rates(0.10, 0.20, 0.002) },
-  'deepseek-v4.1-flash': { reasoning: 'output', rates: rates(0.0507, 0.2028, 0.001014) },
-  'glm-5.3-flash': { reasoning: 'output', rates: rates(0.0399, 0.0784, 0.03) },
-  'minimax-m3.1-flash': { reasoning: 'output', rates: rates(0.15, 0.60, 0.015) },
+  'claude-fable-5-2': { rates: rates(8, 40, 0.20, 10, 16) },
+  'claude-mythos-5-2': { rates: rates(8, 40, 0.20, 10, 16) },
+  'claude-opus-5-5': { rates: rates(4, 20, 0.20, 5, 8) },
+  'claude-sonnet-5-5': { rates: rates(2, 10, 0.10, 2.50, 4) },
+  'claude-haiku-5-5': { rates: rates(0.10, 0.50, 0.01, 0.125, 0.20), ...tier(100_000, rates(0.50, 2.50, 0.05, 0.625, 1)) },
+  'gpt-6-astra': { rates: rates(10, 50, 1), ...tier(272_000, rates(20, 75, 2)) },
+  'gpt-6.1-sol': { rates: rates(2, 10, 0.10), ...tier(272_000, rates(4, 15, 0.20)) },
+  'gpt-6.1-terra': { rates: rates(1, 5, 0.05), ...tier(272_000, rates(2, 7.50, 0.10)) },
+  'gpt-6-luna': { rates: rates(0.10, 0.50, 0.01), ...tier(272_000, rates(0.20, 0.75, 0.02)) },
+  'gemini-3.8-flash': { rates: rates(0.75, 3.75, 0.075), periods: [{ from: '2027-01-01', rates: rates(1.5, 7.5, 0.15) }] },
+  'gemini-4-hydrogen': { rates: rates(1.50, 7.50, 0.075) },
+  'gemini-4-carbon': { rates: rates(2, 10, 0.10), periods: [{ from: '2026-12-01', rates: rates(4, 20, 0.20) }] },
+  'gemini-4-argon': { rates: rates(2, 10, 0.10), periods: [{ from: '2026-12-01', rates: rates(4, 20, 0.20) }] },
+  'muse-spark-1.3-contributor': { rates: rates(0.10, 0.20, 0.002) },
+  'deepseek-v4.1-flash': { rates: rates(0.14, 0.42, 0.0042) },
+  'glm-5.3-flash': { rates: rates(0.0399, 0.0784, 0.03) },
+  'minimax-m3.1-flash': { rates: rates(0.15, 0.60, 0.015) },
 };
 
 test('shipped rate table holds the recorded official rates per model and no unconfirmed model', () => {
   const file = JSON.parse(tableText) as Record<string, unknown>;
-  assert.equal(file['asOf'], '2026-11-15');
+  assert.equal(file['asOf'], '2026-11-16');
   assert.ok(Array.isArray(file['source']) && file['source'].length > 0 && file['source'].every((url) => typeof url === 'string' && url.startsWith('https://')));
   assert.deepEqual(table.models, EXPECTED);
   const pricer = shipped();
-  assert.equal(pricer.meta.asOf, '2026-11-15');
+  assert.equal(pricer.meta.asOf, '2026-11-16');
   assert.deepEqual(pricer.meta.source, file['source']);
+  const usage = { input: 1_000_000, output: 0 };
+  near(pricer.price('gemini-4-carbon', usage, undefined, '2026-11-30').low, 2);
+  near(pricer.price('gemini-4-carbon', usage, undefined, '2026-12-01').low, 4);
+  near(pricer.price('gemini-4-argon', usage, undefined, '2026-12-01').low, 4);
+  near(pricer.price('gemini-3.8-flash', usage, undefined, '2026-12-31').low, 0.75);
+  near(pricer.price('gemini-3.8-flash', usage, undefined, '2027-01-01').low, 1.5);
 });
 
 test('shipped rate table prices every confirmed model in the sample config', () => {
@@ -321,15 +361,22 @@ test('pricing override entries that are malformed are skipped and named by key a
     negative: [{ rates: { input: -1, output: 1 } }, /^pricing\.negative: rates\.input must be a finite number >= 0$/],
     infinite: [{ rates: { input: Number.POSITIVE_INFINITY, output: 1 } }, /^pricing\.infinite: rates\.input must be a finite number >= 0$/],
     stringRate: [{ rates: { input: '1', output: 1 } }, /^pricing\.stringRate: rates\.input must be/],
-    reasoning: [{ ...OK, reasoning: 'input' }, /^pricing\.reasoning: reasoning must be "output"$/],
+    reasoning: [{ ...OK, reasoning: 'output' }, /^pricing\.reasoning: unknown key reasoning$/],
     unordered: [{ ...OK, tiers: [{ abovePromptTokens: 200_000, rates: OK.rates }, { abovePromptTokens: 100_000, rates: OK.rates }] }, /^pricing\.unordered: tiers\[1\]\.abovePromptTokens must be/],
     zeroThreshold: [{ ...OK, tiers: [{ abovePromptTokens: 0, rates: OK.rates }] }, /^pricing\.zeroThreshold: tiers\[0\]\.abovePromptTokens must be/],
     fractional: [{ ...OK, tiers: [{ abovePromptTokens: 1.5, rates: OK.rates }] }, /^pricing\.fractional: tiers\[0\]\.abovePromptTokens must be/],
     tierKeys: [{ ...OK, tiers: [{ abovePromptTokens: 100_000, rates: { input: 2, output: 2, cacheRead: 1 } }] }, /^pricing\.tierKeys: tiers\[0\]\.rates keys differ from rates$/],
     tierExtra: [{ ...OK, tiers: [{ abovePromptTokens: 100_000, rates: OK.rates, note: 1 }] }, /^pricing\.tierExtra: tiers\[0\] must hold only/],
     tiersShape: [{ ...OK, tiers: {} }, /^pricing\.tiersShape: tiers not an array$/],
+    periodsShape: [{ ...OK, periods: {} }, /^pricing\.periodsShape: periods not an array$/],
+    periodNotObj: [{ ...OK, periods: [1] }, /^pricing\.periodNotObj: periods\[0\] must hold only/],
+    periodExtra: [{ ...OK, periods: [{ from: '2026-12-01', rates: OK.rates, note: 1 }] }, /^pricing\.periodExtra: periods\[0\] must hold only/],
+    periodBadDate: [{ ...OK, periods: [{ from: '2026-02-30', rates: OK.rates }] }, /^pricing\.periodBadDate: periods\[0\]\.from must be a valid YYYY-MM-DD date$/],
+    periodUnordered: [{ ...OK, periods: [{ from: '2026-12-01', rates: OK.rates }, { from: '2026-12-01', rates: OK.rates }] }, /^pricing\.periodUnordered: periods\[1\]\.from must be after the previous period$/],
+    periodNoRates: [{ ...OK, periods: [{ from: '2026-12-01' }] }, /^pricing\.periodNoRates: periods\[0\]\.rates not an object$/],
+    periodTierKeys: [{ ...OK, periods: [{ from: '2026-12-01', rates: OK.rates, tiers: [{ abovePromptTokens: 100_000, rates: { input: 2, output: 2, cacheRead: 1 } }] }] }, /^pricing\.periodTierKeys: periods\[0\]\.tiers\[0\]\.rates keys differ from rates$/],
   };
-  const good = { 'house-model': { ...OK, tiers: [{ abovePromptTokens: 100_000, rates: { input: 2, output: 2 } }], reasoning: 'output' } };
+  const good = { 'house-model': { ...OK, tiers: [{ abovePromptTokens: 100_000, rates: { input: 2, output: 2 } }], periods: [{ from: '2026-12-01', rates: { input: 3, output: 3 } }] } };
   assert.deepEqual(pricingProblems(good), []);
   assert.deepEqual(pricingProblems(undefined), []);
   for (const [key, [entry, message]] of Object.entries(bad)) {
