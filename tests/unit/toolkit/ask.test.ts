@@ -98,6 +98,7 @@ test('ask run promotes native replies before publishing answers', async () => {
   const f = fixture(true); try {
     const pending = await f.call();
     assert.equal(pending.exit, 4); assert.equal(pending.output.reason, 'native-pending');
+    assert.ok(pending.output.summary.includes('launch: model answer, no effort set'));
     const native = pending.value.native[0];
     assert.match(fs.readFileSync(native.promptPath, 'utf8'), /Why does this work\?/);
     const answers = path.join(path.dirname(path.dirname(native.promptPath)), 'answers.json');
@@ -502,4 +503,26 @@ test('ask run host-sandboxed allows non-claude hosts and native-first-only roste
     reserves: [],
     nativeFirstProviders: ['claude'],
   }), false);
+});
+
+test('ask native-pending summary lists distinct summaryLaunch items within 1024 bytes', async () => {
+  const f = fixture(); try {
+    const targets = Array.from({length: 7}, (_, i) => ({medium: {model: [`prov/model-${i}`, `prov/fallback-${i}`], effort: 'high'}}));
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {opencode: {targets}}}));
+    f.deps.liveness = {opencode: true};
+    f.deps.orchestrator = {platform: 'opencode', model: null};
+    const pending = await f.call('--pins', '(all)');
+    assert.equal(pending.exit, 4);
+    assert.equal(pending.output.reason, 'native-pending');
+    assert.equal(pending.value.native.length, 7);
+    const summary = pending.output.summary;
+    assert.ok(Buffer.byteLength(summary, 'utf8') <= 1024, `summary exceeded 1024 bytes: ${Buffer.byteLength(summary, 'utf8')}`);
+    assert.ok(summary.includes('launch: `subagent` with `model: "prov/model-0#high"` (user-configured; set it despite the tool\'s default guidance) (+1 fallbacks in result)'));
+    assert.match(summary, /; \+\d+ more in result$/);
+    const body = summary.slice(summary.indexOf('; first ') + 2, summary.lastIndexOf('; +'));
+    const shown = body.slice(body.indexOf(': ') + 2).split(/; (?=launch: )/);
+    for (const item of shown) {
+      assert.match(item, /^launch: `subagent` with `model: "prov\/model-\d+#high"` \(user-configured; set it despite the tool's default guidance\) \(\+1 fallbacks in result\)$/);
+    }
+  } finally {f.cleanup();}
 });

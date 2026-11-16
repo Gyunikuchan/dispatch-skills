@@ -3,7 +3,7 @@ import path from 'node:path';
 import { CONFIG_CANDIDATES, HINT, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
 import { pricingProblems } from '../lib/pricing.ts';
-import { opencodeSubagentModels, type ProviderKey } from '../lib/platform.ts';
+import { type ProviderKey } from '../lib/platform.ts';
 import { normalizeProvider, resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
 import { foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
@@ -20,7 +20,7 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [], warnings: string[] = [];
   const writers: Record<string, ResolvedSubagent> = {};
-  let utility: Record<string, ResolvedUtility & { subagentModels?: string[] }> = {};
+  let utility: Record<string, ResolvedUtility> = {};
   let sandboxRemoved: string[] = [], writeConcurrency = 1;
   try {
     const loaded = loadConfig(skillRoot);
@@ -29,14 +29,10 @@ export function doctorReport(session: string, skillRoot: string, requested?: unk
     warnings = pricingProblems(loaded.config['pricing']);
     if (!problems.length) { writeConcurrency = (loaded.config['write-concurrency'] as number) ?? 1;
       const writerTable = (loaded.config['write-subagents'] ?? {}) as Record<string, LevelMap<SubagentEntry>>;
-      for (const [platform, levels] of Object.entries(writerTable)) writers[platform] = resolveSubagent(resolveLevel(levels, level)!);
+      for (const [platform, levels] of Object.entries(writerTable)) writers[normalizeProvider(platform)] = resolveSubagent(resolveLevel(levels, level)!);
       utility = resolveUtility((loaded.config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>);
-      const opencode = utility['opencode'];
-      if (opencode) {
-        const subagentModels = opencodeSubagentModels(opencode.models, opencode.effort);
-        if (subagentModels !== undefined) utility['opencode'] = {...opencode, subagentModels};
-      }
       if (host && !utility[normalizeProvider(host)]) problems.push(`Missing required entry "utility-subagents.${host}" (${HINT}).`);
+      if (host && !writers[normalizeProvider(host)]) problems.push(`Missing required entry "write-subagents.${host}" (${HINT}).`);
       sandboxRemoved = resolveRoster({
         level, readDelegates: loaded.config['read-delegates'] as Record<string, ReadDelegate>, orchestrator: host ? { platform: host } : null,
         ...(liveness ? { liveness } : {}), ...(sandboxSupported ? { sandboxSupported } : {}),

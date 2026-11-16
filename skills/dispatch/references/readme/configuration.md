@@ -13,7 +13,7 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 | `diagnostics` | Optional | Retrospective `diagnostics.md` report for Dispatch maintainers |
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
-| `write-subagents` | Implementation | Native writer models available to each host platform |
+| `write-subagents` | Required per platform in use | Native writer models available to each host platform |
 | `utility-subagents` | Required per platform in use | One native entry per platform for explorer and utility subagents, with `context-limit` (tokens) |
 | `phases` | Optional | Review target counts, rounds, and provider filters |
 | `read-commands` | Optional | Host read commands, such as a code-index query, that read delegates may run |
@@ -85,7 +85,7 @@ node scripts/dispatch.ts doctor run --session <returned-session-path> --host <pl
 
 Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports the `utility` entry per platform with its `contextLimit`. It does not probe provider executables, authentication or runtime sandbox activation; provider launches expose those failures.
 
-If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer. A review or ask voice on the host platform always runs as a native subagent; a native failure takes a reserve, then `failed`.
+If doctor blocks with `config-invalid`, check that `write-subagents` and `utility-subagents` include the host platform. A read delegate is not a substitute for a native writer. A review or ask voice on the host platform always runs as a native subagent; a native failure takes a reserve, then `failed`.
 
 ## Sandboxing and provider details
 

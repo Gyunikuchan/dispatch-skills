@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { diversitySort, nativeFirstRoute, parsePins, resolveLevel, resolveRoster, type ReadDelegate, type RosterInput } from '../../../skills/dispatch/scripts/policy/roster.ts';
+import { nativeFirstRoute, parsePins, resolveLevel, resolveRoster, type ReadDelegate, type RosterInput } from '../../../skills/dispatch/scripts/policy/roster.ts';
 
 const base: RosterInput = {
   level: 'high',
@@ -36,20 +36,61 @@ test('grammar-pins: (a,b), (3), and (all) parse; count and all stand alone', () 
   assert.throws(() => resolveRoster({ ...base, pins: { kind: 'providers', keys: ['codex', 'typo'] } }), /typo/);
 });
 
-// SECTION: Diversity and identity
+// SECTION: Ordering and identity
 
-test('grammar-diversity-sort: every platform first once, orchestrator platform last in config order', () => {
-  assert.deepEqual(diversitySort(['a1', 'a2', 'b1', 'c1', 'b2'], (item) => item[0]), ['a1', 'b1', 'c1', 'a2', 'b2']);
+test('config-order: unpinned rosters follow config order with host last regardless of model or effort', () => {
   // Wider host object, as the toolkit passes at runtime: the model must not affect ordering.
   const host = { platform: 'claude', model: 'claude-opus-20260101' };
   const roster = resolveRoster({ ...base, orchestrator: host, policy: { rounds: { low: 1 }, targets: { low: 'all' } } });
-  assert.deepEqual(slots(roster), ['codex[0]:gpt-5', 'agy[0]:gemini-pro', 'codex[1]:gpt-5-mini', 'claude[0]:claude-opus', 'claude[1]:claude-sonnet']);
+  assert.deepEqual(slots(roster), ['codex[0]:gpt-5', 'codex[1]:gpt-5-mini', 'agy[0]:gemini-pro', 'claude[0]:claude-opus', 'claude[1]:claude-sonnet']);
+
+  const multiDelegates: Record<string, ReadDelegate> = {
+    codex: { targets: [{ low: { model: 'gpt-5', effort: 'high' } }] },
+    claude: { targets: [{ low: { model: 'claude-opus', effort: 'medium' } }] },
+    opencode: {
+      targets: [
+        { low: { model: 'oc-1', effort: 'low' } },
+        { low: { model: 'oc-2', effort: 'medium' } },
+        { low: { model: 'oc-3', effort: 'high' } },
+        { low: { model: 'oc-4', effort: 'max' } },
+      ],
+    },
+    agy: { targets: [{ low: { model: 'gemini-pro', effort: 'low' } }] },
+  };
+  const allPolicy = { rounds: { low: 1 }, targets: { low: 'all' as const } };
+  const slotIds = (r: ReturnType<typeof resolveRoster>) => r.targets.map((slot) => slot.slot);
+
+  assert.deepEqual(
+    slotIds(resolveRoster({ level: 'low', readDelegates: multiDelegates, policy: allPolicy, orchestrator: { platform: 'claude' } })),
+    ['codex[0]', 'opencode[0]', 'opencode[1]', 'opencode[2]', 'opencode[3]', 'agy[0]', 'claude[0]'],
+  );
+  assert.deepEqual(
+    slotIds(resolveRoster({ level: 'low', readDelegates: multiDelegates, policy: allPolicy, orchestrator: { platform: 'agy' } })),
+    ['codex[0]', 'claude[0]', 'opencode[0]', 'opencode[1]', 'opencode[2]', 'opencode[3]', 'agy[0]'],
+  );
+
+  // Changing candidate model and effort does not alter platform or target order.
+  const alteredDelegates: Record<string, ReadDelegate> = {
+    ...multiDelegates,
+    opencode: {
+      targets: [
+        { low: { model: 'oc-z', effort: 'max' } },
+        { low: { model: 'oc-a', effort: 'low' } },
+        { low: { model: 'oc-m', effort: 'medium' } },
+        { low: { model: 'oc-b', effort: 'high' } },
+      ],
+    },
+  };
+  assert.deepEqual(
+    slotIds(resolveRoster({ level: 'low', readDelegates: alteredDelegates, policy: allPolicy, orchestrator: { platform: 'claude' } })),
+    ['codex[0]', 'opencode[0]', 'opencode[1]', 'opencode[2]', 'opencode[3]', 'agy[0]', 'claude[0]'],
+  );
 });
 
 test('grammar-target-identity: positional provider[index] slots; reserves follow targets', () => {
   const roster = resolveRoster(base);
   assert.equal(roster.rounds, 2);
-  assert.deepEqual(roster.targets.map((slot) => slot.slot), ['codex[0]', 'agy[0]', 'codex[1]']);
+  assert.deepEqual(roster.targets.map((slot) => slot.slot), ['codex[0]', 'codex[1]', 'agy[0]']);
   assert.deepEqual(roster.reserves.map((slot) => [slot.slot, slot.reserve]), [['claude[0]', true], ['claude[1]', true]]);
   const { policy: _policy, ...standalone } = base;
   const single = resolveRoster(standalone);
@@ -116,11 +157,11 @@ test('underfill-native-exclusion: native-only providers of another host are list
 test('sandbox-unsupported provider leaves targets and reserves unless opted out or pinned', () => {
   const policy = { rounds: { low: 1 }, targets: { low: 2 } };
   const ids = (roster: ReturnType<typeof resolveRoster>) => [roster.targets.map((slot) => slot.slot), roster.reserves.map((slot) => slot.slot)];
-  assert.deepEqual(ids(resolveRoster({ ...base, policy })), [['codex[0]', 'agy[0]'], ['codex[1]', 'claude[0]', 'claude[1]']]);
+  assert.deepEqual(ids(resolveRoster({ ...base, policy })), [['codex[0]', 'codex[1]'], ['agy[0]', 'claude[0]', 'claude[1]']]);
   // The next candidate takes the slot, and an absent entry means supported.
   assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { codex: false } })), [['agy[0]', 'claude[0]'], ['claude[1]']]);
   // The orchestrator's own platform stays native, so its sandbox never drops it.
-  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { claude: false } })), [['codex[0]', 'agy[0]'], ['codex[1]', 'claude[0]', 'claude[1]']]);
+  assert.deepEqual(ids(resolveRoster({ ...base, policy, sandboxSupported: { claude: false } })), [['codex[0]', 'codex[1]'], ['agy[0]', 'claude[0]', 'claude[1]']]);
 
   const optedOut = { ...base.readDelegates, codex: { sandbox: false, targets: [{ low: { model: 'gpt-5' } }] } };
   assert.deepEqual(ids(resolveRoster({ ...base, policy, readDelegates: optedOut, sandboxSupported: { codex: false } })), [['codex[0]', 'agy[0]'], ['claude[0]', 'claude[1]']]);

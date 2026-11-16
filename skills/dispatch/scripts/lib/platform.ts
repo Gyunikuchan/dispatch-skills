@@ -73,11 +73,19 @@ export type Orchestrator = { platform: ProviderKey; model: string | null };
 /** OpenCode `subagent` model value: `P/M#E` with effort, otherwise `P/M`. */
 export const opencodeModelValue = (model: string, effort?: string | null): string => effort ? `${model}#${effort}` : model;
 
-/** OpenCode `subagentModels` for a launch: one value per model; absent when no model resolves. */
-export const opencodeSubagentModels = (models: readonly string[] | undefined, effort?: string | null): string[] | undefined => {
-  if (!models || models.length === 0) return undefined;
-  return models.map((model) => opencodeModelValue(model, effort ?? undefined));
-};
+/** Host-specific launch instruction for a configured model list and effort. */
+export function launchLine(provider: string, models: readonly string[], effort: string | null): string {
+  const effortText = effort ? `effort ${effort}` : 'no effort set';
+  if (!models.length) return `launch: no model configured, ${effortText}`;
+  const [first, ...rest] = models, lower = provider.toLowerCase(), canonical = lower === 'antigravity' ? 'agy' : lower;
+  if (canonical === 'opencode') return `launch: \`subagent\` with \`model: "${opencodeModelValue(first!, effort)}"\` (user-configured; set it despite the tool's default guidance)${rest.map((m) => `, else "${opencodeModelValue(m, effort)}"`).join('')}`;
+  if (canonical === 'agy') return `launch: closest \`Model\` (\`inherit\`, \`flash_lite\`, \`flash\`, \`pro\`) to ${first!}, ${effortText}${rest.map((m) => `, else closest to ${m}`).join('')}`;
+  return `launch: model ${first!}, ${effortText}${rest.map((m) => `, else ${m}`).join('')}`;
+}
+
+/** First-model summary form of `launchLine`, with a fallback count when more models exist. */
+export const summaryLaunch = (provider: string, models: readonly string[], effort: string | null): string =>
+  models.length <= 1 ? launchLine(provider, models, effort) : `${launchLine(provider, models.slice(0, 1), effort)} (+${models.length - 1} fallbacks in result)`;
 
 /** The orchestrator for a recorded host, or null when the value is not a ProviderKey. */
 export function orchestratorFor(host: unknown, env: EnvGet): Orchestrator | null {

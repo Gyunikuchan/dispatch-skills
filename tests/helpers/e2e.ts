@@ -36,7 +36,13 @@ function getBaseOverlayTemplate(): string {
     fs.cpSync(path.join(ROOT, 'skills/dispatch'), path.join(baseOverlayTemplate, 'skills/dispatch'), { recursive: true });
     const config = {
       'read-delegates': { opencode: { sandbox: false, targets: [{ low: { model: 'stub' } }] } },
-      'write-subagents': { codex: { low: { model: 'native-stub', effort: 'low' } } },
+      'write-subagents': {
+        claude: { low: { model: 'native-stub', effort: 'low' } },
+        codex: { low: { model: 'native-stub', effort: 'low' } },
+        opencode: { low: { model: 'stub' } },
+        agy: { low: { model: 'stub' } },
+        copilot: { low: { model: 'stub' } },
+      },
       'utility-subagents': {
         claude: { model: 'native-stub', effort: 'low', 'context-limit': 150000 },
         codex: { model: 'native-stub', effort: 'low', 'context-limit': 300000 },

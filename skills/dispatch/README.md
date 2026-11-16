@@ -20,7 +20,7 @@ Dispatch requires Node.js `^22.18 || >=23.6`, at least one authenticated provide
 2. **Pick your models:** Keep only the providers you use and replace example model names with ones available to you. See the model hints in `config.sample.jsonc`:
    - `read-delegates`: required for `ask` and reviews (prefer strong reasoning models at `medium`+).
    - `utility-subagents`: required per platform in use (use a fast, cheap model with at least `medium` effort so exploration and cleanup are thorough).
-   - `write-subagents`: required for `implement` on your host platform.
+   - `write-subagents`: required per platform in use (`doctor` blocks without it).
 3. **Check your setup** from the repository root (`<platform>` is `claude`, `agy`, `copilot`, `opencode`, or `codex`):
 
 ```bash
@@ -121,7 +121,7 @@ flowchart TD
 | Setting | Controls |
 |---|---|
 | `read-delegates` | Provider targets and models for `ask` and reviews |
-| `write-subagents` | Native writer models used during `implement` |
+| `write-subagents` | Native writer models per platform (required for your host) |
 | `utility-subagents` | Native explorer and utility models per platform (`context-limit` required) |
 | `phases` | Optional review target counts, round limits, and provider filters |
 | `write-concurrency` | Max concurrent task writers (default `1`) |
@@ -144,7 +144,7 @@ See [Configure Dispatch](references/readme/configuration.md) for full details an
 |---|---|
 | No delegates available | Run `doctor`; check `read-delegates`, provider CLI auth, and level |
 | Unexpected model or review breadth | Check active config (`config.local.jsonc` vs `config.jsonc`), level, and pins |
-| Implementation cannot start | Add `write-subagents` for your host platform; complete plan prerequisites |
+| Doctor blocks or implementation cannot start | Add `write-subagents` and `utility-subagents` for your host platform; complete plan prerequisites |
 | Code review finds no changes | Without a range, it reviews uncommitted changes; pass `base..head` for commits |
 | Verification fails | Inspect the reported log path and follow the decision prompt |
 | Provider or sandbox fails | Follow the `doctor` diagnostic, then verify CLI install and auth |

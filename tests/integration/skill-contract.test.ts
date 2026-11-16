@@ -394,7 +394,7 @@ test('root skill routes work and guards orchestrator context', () => {
   for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'with exactly the launch result', 'report a blocker with retained evidence instead of launching without them']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'exactly as the result\'s `launchAs` line states', 'report a blocker with retained evidence instead of launching without']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -679,7 +679,7 @@ test('subagent role table, shared rules and delegation contract', () => {
   assert.match(skill, /test cleanup/i);
   assert.match(skill, /ask voice/i);
   assert.match(skill, /fresh context without parent history/i);
-  assert.match(skill, /exact.*model.*effort/i);
+  assert.match(skill, /exact.*launchAs/i);
   assert.match(skill, /retain handles/i);
   assert.match(skill, /never poll/i);
   assert.match(skill, /claims/i);
@@ -1125,4 +1125,35 @@ test('only a subagent assigned a map may lint it', () => {
   const concepts = read(root + 'references/readme/concepts.md');
   assert.match(concepts, /Explorer subagents[\s\S]*write only an assigned map file[\s\S]*`lint run` on its assigned map only/i);
   assert.match(concepts, /Utility subagents[\s\S]*except `lint run` on an assigned map/i);
+});
+
+test('skill prose and scripts stay host-neutral without subagentModels', () => {
+  const skill = read(root + 'SKILL.md');
+  const providers = read(root + 'references/providers.md');
+  const toolkit = read(root + 'references/toolkit.md');
+  for (const [name, text] of [['SKILL.md', skill], ['providers.md', providers], ['toolkit.md', toolkit]] as const) {
+    assert.doesNotMatch(text, /subagentModels/, `${name} omits subagentModels`);
+  }
+
+  const launchSection = skill.split('## Launch and continue\n')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(launchSection.length > 0, 'SKILL.md has Launch and continue');
+  assert.doesNotMatch(launchSection, /\b(opencode|agy|claude|codex|copilot)\b/i, 'SKILL.md launch rule names no platform');
+
+  assert.doesNotMatch(providers, /host-sandboxed|dangerouslyDisableSandbox|excludedCommands/, 'providers.md omits host-sandboxed recovery');
+  assert.doesNotMatch(providers, /closest `Model`|flash_lite/, 'providers.md omits agy Model list');
+
+  const scriptsDir = path.join(OVERLAY_ROOT, root, 'scripts');
+  const tsFiles = fs.readdirSync(scriptsDir, { recursive: true })
+    .map(entry => String(entry).replace(/\\/g, '/'))
+    .filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
+  for (const file of tsFiles) {
+    const content = fs.readFileSync(path.join(scriptsDir, file), 'utf8');
+    if (file === 'toolkit/fanout.ts') {
+      const stripped = content.replace(/function normalizeNative\b[\s\S]*?\n\}/, '');
+      assert.doesNotMatch(stripped, /subagentModels/, 'fanout.ts names subagentModels only inside normalizeNative');
+      assert.match(content, /function normalizeNative\b[\s\S]*?subagentModels/, 'fanout.ts keeps subagentModels in normalizeNative');
+    } else {
+      assert.doesNotMatch(content, /subagentModels/, `${file} omits subagentModels`);
+    }
+  }
 });

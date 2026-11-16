@@ -1948,10 +1948,10 @@ test('off-host saved native attempt keeps CLI cascade', async () => {
   } finally {f.cleanup();}
 });
 
-test('opencode native descriptors carry exact subagent model values', async () => {
+test('native descriptors carry host-specific launchAs lines and normalize legacy saved outcomes', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const nativeOf = (outcome: unknown) => outcome as {state: string; provider: string; model?: unknown; effort?: unknown; subagentModels?: unknown};
-  // Native-only descriptor with effort carries P/M#E.
+  const nativeOf = (outcome: unknown) => outcome as {state: string; provider: string; model?: unknown; effort?: unknown; launchAs?: string; subagentModels?: unknown};
+  // Native-only descriptor with effort carries opencode launchAs and no subagentModels.
   {
     const f = sessionFixture({memory:true}); try {
       f.deps.orchestrator = {platform: 'opencode', model: null};
@@ -1962,10 +1962,11 @@ test('opencode native descriptors carry exact subagent model values', async () =
       assert.equal(native.state, 'native');
       assert.equal(native.model, 'prov/model');
       assert.equal(native.effort, 'my-eff');
-      assert.deepEqual(native.subagentModels, ['prov/model#my-eff']);
+      assert.equal(native.launchAs, 'launch: `subagent` with `model: "prov/model#my-eff"` (user-configured; set it despite the tool\'s default guidance)');
+      assert.equal('subagentModels' in native, false);
     } finally {f.cleanup();}
   }
-  // Native-only descriptor without effort carries plain P/M, and other providers carry no value.
+  // Native-only descriptor without effort carries plain fallback models, and agy carries its Model instruction.
   {
     const f = sessionFixture({memory:true}); try {
       f.deps.orchestrator = {platform: 'opencode', model: null};
@@ -1973,12 +1974,15 @@ test('opencode native descriptors carry exact subagent model values', async () =
       const slots = [{slot: 'opencode[0]', provider: 'opencode', index: 0, model: ['a', 'b'], native: true, reserve: false}];
       const first = await fanOut({dir, slots, prompt: 'question', validate, quota} as never, f.deps);
       const native = nativeOf(first.find(outcome => outcome.slot === 'opencode[0]'));
-      assert.deepEqual(native.subagentModels, ['a', 'b']);
+      assert.equal(native.launchAs, 'launch: `subagent` with `model: "a"` (user-configured; set it despite the tool\'s default guidance), else "b"');
+      assert.equal('subagentModels' in native, false);
       const g = sessionFixture({memory:true}); try {
-        const cdir = path.join(g.session, 'native-only-other');
-        const cslots = [{slot: 'claude[0]', provider: 'claude', index: 0, model: 'm', effort: 'high', native: true, reserve: false}];
-        const cout = await fanOut({dir: cdir, slots: cslots, prompt: 'question', validate, quota} as never, g.deps);
-        assert.equal('subagentModels' in nativeOf(cout.find(outcome => outcome.slot === 'claude[0]')), false);
+        const adir = path.join(g.session, 'native-only-agy');
+        const aslots = [{slot: 'agy[0]', provider: 'agy', index: 0, model: 'gemini-4-hydrogen', effort: 'high', native: true, reserve: false}];
+        const aout = await fanOut({dir: adir, slots: aslots, prompt: 'question', validate, quota} as never, g.deps);
+        const agyNative = nativeOf(aout.find(outcome => outcome.slot === 'agy[0]'));
+        assert.equal(agyNative.launchAs, 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to gemini-4-hydrogen, effort high');
+        assert.equal('subagentModels' in agyNative, false);
       } finally {g.cleanup();}
     } finally {f.cleanup();}
   }
@@ -1991,7 +1995,8 @@ test('opencode native descriptors carry exact subagent model values', async () =
       const first = await fanOut({dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: ['opencode']} as never, f.deps);
       const native = nativeOf(first.find(outcome => outcome.slot === 'opencode[0]'));
       assert.equal(native.provider, 'opencode');
-      assert.deepEqual(native.subagentModels, ['x/y#high']);
+      assert.equal(native.launchAs, 'launch: `subagent` with `model: "x/y#high"` (user-configured; set it despite the tool\'s default guidance)');
+      assert.equal('subagentModels' in native, false);
     } finally {f.cleanup();}
   }
   // Native-only reserve descriptor shares the same launch fields.
@@ -2005,7 +2010,32 @@ test('opencode native descriptors carry exact subagent model values', async () =
       const first = await fanOut({dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: []} as never, f.deps);
       const pending = nativeOf(first.find(outcome => outcome.slot === 'agy[0]'));
       assert.equal(pending.state, 'native');
-      assert.deepEqual(pending.subagentModels, ['r/m#low']);
+      assert.equal(pending.launchAs, 'launch: `subagent` with `model: "r/m#low"` (user-configured; set it despite the tool\'s default guidance)');
+      assert.equal('subagentModels' in pending, false);
+    } finally {f.cleanup();}
+  }
+  // Replaying a saved legacy native outcome drops subagentModels and populates launchAs.
+  {
+    const f = sessionFixture({memory:true}); try {
+      f.deps.orchestrator = {platform: 'opencode', model: null};
+      const dir = path.join(f.session, 'native-legacy-replay');
+      fs.mkdirSync(path.join(dir, 'slots'), {recursive: true});
+      fs.mkdirSync(path.join(dir, 'prompts'), {recursive: true});
+      fs.mkdirSync(path.join(dir, 'replies'), {recursive: true});
+      const promptPath = path.join(dir, 'prompts', 'opencode[0].md');
+      const replyPath = path.join(dir, 'replies', 'opencode[0].md');
+      fs.writeFileSync(promptPath, 'question');
+      fs.writeFileSync(path.join(dir, 'slots', 'opencode[0].json'), JSON.stringify({
+        slot: 'opencode[0]', state: 'native', promptPath, replyPath,
+        provider: 'opencode', attempt: 'opencode[0]#legacy1', cwd: f.session,
+        model: 'prov/legacy', effort: 'medium', subagentModels: ['prov/legacy#medium'],
+      }));
+      const slots = [{slot: 'opencode[0]', provider: 'opencode', index: 0, model: 'prov/legacy', effort: 'medium', native: true, reserve: false}];
+      const replayed = await fanOut({dir, slots, prompt: 'question', validate, quota} as never, f.deps);
+      const native = nativeOf(replayed.find(outcome => outcome.slot === 'opencode[0]'));
+      assert.equal(native.state, 'native');
+      assert.equal(native.launchAs, 'launch: `subagent` with `model: "prov/legacy#medium"` (user-configured; set it despite the tool\'s default guidance)');
+      assert.equal('subagentModels' in native, false);
     } finally {f.cleanup();}
   }
 });

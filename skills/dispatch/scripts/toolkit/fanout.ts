@@ -7,7 +7,7 @@ import { readQuotaState, publishQuotaFailure } from '../lib/quota-store.ts';
 import { H, quotaSnapshot } from '../policy/quota.ts';
 import { next, failureDisposition } from '../policy/cascade.ts';
 import { parsePins, resolveRoster, nativeFirstRoute, normalizeProvider, type Pins, type Roster, type ReadDelegate, type PhasePolicy, type Underfill } from '../policy/roster.ts';
-import { claudeHostSandboxed, currentPlatform, opencodeSubagentModels } from '../lib/platform.ts';
+import { claudeHostSandboxed, currentPlatform, launchLine, summaryLaunch } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import type { ProviderId, RunOutcome, Invocation, LaunchRequest, ProcessResult, UsageBaseline } from '../providers/types.ts';
 import { validSessionId } from '../lib/session.ts';
@@ -43,17 +43,21 @@ export type BlockedAttempt = {provider: string; model: string | null; reason: st
 export type Validation = {ok: true; text?: string} | {ok: false; cls: FailureClass; reason: string; blocked?: {reason: string; reasonHash: string}};
 export type SlotOutcome = {slot: string; blocked?: BlockedAttempt[]} & (
   {state: 'done'; text: string; responder?: {slot: string; provider: string; model: string | null; native: boolean; effort?: string}} |
-  {state: 'native'; promptPath: string; replyPath: string; provider: string; attempt: string; cwd: string; model?: string | readonly string[]; effort?: string; subagentModels?: string[]; error?: string; cliFallback?: true; nativeError?: string} |
+  {state: 'native'; promptPath: string; replyPath: string; provider: string; attempt: string; cwd: string; model?: string | readonly string[]; effort?: string; launchAs?: string; error?: string; cliFallback?: true; nativeError?: string} |
   {state: 'failed'; cls: FailureClass; reason: string; cliOnly?: true}
 );
 export type NativeFailure = {attempt: string; reason: string; reasonHash: string};
 
-/** Native launch fields share one shape: provider opencode carries one `P/M#E` (or `P/M`) value per model. */
-const nativeSubagentModels = (provider: string, model: string | readonly string[] | undefined, effort: string | undefined): string[] | undefined => {
-  if (normalizeProvider(provider) !== 'opencode') return undefined;
-  const models = model === undefined ? undefined : typeof model === 'string' ? [model] : [...model];
-  return opencodeSubagentModels(models, effort ?? null);
-};
+const nativeModels = (model: string | readonly string[] | undefined): string[] => model === undefined ? [] : typeof model === 'string' ? [model] : [...model];
+const nativeLaunchAs = (provider: string, model: string | readonly string[] | undefined, effort: string | undefined): string => launchLine(provider, nativeModels(model), effort ?? null);
+/** Distinct first-model summary launch lines for pending native descriptors. */
+export const nativeSummaryItems = (outcomes: readonly Extract<SlotOutcome, {state: 'native'}>[]): string[] =>
+  [...new Set(outcomes.map(outcome => summaryLaunch(outcome.provider, nativeModels(outcome.model), outcome.effort ?? null)))];
+function normalizeNative(outcome: SlotOutcome): SlotOutcome {
+  if (outcome.state !== 'native') return outcome;
+  const { subagentModels: _legacy, ...rest } = outcome as Extract<SlotOutcome, {state: 'native'}> & { subagentModels?: unknown };
+  return { ...rest, launchAs: rest.launchAs ?? nativeLaunchAs(rest.provider, rest.model, rest.effort) };
+}
 type FanOutInput = {
   dir: string; slots: readonly RosterSlot[] | Roster;
   prompt: string | ((slot: RosterSlot) => string);
@@ -315,7 +319,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const oldReplyPathOf = (logical: string) => path.join(input.dir, 'replies', name(logical) + '.md');
 
   const readSaved = (logical: string): SlotOutcome | undefined => {
-    try { return JSON.parse(fs.readFileSync(fileOfLogical(logical), 'utf8')) as SlotOutcome; }
+    try { return normalizeNative(JSON.parse(fs.readFileSync(fileOfLogical(logical), 'utf8')) as SlotOutcome); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   };
 
@@ -372,13 +376,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       const current = fs.readFileSync(baseFile, 'utf8');
       if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
     } catch { fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), {mode: 0o600}); }
-    const subagentModels = nativeSubagentModels(slot.provider, slot.model, slot.effort);
     const outcome: Extract<SlotOutcome, {state: 'native'}> = {
       slot: slot.slot, state: 'native', promptPath: baseFile, replyPath,
       provider: slot.provider, attempt, cwd,
       ...(slot.model !== undefined ? {model: slot.model} : {}),
       ...(slot.effort !== undefined ? {effort: slot.effort} : {}),
-      ...(subagentModels !== undefined ? {subagentModels} : {}),
+      launchAs: nativeLaunchAs(slot.provider, slot.model, slot.effort),
     };
     markNativeLaunched();
     return outcome;
@@ -397,13 +400,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     fs.writeFileSync(nativeFile, buildNativePrompt(baseText, replyPath), {mode: 0o600});
     emit(attemptOf(logical, physical),{kind:'native',state:'pending'});
     markNativeLaunched();
-    const subagentModels = nativeSubagentModels(physical.provider, physical.model, physical.effort);
     return {
       slot: logical.slot, state: 'native', promptPath: nativeFile, replyPath,
       provider: physical.provider, attempt, cwd,
       ...(physical.model !== undefined ? {model: physical.model} : {}),
       ...(physical.effort !== undefined ? {effort: physical.effort} : {}),
-      ...(subagentModels !== undefined ? {subagentModels} : {}),
+      launchAs: nativeLaunchAs(physical.provider, physical.model, physical.effort),
     };
   };
 
@@ -779,13 +781,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       const current = fs.readFileSync(baseFile, 'utf8');
       if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
     } catch { fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), {mode: 0o600}); }
-    const subagentModels = nativeSubagentModels(reserve.provider, reserve.model, reserve.effort);
     const created: Extract<SlotOutcome, {state: 'native'}> = {
       slot: logical.slot, state: 'native', promptPath: baseFile, replyPath,
       provider: reserve.provider, attempt: `${reserve.slot}#${nonce}`, cwd,
       ...(reserve.model !== undefined ? {model: reserve.model} : {}),
       ...(reserve.effort !== undefined ? {effort: reserve.effort} : {}),
-      ...(subagentModels !== undefined ? {subagentModels} : {}),
+      launchAs: nativeLaunchAs(reserve.provider, reserve.model, reserve.effort),
     };
     const withBlocked = failed.blocked?.length ? {...created, blocked: mergeBlocked(created.blocked, failed.blocked)} : created;
     markNativeLaunched();
@@ -1759,7 +1760,7 @@ function savedOrphanTargets(dir: string): RosterSlot[] {
     const name = /^([A-Za-z0-9_-]+\[\d+\])\.json$/.exec(file)?.[1];
     if (name === undefined) continue;
     let saved: {state?: string; provider?: unknown; model?: string | readonly string[]; effort?: string; responder?: {provider?: unknown}};
-    try { saved = JSON.parse(fs.readFileSync(path.join(dir, 'slots', file), 'utf8')) as typeof saved; } catch { continue; }
+    try { saved = normalizeNative(JSON.parse(fs.readFileSync(path.join(dir, 'slots', file), 'utf8')) as SlotOutcome) as typeof saved; } catch { continue; }
     const provider = typeof saved.provider === 'string' ? saved.provider : saved.responder?.provider;
     if ((saved.state !== 'native' && saved.state !== 'done') || typeof provider !== 'string') continue;
     out.push({slot: name, provider, index: Number(name.slice(name.lastIndexOf('[') + 1, -1)),
@@ -1793,7 +1794,7 @@ export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise
     const marked: RosterSlot[] = [];
     for (const orphan of extra) {
       let saved: SlotOutcome | undefined;
-      try { saved = JSON.parse(fs.readFileSync(path.join(input.dir, 'slots', orphan.slot + '.json'), 'utf8')) as SlotOutcome; }
+      try { saved = normalizeNative(JSON.parse(fs.readFileSync(path.join(input.dir, 'slots', orphan.slot + '.json'), 'utf8')) as SlotOutcome); }
       catch { continue; }
       if (saved?.state !== 'native') continue;
       if ((saved as {cliFallback?: true}).cliFallback) { marked.push(orphan); continue; }

@@ -96,7 +96,7 @@
       ],
     },
   },
-  // Optional; host implementation writers (required for implement).
+  // Required for each host platform; doctor blocks without it.
   // Hint: scale from fast/mid-tier coding models (low-medium) to your strongest (high-max).
   "write-subagents": {
     "claude": {

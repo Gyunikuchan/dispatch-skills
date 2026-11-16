@@ -4,10 +4,10 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
-import { assertHostNotSandboxed, fanOutComplete, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote } from './fanout.ts';
+import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { ToolError } from './output.ts';
+import { summaryWithItems, ToolError } from './output.ts';
 import { LEVELS, type Level } from './types.ts';
 
 export async function askRun({session, manifest, args, values, deps}: HandlerContext): Promise<HandlerResult> {
@@ -50,11 +50,11 @@ export async function askRun({session, manifest, args, values, deps}: HandlerCon
       provider: outcome.responder?.provider ?? slots.targets.find(slot => slot.slot === outcome.slot)?.provider ?? (outcome as unknown as {provider?: string}).provider ?? 'unknown',
       ...(outcome.responder ? {responder: outcome.responder} : {}), text: outcome.text}] : []);
     const failed = outcomes.filter(outcome => outcome.state === 'failed');
-    const native = outcomes.filter(outcome => outcome.state === 'native');
+    const native = outcomes.filter((outcome): outcome is Extract<SlotOutcome, {state: 'native'}> => outcome.state === 'native');
     const wave = cliWaveState(dir);
     const value = {answers, failed, native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(slots.underfill ? {underfill: slots.underfill} : {})};
     const summary = `ask: ${answers.length} answers, ${failed.length} failed` + underfillNote(slots);
-    if (native.length) return {ok: false, exit: 4, reason: 'native-pending', summary: `ask: ${answers.length} answers, ${failed.length} failed: ` + nativePendingNote(native.length, wave) + underfillNote(slots), value};
+    if (native.length) return {ok: false, exit: 4, reason: 'native-pending', summary: summaryWithItems(`ask: ${answers.length} answers, ${failed.length} failed: ` + nativePendingNote(native.length, wave) + underfillNote(slots), nativeSummaryItems(native)), value};
     if (!answers.length) return {ok: false, exit: 2, reason: 'ask-failed', summary, value};
     const file = path.join(dir, 'answers.json');
     const temp = file + '.' + crypto.randomUUID() + '.tmp';

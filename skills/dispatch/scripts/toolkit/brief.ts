@@ -7,33 +7,32 @@ import { qualityCriteria } from './domain/prompt.ts';
 import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
-import { ToolError } from './output.ts';
+import { capSummary, ToolError } from './output.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
-import { opencodeSubagentModels } from '../lib/platform.ts';
+import { launchLine, summaryLaunch } from '../lib/platform.ts';
 import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
 import type { Level } from './types.ts';
 
-type LaunchValues = { model: string[] | null; effort: string | null; subagentModels?: string[] };
+type LaunchValues = { model: string[] | null; effort: string | null; launchAs: string | null };
 
-function launchValues(resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues {
-  if (!resolved) return {model: null, effort: null};
-  const subagentModels = normalized === 'opencode' ? opencodeSubagentModels(resolved.models, resolved.effort) : undefined;
-  return {model: resolved.models, effort: resolved.effort, ...(subagentModels !== undefined ? {subagentModels} : {})};
-}
+const launchValues = (resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues =>
+  resolved ? {model: resolved.models, effort: resolved.effort, launchAs: launchLine(normalized, resolved.models, resolved.effort)} : {model: null, effort: null, launchAs: null};
+const briefSummary = (prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number) =>
+  capSummary(`${prefix}: ${host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : ''}${file} (${bytes} bytes)`);
 
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {
   try {
-    if (!host) return {model: null, effort: null};
+    if (!host) return {model: null, effort: null, launchAs: null};
     const normalized = normalizeProvider(host);
     const {config} = loadConfig(skillRoot);
-    if (validateConfig(config).length) return {model: null, effort: null};
+    if (validateConfig(config).length) return {model: null, effort: null, launchAs: null};
     const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined;
     const key = writerTable ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized) : undefined;
     const entry = key && writerTable ? resolveLevel(writerTable[key], level) : undefined;
     return launchValues(entry ? resolveSubagent(entry) : undefined, normalized);
-  } catch { return {model: null, effort: null}; }
+  } catch { return {model: null, effort: null, launchAs: null}; }
 }
 
 /** Explorer, test-cleanup and writer utility entry; null when the host or config does not resolve. */
@@ -147,11 +146,10 @@ function explorerText(skillRoot: string, platform: string | undefined): string {
   if (!entry) {
     return 'Utility subagent entry for this host is not configured; the orchestrator reports a blocker.';
   }
-  const models = 'model ' + entry.models.map(model => '`' + model + '`').join(' or ');
-  const launch = entry.effort ? models + ', effort `' + entry.effort + '`' : models + ', no effort set';
+  const launch = launchLine(platform ?? '', entry.models, entry.effort);
   const limit = entry.contextLimit.toLocaleString('en-US');
   const replyLimit = DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US');
-  return `Explorer subagent for this host: ${launch}. For heavy reading outside your task paths, you may launch a research explorer on this entry (token limit ${limit} tokens, reply size limit ${replyLimit} UTF-8 bytes). Require it to stay read-only: no edits, no Git write commands and no toolkit. Read the files you edit yourself and treat its reply as claims. If the host has no launch tool, read directly. For tedious, simple edits inside your task paths, you may launch a utility subagent on the same entry. Assign each utility subagent explicit disjoint paths inside your task paths, with no path shared between two running utility subagents. Require it to run no Git write commands, no toolkit, and launch nothing; no token limit applies to it. Inspect its delta and run the task verification yourself. If the host has no launch tool, perform the edits yourself.`;
+  return `Explorer subagent for this host — ${launch}. For heavy reading outside your task paths, you may launch a research explorer on this entry (token limit ${limit} tokens, reply size limit ${replyLimit} UTF-8 bytes). Require it to stay read-only: no edits, no Git write commands and no toolkit. Read the files you edit yourself and treat its reply as claims. If the host has no launch tool, read directly. For tedious, simple edits inside your task paths, you may launch a utility subagent on the same entry. Assign each utility subagent explicit disjoint paths inside your task paths, with no path shared between two running utility subagents. Require it to run no Git write commands, no toolkit, and launch nothing; no token limit applies to it. Inspect its delta and run the task verification yourself. If the host has no launch tool, perform the edits yourself.`;
 }
 
 /** Shared `{{slot}}` substitution; an unknown slot name refuses instead of emitting raw braces. */
@@ -262,7 +260,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   fs.writeFileSync(file, text);
   const launchValues = writerLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform, level);
   const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: task + ' launch ' + launch.launch + ': ' + file + ' (' + value.bytes + ' bytes)'};
+  return {ok: true, exit: 0, value, summary: briefSummary(task + ' launch ' + launch.launch, ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
 }
 
 function selectExplorerKind(text: string, kind: 'map' | 'research'): string {
@@ -290,7 +288,7 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   // 75% margin: an explorer cannot count the tokens its tool output and reasoning add.
   const splitAt = entry ? `${Math.floor(entry.contextLimit * 0.75).toLocaleString('en-US')} tokens` : limit;
   const nestedLaunch = entry
-    ? `model ${entry.models.map(m => '`' + m + '`').join(' or ')}${entry.effort ? `, effort \`${entry.effort}\`` : ', no effort set'}`
+    ? launchLine(ctx.deps.orchestrator?.platform ?? '', entry.models, entry.effort)
     : 'utility entry not configured; the orchestrator reports a blocker';
 
   const templateText = fs.readFileSync(path.join(templates, 'explorer-brief.md'), 'utf8');
@@ -321,7 +319,7 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   fs.writeFileSync(file, text);
   const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const value = {briefPath: file, bytes: Buffer.byteLength(text), kind, contextLimit, ...launchValues};
-  return {ok: true, exit: 0, value, summary: 'explorer brief: ' + file + ' (' + value.bytes + ' bytes)'};
+  return {ok: true, exit: 0, value, summary: briefSummary('explorer brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
 }
 
 export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<HandlerResult> {
@@ -346,7 +344,7 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   fs.writeFileSync(file, text);
   const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: 'test-cleanup brief: ' + file + ' (' + value.bytes + ' bytes)'};
+  return {ok: true, exit: 0, value, summary: briefSummary('test-cleanup brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
 }
 
 const VERIFIER_VALUES = ['checkoutPath', 'base', 'specPath', 'focus'] as const;
@@ -364,6 +362,7 @@ export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerR
   fs.mkdirSync(evidenceDir, {recursive: true});
   const file = nextBriefPath(directory, 'verifier');
   fs.writeFileSync(file, text);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text), evidenceDir, ...utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform)};
-  return {ok: true, exit: 0, value, summary: 'verifier brief: ' + file + ' (' + value.bytes + ' bytes)'};
+  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
+  const value = {briefPath: file, bytes: Buffer.byteLength(text), evidenceDir, ...launchValues};
+  return {ok: true, exit: 0, value, summary: briefSummary('verifier brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
 }

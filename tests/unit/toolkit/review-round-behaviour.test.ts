@@ -240,7 +240,7 @@ test('review native-pending and resumed final results report and retain underfil
     const pending = await f.call();
     assert.equal(pending.exit, 4); assert.equal(pending.output.reason, 'native-pending');
     assert.deepEqual(pending.value.underfill, underfilled);
-    assert.match(pending.output.summary, /; underfill 2\/2 targets, host codex, excluded native-only: copilot$/);
+    assert.match(pending.output.summary, /; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: launch: model native, no effort set$/);
 
     // Modify configuration before resuming to ensure resumed run retains roster underfill
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({

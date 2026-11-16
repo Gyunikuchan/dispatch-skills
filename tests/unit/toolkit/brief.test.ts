@@ -408,7 +408,7 @@ test('writer brief states explorer and utility subagent rules', async () => {
     };
     fs.writeFileSync(config, valid);
     const claudeBrief = await render('claude');
-    assert.match(claudeBrief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+    assert.match(claudeBrief, /launch: model cheap-a, effort medium, else cheap-b/);
     assert.match(claudeBrief, /token limit 150,000 tokens/);
     assert.match(claudeBrief, /reply size limit 8,192 UTF-8 bytes/);
     assert.match(claudeBrief, /stay read-only: no edits, no Git write commands and no toolkit/);
@@ -423,7 +423,7 @@ test('writer brief states explorer and utility subagent rules', async () => {
     assert.match(claudeBrief, /A utility subagent under a writer is not a second writer/);
 
     const codexBrief = await render('codex');
-    assert.match(codexBrief, /model `codex-mid`, no effort set/);
+    assert.match(codexBrief, /launch: model codex-mid, no effort set/);
     assert.match(codexBrief, /token limit 300,000 tokens/);
 
     const copilotBrief = await render('copilot');
@@ -506,7 +506,7 @@ describe('explorer brief', () => {
 
       // host limit and nested launch model and effort
       assert.match(brief, /150,000/);
-      assert.match(brief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+      assert.match(brief, /Launch nested explorers exactly as: launch: model cheap-a, effort medium, else cheap-b\./);
 
       // solo and split rules with minimum size, cap and one level
       assert.match(brief, /work solo/i);
@@ -612,7 +612,7 @@ describe('explorer brief', () => {
       assert.match(brief, /nesting:.*nested explorer replies inline.*consolidates the nested replies into its one reply within the 8,192/is);
 
       // Launch model and effort
-      assert.match(brief, /model `cheap-a` or `cheap-b`, effort `medium`/);
+      assert.match(brief, /Launch nested explorers exactly as: launch: model cheap-a, effort medium, else cheap-b\./);
 
       // No map instructions
       assert.ok(!brief.includes('lint run'), 'research brief has no lint run');
@@ -766,10 +766,12 @@ test('brief results name the host model and effort', async () => {
       codex: {low: {model: 'codex-low', effort: 'low-eff'}, high: {model: ['codex-high-a', 'codex-high-b'], effort: 'high-eff'}},
       opencode: {low: {model: 'prov/model', effort: 'my-eff'}, high: {model: 'prov/plain'}},
       agy: {low: {model: 'agy-low', effort: 'low'}},
+      claude: {low: {model: 'claude-haiku-5-5', effort: 'medium'}},
     },
     'utility-subagents': {
       opencode: {model: 'exp/model', effort: 'exp-eff', 'context-limit': 300000},
       codex: {model: 'codex-exp', 'context-limit': 300000},
+      claude: {model: 'claude-haiku-5-5', effort: 'medium', 'context-limit': 300000},
     },
   }));
   try {
@@ -782,7 +784,11 @@ test('brief results name the host model and effort', async () => {
       f.lines.length = 0;
       const exit = await main(['brief', 'render', 'T1', '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+      const out = f.output();
+      return {
+        summary: out.summary,
+        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {path: string; launch: number; model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+      };
     };
     writeConfig();
     // Two distinct levels for the same host.
@@ -791,29 +797,45 @@ test('brief results name the host model and effort', async () => {
     const high = await writerValue('codex', 'high');
     assert.deepEqual(high.model, ['codex-high-a', 'codex-high-b']);
     assert.equal(high.effort, 'high-eff');
+    assert.equal(high.launchAs, 'launch: model codex-high-a, effort high-eff, else codex-high-b');
+    assert.match(high.summary, /^T1 launch \d+: launch: model codex-high-a, effort high-eff \(\+1 fallbacks in result\); /);
     assert.equal('subagentModels' in high, false);
     // Level fallback through resolveLevel: medium resolves to the nearest defined below (low).
     await f.add('level', {level: 'medium'});
     f.deps.orchestrator = {platform: 'codex', model: null} as never;
     f.lines.length = 0;
     assert.equal(await main(['brief', 'render', 'T1', '--session', f.session, '--host', 'codex'], f.deps), 0);
-    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown};
+    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; launchAs: string | null};
     assert.deepEqual(fallback.model, ['codex-low']);
     assert.equal(fallback.effort, 'low-eff');
-    // OpenCode writer carries the exact subagent value with effort.
+    assert.equal(fallback.launchAs, 'launch: model codex-low, effort low-eff');
+    // OpenCode writer carries the exact launchAs value with effort and keeps launch as the writer launch ID.
     const openLow = await writerValue('opencode', 'low');
     assert.deepEqual(openLow.model, ['prov/model']);
     assert.equal(openLow.effort, 'my-eff');
-    assert.deepEqual(openLow.subagentModels, ['prov/model#my-eff']);
+    assert.equal(typeof openLow.launch, 'number');
+    assert.equal(openLow.launchAs, 'launch: `subagent` with `model: "prov/model#my-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal('subagentModels' in openLow, false);
+    assert.ok(openLow.summary.includes(openLow.launchAs));
+    assert.ok(fs.readFileSync(openLow.path, 'utf8').includes('Explorer subagent for this host — launch: `subagent` with `model: "exp/model#exp-eff"`'));
     // OpenCode writer without effort carries the plain value.
     const openHigh = await writerValue('opencode', 'high');
     assert.deepEqual(openHigh.model, ['prov/plain']);
     assert.equal(openHigh.effort, null);
-    assert.deepEqual(openHigh.subagentModels, ['prov/plain']);
+    assert.equal(openHigh.launchAs, 'launch: `subagent` with `model: "prov/plain"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal('subagentModels' in openHigh, false);
+    // agy and claude writers carry their host-specific launchAs lines.
+    const agyLow = await writerValue('agy', 'low');
+    assert.equal(agyLow.launchAs, 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-low, effort low');
+    assert.ok(agyLow.summary.includes(agyLow.launchAs));
+    const claudeLow = await writerValue('claude', 'low');
+    assert.equal(claudeLow.launchAs, 'launch: model claude-haiku-5-5, effort medium');
+    assert.ok(claudeLow.summary.includes(claudeLow.launchAs));
     // Missing entry resolves to null without refusing.
     const missing = await writerValue('copilot', 'low');
     assert.equal(missing.model, null);
     assert.equal(missing.effort, null);
+    assert.equal(missing.launchAs, null);
     assert.equal('subagentModels' in missing, false);
     // Explorer and test-cleanup read the utility entry.
     const explorerValue = async (host: string) => {
@@ -823,16 +845,27 @@ test('brief results name the host model and effort', async () => {
       f.lines.length = 0;
       const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+      const out = f.output();
+      return {
+        summary: out.summary,
+        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {briefPath: string; model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+      };
     };
     const expOpen = await explorerValue('opencode');
     assert.deepEqual(expOpen.model, ['exp/model']);
     assert.equal(expOpen.effort, 'exp-eff');
-    assert.deepEqual(expOpen.subagentModels, ['exp/model#exp-eff']);
+    assert.equal(expOpen.launchAs, 'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal('subagentModels' in expOpen, false);
+    assert.ok(expOpen.summary.includes(expOpen.launchAs));
+    assert.ok(fs.readFileSync(expOpen.briefPath, 'utf8').includes(`Launch nested explorers exactly as: ${expOpen.launchAs}.`));
     const expCodex = await explorerValue('codex');
     assert.deepEqual(expCodex.model, ['codex-exp']);
     assert.equal(expCodex.effort, null);
+    assert.equal(expCodex.launchAs, 'launch: model codex-exp, no effort set');
     assert.equal('subagentModels' in expCodex, false);
+    const expClaude = await explorerValue('claude');
+    assert.equal(expClaude.launchAs, 'launch: model claude-haiku-5-5, effort medium');
+    assert.ok(expClaude.summary.includes(expClaude.launchAs));
     // No utility entry gives null launch values, independent of writer entries or level.
     await f.add('level', {level: 'high'});
     const expAgyHigh = await explorerValue('agy');
@@ -841,11 +874,13 @@ test('brief results name the host model and effort', async () => {
     for (const value of [expAgyHigh, expAgyLow]) {
       assert.equal(value.model, null);
       assert.equal(value.effort, null);
+      assert.equal(value.launchAs, null);
     }
     const expMissing = await explorerValue('copilot');
     assert.equal(expMissing.model, null);
     assert.equal(expMissing.effort, null);
-    // Test-cleanup shares the utility entry, including the OpenCode value.
+    assert.equal(expMissing.launchAs, null);
+    // Test-cleanup shares the utility entry, including launchAs.
     const cleanupValue = async (host: string) => {
       const valuesPath = path.join(f.session, `cleanup-${host}.json`);
       fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
@@ -853,22 +888,32 @@ test('brief results name the host model and effort', async () => {
       f.lines.length = 0;
       const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; subagentModels?: unknown};
+      const out = f.output();
+      return {
+        summary: out.summary,
+        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+      };
     };
     const cleanOpen = await cleanupValue('opencode');
     assert.deepEqual(cleanOpen.model, ['exp/model']);
-    assert.deepEqual(cleanOpen.subagentModels, ['exp/model#exp-eff']);
+    assert.equal(cleanOpen.launchAs, 'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal('subagentModels' in cleanOpen, false);
+    assert.ok(cleanOpen.summary.includes(cleanOpen.launchAs));
     const verifierValuesPath = path.join(f.session, 'verifier-opencode.json');
     fs.writeFileSync(verifierValuesPath, JSON.stringify({checkoutPath: 'integration', base: 'a'.repeat(40), specPath: 'work.spec.md', focus: 'Cycle 2. Re-check the proof.'}));
     f.lines.length = 0;
     assert.equal(await main(['brief', 'verifier', verifierValuesPath, '--session', f.session, '--host', 'opencode'], f.deps), 0, JSON.stringify(f.lines));
-    const verifier = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    const verifierOut = f.output();
+    const verifier = JSON.parse(fs.readFileSync(verifierOut.path!, 'utf8'));
     assert.deepEqual(verifier.model, cleanOpen.model);
     assert.equal(verifier.effort, cleanOpen.effort);
-    assert.deepEqual(verifier.subagentModels, cleanOpen.subagentModels);
+    assert.equal(verifier.launchAs, cleanOpen.launchAs);
+    assert.equal('subagentModels' in verifier, false);
+    assert.ok(verifierOut.summary.includes(verifier.launchAs));
     const cleanMissing = await cleanupValue('copilot');
     assert.equal(cleanMissing.model, null);
     assert.equal(cleanMissing.effort, null);
+    assert.equal(cleanMissing.launchAs, null);
     // Missing or invalid config never refuses a render; launch values are null.
     fs.unlinkSync(configPath);
     const nullWriter = await writerValue('codex', 'low');

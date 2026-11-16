@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { claudeHostSandboxed, orchestratorFor, platformFacts } from '../../../skills/dispatch/scripts/lib/platform.ts';
+import { claudeHostSandboxed, launchLine, orchestratorFor, platformFacts, summaryLaunch } from '../../../skills/dispatch/scripts/lib/platform.ts';
 
 const envOf = (values: Record<string, string>) => (name: string): string | undefined => values[name];
 
@@ -27,4 +27,43 @@ test('claudeHostSandboxed detects SANDBOX_RUNTIME or SANDBOX=1', () => {
   assert.equal(claudeHostSandboxed(envOf({ SANDBOX: '1' })), true);
   assert.equal(claudeHostSandboxed(envOf({})), false);
   assert.equal(claudeHostSandboxed(envOf({ SANDBOX: '0', SANDBOX_RUNTIME: '' })), false);
+});
+
+test('launchLine and summaryLaunch format host-specific launch instructions', () => {
+  assert.equal(
+    launchLine('opencode', ['opencode-go/deepseek-v4.1-flash'], 'max'),
+    'launch: `subagent` with `model: "opencode-go/deepseek-v4.1-flash#max"` (user-configured; set it despite the tool\'s default guidance)',
+  );
+  assert.equal(
+    launchLine('opencode', ['prov/a', 'prov/b'], null),
+    'launch: `subagent` with `model: "prov/a"` (user-configured; set it despite the tool\'s default guidance), else "prov/b"',
+  );
+  assert.equal(
+    launchLine('agy', ['gemini-4-hydrogen'], 'medium'),
+    'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to gemini-4-hydrogen, effort medium',
+  );
+  assert.equal(
+    launchLine('antigravity', ['gemini-4-hydrogen', 'gemini-4-flash'], null),
+    'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to gemini-4-hydrogen, no effort set, else closest to gemini-4-flash',
+  );
+  assert.equal(
+    launchLine('claude', ['claude-haiku-5-5'], 'medium'),
+    'launch: model claude-haiku-5-5, effort medium',
+  );
+  assert.equal(
+    launchLine('codex', ['gpt-6-luna', 'gpt-6-mini'], null),
+    'launch: model gpt-6-luna, no effort set, else gpt-6-mini',
+  );
+  assert.equal(
+    summaryLaunch('opencode', ['opencode-go/deepseek-v4.1-flash', 'opencode-go/other'], 'max'),
+    'launch: `subagent` with `model: "opencode-go/deepseek-v4.1-flash#max"` (user-configured; set it despite the tool\'s default guidance) (+1 fallbacks in result)',
+  );
+  assert.equal(
+    summaryLaunch('agy', ['gemini-4-hydrogen', 'gemini-4-flash', 'gemini-4-pro'], 'medium'),
+    'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to gemini-4-hydrogen, effort medium (+2 fallbacks in result)',
+  );
+  assert.equal(
+    summaryLaunch('claude', ['claude-haiku-5-5'], 'medium'),
+    'launch: model claude-haiku-5-5, effort medium',
+  );
 });

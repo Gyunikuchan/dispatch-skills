@@ -76,6 +76,7 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     const design=f.artifact('strategy.design.md','# Strategy\n## Boundaries\nA boundary.\n');
     f.artifact('strategy.design.context.md',CONTEXT_MAP);
     const pending=await call('design',design);
+    assert.ok(pending.output.summary.includes('launch: model native, no effort set'));
     await finish(pending,'design',design,f.spec);
     const designRound=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/design-strategy.design/round-1/round.json'),'utf8'));
     assert.equal(designRound.spec.path,fs.realpathSync.native(f.spec));
@@ -163,6 +164,33 @@ test('design-stage review binds its spec and preserves an in-place revision with
       class: 'non-intent', affects: [], rationale: 'Clarify risk', diffRef: 'design diff'});
     assert.equal((await f.call('design', design)).exit, 0);
     assert.equal(foldLedger(f.session).records.filter(row => row.kind === 'edit').length, 1);
+  } finally {f.cleanup();}
+});
+
+test('review native-pending summary lists distinct summaryLaunch items within 1024 bytes', async () => {
+  const f = await fixture(false);
+  try {
+    const targets = Array.from({length: 7}, (_, i) => ({medium: {model: [`prov/model-${i}`, `prov/fallback-${i}`], effort: 'high'}}));
+    fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {opencode: {targets}}}));
+    f.deps.liveness = {opencode: true};
+    f.deps.orchestrator = {platform: 'opencode', model: null};
+    const design = f.artifact('seven.design.md', '# Strategy\n## Boundaries\nA boundary.\n');
+    f.artifact('seven.design.context.md', CONTEXT_MAP);
+    const exit = await main(['review', 'run', design, '--kind', 'design', '--level', 'medium', '--pins', '(all)', '--spec', f.spec, '--session', f.session, '--host', 'opencode'], f.deps);
+    const output = f.output();
+    const value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as {pending: unknown[]};
+    assert.equal(exit, 4);
+    assert.equal(output.reason, 'native-pending');
+    assert.equal(value.pending.length, 7);
+    const summary = output.summary;
+    assert.ok(Buffer.byteLength(summary, 'utf8') <= 1024, `summary exceeded 1024 bytes: ${Buffer.byteLength(summary, 'utf8')}`);
+    assert.ok(summary.includes('launch: `subagent` with `model: "prov/model-0#high"` (user-configured; set it despite the tool\'s default guidance) (+1 fallbacks in result)'));
+    assert.match(summary, /; \+\d+ more in result$/);
+    const body = summary.slice(summary.indexOf('; first ') + 2, summary.lastIndexOf('; +'));
+    const shown = body.slice(body.indexOf(': ') + 2).split(/; (?=launch: )/);
+    for (const item of shown) {
+      assert.match(item, /^launch: `subagent` with `model: "prov\/model-\d+#high"` \(user-configured; set it despite the tool's default guidance\) \(\+1 fallbacks in result\)$/);
+    }
   } finally {f.cleanup();}
 });
 

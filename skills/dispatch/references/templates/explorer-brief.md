@@ -16,7 +16,7 @@ Answer the planned-decision questions, not a general repository survey.
 
 Token limit for this host: {{limit}}.
 Split threshold: {{splitAt}}.
-Launch model and effort for nested launches: {{nestedLaunch}}.
+Launch nested explorers exactly as: {{nestedLaunch}}.
 
 Work solo by default. Split only when expected reading exceeds the split threshold. Estimate expected reading in files and bytes using ~4 bytes per token (about 20 KB or ~5 files per ~5k tokens). The token limit is a soft budget.
 

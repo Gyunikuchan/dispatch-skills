@@ -1,5 +1,5 @@
-// Review roster (spec §6.5 step 1, §14): level → phase policy (`targets`, `only`) → pins → diversity sort with
-// orchestrator demotion → `-m`/`-e` collapse → native marking → reserves.
+// Review roster (spec §6.5 step 1, §14): level → phase policy (`targets`, `only`) → pins → orchestrator
+// demotion in config order → `-m`/`-e` collapse → native marking → reserves.
 
 import type { Level, SlotId } from '../toolkit/types.ts';
 import type { RosterSlot } from '../toolkit/domain/types.ts';
@@ -69,21 +69,6 @@ export function parsePins(text: string): Pins {
   return { kind: 'providers', keys: [...new Set(items.map(normalizeProvider))] };
 }
 
-// SECTION: Ordering
-
-/** Every key's first candidate before any repeat, preserving input order. */
-export function diversitySort<T>(candidates: readonly T[], key: (candidate: T) => unknown): T[] {
-  const seen = new Set<unknown>();
-  const firsts: T[] = [];
-  const repeats: T[] = [];
-  for (const candidate of candidates) {
-    const value = key(candidate);
-    if (seen.has(value)) repeats.push(candidate);
-    else { seen.add(value); firsts.push(candidate); }
-  }
-  return [...firsts, ...repeats];
-}
-
 // SECTION: Roster
 
 export type TargetEntry = { model?: string | readonly string[]; effort?: string };
@@ -129,12 +114,11 @@ function candidates(input: RosterInput): Candidate[] {
   });
 }
 
-/** Alternatives first, then the orchestrator platform; each group diversity-sorted. */
-function demote(list: readonly Candidate[], orchestrator: Orchestrator | null, sort: boolean): Candidate[] {
-  const group = (items: readonly Candidate[]) => (sort ? diversitySort(items, (item) => item.provider) : [...items]);
-  if (!orchestrator) return group(list);
+/** Alternatives first, then the orchestrator platform; config order preserved. */
+function demote(list: readonly Candidate[], orchestrator: Orchestrator | null): Candidate[] {
+  if (!orchestrator) return [...list];
   const own = (item: Candidate) => item.provider === orchestrator.platform;
-  return [...group(list.filter((item) => !own(item))), ...group(list.filter(own))];
+  return [...list.filter((item) => !own(item)), ...list.filter(own)];
 }
 
 /** `-m`/`-e` collapse each platform to its first candidate carrying the override. */
@@ -200,7 +184,7 @@ export function resolveRoster(input: RosterInput): Roster {
   const hostProvider = orchestrator?.platform ?? null;
   const live = usable.filter((item) => explicit || input.liveness === undefined || input.liveness[item.provider] === true || item.native || item.provider === hostProvider);
   const blocked = (item: Candidate) => !explicit && !item.native && item.provider !== hostProvider && item.sandbox === true && input.sandboxSupported?.[item.provider] === false;
-  const ordered = collapse(demote(live.filter((item) => !blocked(item)), orchestrator, !explicit), input.overrides);
+  const ordered = collapse(demote(live.filter((item) => !blocked(item)), orchestrator), input.overrides);
   const count = wanted === 'all' ? ordered.length : Math.min(wanted, ordered.length);
   const [targets = [], reserves = []] = identify(ordered.slice(0, count), ordered.slice(count));
   const excluded = [...new Set(all.filter((item) => item.native && item.provider !== orchestrator?.platform).map((item) => item.provider))];
