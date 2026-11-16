@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-16
+
 - Added runtime verification before test cleanup and the standalone verify verb.
 - **Breaking:** Renamed tool action `verify run` to `check run`, plan criterion field `Verify:` to `Check:`, and evidence class `Evidence: verify` to `Evidence: check` with no compatibility aliases; `criterion-evidence` lint errors (including missing, duplicate, or unknown `Evidence:` classes, not only `Evidence: verify`) now block lint; added `check run --task`, task-scoped checks per integration, two-layer verification stage ordering, and inline verifier proof standards.
+- Usage and cost reporting attributes native and delegate sessions per model and effort, with banded storage, delegate session capture, and dollar estimates over dated rate periods for latest models.
+- Delivery flow orchestrates design delivery by increment, routes accepted review fixes to task writers, commits each delivered increment, runs a shared check command once per tree, and resumes stalled or capacity-limited delegates.
+- Delegation controls add explorer limits, conditional nesting, unified subagent rules, config-ordered roster, host writer checks, sandbox and approval flags, and deadline and budget handling.
+- Refreshed user guides, diagrams, and sample config.
 
 ## [0.8.4] - 2026-11-10
 
