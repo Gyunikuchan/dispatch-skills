@@ -32,7 +32,7 @@ Writers own TDD: failing proof tests, implementation to GREEN and durable contra
 
 The [toolkit contract](../../skills/dispatch/references/toolkit.md) remains the canonical source for per-call detail. On-demand help serves its sections and refusals point to the governing section, avoiding repeated mandatory reads without maintaining a second contract.
 
-The [path workload measure](../../scripts/path-bytes.ts) counts deterministic representative reads against a fixed baseline as a proxy for token workload, not observed usage. Its 25% reduction target is aspirational: a smaller measured reduction is reported rather than failing the work.
+The [path workload measure](../../scripts/path-bytes.ts) counts deterministic representative reads for all six verbs against baseline commit `7677a380` as a proxy for token workload, not observed usage. `--check-baseline` reproduces the baseline; `--at <commit>` measures another commit. Workload growth above the baseline fails the gate. Its 25% reduction target is aspirational: a smaller measured reduction is reported rather than failing the work.
 
 ## Consequences
 

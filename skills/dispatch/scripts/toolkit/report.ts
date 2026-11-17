@@ -39,6 +39,7 @@ type Snapshot = {
   planStem: string;
   specPath: string;
   specHash: string;
+  designHash: string | undefined;
   integration: LedgerRecord | undefined;
   integrationPath: string | null;
   head: string | null;
@@ -151,7 +152,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   try {coverage=coverageState(ctx.session,fold,'code-integration',applicableReviewIds(ctx.manifest,fold).get('code-integration'));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='coverage-required'))throw error;coverage='unreadable';}
   return {
-    fold, bind, plan, planPath, planHash, planStem, specPath, specHash,
+    fold, bind, plan, planPath, planHash, planStem, specPath, specHash, designHash: hashes.design ?? undefined,
     risk,
     integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
     integrated: integrated.size,rejectionConfirmations,confirmationError,coverage,reviewedCodeBaseline,reviewFixes,
@@ -260,11 +261,13 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       branch: destBranch,
       ref: deliveredSourceRef(ctx.manifest.safeSessionId),
     } : null,
-    glance,
+    glance: glance ? { what: glance.what, visuals: glance.visuals } : null,
+    repositoryRoot: ctx.manifest.repositoryRoot,
+    ...(typeof designPath === 'string' ? { designPath, designHash: snapshot.designHash ?? 'unavailable' } : {}),
     ...(runtimeProof ? {runtimeProof} : {}),
     visuals,
     focus: focusRecord ? { bullets: focusBullets, ...(focusVisual ? { visual: focusVisual } : {}) } : null,
-    tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary, behaviour: task.behaviour })),
+    tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary })),
     statuses: snapshot.statuses,
     changes,
     edits,

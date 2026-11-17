@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -14,7 +15,7 @@ export type PathManifest = { guide: string; links: Record<string, LinkEntry>; ca
 export type Figures = { distinct: number; workload: number; editableDistinct: number; editableWorkload: number };
 export type Model = 'before' | 'after';
 export type Read = (rel: string) => string;
-export type PathName = 'plan' | 'implement';
+export type PathName = 'ask' | 'design' | 'plan' | 'implement' | 'review' | 'verify';
 
 // SECTION: Manifest (fixed normal-path model; counts are representative, not observed averages)
 
@@ -28,6 +29,42 @@ const TOOLKIT = 'references/toolkit.md';
 const BAR = 'references/templates/quality-bar.md';
 
 export const MANIFEST: Record<PathName, PathManifest> = {
+  ask: { guide: 'references/verbs/ask.md', links: {
+    'SKILL.md#routing': unconditional, 'references/grounding.md#publish': conditional('only when'),
+    'references/toolkit.md#ask-run': unconditional, 'references/grounding.md': conditional('when'),
+    'references/decision-frame.md': conditional('When source checks'), 'references/providers.md#native-slots': unconditional,
+    'references/providers.md': unconditional,
+  }, calls: [call('ask run', 1)] },
+  design: { guide: 'references/verbs/design.md', links: {
+    'references/spec-authoring.md#resolve-and-author': conditional('No current spec'), 'references/grounding.md#scope-round': unconditional,
+    [`${BAR}#shared`]: unconditional, [`${BAR}#spec`]: unconditional, [`${BAR}#design`]: unconditional,
+    'references/spec-stage.md#readers-and-document-layers': unconditional, 'references/templates/design.md': unconditional,
+    'references/grounding.md#check-and-recover': unconditional, [`${TOOLKIT}#lint-run`]: unconditional,
+    [`${TOOLKIT}#bind`]: unconditional, 'references/spec-stage.md#run-level': unconditional,
+    'references/review-rules.md': unconditional, 'references/verbs/review.md': unconditional,
+    'references/spec-stage.md#revision-protocol': unconditional, [`${TOOLKIT}#edit`]: unconditional,
+    'references/verbs/implement.md': unconditional, [`${TOOLKIT}#session-commands`]: conditional('For each ready increment'),
+    'references/templates/increment-orchestrator-brief.md': conditional('On a verified host'),
+    'references/providers.md#child-orchestrators': conditional('On a verified host'),
+    'references/grounding.md#design-increments': unconditional, 'references/decision-frame.md#user-gate-boundaries': conditional('user gate'),
+    'references/spec-stage.md#approval': conditional('otherwise'), [`${TOOLKIT}#worktree-deliver`]: conditional('With the opt-in'),
+  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
+  // Normal review assumes a code target; plan/design edit records are conditional.
+  review: { guide: 'references/verbs/review.md', links: {
+    'references/spec-stage.md#readers-and-document-layers': unconditional, [`${TOOLKIT}#review-run`]: unconditional,
+    [`${BAR}#shared`]: unconditional, [`${BAR}#spec`]: unconditional, [`${BAR}#plan`]: unconditional,
+    [`${BAR}#testing`]: unconditional, [`${BAR}#design`]: unconditional, [`${BAR}#code`]: unconditional,
+    'references/review-rules.md': unconditional, [`${TOOLKIT}#ruling`]: unconditional,
+    'references/review-rules.md#rulings-and-fix-scope': unconditional, [`${TOOLKIT}#edit`]: conditional('plan and design fixes'),
+    'references/review-coverage.md#failed-slot-coverage': conditional('slot'), 'references/spec-stage.md': unconditional,
+    'references/review-coverage.md#repository-changes-from-native-voices': conditional('repository change'),
+  }, calls: [call('review run', 2), record('ruling', 8), record('edit', 0)] },
+  // Step reads make the Decision Frame unconditional, including escalation without risky approval.
+  verify: { guide: 'references/verbs/verify.md', links: {
+    [`${TOOLKIT}#brief-verifier`]: unconditional, [`${TOOLKIT}#check-run`]: unconditional,
+    'SKILL.md#routing': conditional('If `check run` fails'), 'references/decision-frame.md': unconditional,
+    'references/spec-stage.md': unconditional, [`${TOOLKIT}#ledger-append`]: unconditional,
+  }, calls: [call('brief verifier', 1), call('check run', 1), record('integrate', 1)] },
   plan: {
     guide: 'references/verbs/plan.md',
     links: {
@@ -43,7 +80,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/spec-stage.md#revision-protocol': unconditional,
       'references/templates/plan.md': unconditional,
       'references/templates/plan-field-notes.md': conditional('lint reports a code'),
-      'references/grounding.md#check-and-recover': conditional('phase context map exists'),
+      'references/grounding.md#check-and-recover': unconditional,
       [`${TOOLKIT}#lint-run`]: unconditional,
       [`${TOOLKIT}#bind`]: unconditional,
       [`${TOOLKIT}#edit`]: unconditional,
@@ -116,36 +153,41 @@ export const MANIFEST: Record<PathName, PathManifest> = {
 
 /** Every relative link in SKILL.md; true marks a read that the path makes on every normal run. */
 export const SKILL_LINKS: Record<string, Record<PathName, boolean>> = {
-  'references/decision-frame.md': { plan: true, implement: false },
-  'references/decision-frame.md#user-gate-boundaries': { plan: false, implement: true },
-  'references/providers.md': { plan: false, implement: false },
-  'references/providers.md#child-orchestrators': { plan: false, implement: false },
-  'references/providers.md#native-slots': { plan: false, implement: false },
-  'references/review-rules.md': { plan: false, implement: false },
-  'references/review-rules.md#review-provenance-and-applicability': { plan: false, implement: true },
-  'references/self-build.md': { plan: false, implement: false },
-  'references/spec-stage.md': { plan: false, implement: false },
-  'references/spec-stage.md#approval': { plan: true, implement: true },
-  'references/spec-stage.md#run-level': { plan: true, implement: true },
-  'references/templates/quality-bar.md#shared': { plan: false, implement: true },
-  [TOOLKIT]: { plan: false, implement: false },
-  [`${TOOLKIT}#doctor-run`]: { plan: false, implement: false },
-  [`${TOOLKIT}#native-slot-replies`]: { plan: true, implement: true },
-  [`${TOOLKIT}#session-commands`]: { plan: false, implement: false },
-  [`${TOOLKIT}#status-show`]: { plan: false, implement: false },
-  'references/verbs/ask.md': { plan: false, implement: false },
-  'references/verbs/design.md': { plan: false, implement: false },
-  'references/verbs/implement.md': { plan: false, implement: false },
-  'references/verbs/plan.md': { plan: false, implement: false },
-  'references/verbs/review.md': { plan: false, implement: false },
-  'references/verbs/verify.md': { plan: false, implement: false },
-  'references/worktree-cleanup.md': { plan: false, implement: true },
+  'references/decision-frame.md': { ask: false, design: true, plan: true, implement: false, review: false, verify: false },
+  'references/decision-frame.md#user-gate-boundaries': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  'references/providers.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/providers.md#child-orchestrators': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/providers.md#native-slots': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/review-rules.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/review-rules.md#review-provenance-and-applicability': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  'references/self-build.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/spec-stage.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/spec-stage.md#approval': { ask: false, design: true, plan: true, implement: true, review: false, verify: false },
+  'references/spec-stage.md#run-level': { ask: true, design: true, plan: true, implement: true, review: true, verify: true },
+  'references/templates/quality-bar.md#shared': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  [TOOLKIT]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  [`${TOOLKIT}#doctor-run`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  [`${TOOLKIT}#native-slot-replies`]: { ask: true, design: true, plan: true, implement: true, review: true, verify: true },
+  [`${TOOLKIT}#session-commands`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  [`${TOOLKIT}#status-show`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/ask.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/design.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/implement.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/plan.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/review.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/verbs/verify.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  'references/worktree-cleanup.md': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
 };
 
-/** Fresh "before" measure of commit f8d2b708; a test recomputes it from Git. */
+/** Figures at BASELINE_COMMIT; reproduce with --check-baseline. */
+export const BASELINE_COMMIT = '7677a380';
 export const BASELINE: Record<PathName, Figures> = {
-  plan: { distinct: 71770, workload: 100144, editableDistinct: 55051, editableWorkload: 83425 },
-  implement: { distinct: 83052, workload: 116214, editableDistinct: 68850, editableWorkload: 102012 },
+  ask: { distinct: 30757, workload: 30757, editableDistinct: 29994, editableWorkload: 29994 },
+  design: { distinct: 89058, workload: 89058, editableDistinct: 76438, editableWorkload: 76438 },
+  review: { distinct: 60398, workload: 60398, editableDistinct: 42668, editableWorkload: 42668 },
+  verify: { distinct: 33701, workload: 33701, editableDistinct: 30133, editableWorkload: 30133 },
+  plan: { distinct: 85295, workload: 85295, editableDistinct: 69106, editableWorkload: 69106 },
+  implement: { distinct: 100876, workload: 100876, editableDistinct: 86170, editableWorkload: 86170 },
 };
 
 // SECTION: Sections and bytes
@@ -284,12 +326,45 @@ export function formatReport(result: Record<PathName, Figures>, baseline: Record
   return lines.join('\n') + '\n';
 }
 
-/** Prints the figures; exits 1 on growth above the baseline. The 25% target never fails the check. */
-export function main(): number {
+/** Measures the checkout or a Git revision and checks the selected baseline. */
+export function main(args: string[] = process.argv.slice(2), git: (args: string[]) => string = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }), baseline: Record<PathName, Figures> = BASELINE): number {
+  if (!(args.length === 0 || (args.length === 1 && args[0] === '--check-baseline') || (args.length === 2 && args[0] === '--at' && args[1]))) {
+    process.stderr.write('Usage: path-bytes [--at <commit> | --check-baseline]\n'); return 2;
+  }
+  const commit = args[0] === '--check-baseline' ? BASELINE_COMMIT : args[1];
   const skillDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/dispatch');
-  const result = measure(rel => fs.readFileSync(path.join(skillDir, rel), 'utf8'), 'after');
-  process.stdout.write(formatReport(result));
-  const errors = checkGrowth(result);
+  let objectId: string | undefined;
+  if (commit) {
+    try {
+      objectId = git(['rev-parse', '--verify', `${commit}^{commit}`]).trim();
+    } catch (error) {
+      const e = error as { stderr?: Buffer | string; message?: string };
+      process.stderr.write(String(e.stderr || e.message) + '\n');
+      return 2;
+    }
+  }
+  const read: Read = commit
+    ? rel => git(['show', `${objectId}:skills/dispatch/${rel}`])
+    : rel => fs.readFileSync(path.join(skillDir, rel), 'utf8');
+  const result = {} as Record<PathName, Figures>;
+  let missing = false;
+  for (const [name, spec] of Object.entries(MANIFEST) as [PathName, PathManifest][]) {
+    try {
+      result[name] = measure(read, 'after', { [name]: spec })[name]!;
+    } catch (error) {
+      if (!commit) throw error;
+      missing = true;
+      process.stdout.write(`${name}: missing ${(error as Error).message}\n`);
+    }
+  }
+  process.stdout.write(formatReport(result, baseline));
+  if (args[0] === '--check-baseline') {
+    const unequal = missing || Object.entries(result).some(([name, figures]) => LABELS.some(([key]) => figures[key] !== baseline[name as PathName][key]));
+    if (unequal) process.stderr.write('Baseline differs from commit measure\n');
+    return unequal ? 1 : 0;
+  }
+  if (commit) return 0;
+  const errors = checkGrowth(result, baseline);
   for (const error of errors) process.stderr.write(`${error}\n`);
   return errors.length ? 1 : 0;
 }

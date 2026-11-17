@@ -326,8 +326,8 @@ test('report complete low session accepts bound evidence and a user contract wai
     const result = await invoke(f, 'report', 'complete');
     assert.equal(result.exit, 0, result.output.summary);
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
-    assert.ok(walkthrough.includes(`- Spec: brief.spec.md · sha256:${hashes.spec!.slice(7, 19)}`));
-    assert.ok(walkthrough.includes(`- Plan: report.plan.md · sha256:${hashes.plan!.slice(7, 19)}`));
+    assert.ok(walkthrough.includes(`- Spec: [brief.spec.md](${path.relative(f.session, path.join(f.root, 'brief.spec.md')).replaceAll('\\', '/')}) · sha256:${hashes.spec!.slice(7, 19)}`));
+    assert.ok(walkthrough.includes(`- Plan: [report.plan.md](${path.relative(f.session, path.join(f.root, 'report.plan.md')).replaceAll('\\', '/')}) · sha256:${hashes.plan!.slice(7, 19)}`));
     assert.ok(walkthrough.includes(`| SC1 | ${evidencePaths.get('SC1')} |`));
     assert.match(walkthrough, /- contract · Reason: manual contract acceptance; quote: contract waiver quote/);
     assert.match(walkthrough, /- Deviation: plan edit \(intent\) seq \d+: clarified the acceptance boundary; diff plan-edit\.diff; affects SC1/);

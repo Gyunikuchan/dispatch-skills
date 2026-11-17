@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { neutralizeComments } from './domain/sanitize.ts';
 import type { CoverageState } from './coverage.ts';
 import type { CriterionStatus } from './evidence.ts';
@@ -21,13 +22,16 @@ export type WalkthroughView = {
   specHash: string;
   planPath: string;
   planHash?: string;
+  repositoryRoot?: string;
+  designPath?: string;
+  designHash?: string;
   risk?: string;
   delivered: { integrated: number; total: number; source: string | null; branch: string; ref: string } | null;
-  glance?: { what: string; how: string; visuals?: string } | null;
+  glance?: { what: string; how?: string; visuals?: string } | null;
   /** Parent-design visuals used only when the bound plan has no At a Glance visuals. */
   visuals?: string;
   focus?: { bullets?: readonly { text: string; evidence: string }[]; visual?: string } | null;
-  tasks?: readonly { id: string; title: string; outcome: string; behaviour: readonly string[] }[];
+  tasks?: readonly { id: string; title: string; outcome: string; behaviour?: readonly string[] }[];
   statuses: readonly Status[];
   changes: readonly { action: 'NEW' | 'MODIFY' | 'DELETE'; path: string; owners: readonly Owner[] }[];
   edits: readonly { seq: number; artifact: string; class: string; rationale: string; diffRef: string; affects: readonly string[] }[];
@@ -177,20 +181,22 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
       : `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; uncommitted changes from source ${line(view.delivered.source).slice(0, 12)} in ${line(view.delivered.branch)} working tree; ref ${line(view.delivered.ref)}`;
   const delivered = line(view.glance?.what) || integration;
   const exceptionCount = statuses.filter((row) => row.state !== 'verified').length;
-  const plannedVisuals = view.glance?.visuals || view.visuals || '';
-  const replacement = view.focus?.visual?.trim() ? view.focus.visual : plannedVisuals;
+  const href = (artifact: string) => path.relative(fromDir, path.resolve(view.repositoryRoot ?? fromDir, artifact)).replaceAll('\\', '/');
+  const planHref = href(view.planPath);
+  const replacement = view.focus?.visual?.trim() ? view.focus.visual : '';
+  const plannedVisual = view.glance?.visuals ? `See [plan visuals](${planHref}#at-a-glance).` : view.visuals && view.designPath ? `See [design visuals](${href(view.designPath)}#at-a-glance).` : 'None.';
   const out = [
     `# ${line(view.title)}`,
     '',
     '## At a Glance',
     '',
     `- **What:** ${delivered}`,
-    ...(view.glance?.how ? [`- **How it works:** ${line(view.glance.how)}`] : []),
+    `- **Artifacts:** [spec](${href(view.specPath)}) · [plan](${planHref})${view.designPath ? ` · [design](${href(view.designPath)})` : ''}`,
     `- **Counts:** ${satisfied}/${criteria.length} criteria (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing}); ${changeSummary}; ${view.edits.length} recorded edits; ${view.unplannedPaths.length} unplanned paths; ${view.openEscalations.length} open escalations; ${view.deferredRulings.length} deferred rulings; ${view.reviewRows.length} findings (${openReviews} open)`,
     '',
     '## Visuals',
     '',
-    ...(replacement ? markdownLines(replacement) : ['None.']),
+    ...(replacement ? markdownLines(replacement) : [plannedVisual]),
     '',
     '## Review Focus',
     '',
@@ -206,8 +212,8 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   if (!tasks.length && !view.changes.length) out.push('None.', '');
   for (const task of tasks) {
     out.push(`### ${line(task.id)} — ${line(task.title)}`, '');
-    const behaviour = task.behaviour.map(line).filter(Boolean);
-    out.push(...(behaviour.length ? behaviour.map((item) => `- ${item}`) : [`- ${line(task.outcome)}`]), '', '<details>', '');
+    const fragment = `${line(task.id)} — ${line(task.title)}`.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replaceAll(' ', '-');
+    out.push(`- ${line(task.outcome)} ([plan task](${planHref}#${fragment}))`, '', '<details>', '');
     const taskChanges = view.changes.filter((change) => change.owners.some((owner) => owner.id === task.id));
     out.push(...(taskChanges.length ? taskChanges.map(changeLine) : ['None.']), '', '</details>', '');
   }
@@ -257,8 +263,9 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     '## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), ...coverageLines(view.coverage), '',
     '## Appendix', '', '<details>', '', '<summary>Audit records</summary>', '',
     '### Provenance', '',
-    `- Spec: ${line(view.specPath)} · ${hashPrefix(view.specHash)}`,
-    `- Plan: ${line(view.planPath)} · ${hashPrefix(view.planHash)}`,
+    `- Spec: [${line(view.specPath)}](${href(view.specPath)}) · ${hashPrefix(view.specHash)}`,
+    `- Plan: [${line(view.planPath)}](${planHref}) · ${hashPrefix(view.planHash)}`,
+    ...(view.designPath ? [`- Design: [${line(view.designPath)}](${href(view.designPath)}) · ${hashPrefix(view.designHash)}`] : []),
     `- Integration: ${integrationRecord}`,
     '',
     '### Verified Evidence', '', ...statusTable(statuses, 'verified'), '',

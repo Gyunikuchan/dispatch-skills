@@ -37,10 +37,11 @@ The orchestrator loads only the current step's references: each verb guide carri
 | Test-cleanup brief template | 1870 bytes | 1656 bytes |
 | Test-cleanup rendered quality | 7653 bytes | 7385 bytes |
 | Test-cleanup pack | 9523 bytes | 9041 bytes |
-| Driver TS LOC | 18176 lines | 18176 lines |
-| `SKILL.md` | 10100 bytes | 9776 bytes |
+| Driver TS LOC | 18186 lines | 18186 lines |
+| `SKILL.md` | 10100 bytes | 9622 bytes |
 | Increment orchestrator brief | 4096 bytes | 1674 bytes |
 | Ledger kinds | 14 | 14 |
+| Agent-facing prose line, excluding tables, fences, readme and quality bar | 1200 bytes | 1141 bytes |
 
 Structural ceilings are a hint, not a gate needing user authorization: cut or consolidate first; a genuine new behaviour or rule may raise a ceiling with the reason recorded beside it and reported in the handoff; duplicates never justify a raise. Dead exports are removed only on index or reference evidence, and duplicate helpers merge to one owner with error handling and validation kept; files split by responsibility, never by length.
 
@@ -66,4 +67,4 @@ Canonical homes hold one copy per rule across `SKILL.md`, `quality-bar.md`, `spe
 
 ## Consequences
 
-Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 18176 against a measured 18176, and `SKILL.md` sits at 9776 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.
+Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 18186 against a measured 18186, and `SKILL.md` sits at 9622 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.

@@ -86,16 +86,16 @@ test('readable artifact templates: human layout sections, callouts, details and 
     const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
     assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 0);
     assert.equal((template.match(/^>$/gm) ?? []).length, 0);
-    assert.match(template, /^- \*\*How it works:\*\*/m);
+    assert.match(template, /^- \*\*Artifacts:\*\*/m);
     assert.match(template, /^- \*\*Counts:\*\*/m);
     const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
-    assert.match(skeleton, /### T<n> — <task title>\n\n- <observable behavior from this task>\n\n<details>/);
+    assert.ok(skeleton.includes('### T<n> — <task title>\n\n- <Task Map outcome> ([plan task](<relative href>#<task heading slug>))\n\n<details>'));
     assert.match(skeleton, /- `<relative-path>` · <created \| modified \| deleted>/);
     assert.doesNotMatch(skeleton, /#### \[|Changes:/);
     assert.match(skeleton, /<summary>Audit records<\/summary>/);
     assert.match(skeleton, /\| SC \| Evidence \|/);
-    const labels = [...skeleton.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
-    assert.deepEqual(labels, ['What', 'How it works', 'Counts']);
+    const labels = [...skeleton.matchAll(/^- \*\*(What|Artifacts|Counts):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(labels, ['What', 'Artifacts', 'Counts']);
     const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
     assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Runtime Proof', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix']);
     const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
@@ -114,9 +114,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
       reviewRows: [], reviewRounds: [], reviewFixes: [],
     } as Parameters<typeof renderWalkthrough>[0]);
     assert.deepEqual(headings(skeleton), headings(rendered));
-    const summaryLabels = (text: string) => [...text.matchAll(/^- \*\*(What|How it works|Counts):\*\*/gm)].map((match) => match[1]);
+    const summaryLabels = (text: string) => [...text.matchAll(/^- \*\*(What|Artifacts|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(summaryLabels(skeleton), summaryLabels(rendered));
-    assert.match(rendered, /### T1 — Add a file\n\n- The report describes the feature\.\n\n<details>\n\n- `src\/new\.ts` · created\n\n<\/details>/);
+    assert.match(rendered, /### T1 — Add a file\n\n- The new file supports the feature\. \(\[plan task\]\(example\.plan\.md#t1--add-a-file\)\)\n\n<details>\n\n- `src\/new\.ts` · created\n\n<\/details>/);
     assert.match(rendered, /### Manual\n\n- SC1 · User evidence: manual\/proof\.md; quote: approved/);
     assert.doesNotMatch(rendered, /#### \[|Changes:/);
   });

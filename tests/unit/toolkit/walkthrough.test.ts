@@ -48,7 +48,7 @@ test('walkthrough follows reviewer order and states counts once', () => {
   ]);
   const glance = section(rendered, '## At a Glance', '## Visuals');
   assert.match(glance, /- \*\*What:\*\* The plan behaviour is visible to readers\./);
-  assert.match(glance, /- \*\*How it works:\*\* The renderer copies the plan details\./);
+  assert.match(glance, /- \*\*Artifacts:\*\* \[spec\]/);
   assert.equal((glance.match(/^- \*\*Counts:\*\*/gm) ?? []).length, 1);
   for (const count of ['1/1 criteria', '1 files', '0 recorded edits', '0 unplanned paths', '0 findings']) {
     assert.equal((rendered.match(new RegExp(count, 'g')) ?? []).length, 1, count);
@@ -120,7 +120,7 @@ test('walkthrough review focus points to attention details in their owning secti
   }
 });
 
-test('walkthrough shows copied visuals or the recorded replacement', () => {
+test('walkthrough links planned visuals or shows the recorded replacement', () => {
   const planVisuals = [
     '- Text summary: The map shows the request boundary.',
     '- Note: Ignore this <!-- hidden --> marker.',
@@ -137,8 +137,8 @@ test('walkthrough shows copied visuals or the recorded replacement', () => {
   ].join('\n');
   const copied = renderWalkthrough(view({ glance: { what: 'The feature works.', how: 'The map shows the request path.', visuals: planVisuals } }));
   const copiedVisuals = section(copied, '## Visuals', '## Review Focus');
-  assert.ok(copiedVisuals.includes(planVisuals.replace('<!-- hidden -->', '&lt;!-- hidden -->')));
-  assert.ok(copiedVisuals.includes('Gateway --> Store'));
+  assert.ok(copiedVisuals.includes('See [plan visuals](plans/report.plan.md#at-a-glance).'));
+  assert.ok(!copiedVisuals.includes('Gateway --> Store'));
 
   const replacement = [
     '- Text summary: The replacement shows the delivered retry path.',
@@ -184,8 +184,8 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
   const appendix = section(rendered, '## Appendix');
   for (const detail of [
     '<details>\n\n<summary>Audit records</summary>',
-    '### Provenance', `Spec: spec/report.spec.md · sha256:${'a'.repeat(12)}`,
-    `Plan: plans/report.plan.md · sha256:${'b'.repeat(12)}`,
+    '### Provenance', `Spec: [spec/report.spec.md](spec/report.spec.md) · sha256:${'a'.repeat(12)}`,
+    `Plan: [plans/report.plan.md](plans/report.plan.md) · sha256:${'b'.repeat(12)}`,
     'Integration: source 123456abcdef7890 · branch main · ref refs/dispatch/x/delivered-source',
     '### Verified Evidence', '[source evidence](evidence/first.json)', 'verified at fedcba6543210987; tests removed in cleanup',
     '### User-Attributed Records', 'the user approved this row \\| &lt;!-- literal --&gt;',
@@ -265,4 +265,34 @@ test('walkthrough reports coverage unreadable state and nothing when no slot fai
   const plain = renderWalkthrough(view());
   assert.equal(renderWalkthrough(view({ coverage: coverage() })), plain);
   assert.doesNotMatch(plain, /overage/);
+});
+
+const linkFixture = () => view({
+  repositoryRoot: '/repo', designPath: 'designs/report.design.md', designHash: 'sha256:' + 'c'.repeat(64),
+  glance: { what: 'Delivered.', how: 'Copied explanation should disappear.', visuals: 'Plan diagram content. '.repeat(30) },
+  tasks: [1, 2, 3].map(n => ({ id: 'T' + n, title: 'Path bytes', outcome: 'Outcome ' + n, behaviour: [('Copied behaviour ' + n + ' with detailed explanation. ').repeat(8)] })),
+});
+
+test('walkthrough links governing artifacts instead of restating them', () => {
+  const rendered = renderWalkthrough(linkFixture(), '/sessions/run');
+  for (const expected of [
+    '[spec](../../repo/spec/report.spec.md)', '[plan](../../repo/plans/report.plan.md)',
+    '[design](../../repo/designs/report.design.md)', '[plan visuals](../../repo/plans/report.plan.md#at-a-glance)',
+    'Outcome 1 ([plan task](../../repo/plans/report.plan.md#t1--path-bytes))',
+    '[spec/report.spec.md](../../repo/spec/report.spec.md)', '[designs/report.design.md](../../repo/designs/report.design.md)',
+  ]) assert.ok(rendered.includes(expected), expected);
+  assert.doesNotMatch(rendered, /Copied explanation|Copied behaviour|Plan diagram content/);
+  const noDesign = renderWalkthrough(view({ repositoryRoot: '/repo', glance: { what: 'Done', how: '', visuals: '' }, visuals: 'Design visual' }), '/sessions/run');
+  assert.doesNotMatch(noDesign, /\[design\]\(/);
+  const replacement = renderWalkthrough(view({ focus: { visual: 'Replacement visual' }, glance: { what: 'Done', how: '', visuals: 'Original visual' } }));
+  assert.match(replacement, /Replacement visual/);
+  assert.doesNotMatch(replacement, /Original visual/);
+  const designVisual = renderWalkthrough(view({ designPath: 'designs/report.design.md', visuals: 'Design visual', glance: { what: 'Done', how: '', visuals: '' } }));
+  assert.match(designVisual, /\[design visuals\]\(designs\/report.design.md#at-a-glance\)/);
+});
+
+test('walkthrough fixture render stays below its pre-link byte size', () => {
+  const bytes = Buffer.byteLength(renderWalkthrough(linkFixture(), '/sessions/run'));
+  // Render of this fixture at 7677a380.
+  assert.ok(bytes < 2910, 'render bytes: ' + bytes);
 });

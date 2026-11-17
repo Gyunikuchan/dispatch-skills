@@ -391,10 +391,10 @@ test('root skill routes work and guards orchestrator context', () => {
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
   for (const phrase of ['from the `utility-subagents` entry', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
-  for (const phrase of ['every verb', 'files, logs, web, command output, result files, diffs', 'a launch has a cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'an estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
+  for (const phrase of ['Every verb', 'files, logs, web, command output, result files, diffs', 'has a launch cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until the run ends or the host drops them', 'it keeps its model, write boundary and reply rules', 'a follow-up answer returns inline and writes no file', 'never rewrites `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'exactly as the result\'s `launchAs` line states', 'report a blocker with retained evidence instead of launching without']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until run end or host drop', 'it keeps its model, write boundary and launch deliverable reply rules', 'Follow-ups return inline without files', 'never rewrite `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'exactly as the result\'s `launchAs` line states', 'report a blocker with retained evidence; do not launch without']) assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -414,7 +414,7 @@ test('references keep branch detail and use the utility entry', () => {
   assert.doesNotMatch(providers, /^## Subagent context$/m);
   assert.ok(links(providers).includes('../SKILL.md#launch-and-continue'));
   assert.ok(links(ref('verbs/ask')).includes('../../SKILL.md#routing'));
-  const step6 = ref('verbs/implement').split('\n').find(line => line.includes('Apply [shared]')) ?? '';
+  const step6 = ref('verbs/implement').split('7. Apply [shared]')[1]?.split('8. Review')[0] ?? '';
   assert.doesNotMatch(step6, /--level low/);
   assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/);
   assert.match(step6, /runs only its edited test files/);
@@ -686,10 +686,10 @@ test('subagent role table, shared rules and delegation contract', () => {
   assert.match(skill, /5 files or 20 KB/i);
   assert.match(skill, /distilled, cited reply/i);
   assert.match(skill, /one (?:explorer|launch) per independent topic/i);
-  assert.match(skill, /research explorer.*any step of any verb/i);
+  assert.match(skill, /any step of any verb.*research explorer/i);
   assert.match(skill, /parallel/i);
   assert.match(skill, /brief explorer/i);
-  assert.match(skill, /follow-up.*(?:any time|retained)/i);
+  assert.match(skill, /retained explorer a follow-up anytime/i);
   assert.match(skill, /inline/i);
   assert.match(skill, /8,192|8192/i);
   assert.match(skill, /rewrit(?:es?|ing) no map/i);
@@ -859,7 +859,7 @@ test('writer review fix handoff preserves the integration boundary', () => {
   assert.ok(links(fixes).includes('templates/quality-bar.md#shared'));
   assert.match(fixes, /reserve toolkit actions for the orchestrator/i);
   assert.match(fixes, /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i);
-  assert.match(skill, /assigned review fix, a follow-up answer returns inline and writes no file; an assigned review fix also replies inline/i);
+  assert.match(skill, /Follow-ups return inline without files, except assigned child increment continuation or review fix; review fixes also reply inline/i);
   const routing = skill.split('## Routing\n')[1]!.split('\n## ')[0]!;
   assert.match(routing, /implementation integration mechanical fixes that a deterministic check confirms \| Utility subagent/i);
   assert.match(routing, /remaining implementation integration fixes per \[writer triggers\]\(references\/review-rules\.md\) \| Writer at run level/i);
@@ -970,9 +970,9 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   assert.doesNotMatch(skill, /Explorer subagent \(read-only\)/i);
 
   // Retained explorer follow-up: canonical home in SKILL.md#context-guard; grounding.md links it.
-  assert.match(skill, /ask a retained explorer a follow-up at any time, not subject to the limit/i);
+  assert.match(skill, /Ask a retained explorer a follow-up anytime, outside the limit/i);
   assert.ok(links(grounding).includes('../SKILL.md#context-guard'));
-  assert.doesNotMatch(grounding, /ask a retained explorer a follow-up at any time, not subject to the limit/i);
+  assert.doesNotMatch(grounding, /Ask a retained explorer a follow-up anytime, outside the limit/i);
 
   // Cap, continuation, confirmation-only: saved round-1 cap in review-rules.md; coverage and toolkit link it.
   const rules = ref('review-rules.md');
@@ -1055,13 +1055,6 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   assert.doesNotMatch(planTemplate, /full checks of modified logical test files or known impacted consumers before aggregate/);
   assert.ok(links(implement).includes('../templates/writer-brief.md'));
   assert.doesNotMatch(implement, /Their reply gives status, `reportPath`, a one-line summary and `concerns: <n>`/);
-
-  // checks passed focus: canonical home in toolkit.md#brief-verifier; implement and verify link it.
-  assert.ok(links(implement).includes('../toolkit.md#brief-verifier'));
-  assert.doesNotMatch(implement, /executed > 0/);
-  const verify = ref('verbs/verify.md');
-  assert.ok(links(verify).includes('../toolkit.md#brief-verifier'));
-  assert.ok(verify.includes('or no bound integration is targeted'));
 
   // Three fix rounds: canonical home in verbs/verify.md; implement links it.
   assert.ok(links(implement).includes('verify.md'));
@@ -1170,5 +1163,19 @@ test('skill prose and scripts stay host-neutral without subagentModels', () => {
     } else {
       assert.doesNotMatch(content, /subagentModels/, `${file} omits subagentModels`);
     }
+  }
+});
+
+
+test('checks passed condition has one home in brief verifier', () => {
+  const ref = (file: string) => read(root + 'references/' + file);
+  const toolkit = section(ref('toolkit.md'), 'brief verifier');
+  const verify = ref('verbs/verify.md');
+  const implement = ref('verbs/implement.md');
+  assert.match(toolkit, /executed > 0/);
+  assert.match(toolkit, /no bound integration is targeted/);
+  for (const guide of [verify, implement]) {
+    assert.ok(links(guide).includes('../toolkit.md#brief-verifier'));
+    assert.doesNotMatch(guide, /executed > 0|no bound integration is targeted|zero.command runs|zero commands ran|executed-command condition/);
   }
 });

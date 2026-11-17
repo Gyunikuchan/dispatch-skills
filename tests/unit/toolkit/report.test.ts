@@ -340,10 +340,10 @@ test('report render fills review focus and visuals from ledger and design',async
   assert.match(deviations,/- Follow-up: deferred review-alpha:R1-F002/);
   assert.match(deviations,/- Deviation: cap-ending SHOULD fix R3-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/task-1\.ts, src\/shared\.ts/);
   const visuals=text.slice(text.indexOf('## Visuals'),text.indexOf('## Review Focus'));
-  assert.ok(visuals.includes('| Component | Boundary |'));assert.ok(visuals.includes('```mermaid\nflowchart LR\n  Gateway --> Store\n```'));
+  assert.ok(visuals.includes('[design visuals](')); assert.ok(!visuals.includes('| Component | Boundary |'));
   const bind=latest(foldLedger(f.session),'bind')!;const hashes=currentHashes(f.root,bind),appendix=text.slice(text.indexOf('## Appendix'));
-  assert.ok(appendix.includes(`Spec: brief.spec.md · sha256:${hashes.spec!.slice(7,19)}`));
-  assert.ok(appendix.includes(`Plan: report.plan.md · sha256:${hashes.plan!.slice(7,19)}`));
+  assert.ok(appendix.includes(`Spec: [brief.spec.md](${path.relative(f.session, path.join(f.root, 'brief.spec.md')).replaceAll('\\', '/')}) · sha256:${hashes.spec!.slice(7,19)}`));
+  assert.ok(appendix.includes(`Plan: [report.plan.md](${path.relative(f.session, path.join(f.root, 'report.plan.md')).replaceAll('\\', '/')}) · sha256:${hashes.plan!.slice(7,19)}`));
   assert.ok(!appendix.includes('Review Fixes'));
   const nextDir=path.join(f.session,'.state/reviews/code-integration/round-4');
   writeJson(path.join(nextDir,'round.json'),{round:4,generation:1,cap:3,startSeq:foldLedger(f.session).lastSeq,target:{base:'c'.repeat(40),head:commit},scope:'Re-review round 4 (full)',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
