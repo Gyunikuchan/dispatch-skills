@@ -10,7 +10,7 @@ Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes an
 
 `node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` needs no session and prints one section of this file as raw text through the next heading, exit 0; it is the one command whose stdout is not JSON. An unknown or empty heading refuses with reason `usage` and lists the valid headings; an unreadable file refuses with reason `fault`, exit 2. A refusal may add `help`, the heading to read next; `native-pending` and `ok:true` results carry none.
 
-In the table, `\|` separates alternative values. Append a record with `ledger append <record.json> --session <session>`: the file holds JSON objects with kind, by, data, optional key and optional quote, and `help <kind>` lists the data fields.
+In the table, `\|` separates alternative values. Append a record object or non-empty JSON array from a file or stdin with `ledger append <record.json|-> --session <session>`; `help <kind>` lists its data fields.
 
 | Type | Heading | Arguments |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ In the table, `\|` separates alternative values. Append a record with `ledger ap
 | action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
 | action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>]` |
 | action | brief verifier | `brief verifier <values.json> --session <session> --host <platform>` |
-| action | ledger append | `ledger append <record.json> --session <session>` |
+| action | ledger append | `ledger append <record.json\|-> --session <session>` |
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
 | action | doctor run | `doctor run --session <session> --host <platform> [--level <level>]` |
 | action | status show | `status show --session <session>` |
@@ -211,7 +211,7 @@ Refusals: missing, blank or unknown values; no brief or evidence directory is wr
 
 ### ledger append
 
-Arguments: `ledger append <record.json> --session <session>`. `<record.json>` is a file path, not inline JSON, holding a single record object or a non-empty JSON array of record objects. A leading UTF-8 BOM in the record file is ignored.
+Arguments: `ledger append <record.json|-> --session <session>`. `<record.json>` is a file path, not inline JSON; `-` reads stdin. Both accept a single record object or a non-empty JSON array of record objects with the same validation. A leading UTF-8 BOM is ignored. Under Windows PowerShell 5.1, use a file for non-ASCII records.
 Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, or a bind of a plan/design that has saved review rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
 Refusals: unreadable JSON, invalid-record (including an empty array and an approval with no bind record), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
@@ -297,7 +297,7 @@ data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` i
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Non-intent orchestrator edits extend approved hash chains; intent, dependency and discard need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol). Use lint canonical hashes, excluding incidental report history. For a qualifying plan/design SHOULD correction, keep before and after canonical hashes in the existing edit record and identify the accepted finding in its rationale; record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Non-intent orchestrator edits extend approved hash chains; intent, dependency and discard need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol). Use lint canonical hashes, excluding incidental report history. For each edited artifact per fix batch, run `lint run` once and append one `edit` record: `before` is its current canonical hash (bound or last recorded `after`), `after` is the lint result `value.hash`, and `rationale` names every accepted finding the batch fixes in that artifact. For a qualifying plan/design SHOULD correction, also record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 

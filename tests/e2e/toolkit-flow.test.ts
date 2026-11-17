@@ -296,3 +296,15 @@ test('RED capture from a shell-unsafe session path writes logs without substitut
     assert.equal(fs.existsSync(path.join(f.root, 'substitution-side-effect')), false);
   } finally { f.cleanup(); }
 });
+
+
+test('CLI appends UTF-8 records from piped stdin', async () => {
+ const f=await toolkitRepo();try {
+  const records=[{kind:'note',by:'orchestrator',key:'stdin-one',data:{text:'“quoted”'}},{kind:'note',by:'orchestrator',key:'stdin-two',data:{text:'second'}}];
+  const result=spawnSync(process.execPath,[path.resolve('skills/dispatch/scripts/dispatch.ts'),'ledger','append','-','--session',f.session],{input:JSON.stringify(records),encoding:'utf8',cwd:f.root,windowsHide:true});
+  assert.equal(result.status,0,result.stderr);const output=JSON.parse(result.stdout);assert.equal(output.ok,true);
+  const value=JSON.parse(fs.readFileSync(output.path,'utf8'));assert.equal(value.count,2);
+  const stored=foldLedger(f.session).records.filter(row=>row.key==='stdin-one'||row.key==='stdin-two');
+  assert.deepEqual(stored.map(row=>row.data),records.map(row=>row.data));
+ }finally{f.cleanup();}
+});

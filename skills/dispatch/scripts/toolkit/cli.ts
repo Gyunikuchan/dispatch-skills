@@ -38,6 +38,7 @@ import { reviewId } from './confirmations.ts';
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  readStdin?: () => string;
   hostUsageFs?: HostUsageFs;
   diagnostics?: (event: DiagnosticEvent) => void;
   delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
@@ -68,7 +69,7 @@ export function nodeDeps(): CliDeps {
   const modes = (provider:ProviderId) => SPECS[provider].modes.filter(mode=>discovery.resolve(provider,mode.id).status==='path').map(mode=>mode.id);
   const runnerFs = nodeRunnerFs;
   return {
-    modes, orchestrator:null,
+    modes, orchestrator:null, readStdin: () => fs.readFileSync(0, 'utf8'),
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
     sandboxSupported:Object.fromEntries(Object.entries(SPECS).map(([provider,spec])=>[provider,!sandboxBlocked(spec,true,platform)])),
     async delegate(provider,request,mode) {
@@ -142,14 +143,15 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree abandon': abandon,
   'check run': checkRun,
   'ledger append': async ({ session, manifest, args, deps }) => {
-    if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file: ledger append <record.json> --session <session>');
-    const file = path.resolve(args[0]!);
+    if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file or -: ledger append <record.json|-> --session <session>');
+    const stdin = args[0] === '-';
+    const file = stdin ? '' : path.resolve(args[0]!);
     let text: string;
-    try {text = stripBom(fs.readFileSync(file, 'utf8'));}
-    catch {throw new ToolError(1, 'invalid-input', 'Cannot read record file ' + file);}
+    try {text = stdin ? deps.readStdin!() : fs.readFileSync(file, 'utf8');}
+    catch {throw new ToolError(1, 'invalid-input', stdin ? 'Cannot read records from stdin' : 'Cannot read record file ' + file);}
     let input: unknown;
-    try {input = JSON.parse(text);}
-    catch (error) {throw new ToolError(1, 'invalid-input', 'Record file ' + file + ' is not valid JSON: ' + (error as SyntaxError).message);}
+    try {input = JSON.parse(stripBom(text));}
+    catch (error) {throw new ToolError(1, 'invalid-input', (stdin ? 'Records from stdin are not valid JSON: ' : 'Record file ' + file + ' is not valid JSON: ') + (error as SyntaxError).message);}
     let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
     let findingsSectionReason: string | undefined;
     const appended = await appendRecords(session, input, deps, { onCommit: () => {

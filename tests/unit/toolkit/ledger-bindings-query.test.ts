@@ -49,8 +49,35 @@ test('ledger bindings preserve rulings queries and input validation', async () =
  }
  f.lines.length=0;assert.equal(await main(['ledger','query','--session',f.session,'--kind','bad'],f.deps),1);assert.equal(f.output().reason,'invalid-input');
  for(const file of ['missing',f.root]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,file],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'Cannot read record file '+path.resolve(file));}
- for(const extra of [[],[input,input]]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,...extra],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.match(f.output().summary,/ledger append <record\.json>/);}
+ for(const extra of [[],[input,input]]){f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,...extra],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.match(f.output().summary,/ledger append <record\.json\|->/);}
  fs.writeFileSync(input,'bad');f.lines.length=0;assert.equal(await main(['ledger','append','--session',f.session,input],f.deps),1);assert.equal(f.output().reason,'invalid-input');assert.ok(f.output().summary.startsWith('Record file '+path.resolve(input)+' is not valid JSON: '));
  const ledger=path.join(f.session,'ledger.jsonl');const bytes=fs.readFileSync(ledger,'utf8');const first=JSON.parse(bytes.split('\n')[0]!);fs.appendFileSync(ledger,JSON.stringify(first)+'\n');const corrupt=fs.readFileSync(ledger,'utf8');await assert.rejects(add('note',{text:'n'}),{reason:'ledger-corrupt'});assert.equal(fs.readFileSync(ledger,'utf8'),corrupt);
  }finally{f.cleanup();}
+});
+
+
+test('stdin appends use file validation and preserve atomic batches', async () => {
+ const records=[{kind:'note',by:'orchestrator',key:'one',data:{text:'one'}},{kind:'note',by:'orchestrator',key:'two',data:{text:'two'}}];
+ for(const text of [JSON.stringify(records[0]),JSON.stringify(records),'\ufeff'+JSON.stringify(records),'bad','', '[]',JSON.stringify([records[0],{kind:'invalid'}])]) {
+  const results=[];
+  for(const stdin of [false,true]) {
+   const f=sessionFixture(); try {
+    const file=f.artifact('record.json',text);
+    const exit=await main(['ledger','append','--session',f.session,stdin?'-':file],{...f.deps,...(stdin?{readStdin:()=>text}:{})});
+    const output=f.output(); const value=output.path?JSON.parse(fs.readFileSync(output.path,'utf8')):null;
+    results.push({exit,reason:output.reason,value,records:foldLedger(f.session).records});
+   } finally {f.cleanup();}
+  }
+  if(text==='bad'||text==='') {
+   assert.equal(results[1]!.exit,1);assert.equal(results[1]!.reason,'invalid-input');assert.match(results[1]!.value.message,/^Records from stdin are not valid JSON: /);
+   assert.equal(results[1]!.reason,results[0]!.reason);assert.deepEqual(results[1]!.records,results[0]!.records);
+  } else assert.deepEqual(results[1],results[0],text);
+  if(text==='[]'||text.includes('invalid')) {assert.equal(results[1]!.reason,'invalid-record');assert.deepEqual(results[1]!.records,[]);}
+ }
+ for(const readStdin of [undefined,()=>{throw new Error('read failed');}]) {
+  const f=sessionFixture();try {
+   assert.equal(await main(['ledger','append','--session',f.session,'-'],{...f.deps,...(readStdin ? {readStdin} : {})}),1);
+   assert.equal(f.output().reason,'invalid-input');assert.equal(f.output().summary,'Cannot read records from stdin');assert.deepEqual(foldLedger(f.session).records,[]);
+  }finally{f.cleanup();}
+ }
 });
