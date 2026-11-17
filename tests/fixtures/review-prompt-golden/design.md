@@ -45,7 +45,7 @@ The governing spec's Decisions and Non-goals, and decisions recorded in an appro
 
 - Visuals, summaries, and callouts: flag a visual aid or At a Glance summary when it is stale, contradicts governed or collapsed `<details>` content, or is decorative or duplicates visible prose/tables/visuals; flag `> [!NOTE]` (for information the user must know) or `> [!IMPORTANT]` (only for a decision they must make, consistent with `Decide:`) when misused or wrapping machine fields.
 
-- **architecture** — Define separation of concerns, component ownership, contracts, data flow, and boundaries. Weigh alternatives and trade-offs, apply the shared simplicity order, and check internal consistency and step order.
+- **architecture** — Define separation of concerns, component ownership, contracts, data flow, and boundaries. Each new contract names the existing code that produces each input it reads. Weigh alternatives and trade-offs, apply the shared simplicity order, and check internal consistency and step order.
 - **testing** — Make every criterion observable and together sufficient for the goals, with each increment's acceptance criteria. Check testability and an exact verification path.
 - **decomposition** — Choose independently deliverable, correctly ordered increments with safe parallel work, vertical slices, INVEST sizing, final integration, and no concentration of risk in one increment.
 

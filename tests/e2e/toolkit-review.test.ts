@@ -224,6 +224,7 @@ test('toolkit code review reports missing evidence without admission gates and t
     const head=await launch('first\n');assert.equal((await f.run(['worktree','integrate','T1'])).exit,0);
     const review=async(target='T1')=>{const r=await f.run(['review','run',target,'--kind','code']);assert.equal(r.exit,0,JSON.stringify(r.output));return JSON.parse(fs.readFileSync(r.value.path,'utf8'));};
     const first=await review(); assert.equal(first.findings.length,1);const gap=first.findings[0];
+    assert.deepEqual(first.units.map((unit:any)=>[unit.unit,unit.findings]),[['work.plan.md',[gap.id]]]);
     assert.match(gap.defect,/missing-red: T1 SC1; Tests touched: no/);assert.equal(gap.category,'testing');assert.match(gap.locus,/work.plan.md:L\d+$/);
     const metadata=JSON.parse(fs.readFileSync(path.join(f.session,'.state/reviews/code-T1/round-1/round.json'),'utf8'));
     assert.equal(metadata.target.head,head);assert.ok(prompts[0]!.includes('comparison: '+metadata.target.base+'..'+head));
@@ -1993,4 +1994,3 @@ test('inter-round diff holds governed text from real Git', async () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).interRound.diff, '`' + path.join(roundDir, 'inter-round.diff') + '` (unified diff of the governed text)');
   } finally {f.cleanup();}
 });
-

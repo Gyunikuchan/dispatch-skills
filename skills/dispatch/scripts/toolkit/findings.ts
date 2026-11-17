@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { collectFindings, matchFinding, parseReport } from './domain/report.ts';
+import { collectFindings, isUnresolvedLocus, matchFinding, parseReport } from './domain/report.ts';
+import { structuralLines } from './domain/plan.ts';
 import type { Finding, ReviewKind } from './domain/types.ts';
 import type { SlotOutcome } from './fanout.ts';
 import type { LedgerRecord, RecordInput } from './records.ts';
@@ -16,7 +17,7 @@ export type RepositoryChange = { cwd: string; paths: string[] };
 export type RepositoryCheckState = { state: 'unavailable'; reason: string };
 export type FindingsValue = {
   review: string; round: number; cap: number; level: string; findings: ReviewedFinding[];
-  clusters: {file: string; findings: string[]}[]; failed: Extract<SlotOutcome, {state: 'failed'}>[];
+  units: FindingUnit[]; clusters: {file: string; findings: string[]}[]; failed: Extract<SlotOutcome, {state: 'failed'}>[];
   confirmations?: RejectionReply[];
   repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState;
 };
@@ -46,7 +47,7 @@ export function finalizeRound(input: {
   const findings: ReviewedFinding[] = [...collectFindings(input.round, drafts).filter(finding => !finding.dupOf), ...(input.redGaps ?? [])];
   const escalations: RecordInput[] = [];
   if(input.spec && input.roster) {
-    const current:ConfirmationRound={review:input.review,metadata:{round:input.round,cap:input.cap,generation:input.generation,startSeq:input.startSeq,target:input.target,spec:input.spec,roster:input.roster,requests:input.requests ?? []},findings:{review:input.review,round:input.round,cap:input.cap,level:input.level,findings:[],clusters:[],failed:[],confirmations}};
+    const current:ConfirmationRound={review:input.review,metadata:{round:input.round,cap:input.cap,generation:input.generation,startSeq:input.startSeq,target:input.target,spec:input.spec,roster:input.roster,requests:input.requests ?? []},findings:{review:input.review,round:input.round,cap:input.cap,level:input.level,findings:[],clusters:[],units:[],failed:[],confirmations}};
     for(const state of rejectionState([...(input.confirmationRounds ?? []),current],input.rulings,input.escalationRecords ?? []))if(state.state!=='confirmed' && (state.noResponses>=2 || state.disagreements>=2 && confirmations.some(reply=>reply.finding===state.request.finding && reply.decision==='disagree'))) {
       const id='rejection:'+input.review+':'+state.request.finding;
       escalations.push({kind:'escalation',by:'tool',key:id+':R'+input.round+':g'+input.generation,data:{id,state:'open',summary:state.noResponses>=2?'An assigned source did not reply to MUST rejection '+state.request.finding+' in two consecutive past-cap rounds':'Reviewer disputed MUST rejection '+state.request.finding+' '+state.disagreements+' consecutive times'}});
@@ -75,10 +76,79 @@ export function finalizeRound(input: {
     clusters.set(file, [...(clusters.get(file) ?? []), finding.id]);
   }
   return {review: input.review, round: input.round, cap: input.cap, level: input.level, findings,
-    clusters: [...clusters].map(([file, findings]) => ({file, findings})),
+    units: [], clusters: [...clusters].map(([file, findings]) => ({file, findings})),
     failed: input.replies.filter((reply): reply is Extract<SlotOutcome, {state: 'failed'}> => reply.state === 'failed'), confirmations, escalations,
     ...(input.repositoryChanges ? {repositoryChanges: input.repositoryChanges} : {}),
     ...(input.repositoryCheck ? {repositoryCheck: input.repositoryCheck} : {})};
+}
+export type FindingUnit = {unit: string; findings: string[]; hot: boolean; hotStreak: number; bytes?: number; delta?: number; growthStreak?: number};
+type UnitFinding = {id: string; locus: string; defect?: string};
+type UnitRound = {findings: readonly UnitFinding[]; text?: string; startSeq: number};
+export function findingUnits(input: {kind: ReviewKind; round: number; rounds: readonly UnitRound[]; planPath: string; ruling: (id: string, seq: number) => string | undefined}): FindingUnit[] {
+  const normalize = (s: string) => s.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+  const sections = (text: string | undefined) => {
+    if (text === undefined) return [];
+    const lines = text.split(/(?<=\n)/);
+    const headings = structuralLines(text).flatMap(line => {
+      const m = /^(#{2,3})\s+(.+?)\s*#*\s*$/.exec(line.text);
+      if (!m) return [];
+      const id = m[1] === '###' ? /^(T\d+|AD-\d+|I\d+)\b/i.exec(m[2]!)?.[1]?.toUpperCase() : undefined;
+      return [{level: m[1]!.length, title: m[2]!, id, line: line.line - 1}];
+    });
+    return headings.map((h, i) => ({...h, unit: h.id ?? '§ ' + h.title, bytes: Buffer.byteLength(lines.slice(h.line, headings.slice(i + 1).find(next => next.level <= h.level)?.line ?? lines.length).join(''))}));
+  };
+  const allSections = input.rounds.map(r => sections(r.text));
+  const classify = (finding: UnitFinding, index: number): string => {
+    if (input.kind === 'code') {
+      if (finding.defect?.startsWith('missing-red:')) return input.planPath.replace(/\\/g, '/');
+      if (isUnresolvedLocus(finding.locus) || !finding.locus.trim() || finding.locus === '(none)') return 'unresolved';
+      return finding.locus.replace(/:L\d+$/, '').replace(/\\/g, '/');
+    }
+    const locus = finding.locus.replace(/^unresolved-locus:\s*/i, '').replace(/^§\s*/, '');
+    const spec = /\b(REQ-\d+|DEC-\d+)\b/i.exec(locus);
+    if (spec) return 'spec:' + spec[1]!.toUpperCase();
+    const namedSpec = /\bSpec:\s*(.+)/i.exec(locus);
+    if (namedSpec) return 'spec:' + namedSpec[1]!.trim();
+    const headings = allSections[index] ?? [];
+    for (const match of locus.matchAll(/\b(T\d+|AD-\d+|I\d+)\b/gi)) {
+      const heading = headings.find(h => h.id === match[1]!.toUpperCase());
+      if (heading) return heading.unit;
+    }
+    if (/\bSC\d+\b/i.test(locus)) return '§ Success Criteria';
+    const folded = normalize(locus.replace(/^#{2,3}\s+/, ''));
+    const heading = headings.find(h => {
+      const title = normalize(h.title), short = h.id ? title.replace(/^(?:t\d+|ad-\d+|i\d+)\s*-\s*/, '') : title;
+      return !!folded && (folded === title || (!!short && folded === short));
+    });
+    return heading?.unit ?? 'artifact';
+  };
+  const grouped = input.rounds.map((r, i) => {
+    const units = new Map<string, string[]>();
+    for (const f of r.findings) {const unit = classify(f, i); units.set(unit, [...(units.get(unit) ?? []), f.id]);}
+    return units;
+  });
+  const hot = (unit: string, index: number) => index > 0 && unit !== 'artifact' && unit !== 'unresolved' && !!grouped[index]?.has(unit) && (grouped[index-1]?.get(unit) ?? []).some(id => input.ruling(id, input.rounds[index]!.startSeq) === 'accepted');
+  const size = (unit: string, index: number): number | undefined => {
+    const text = input.rounds[index]?.text;
+    if (text === undefined) return undefined;
+    return unit === 'artifact' ? Buffer.byteLength(text) : allSections[index]?.find(h => h.unit.toLowerCase() === unit.toLowerCase())?.bytes ?? 0;
+  };
+  const index = input.round - 1;
+  return [...(grouped[index] ?? new Map())].map(([unit, findings]) => {
+    let hotStreak = 0; for (let i = index; i >= 0 && hot(unit, i); i--) hotStreak++;
+    const result: FindingUnit = {unit, findings, hot: hotStreak > 0, hotStreak};
+    if (input.kind !== 'code' && !unit.startsWith('spec:')) {
+      const bytes = size(unit, index);
+      if (bytes !== undefined) {
+        result.bytes = bytes;
+        if (index > 0 && size(unit, index - 1) !== undefined) result.delta = bytes - size(unit, index - 1)!;
+        let growth = 0;
+        for (let i = index; i > 0; i--) {const a = size(unit, i), b = size(unit, i - 1); if (a === undefined || b === undefined || a <= b) break; growth++;}
+        result.growthStreak = growth;
+      }
+    }
+    return result;
+  });
 }
 // SECTION: Review budget
 export function read<T>(file: string): T | null {

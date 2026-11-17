@@ -1,10 +1,10 @@
 # Review fixes
 
-Load this procedure only when accepted review findings require fixes in implementation integration. Route accepted fixes and apply the fix-interaction self-check before the next review round under [rulings and fix scope](review-rules.md#rulings-and-fix-scope).
+Load this procedure only when accepted review findings require fixes in implementation integration. Route accepted fixes under [rulings and fix scope](review-rules.md#rulings-and-fix-scope).
 
 ## Assignment and scope
 
-Start each new fix set in a clean integration worktree with recorded HEAD; keep assignments serial and other agents out until the delta commits. For a writer or utility subagent, give a self-contained brief with accepted findings, required outcome, absolute integration worktree, explicit write paths, affected checks, and the [Git-write boundary](templates/quality-bar.md#shared); reserve toolkit actions for the orchestrator. Require the assignee to perform the fix-interaction self-check in [rulings and fix scope](review-rules.md#rulings-and-fix-scope) before returning.
+Start each new fix set in a clean integration worktree with recorded HEAD; keep assignments serial and other agents out until the delta commits. For a writer or utility subagent, give a self-contained brief with accepted findings, required outcome, absolute integration worktree, explicit write paths, affected checks, and the [Git-write boundary](templates/quality-bar.md#shared); reserve toolkit actions for the orchestrator. Require the assignee to follow steps 4–6 with the orchestrator’s stated step 3 root cause per group and perform the self-check for code fixes in [rulings and fix scope](review-rules.md#rulings-and-fix-scope) before returning.
 
 For a cross-ownership fix, assign all approved paths to the task owning the defective behaviour; resolve unclear ownership from the plan and integration evidence before writes.
 

@@ -954,7 +954,7 @@ test('verifier brief states the ten proof standards and baseline rule with no UR
   }
 });
 
-test('each preserved rule has one canonical home', () => {
+test('each preserved rule has one canonical home; review fix procedure and fix check keep one home', () => {
   const ref = (file: string) => read(root + 'references/' + file);
   const skill = read(root + 'SKILL.md');
 
@@ -994,13 +994,28 @@ test('each preserved rule has one canonical home', () => {
   assert.doesNotMatch(implement, /pending or escalated confirmations block delivery and report completion/);
 
   // Fix-interaction self-check and moved review-fix procedure.
-  assert.match(rules, /Before the next review round, whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/i);
-  assert.match(rules, /launches no subagent and changes no roster, cap or round rule/i);
   const reviewFixes = ref('review-fixes.md');
+  const review = ref('verbs/review.md');
   assert.ok(links(reviewFixes).includes('review-rules.md#rulings-and-fix-scope'));
   assert.ok(links(reviewFixes).includes('templates/quality-bar.md#shared'));
   assert.ok(links(implement).includes('../review-fixes.md'));
   assert.doesNotMatch(implement, /worktree commit --review-fix/);
+
+  const fixRules = rules.split('The orchestrator runs steps 1–3')[1]!;
+  const once = (needle: string) => assert.equal(fixRules.split(needle).length - 1, 1, needle);
+  for (let n = 1; n <= 8; n++) assert.match(fixRules, new RegExp('^' + n + '\\. ', 'm'));
+  for (const text of ['accepted findings with their rulings', 'diff file', 'artifact path', 'governing spec path', 'citations copied from the diff', 'report only false citations', 'mode `inline`', 'advisory']) once(text);
+  assert.match(fixRules, /code and integration fixes[\s\S]*whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/);
+  assert.match(fixRules, /launches no subagent and changes no roster, cap or round rule/);
+  assert.match(fixRules, /mark the check inline in the verb report/);
+  assert.match(rules, /For the final completed review round[^\n]*plan and design batches[^\n]*step 8/);
+  assert.match(fixRules, /verb report \(the plan or design handoff\)/);
+  assert.match(fixRules, /Verify each claim at source and fix or rule it before the next round or report/);
+  assert.match(reviewFixes, /steps 4–6 with the orchestrator’s stated step 3 root cause per group/);
+  assert.match(rules, /After claims settle, record one `note` per batch, including any repeat[^\n]*stable, unique one-based batch ordinal within that review round/);
+  assert.match(reviewFixes, /self-check for code fixes/);
+  assert.match(skill, /plan and design fix checks/);
+  assert.match(review, /fix procedure/);
 
   // Cleanup order: canonical home in worktree-cleanup.md; implement links it.
   assert.ok(links(implement).includes('../worktree-cleanup.md'));

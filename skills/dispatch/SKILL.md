@@ -37,7 +37,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 
 | Work | Route |
 |---|---|
-| Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps | Explorer subagent |
+| Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps, plan and design fix checks | Explorer subagent |
 | Test cleanup, runtime verification, map corrections exceeding the context-guard threshold, implementation integration mechanical fixes that a deterministic check confirms | Utility subagent |
 | Plan tasks, remaining implementation integration fixes per [writer triggers](references/review-rules.md) | Writer at run level |
 | Design increment | Child orchestrator where verified; else chain |

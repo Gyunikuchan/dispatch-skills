@@ -29,7 +29,7 @@ The orchestrator loads only the current step's references: each verb guide carri
 | Plan authoring steps | at most 36914 bytes | at most 23985 bytes |
 | Code reviewer prompt | 14333 bytes | 14333 bytes |
 | Plan reviewer prompt | 16690 bytes | 16690 bytes |
-| Design reviewer prompt | 12475 bytes | 12475 bytes |
+| Design reviewer prompt | 12552 bytes | 12552 bytes |
 | Writer brief pack | 10784 bytes | 10456 bytes |
 | Explorer brief template | 7977 bytes | 7738 bytes |
 | Explorer pack | 12638 bytes | 10705 bytes |
@@ -37,8 +37,8 @@ The orchestrator loads only the current step's references: each verb guide carri
 | Test-cleanup brief template | 1870 bytes | 1656 bytes |
 | Test-cleanup rendered quality | 7653 bytes | 7385 bytes |
 | Test-cleanup pack | 9523 bytes | 9041 bytes |
-| Driver TS LOC | 17911 lines | 17911 lines |
-| `SKILL.md` | 10100 bytes | 9950 bytes |
+| Driver TS LOC | 18176 lines | 18176 lines |
+| `SKILL.md` | 10100 bytes | 9776 bytes |
 | Increment orchestrator brief | 4096 bytes | 1674 bytes |
 | Ledger kinds | 14 | 14 |
 
@@ -66,4 +66,4 @@ Canonical homes hold one copy per rule across `SKILL.md`, `quality-bar.md`, `spe
 
 ## Consequences
 
-Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 17911 against a measured 17911, and `SKILL.md` sits at 9950 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.
+Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 18176 against a measured 18176, and `SKILL.md` sits at 9776 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.

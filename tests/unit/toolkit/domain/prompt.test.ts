@@ -18,17 +18,32 @@ test('rejected MUST prompt context settles only confirmed rejections',()=>{
 
 const settledRows = (section: string) => section.split('\n').filter((line) => line.startsWith('- '));
 
-test('settled accepted rows drop rationale', () => {
+test('settled accepted rows show the ruling rationale; settled accepted rows since the previous round are marked new', () => {
   const accepted = {id: 'R3-F001', locus: '§ Tasks', defect: 'First line of the defect.\nSecond line elaborates.', ruling: 'accepted', reason: 'Applied the fix in the reworked section.'};
-  assert.deepEqual(settledRows(settledSection([accepted])), ['- R3-F001 § Tasks: First line of the defect. — accepted']);
+  assert.deepEqual(settledRows(settledSection([accepted])), ['- R3-F001 § Tasks: First line of the defect. — accepted: Applied the fix in the reworked section.']);
   const clipped = {...accepted, id: 'R3-F002', defect: `${'x'.repeat(130)}\nmore`};
-  assert.deepEqual(settledRows(settledSection([clipped])), [`- R3-F002 § Tasks: ${'x'.repeat(119)}… — accepted`]);
-  assert.match(settledSection([{...accepted, revision: 'abc1234'}], true), /— accepted \(reviewed revision abc1234\)$/m);
-  const must = {...accepted, id: 'R3-F003', severity: 'MUST', defect: `${'y'.repeat(130)}\nSecond line elaborates with more detail.`};
-  const mustSection = settledSection([must]);
-  assert.ok(mustSection.includes('y'.repeat(130)), 'accepted MUST preserves full defect');
-  assert.ok(mustSection.includes('Second line elaborates with more detail.'), 'accepted MUST preserves second line');
-  assert.doesNotMatch(mustSection, /…/, 'accepted MUST is not clipped');
+  assert.deepEqual(settledRows(settledSection([clipped])), [`- R3-F002 § Tasks: ${'x'.repeat(119)}… — accepted: Applied the fix in the reworked section.`]);
+  assert.match(settledSection([{...accepted, revision: 'abc1234'}], true), /— accepted: Applied the fix in the reworked section\. \(reviewed revision abc1234\)$/m);
+  assert.match(settledSection([{...accepted, reason: `${'r'.repeat(130)}\nignored`}]), new RegExp(`accepted: ${'r'.repeat(119)}…`));
+  assert.deepEqual(settledRows(settledSection([{...accepted, reason: ''}], false, new Set([accepted.id]))), ['- R3-F001 § Tasks: First line of the defect. — accepted (new)']);
+
+  const older: Settled = {id: 'R1-F001', locus: '§ Scope', defect: 'Older accepted defect.', ruling: 'accepted', reason: 'Fixed earlier'};
+  const fresh: Settled = {id: 'R2-F001', locus: '§ Tasks', defect: 'Step order skips lint', ruling: 'accepted', reason: 'Fixed now'};
+  const freshMust: Settled = {id: 'R2-F002', locus: '§ Guard', severity: 'MUST', defect: `${'m'.repeat(130)}\nKeep full MUST detail.`, ruling: 'accepted', reason: 'Fixed guard'};
+  const rendered = settledSection([older, fresh, freshMust], false, new Set(['R2-F001', 'R2-F002']));
+  assert.ok(rendered.includes('- R1-F001 § Scope: Older accepted defect. — accepted: Fixed earlier\n'), 'older accepted row omits (new)');
+  assert.ok(rendered.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new): Fixed now\n'), 'accepted-since row marked (new)');
+  assert.ok(rendered.includes(`- R2-F002 § Guard: ${'m'.repeat(130)}\nKeep full MUST detail. — accepted (new): Fixed guard\n`), 'accepted MUST keeps full defect and (new)');
+  const prompt = reviewPrompt('plan', {
+    ...reviewContext('plan'),
+    round: 2,
+    settled: [older, fresh],
+    interRound: {diff: 'inter-round.diff', accepted: [{id: 'R2-F001', locus: '§ Tasks'}]},
+  });
+  assert.ok(prompt.includes('- R1-F001 § Scope: Older accepted defect. — accepted: Fixed earlier\n'));
+  assert.ok(prompt.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new): Fixed now\n'));
+  assert.ok(prompt.includes('### Since the previous round\nInter-round diff: inter-round.diff\n'));
+  assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
 });
 
 test('settled duplicate rows resolve the original finding id or keep the reason', () => {
@@ -63,11 +78,12 @@ test('settled rejected rows keep full rationale', () => {
 // Rendered size of this fixture under the pre-compaction row format, recorded before the format changed.
 const SETTLED_ROUND_7_BASELINE_BYTES = 25570;
 
-test('settled section halves round-7 fixture', () => {
+test('settled section stays within its round-7 budget', () => {
   const settled = JSON.parse(readFileSync(new URL('./fixtures/settled-round-7.json', import.meta.url), 'utf8')) as Settled[];
   assert.equal(settled.length, 49, 'fixture keeps the recorded settled set');
   const bytes = Buffer.byteLength(settledSection(settled), 'utf8');
-  assert.ok(bytes <= SETTLED_ROUND_7_BASELINE_BYTES / 2, `${bytes} B exceeds half of the recorded ${SETTLED_ROUND_7_BASELINE_BYTES} B baseline`);
+  // Accepted ruling rationales add bytes to the compact settled rows.
+  assert.ok(bytes <= 16500 && bytes < SETTLED_ROUND_7_BASELINE_BYTES, `${bytes} B exceeds the round-7 budget`);
 });
 
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);
@@ -88,16 +104,18 @@ test('prompt: declared variables and body are extracted from the Markdown templa
   assert.equal(fillTemplate(template, variables, { Name: 'Ada' }), 'Hi Ada');
 });
 
-test('assembles prompt matching golden per review kind', () => {
+test('assembles prompt matching golden per review kind; design reviewer prompt asks contracts to name input producers', () => {
   const frame = read(templates, 'review-prompt.md');
   const standardsRule = 'Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.';
   const specRouting = 'Report unmet or contradicted intent as `intent` and a defect in the governing spec text as `spec` (locus `§ Spec: <heading>`), before other tags.';
   const reuseCitation = 'Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`';
   const codeSpecCitation = 'Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`';
+  const inputProducerClause = 'Each new contract names the existing code that produces each input it reads.';
   for (const kind of ['code', 'design', 'plan'] as const) {
     const { variables, template } = assembleTemplate(frame, read(templates, `review-prompt-${kind}.md`), undefined, shared(kind));
     assert.equal(`${fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind])}\n`, read(golden, `${kind}.md`), kind);
     const prompt = fillTemplate(template, variables, REVIEW_PROMPT_INPUTS[kind]);
+    assert.equal(reviewPrompt(kind, reviewContext(kind)).includes(inputProducerClause), kind === 'design', kind);
     assert.match(prompt, /Read the whole spec/);
     assert.doesNotMatch(prompt, /\]\(quality-bar\.md/, kind);
     assert.ok(prompt.includes(REVIEW_PROMPT_INPUTS[kind]['Spec Hash']!));
@@ -626,30 +644,6 @@ test('reviewPrompt throws when rendered families diverge from REVIEW_TAGS_BY_KIN
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('settled accepted rows since the previous round are marked new', () => {
-  const older: Settled = {id: 'R1-F001', locus: '§ Scope', defect: 'Older accepted defect.', ruling: 'accepted', reason: 'Fixed earlier'};
-  const fresh: Settled = {id: 'R2-F001', locus: '§ Tasks', defect: 'Step order skips lint', ruling: 'accepted', reason: 'Fixed now'};
-  const freshMust: Settled = {id: 'R2-F002', locus: '§ Guard', severity: 'MUST', defect: `${'m'.repeat(130)}\nKeep full MUST detail.`, ruling: 'accepted', reason: 'Fixed guard'};
-  const rendered = (settledSection as (s: readonly Settled[], r?: boolean, n?: ReadonlySet<string>) => string)(
-    [older, fresh, freshMust],
-    false,
-    new Set(['R2-F001', 'R2-F002']),
-  );
-  assert.ok(rendered.includes('- R1-F001 § Scope: Older accepted defect. — accepted\n'), 'older accepted row omits (new)');
-  assert.ok(rendered.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new)\n'), 'accepted-since row marked (new)');
-  assert.ok(rendered.includes(`- R2-F002 § Guard: ${'m'.repeat(130)}\nKeep full MUST detail. — accepted (new)\n`), 'accepted MUST keeps full defect and (new)');
-  const prompt = reviewPrompt('plan', {
-    ...reviewContext('plan'),
-    round: 2,
-    settled: [older, fresh],
-    interRound: {diff: 'inter-round.diff', accepted: [{id: 'R2-F001', locus: '§ Tasks'}]},
-  });
-  assert.ok(prompt.includes('- R1-F001 § Scope: Older accepted defect. — accepted\n'));
-  assert.ok(prompt.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new)\n'));
-  assert.ok(prompt.includes('### Since the previous round\nInter-round diff: inter-round.diff\n'));
-  assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
 });
 
 test('askPrompt includes deadline and wrap-up stop-tool-calls guidance', () => {

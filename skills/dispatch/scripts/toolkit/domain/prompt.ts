@@ -31,11 +31,11 @@ export function settledSection(settled: readonly Settled[], revisions = false, a
   settled=settled.filter(entry=>entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
   if (!settled.length) return '';
   const clip = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
-  // Reviewers must re-read rejected and deferred text in full; accepted and duplicate rows need only identity.
+  // Reviewers must re-read rejected and deferred text in full; accepted rows include the ruling rationale; duplicate rows need only identity.
   const row = (entry: Settled) => {
     const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
-    const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '';
-    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${suffix}`;
+    const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '', reasonLine = entry.reason.split(/\r\n|\n|\r/)[0] ?? '';
+    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${reasonLine ? `: ${clip(reasonLine, 120)}` : ''}${suffix}`;
     if (entry.ruling === 'duplicate') {
       const reason = entry.reason || 'no reason recorded', labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
       const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map(match => match[0]!).filter(id => id !== entry.id);

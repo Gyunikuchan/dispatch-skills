@@ -15,7 +15,7 @@ import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
 import type { InterRound } from './domain/prompt.ts';
 import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
-import { admission, finalizeRound, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
+import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
 import { git, gitOk, gitPaths } from './git.ts';
 import { captureCheckouts, compareCheckouts, type CheckoutBaselineFile } from './review-checkout.ts';
 import { launches } from './writers.ts';
@@ -662,6 +662,19 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     let pending = read<Finalized>(pendingFile);
     const ignoredFailureReports: string[] = [];
+    const computeUnits = () => {
+      const rows = rulingRows();
+      const rounds = Array.from({length: n}, (_, i) => {
+        const number = i + 1;
+        const value = number === n ? pending : prior.find(item => item.round === number);
+        const metadata = number === n ? round : read<Round>(path.join(directory, 'round-' + number, 'round.json'));
+        let text: string | undefined;
+        if (kind !== 'code') {try {text = fs.readFileSync(reviewerInputPath(directory, number), 'utf8');} catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}}
+        return {findings: value?.findings ?? [], ...(text === undefined ? {} : {text}), startSeq: metadata?.startSeq ?? 0};
+      });
+      const bind = latest(foldLedger(session), 'bind');
+      return findingUnits({kind, round: n, rounds, planPath: bind ? path.relative(manifest.repositoryRoot, path.resolve(manifest.repositoryRoot, String(bind.data['plan']))) : '', ruling: (id, seq) => rows.findLast(row => row.seq <= seq && row.data['subject'] === 'review:' + review + ':' + id)?.data['ruling'] as string | undefined});
+    };
     if (!pending) {
       const bind = latest(foldLedger(session), 'bind');
       const requestsBySlot=new Map<string,RejectionRequest[]>();
@@ -797,9 +810,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // The finalized findings copy carries the same durable report identity as
       // the per-generation checkout report, so one per-report decision closes
       // both copies.
+      pending.units = computeUnits();
       atomic(pendingFile, {...pending, asOfSeq: checkout.asOfSeq});
       await deps.hook?.('review:after-pending');
     }
+    if (!pending.units) {pending.units = computeUnits(); atomic(pendingFile, pending);}
     if(round.rulingSnapshot!==rulingSnapshot()){await supersede(await capture());throw new ToolError(4,'target-moved','Review ruling moved during finalization');}
     await withLedger(session, 'review finalize', deps, async tx => {for (const escalation of pending!.escalations) await tx.append(escalation);});
     await deps.hook?.('review:after-append');

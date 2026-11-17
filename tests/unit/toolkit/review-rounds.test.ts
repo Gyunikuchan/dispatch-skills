@@ -335,7 +335,7 @@ test('standard re-review prompt omits the accepted id list, and round 1 renders 
       assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
       assert.doesNotMatch(prompt, /No accepted findings since the previous round/);
       assert.ok(prompt.includes('Rows marked `(new)` were accepted since the previous round; inspect their loci and interactions first.'), prompt);
-      assert.match(prompt, /^- R1-F001 § Work: [^\n]+ — accepted \(new\)$/m);
+      assert.match(prompt, /^- R1-F001 § Work: [^\n]+ — accepted \(new\): [^\n]+$/m);
     }
     assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
     assert.deepEqual(f.read(2, 'round.json').interRound, {diff, accepted: [{id: 'R1-F001', locus: '§ Work'}]});
@@ -392,7 +392,7 @@ test('confirmation-only prompt keeps the accepted id list, and the window moves 
     before = f.launches.length;
     assert.equal((await f.call()).exit, 0);
     assert.deepEqual(f.read(3, 'round.json').interRound?.accepted, [{id: 'R1-F002', locus: '§ Notes'}]);
-    assert.ok(promptsOf(f).slice(before).every(prompt => /^- R1-F002 § Notes: [^\n]+ — accepted \(new\)$/m.test(prompt)));
+    assert.ok(promptsOf(f).slice(before).every(prompt => /^- R1-F002 § Notes: [^\n]+ — accepted \(new\): [^\n]+$/m.test(prompt)));
     // Round 4: round 3 reviewed the target; only a findings-section refresh changed the plan.
     before = f.launches.length;
     assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
@@ -483,4 +483,48 @@ test('origin: the round-2 prompt asks for it and findings.json and the summary c
     assert.match(second.output.summary, /, 1 fix-induced/);
     assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes('add `origin`')));
   } finally {f.cleanup();}
+});
+
+test('review run stores finding units for every round', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n## Review Findings & Resolutions\n');
+    let clean = false;
+    f.deps.delegate = async () => ({outcome: {status:'ok', text:clean ? CLEAN : report('§ T1 — Task', 'A defect', 'SHOULD'), resume:null, sessionId:null}, invocations: []});
+    assert.equal((await f.call()).exit, 0);
+    const first = f.read(1, 'findings.json');
+    assert.equal(first.units[0].unit, 'T1');
+    assert.deepEqual(first.clusters, [{file:f.plan, findings:[first.findings[0].id]}]);
+    await f.add('ruling', {subject:'review:plan-work.plan:R1-F001', ruling:'accepted', rationale:'Fixed'});
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal and expanded.\n## Review Findings & Resolutions\n');
+    assert.equal((await f.call()).exit, 0);
+    const second = f.read(2, 'findings.json');
+    assert.deepEqual([second.units[0].unit, second.units[0].hot, second.units[0].hotStreak], ['T1',true,1]);
+    assert.ok(second.units[0].delta > 0);
+  } finally {f.cleanup();}
+  const designFixture = await fixture();
+  try {
+    const design = designFixture.artifact('strategy.design.md', '# Strategy\n## Architecture\n### AD-4 — Boundary\nDesign.\n');
+    designFixture.deps.delegate = async () => ({outcome:{status:'ok',text:report('§ AD-4 — Boundary'),resume:null,sessionId:null},invocations:[]});
+    const result = await designFixture.call('design', design);
+    assert.equal(result.exit, 0, JSON.stringify(result));
+    const designResult = JSON.parse(fs.readFileSync(path.join(designFixture.session, '.state/reviews/design-strategy.design/round-1/findings.json'), 'utf8'));
+    assert.equal(designResult.units[0].unit, 'AD-4');
+  } finally {designFixture.cleanup();}
+  const g = await fixture();
+  try {
+    let saved = 0;
+    g.deps.hook = point => {if (point === 'review:after-pending') {
+      const file = path.join(g.directory, 'round-1', 'pending.json');
+      const value = JSON.parse(fs.readFileSync(file, 'utf8')); saved = value.asOfSeq; delete value.units;
+      fs.writeFileSync(file, JSON.stringify(value)); throw new Error('interrupt');
+    }};
+    await g.call();
+    delete g.deps.hook;
+    assert.equal((await g.call()).exit, 0);
+    const result = g.read(1, 'findings.json');
+    assert.ok(Array.isArray(result.units)); assert.equal(result.asOfSeq, saved);
+    g.deps.delegate = async () => ({outcome: {status:'ok', text:CLEAN, resume:null, sessionId:null}, invocations: []});
+    assert.equal((await g.call()).exit, 0); assert.deepEqual(g.read(2, 'findings.json').units, []);
+  } finally {g.cleanup();}
 });
