@@ -371,6 +371,15 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   const startMsForDate = starts.length ? Math.min(...starts) : Number.isFinite(createdMs) && Math.abs(createdMs) <= 8_640_000_000_000_000 ? createdMs : undefined;
   const startedAt = startMsForDate === undefined ? undefined : new Date(startMsForDate).toISOString().slice(0, 10);
   const slotYield=slotYieldFacts(rounds,invocations,fold);
+  const roundTiming=rounds.map(round=>{
+    const subject=round.generations.find(g=>g.generation===round.generation)?.subject;
+    return {review:reviewKeys.get(round.review)!,round:round.round,slots:round.roster.filter(slot=>!slot.reserve).map(slot=>{
+      const outcome=round.slots.find(value=>value.slot===slot.slot);
+      const native=outcome?.state==='native'||(outcome?.state==='done'&&outcome.responder?.native===true)||invocations.some(i=>i.subject===subject&&i.surface==='native'&&(i.targetSlot??i.slot)===slot.slot);
+      const attempts=invocations.filter(i=>i.subject===subject&&i.launched&&(i.targetSlot??i.slot)===slot.slot).map(i=>({...i.startMs===undefined?{}:{startMs:i.startMs},...i.endMs===undefined?{}:{endMs:i.endMs}}));
+      return {slot:slot.slot,attempts:native?[...attempts,{}]:attempts};
+    })};
+  });
   let hostUsage: RunFacts['hostUsage'];
   if(hostContext) {
     const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
@@ -384,7 +393,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),...(hosts.length?{hosts}:{}),...(startedAt?{startedAt}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
-    ...(slotYield.length?{slotYield}:{}),...(hostUsage?{hostUsage}:{}),
+    ...(slotYield.length?{slotYield}:{}),...(roundTiming.length?{roundTiming}:{}),...(hostUsage?{hostUsage}:{}),
     retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };
@@ -485,7 +494,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
         const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
         const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
+          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
         seen.add(i);added=true;
       }
       if(added||pendingPersistence)persist();

@@ -766,7 +766,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
     const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
     const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
     if (isWrapUpLaunch) {
       if (outcome.status === 'ok') return { outcome, result, attempts, briefFile, invocations };
       return wrapUpTimeout(result);

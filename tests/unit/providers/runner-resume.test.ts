@@ -226,16 +226,19 @@ test('resume: stall resumes once after idle or empty-output with continue prompt
   for (const first of ['idle', 'empty'] as const) {
     const h = harness(posix);
     const spec = makeNudgeSpec('sess1');
-    const run = runDelegate(spec, req, 'cli', h.ports);
+    const rows: any[] = [];
+    const run = runDelegate(spec, { ...req, onInvocation: row => rows.push(row) }, 'cli', h.ports);
     await flush();
     if (first === 'idle') h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'SESS partial', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
-    else h.finish(ok({ exit: 1, stdout: 'no answer', stderrTail: 'boom' }));
+    else { h.clock.advance(10); h.finish(ok({ exit: 1, stdout: 'no answer', stderrTail: 'boom' })); }
     await flush(); await flush();
+    h.clock.advance(10);
     h.finish(ok({ stdout: 'FINAL answer' }));
     const done = await run;
     assert.equal(h.launches.length, 2, first);
     assert.equal(done.outcome.status, 'ok', first);
     assert.equal((done.invocations[1] as any)?.nudge, true, first);
+    assert.deepEqual(rows.map(({ startMs, endMs }) => [startMs, endMs]), first === 'idle' ? [[0, 0], [1, 10]] : [[0, 10], [11, 20]], first);
     if (first === 'idle') {
       assert.match(String(h.launches[1]?.argv[1] ?? ''), /resume:sess1/);
       assert.ok(String(h.launches[1]?.argv[2] ?? '').includes(CONTINUE_PROMPT));

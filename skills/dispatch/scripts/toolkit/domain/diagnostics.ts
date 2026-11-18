@@ -47,7 +47,7 @@ export type DiagnosticEvent = {
 );
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
-  launched: boolean; durationMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason[];
+  launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason[];
   slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
@@ -97,6 +97,7 @@ export type RunFacts = {
   invocations: InvocationFacts[];
   reviews: ReviewFacts[];
   slotYield?: SlotYieldFacts[];
+  roundTiming?: {review:string; round:number; slots:{slot:string; attempts:{startMs?:number; endMs?:number}[]}[]}[];
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
 };
@@ -366,6 +367,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
     ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
     surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
+    ...opt('startMs', millis(v['startMs'])), ...opt('endMs', millis(v['endMs'])),
     ...opt('routingOutcome',(['next-model','next-mode','reserve','stop'] as const).find(x=>x===v['routingOutcome'])),
     ...opt('slotState',(['done','native','failed'] as const).find(x=>x===v['slotState'])),
     ...opt('validationOutcome',token(v['validationOutcome'])),
@@ -445,6 +447,16 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         ...opt('cap', cap !== undefined && cap <= DIAGNOSTIC_THRESHOLDS.maxRoundCap ? cap : undefined),
       }];
     }),
+    ...opt('roundTiming', Array.isArray(r['roundTiming']) ? r['roundTiming'].filter(record).flatMap(v => {
+      const review=match(/^review-[a-f0-9]{16}$/)(v['review']), round=count(v['round']);
+      if (!review || !round) return [];
+      const slots=list(v['slots']).map(s => {
+        const slot=record(s)?match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(s['slot']):undefined;
+        const attempts=slot&&record(s)?list(s['attempts']).map(a=>record(a)?({...opt('startMs',millis(a['startMs'])),...opt('endMs',millis(a['endMs']))}):{}):[];
+        return {slot:slot??DASH,attempts};
+      });
+      return [{review,round,slots}];
+    }) : undefined),
     ...opt('slotYield', Array.isArray(r['slotYield']) ? r['slotYield'].filter(record).flatMap((v): SlotYieldFacts[] => {
       const kind = (['provider', 'native', 'tool'] as const).find((name) => name === v['kind']);
       const provider = token(v['provider']);
@@ -797,9 +809,9 @@ function costDrivers(units: readonly Unit[]): string[] {
 // SECTION: Folding
 
 /** Row counts kept per table once a report exceeds its byte cap; an absent entry leaves that table whole. */
-type Fold = { stage?: number; phase?: number; platform?: number };
+type Fold = { timing?: number; stage?: number; phase?: number; platform?: number };
 type Foldable = { units: readonly Unit[]; tokens: number; key: string };
-const FOLD_ORDER = ['stage', 'phase', 'platform'] as const;
+const FOLD_ORDER = ['timing', 'stage', 'phase', 'platform'] as const;
 
 /** Keeps the `keep` best-ranked rows (high cost, low cost, tokens, key; unpriced counts 0) in normal order and merges the rest into one trailing row. */
 function foldTable<R extends Foldable>(rows: readonly R[], keep: number | undefined, merge: (rest: R[]) => R, pinned: (row: R) => boolean = () => false): R[] {
@@ -918,6 +930,21 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
   }
   const yieldRows = [...yields.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
   const showFixInduced = yieldRows.some((entry) => (entry.fixInduced ?? 0) > 0);
+  const timing=runs.flatMap(run=>run.roundTiming??[]);
+  if(timing.length) lines.push((fold) => {
+    const kept=timing.slice(0,fold.timing??timing.length);
+    const result=['', '### Review round timing', '', row(['Review','Round','Slot','Wall','Critical path']), '| --- | ---: | --- | ---: | --- |'];
+    for(const round of kept) {
+      const spans=round.slots.map(slot=>{
+        if(!slot.attempts.length || slot.attempts.some(a=>a.startMs===undefined||a.endMs===undefined||a.endMs<a.startMs)) return undefined;
+        return {start:Math.min(...slot.attempts.map(a=>a.startMs!)),end:Math.max(...slot.attempts.map(a=>a.endMs!))};
+      });
+      const latest=spans.every(Boolean)?spans.findIndex(s=>s!.end===Math.max(...spans.map(x=>x!.end))):-1;
+      round.slots.forEach((slot,i)=>result.push(row(['subject '+round.review.slice(7),String(round.round),slot.slot,formatDuration(spans[i] && spans[i]!.end-spans[i]!.start),i===latest?'✓':DASH])));
+    }
+    if(kept.length<timing.length)result.push('',`${timing.length-kept.length} review timing rounds omitted`);
+    return result;
+  });
   lines.push('', '### Review yield by slot', '',
     row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted', 'Cost', 'Cost / accepted', 'Cost notes']),
     '| --- | --- | ---: | ---: | ---: |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
@@ -936,7 +963,7 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
       String(entry.accepted), String(entry.rejected), String(entry.deferred), String(entry.duplicate), String(entry.unruled), tokensCell, tokensPerAccepted, costCell, costPerAccepted, costNotes]));
   }
   if (!yieldRows.length) lines.push(row(Array<string>(showFixInduced ? 16 : 15).fill(DASH)));
-  return { render: (fold) => [...lines.flatMap((line) => typeof line === 'function' ? line(fold) : [line]), ''], counts: { stage: sorted.length, phase: phaseRows.filter((r) => !r.pinned).length, platform: platformRows.length } };
+  return { render: (fold) => [...lines.flatMap((line) => typeof line === 'function' ? line(fold) : [line]), ''], counts: { timing: timing.length, stage: sorted.length, phase: phaseRows.filter((r) => !r.pinned).length, platform: platformRows.length } };
 }
 
 function appendix(runs: readonly RunFacts[]): string[] {

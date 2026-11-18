@@ -507,8 +507,8 @@ test('runDelegate records one invocation per launch attempt, including the effor
   const done = await run;
   assert.equal(done.outcome.status, 'ok');
   assert.deepEqual(done.invocations.map(({ usage: _usage, ...rest }) => rest), [
-    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, outcome: 'config', usageBaseline: 'none', usageWindowEndMs: 0 },
-    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, outcome: 'ok', usageBaseline: 'none', usageWindowEndMs: 0 },
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: 'high', launched: true, durationMs: 7, startMs: 0, endMs: 0, outcome: 'config', usageBaseline: 'none', usageWindowEndMs: 0 },
+    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: true, durationMs: 9, startMs: 1, endMs: 0, outcome: 'ok', usageBaseline: 'none', usageWindowEndMs: 0 },
   ]);
 
   const throwingHarness = harness(posix);

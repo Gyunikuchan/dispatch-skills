@@ -457,11 +457,11 @@ test('attempt persistence retries a failed write without repeating successful wr
   const observer=observeTool(f.session,'ask','run',undefined,f.deps)!;
   const rename=fs.renameSync;let writes=0,fail=true;
   t.mock.method(fs,'renameSync',((from:fs.PathLike,to:fs.PathLike)=>{if(String(to).endsWith('.json')&&!String(to).endsWith('.failure.json')){writes++;if(fail){fail=false;throw new Error('storage');}}return rename(from,to);}) as typeof fs.renameSync);
-  const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok'};
+  const row={provider:'claude' as const,model:'m',effort:null,mode:'cli' as const,launched:true,outcome:'ok',startMs:0,endMs:30};
   f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(row);return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[row]};};
   await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
   assert.equal(writes,2,'return retries failed callback persistence');
-  assert.equal(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.length,1);
+  assert.deepEqual(sessionFacts(f.session,{records:[],lastSeq:0,torn:null},'complete').invocations.map(i=>[i.startMs,i.endMs]),[[0,30]]);
   writes=0;
   const second={...row};f.deps.delegate=async (_provider,request)=>{request.onInvocation?.(second);return {outcome:{status:'ok',text:'answer',resume:null,sessionId:null},invocations:[second]};};
   await observer.deps.delegate('claude',{logPath:path.join(f.session,'logs','claude[0].log')} as never,'cli');
@@ -561,4 +561,55 @@ test('coverage list: observeTool preserves coverage list for copilot', async () 
   } finally {
     f.cleanup();
   }
+});
+
+test('review timing joins current generation and reserve attempts', async () => {
+ const f=sessionFixture({memory:true}); try {
+  const skill=path.join(f.root,'skill'); fs.mkdirSync(skill); writeJson(path.join(skill,'config.jsonc'),{diagnostics:true}); f.deps.skillRoot=skill;
+  saveRound({session:f.session,review:'plan-a',round:1,generation:2,roster:[rosterSlot('codex[0]','codex'),rosterSlot('claude[0]','claude',{reserve:true})],outcomes:[]});
+  saveRound({session:f.session,review:'plan-a',round:2,roster:[rosterSlot('codex[0]','codex'),rosterSlot('native[0]','native',{native:true})],outcomes:[]});
+  f.deps.delegate=async()=>({outcome:{status:'ok',text:'ok',resume:null,sessionId:null},invocations:[{provider:'claude',model:'m',mode:'cli',effort:null,launched:true,outcome:'ok',startMs:0,endMs:30},{provider:'claude',model:'m',mode:'cli',effort:null,launched:false,outcome:'launch-failed',startMs:1,endMs:99}]});
+  const observer=observeTool(f.session,'review','run','plan',f.deps)!;
+  const generation=path.join(f.session,'.state','reviews','plan-a','round-1','gen-2');
+  await observer.deps.delegate('claude',{logPath:path.join(generation,'logs','claude[0].log'),targetSlot:'codex[0]'} as never,'cli');
+  observer.deps.diagnostics!({kind:'routing',subject:generation,slot:'claude[0]',targetSlot:'codex[0]',attempt:1,state:'reserve'});
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1','logs','codex[0].log')} as never,'cli');
+  observer.deps.diagnostics!({kind:'native',subject:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1'),slot:'codex[0]',provider:'native',attempt:1,state:'failed'});
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'.state','reviews','plan-a','round-2','gen-1','logs','codex[0].log')} as never,'cli');
+  observer.finish({ok:true,exit:0,summary:'done',value:null});
+  const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
+  assert.deepEqual(facts.roundTiming?.[1]?.slots,[{slot:'codex[0]',attempts:[{startMs:0,endMs:30}]},{slot:'native[0]',attempts:[]}]);
+  assert.deepEqual(facts.roundTiming?.[0]?.slots,[{slot:'codex[0]',attempts:[{startMs:0,endMs:30}]}]);
+ } finally {f.cleanup();}
+});
+
+test('native substitution makes timed CLI slots unmeasured', () => {
+ const f=sessionFixture({memory:true}); try {
+  const roster=[rosterSlot('codex[0]','codex'),rosterSlot('claude[0]','claude')];
+  for(const [round,outcome] of [[1,{slot:'codex[0]',state:'done',responder:{slot:'native[0]',provider:'native',model:null,native:true}}],[2,{slot:'codex[0]',state:'native'}]] as const) {
+   saveRound({session:f.session,review:'plan-a',round,roster,outcomes:[outcome]});
+  }
+  captureRuns(f.session,[1,2].flatMap(round=>['codex[0]','claude[0]'].map(slot=>({...attempt(roundSubject(f.session,'plan-a',round),{slot,provider:'codex',model:'m',outcome:'timeout'}),startMs:0,endMs:1000}))));
+  const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
+  for(const round of facts.roundTiming!) assert.deepEqual(round.slots[0]!.attempts,[{startMs:0,endMs:1000},{}]);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
+  assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
+ } finally {f.cleanup();}
+});
+
+test('failed native reserve remains unmeasured after terminal failure', () => {
+ const f=sessionFixture({memory:true}); try {
+  const skill=path.join(f.root,'skill'); fs.mkdirSync(skill); writeJson(path.join(skill,'config.jsonc'),{diagnostics:true}); f.deps.skillRoot=skill;
+  const roster=[rosterSlot('codex[0]','codex'),rosterSlot('claude[0]','claude')];
+  saveRound({session:f.session,review:'plan-a',round:1,roster,outcomes:[{slot:'codex[0]',state:'failed',cls:'refusal'}]});
+  const subject=roundSubject(f.session,'plan-a',1);
+  captureRuns(f.session,[{...attempt(subject,{slot:'codex[0]',provider:'codex',model:'m',outcome:'timeout'}),startMs:0,endMs:1000},{...attempt(subject,{slot:'claude[0]',provider:'claude',model:'m'}),startMs:0,endMs:5000}]);
+  const observer=observeTool(f.session,'review','run','plan',f.deps)!;
+  observer.deps.diagnostics!({kind:'native',subject:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1'),slot:'codex[0]',provider:'native',attempt:1,state:'failed'});
+  observer.finish({ok:true,exit:0,summary:'done',value:null});
+  const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
+  assert.deepEqual(facts.roundTiming?.[0]?.slots[0]?.attempts,[{startMs:0,endMs:1000},{}]);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
+  assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
+ } finally {f.cleanup();}
 });

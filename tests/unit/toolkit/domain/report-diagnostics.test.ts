@@ -595,3 +595,55 @@ test('coverage list: sanitizes legacy string and renders reasons on measured and
   assert.match(text, /\| code review \| claude \| delegate \| .* \| 50 \| — \| — \| 5 \| — \| 1\/1 transcript unavailable \|/);
   assert.match(text, /\| code review \| copilot \| delegate \| .* \| — \| — \| — \| — \| — \| 0\/1 no usage \|/);
 });
+
+test('review timing marks the latest finisher and preserves unknown slots', () => {
+ const timing=[{review:'review-1234567890abcdef',round:1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:100}]},{slot:'claude[0]',attempts:[{startMs:90,endMs:110}]}]}];
+ const text=render([facts({roundTiming:timing} as never)]);
+ assert.match(text,/subject 1234567890abcdef/);
+ assert.match(text,/claude\[0\].*✓/);
+ const unknown=render([facts({roundTiming:[{...timing[0],slots:[...timing[0]!.slots,{slot:'native[0]',attempts:[]}]}]} as never)]);
+ assert.doesNotMatch(unknown,/✓/);
+});
+
+test('review timing includes retry gaps, ties and invalid endpoints', () => {
+ const slot=(slot:string,...attempts:unknown[])=>({slot,attempts});
+ const rounds=[
+  {review:'review-1234567890abcdef',round:1,slots:[slot('a[0]',{startMs:0,endMs:1000},{startMs:3000,endMs:5000}),slot('b[0]',{startMs:4000,endMs:5000})]},
+  {review:'review-1234567890abcdef',round:2,slots:[slot('a[0]',{startMs:0,endMs:1000},{startMs:3000,endMs:2000}),slot('b[0]',{startMs:0,endMs:5000})]},
+  {review:'review-1234567890abcdef',round:3,slots:[slot('native[0]'),slot('a[0]',{startMs:1})]},
+ ];
+ const text=render([facts({roundTiming:rounds} as never)]);
+ assert.match(text,/\| subject 1234567890abcdef \| 1 \| a\[0\] \| 5s \| ✓ \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 1 \| b\[0\] \| 1s \| — \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 3 \| native\[0\] \| — \| — \|/);
+ assert.equal((text.match(/✓/g)??[]).length,1);
+ assert.doesNotMatch(text,/slot removal|remove.*slot/i);
+});
+
+test('review timing compaction omits complete rounds and retains the omission count', () => {
+ const rounds=Array.from({length:3000},(_,i)=>({review:'review-1234567890abcdef',round:i+1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:1000}]}]}));
+ const text=render([facts({roundTiming:rounds} as never)]);
+ assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
+ const count=Number(/(\d+) review timing rounds omitted/.exec(text)?.[1]);
+ assert.ok(count>1);
+ assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3000-count} \\|`));
+ assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3001-count} \\|`));
+ const next=text.replace(`\n\n${count} review timing rounds omitted`, `\n| subject 1234567890abcdef | ${3001-count} | codex[0] | 1s | ✓ |\n\n${count-1} review timing rounds omitted`);
+ assert.ok(Buffer.byteLength(next)>DIAGNOSTIC_LIMITS.reportBytes, 'another complete round exceeds the cap');
+});
+
+
+test('review timing rejects nonopaque identities and invalid endpoints', () => {
+ const text=render([facts({roundTiming:[{review:'private/path',round:1,slots:[{slot:'a[0]',attempts:[{startMs:0,endMs:1}]}]},{review:'review-1234567890abcdef',round:2,slots:[{slot:'a[0]',attempts:[{startMs:-1,endMs:5}]}]}]} as never)]);
+ assert.doesNotMatch(text,/private\/path/);
+ assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
+});
+
+test('malformed timing slots and attempts stay unknown without leaking names', () => {
+ const text=render([facts({roundTiming:[{review:'review-1234567890abcdef',round:1,slots:[{slot:'private/path',attempts:[{startMs:0,endMs:3}]},{slot:'a[0]',attempts:[{startMs:0,endMs:4},null]},null,{slot:'b[0]',attempts:[{startMs:0,endMs:5}]}]}]} as never)]);
+ assert.doesNotMatch(text,/private\/path|✓/);
+ const timing=text.split('### Review round timing')[1]!.split('### Review yield')[0]!;
+ assert.equal((timing.match(/\| — \| — \| — \|/g)??[]).length,2);
+ assert.match(text,/\| a\[0\] \| — \| — \|/);
+});
