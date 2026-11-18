@@ -51,17 +51,17 @@ export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDA
 const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
 
 /** Loopback hosts only: a LAN or remote host is not "local" for the WAN trap. */
-export function isLocalHost(host: string): boolean {
+function isLocalHost(host: string): boolean {
   const bare = host.replace(/^\[|\]$/g, '').toLowerCase();
   return bare === 'localhost' || bare === '::1' || bare.endsWith('.localhost') || /^127(?:\.\d{1,3}){3}$/.test(bare);
 }
 
-export function endpointHost(endpoint: string): string | null {
+function endpointHost(endpoint: string): string | null {
   try { return new URL(endpoint).hostname; } catch { return null; }
 }
 
 /** Bubblewrap: read-only root, private /tmp, writable OpenCode state; the delegate cannot write the project. */
-export function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[] {
+function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[] {
   const home = req.platform.home;
   const xdg = req.platform.xdg ?? {};
   // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf.

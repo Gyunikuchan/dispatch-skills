@@ -2,16 +2,16 @@
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';
 import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, sectionRanges, structuralLines, type StructuralLine } from './plan.ts';
-export const SPEC_SECTION_ORDER = [
+const SPEC_SECTION_ORDER = [
   '## At a Glance', '## Intent & Problem', '## Background', '## Requirements', '## Non-goals', '## Constraints', '## Decisions',
   '## Discussion Record', '## Open Questions',
 ] as const;
 
-export type SpecDefectCode =
+type SpecDefectCode =
   | 'missing-section' | 'section-order' | 'missing-requirement' | 'malformed-id' | 'colliding-id' | 'id-sequence' | 'missing-acceptance' | 'duplicate-section' | 'long-paragraph';
-export type SpecDefect = { code: SpecDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
-export type ParsedSpec = { title: string | null; reqIds: readonly string[]; decIds: readonly string[]; sections: readonly string[] };
-export type SpecResult = { ok: true; spec: ParsedSpec; warnings: SpecDefect[] } | { ok: false; defects: SpecDefect[]; warnings: SpecDefect[] };
+type SpecDefect = { code: SpecDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
+type ParsedSpec = { title: string | null; reqIds: readonly string[]; decIds: readonly string[]; sections: readonly string[] };
+type SpecResult = { ok: true; spec: ParsedSpec; warnings: SpecDefect[] } | { ok: false; defects: SpecDefect[]; warnings: SpecDefect[] };
 
 const defect = (code: SpecDefectCode, line: number | null, message: string, blocking = false): SpecDefect => ({ code, severity: blocking ? 'defect' : 'warning', line, message });
 

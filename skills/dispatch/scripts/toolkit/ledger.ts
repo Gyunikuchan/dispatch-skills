@@ -16,7 +16,7 @@ const ledgerPath = (session: string) => path.join(session, 'ledger.jsonl');
 // A closing or rerun decision names the report it acknowledges: the trailing
 // :<reportSeq> carries the covered report's asOfSeq, so two reports
 // under one reused round number close independently on distinct keys.
-export type RepositoryNoteKey = { kind: 'changes' | 'rerun'; review: string; round: number; reportSeq: number };
+type RepositoryNoteKey = { kind: 'changes' | 'rerun'; review: string; round: number; reportSeq: number };
 export function parseRepositoryNoteKey(key: string): RepositoryNoteKey | null {
   let match = /^repository-changes:([^:\s]+):(\d+):(\d+)$/.exec(key);
   if (match) return { kind: 'changes', review: match[1]!, round: Number(match[2]), reportSeq: Number(match[3]) };
@@ -255,8 +255,8 @@ function recoverTorn(session: string, fold: Fold): void {
   fold.torn = null;
 }
 
-export type AppendResult = { seq: number; deduped: boolean; count?: number; results?: { seq: number; deduped: boolean }[] };
-export type AppendRecordsOptions = {
+type AppendResult = { seq: number; deduped: boolean; count?: number; results?: { seq: number; deduped: boolean }[] };
+type AppendRecordsOptions = {
   onCommit?: (fold: Fold) => void;
   writeBatch?: (handle: number, buffer: Buffer, offset: number, length: number) => number;
 };

@@ -30,7 +30,7 @@ function reviewRead<T>(read:()=>T):T {
 }
 const digest = (value:unknown)=>'sha256:'+crypto.createHash('sha256').update(stableValue(value)).digest('hex');
 const equal=(a:unknown,b:unknown)=>stableValue(a)===stableValue(b);
-export type ReviewCorrection = { commit:string; seq:number; reason:string; reviewFix:ReviewFix; paths:string[] };
+type ReviewCorrection = { commit:string; seq:number; reason:string; reviewFix:ReviewFix; paths:string[] };
 export type ReviewIdentity = { identity:string; baseline:string; round:number; generation:number; startSeq:number; corrections:ReviewCorrection[] };
 function safeCorrectionPath(value:unknown):string|null {
   if(typeof value!=='string'||!value.trim())return null;

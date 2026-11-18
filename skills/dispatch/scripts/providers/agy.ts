@@ -8,7 +8,7 @@ import { classifyFailure, failOutcome } from './runner.ts';
 import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 
-export const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
+const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
 
 const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
 

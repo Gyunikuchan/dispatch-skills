@@ -25,14 +25,14 @@ export type PlatformEnv = {
   xdg?: { data?: string; cache?: string; state?: string };
 };
 
-export type EnvGet = (name: string) => string | undefined;
+type EnvGet = (name: string) => string | undefined;
 
-export type PlatformInput = { platform: string; arch: string; release: string; home: string; env: EnvGet; bubblewrap: boolean };
+type PlatformInput = { platform: string; arch: string; release: string; home: string; env: EnvGet; bubblewrap: boolean };
 
-export const toOs = (platform: string): OsId => (platform === 'win32' ? 'win32' : platform === 'darwin' ? 'darwin' : 'linux');
+const toOs = (platform: string): OsId => (platform === 'win32' ? 'win32' : platform === 'darwin' ? 'darwin' : 'linux');
 
 // NOTE: Windows caps a whole command line at 32767 chars; POSIX ARG_MAX is shared with the environment block.
-export const argvLimitFor = (osId: OsId): number => (osId === 'win32' ? 24000 : 100000);
+const argvLimitFor = (osId: OsId): number => (osId === 'win32' ? 24000 : 100000);
 
 export function platformFacts(input: PlatformInput): PlatformEnv {
   const osId = toOs(input.platform);

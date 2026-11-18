@@ -11,10 +11,10 @@ export type Voice = {
   /** Classes the provider declares mode-cascadable (agy: quota/context-overflow/…; copilot: quota). */
   modeCascadeOn: readonly FailureClass[];
 };
-export type Position = { model: number; mode: number };
-export type WaveContext = { reserveAvailable: boolean };
+type Position = { model: number; mode: number };
+type WaveContext = { reserveAvailable: boolean };
 
-export type CascadeDecision =
+type CascadeDecision =
   | { kind: 'next-model'; position: Position }
   | { kind: 'next-mode'; position: Position }
   | { kind: 'reserve' }
@@ -55,7 +55,7 @@ export function next(cls: FailureClass, position: Position, voice: Voice, wave: 
 
 // SECTION: Reserves
 
-export type ReservePool = { order: readonly SlotId[]; used: readonly SlotId[]; records: readonly string[] };
+type ReservePool = { order: readonly SlotId[]; used: readonly SlotId[]; records: readonly string[] };
 
 export const reservePool = (order: readonly SlotId[]): ReservePool => ({ order, used: [], records: [] });
 export const hasReserve = (pool: ReservePool): boolean => pool.order.some((slot) => !pool.used.includes(slot));

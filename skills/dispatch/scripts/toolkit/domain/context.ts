@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { sectionRanges, structuralLines } from './plan.ts';
 
-export const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
-export type ContextSection = typeof CONTEXT_SECTIONS[number];
+const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
+type ContextSection = typeof CONTEXT_SECTIONS[number];
 
 /** Map byte budget rendered into the explorer brief; the warning threshold for context maps. */
 export const DEFAULT_MAP_BUDGET = 16_384;
@@ -10,28 +10,28 @@ export const DEFAULT_MAP_BUDGET = 16_384;
 /** Research explorer inline reply size limit rendered into the explorer brief. */
 export const DEFAULT_RESEARCH_REPLY_LIMIT = 8_192;
 
-export type ParsedContextMap = {
+type ParsedContextMap = {
   title: string | null;
   commit: string | null;
   tool: string | null;
   sections: Record<ContextSection, string[]>;
 };
 
-export type ContextLintIssue = {
+type ContextLintIssue = {
   code: string;
   severity: 'defect' | 'warning';
   line: number | null;
   message: string;
 };
 
-export type ContextLintResult = {
+type ContextLintResult = {
   ok: boolean;
   defects: ContextLintIssue[];
   warnings: ContextLintIssue[];
   map: ParsedContextMap;
 };
 
-export type ContextLintOptions = { readRepoFile: (relativePath: string) => string | null };
+type ContextLintOptions = { readRepoFile: (relativePath: string) => string | null };
 
 type ContextReference = { path: string; start: number | null; end: number | null };
 type ContextEntry = { line: number; text: string };
@@ -54,7 +54,7 @@ function isValidCommit(commit: string | null): commit is string {
 }
 
 /** Parses the metadata and each section's entry texts. */
-export function parseContextMap(source: string): ParsedContextMap {
+function parseContextMap(source: string): ParsedContextMap {
   const lines = structuralLines(source);
   const sections = Object.fromEntries(CONTEXT_SECTIONS.map(section => [section, entries(lines, section).map(entry => entry.text)])) as Record<ContextSection, string[]>;
   const title = lines.map(entry => /^#\s+Context map:\s*(.*?)\s*$/i.exec(entry.text)?.[1]?.trim() ?? null).find(value => value !== null) ?? null;

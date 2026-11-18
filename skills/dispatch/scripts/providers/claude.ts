@@ -8,17 +8,17 @@ import { claudeUsage } from '../lib/usage/claude.ts';
 import { readDelegateSession } from '../lib/usage/delegate.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
-export const READ_ONLY_ALLOWED_TOOLS = [
+const READ_ONLY_ALLOWED_TOOLS = [
   'Read', 'Glob', 'Grep', 'LS', 'Bash(git diff*)', 'Bash(git status*)', 'Bash(git log*)', 'Bash(git show*)', 'Bash(git blame*)',
   'Bash(git rev-parse*)', 'Bash(git ls-files*)', 'Bash(grep *)', 'Bash(rg *)', 'Bash(ls *)', 'Bash(head *)', 'Bash(tail *)', 'Bash(wc *)',
   'Bash(file *)', 'Bash(jq *)', 'Bash(diff *)', 'Bash(uniq *)', 'Bash(cut *)', 'Bash(tr *)', 'Bash(stat *)', 'Bash(which *)', 'Bash(type *)',
   'Bash(date *)', 'Bash(basename *)', 'Bash(dirname *)', 'Bash(realpath *)', 'Bash(readlink *)', 'Bash(column *)', 'Bash(paste *)',
   'Bash(npm ls*)', 'TodoWrite',
 ] as const;
-export const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
+const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
 /** Current CLI versions name the subagent control `Agent`; older versions know only `Task`. */
-export const DISALLOWED_SUBAGENT_TOOLS = ['Agent', 'Task'] as const;
-export const SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: true } });
+const DISALLOWED_SUBAGENT_TOOLS = ['Agent', 'Task'] as const;
+const SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: true } });
 
 const MODEL_NOT_FOUND = /selected model|model\b[^\n]*\bnot found/i;
 const CLI_OUTDATED = /claude_code_version_too_old|Claude Code \S+ does not support this model/i;

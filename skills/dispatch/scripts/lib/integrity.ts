@@ -13,7 +13,7 @@ const REFERENCE_EXTENSION = /\.(?:md|json)$/;
 const MARKDOWN_EXTENSION = /\.md$/;
 const JSON_EXTENSION = /\.json$/;
 
-export const hashFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const hashFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
 const sha256 = (text: string): string => crypto.createHash('sha256').update(text).digest('hex');
 
@@ -68,7 +68,7 @@ export function generateSkillHashes(skillDir: string): Record<string, string> {
   return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key] ?? '']));
 }
 
-export type IntegrityResult =
+type IntegrityResult =
   | { status: 'ok' }
   | { status: 'missing-manifest'; warning: string }
   | { status: 'drift'; violations: string[] };

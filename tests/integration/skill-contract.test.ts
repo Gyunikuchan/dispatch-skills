@@ -475,7 +475,7 @@ test('native voice launch order failure reports and change rules are documented'
   }
   assert.match(reviewRun, /before the backgrounded rerun/i);
 });
-test('native slots launch by prompt path', t => {
+test('native slots launch by prompt path', () => {
   const providers = read(root + 'references/providers.md');
   const openCode = providers.indexOf('## OpenCode private launches');
   for (const heading of ['Native slots', 'Shared provider controls', 'Quota']) {
@@ -485,7 +485,6 @@ test('native slots launch by prompt path', t => {
   const toolkit = read(root + 'references/toolkit.md');
   assert.doesNotMatch(toolkit, /#### (?:Test cleanup|Cap-ending SHOULD corrections)|\]\(#test-cleanup\)/);
   for (const term of ['test-cleanup-evidence-required', 'test-cleanup-paths-unchanged', 'test-cleanup-recorded', 'test-cleanup-empty', 'test-cleanup-removed', '--review-fix', 'reviewFix', 'bind the revised spec, then append its `edit` record']) assert.ok(toolkit.includes(term), term);
-  t.diagnostic('toolkit.md: ' + Buffer.byteLength(toolkit) + ' UTF-8 bytes; baseline 27475');
   const grounding = read(root + 'references/grounding.md');
   assert.match(grounding, /only when the explorer did not report a passing `lint run`[^.]*inline[^.]*or after the orchestrator edits the map/);
   for (const phrase of ['Relaunch a failed, timed-out or lint-failing explorer once', 'For a size error, ask it to compress wording while retaining every entry', 'self-ground']) assert.ok(grounding.includes(phrase), phrase);

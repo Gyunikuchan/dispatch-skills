@@ -15,7 +15,7 @@ import type { WalkthroughView } from './walkthrough.ts';
 const FINDINGS_HEADING = '## Review Findings & Resolutions';
 type ReviewRow = WalkthroughView['reviewRows'][number];
 export type RoundLink = { review: string; round: number; findings: number; path: string };
-export type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
+type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
 
 const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
 const cell = (value: unknown): string => neutralizeComments(String(value ?? '')

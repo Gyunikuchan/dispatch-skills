@@ -2,7 +2,7 @@ import { addCounters, tokenTotal, usageKey, type Counters, type UsageRow } from 
 
 export const BAND_EDGES = [100_000, 200_000, 272_000] as const;
 export const BANDS = ['le100k', 'le200k', 'le272k', 'gt272k'] as const;
-export type Band = (typeof BANDS)[number];
+type Band = (typeof BANDS)[number];
 export type Bands = Partial<Record<Band, Counters>>;
 export type BandedCounters = Counters & { bands?: Bands };
 

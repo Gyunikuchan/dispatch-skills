@@ -33,7 +33,7 @@ const mergeOrigin = (a: FindingOrigin | undefined, b: FindingOrigin | undefined)
 const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
 
 /** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
-export function normalizeLocus(kind: ReviewKind, locus: string): string {
+function normalizeLocus(kind: ReviewKind, locus: string): string {
   const trimmed = locus.trim();
   if (kind === 'code') {
     return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]+):([1-9]\d*)$/, '$1:L$2');
@@ -41,7 +41,7 @@ export function normalizeLocus(kind: ReviewKind, locus: string): string {
   return trimmed.replace(/^§(?=\S)/, '§ ');
 }
 
-export const UNRESOLVED_LOCUS = 'unresolved-locus: ';
+const UNRESOLVED_LOCUS = 'unresolved-locus: ';
 const UNRESOLVED_LOCUS_BYTES = 120;
 export const isUnresolvedLocus = (locus: string): boolean => locus.startsWith(UNRESOLVED_LOCUS);
 
@@ -93,7 +93,7 @@ function continuesContainer(text: string, lineStart: number): boolean {
  * The report must end the reply: the whole text, a closing fenced block, or a line-start object running to the end.
  * Position decides, not content, so quoted examples and earlier JSON never compete; anything else fails closed.
  */
-export function extractJsonText(raw: string): string {
+function extractJsonText(raw: string): string {
   const text = raw.trim();
   if (parses(text)) return text;
   if (text.endsWith(FENCE)) return fencedBody(text) ?? text;
@@ -113,11 +113,11 @@ export function extractJsonText(raw: string): string {
 
 // SECTION: Parse
 
-export type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope';
-export type ReportFailure = { kind: ReportFailureKind; detail: string };
-export type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
-export type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
-export type ReportResult =
+type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope';
+type ReportFailure = { kind: ReportFailureKind; detail: string };
+type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
+type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
+type ReportResult =
   | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: DraftFinding[]; confirmations?: Confirmation[] }
   | { ok: false; failure: ReportFailure };
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -225,8 +225,8 @@ export function parseReport(input: ReportInput): ReportResult {
 
 // SECTION: Matching
 
-export const MATCH_LINE_WINDOW = 5;
-export const MATCH_JACCARD = 0.3;
+const MATCH_LINE_WINDOW = 5;
+const MATCH_JACCARD = 0.3;
 const STOPWORDS: ReadonlySet<string> = new Set([
   'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'has', 'had', 'its', 'was', 'were', 'will',
   'with', 'this', 'that', 'from', 'into', 'when', 'then', 'than', 'them', 'they', 'which', 'while', 'where', 'there',
@@ -236,7 +236,7 @@ const STOPWORDS: ReadonlySet<string> = new Set([
 
 const tokens = (text: string) => new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !STOPWORDS.has(token)));
 /** Token Jaccard; two empty sets score 0 so location and category alone never match. */
-export function similarity(a: string, b: string): number {
+function similarity(a: string, b: string): number {
   const left = tokens(a);
   const right = tokens(b);
   if (!left.size || !right.size) return 0;
@@ -245,7 +245,7 @@ export function similarity(a: string, b: string): number {
   return shared / (left.size + right.size - shared);
 }
 
-export type MatchKey = { locus: string; category: string; text: string };
+type MatchKey = { locus: string; category: string; text: string };
 
 /** Code loci: same path (case-folded when `caseInsensitive`) within ±MATCH_LINE_WINDOW lines; section loci: same heading; unresolved loci: never. */
 function sameLocation(a: string, b: string, caseInsensitive: boolean): boolean {
@@ -268,7 +268,7 @@ export function matchFinding(a: MatchKey, b: MatchKey, caseInsensitive = false):
 
 // SECTION: Collect and dedup
 
-export const findingId = (round: number, ordinal: number): FindingId => `R${round}-F${String(ordinal).padStart(3, '0')}`;
+const findingId = (round: number, ordinal: number): FindingId => `R${round}-F${String(ordinal).padStart(3, '0')}`;
 
 /**
  * Assigns round ids in report order and dedups across sources: a duplicate keeps its own id with `dupOf`

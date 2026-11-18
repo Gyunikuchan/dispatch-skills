@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { sortedJson } from './integrity.ts';
 
-export const SAMPLE_NAME = 'config.sample.jsonc';
+const SAMPLE_NAME = 'config.sample.jsonc';
 export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const;
 export const HINT = `diff against ${SAMPLE_NAME}`;
 
@@ -21,7 +21,7 @@ const ALIASES: Readonly<Record<string, string>> = {
   antigravity: 'agy', claudecode: 'claude', 'claude-code': 'claude', 'github-copilot': 'copilot', 'openai-codex': 'codex',
 };
 
-export type DispatchConfig = Record<string, unknown>;
+type DispatchConfig = Record<string, unknown>;
 
 // SECTION: JSONC
 

@@ -32,7 +32,7 @@ function printHelp(heading: string, deps: EntryDeps): number {
   return 0;
 }
 
-export type EntryDeps = CliDeps & { cwd?: () => string };
+type EntryDeps = CliDeps & { cwd?: () => string };
 
 export async function main(argv: readonly string[] = process.argv.slice(2), deps: EntryDeps = nodeDeps()): Promise<number> {
   if (argv[0] === 'help') {

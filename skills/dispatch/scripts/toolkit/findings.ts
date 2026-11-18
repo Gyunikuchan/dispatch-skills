@@ -12,7 +12,7 @@ import { coverageState, type CoverageApplies, type CoverageDecision, type Covera
 import { ToolError } from './output.ts';
 import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
 export type ReviewTarget = string | {base: string; head: string};
-export type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
+type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
 export type RepositoryChange = { cwd: string; paths: string[] };
 export type RepositoryCheckState = { state: 'unavailable'; reason: string };
 export type FindingsValue = {
@@ -81,7 +81,7 @@ export function finalizeRound(input: {
     ...(input.repositoryChanges ? {repositoryChanges: input.repositoryChanges} : {}),
     ...(input.repositoryCheck ? {repositoryCheck: input.repositoryCheck} : {})};
 }
-export type FindingUnit = {unit: string; findings: string[]; hot: boolean; hotStreak: number; bytes?: number; delta?: number; growthStreak?: number};
+type FindingUnit = {unit: string; findings: string[]; hot: boolean; hotStreak: number; bytes?: number; delta?: number; growthStreak?: number};
 type UnitFinding = {id: string; locus: string; defect?: string};
 type UnitRound = {findings: readonly UnitFinding[]; text?: string; startSeq: number};
 export function findingUnits(input: {kind: ReviewKind; round: number; rounds: readonly UnitRound[]; planPath: string; ruling: (id: string, seq: number) => string | undefined}): FindingUnit[] {
@@ -177,7 +177,7 @@ function ceilingState(records: readonly LedgerRecord[], review: string, cap1: nu
   const ceiling = cap1 + 2 + 2 * grants.size;
   return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
 }
-export type BudgetCoverage =
+type BudgetCoverage =
   | {state: 'readable'; open: string[]; decision: CoverageDecision; use?: 'free' | 'grant'}
   | {state: 'unreadable'};
 export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open' | 'requires-coverage-decision'; coverage?: BudgetCoverage};
@@ -186,7 +186,7 @@ export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asO
 // first, then each generation in numeric order and each attempt file in
 // numeric order. A clean generation contributes no identity. A report without
 // a numeric asOfSeq keeps identity 0.
-export type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState };
+type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState };
 export function contentReports(session: string, review: string, round: number): ReportContent[] {
   const out: ReportContent[] = [];
   const dir = path.join(session, '.state/reviews', review, 'round-' + round);
@@ -302,7 +302,7 @@ export function repositoryRerunRounds(fold: Fold, review: string): number[] {
 // Every unacknowledged report file of one generation: the first write lands in
 // checkout-report.json and each retry in checkout-report-<k>.json, so a later
 // clean comparison never erases an earlier report. Numeric attempt order.
-export type CheckoutReportRead = {repositoryChanges?: unknown; repositoryCheck?: unknown; asOfSeq?: number};
+type CheckoutReportRead = {repositoryChanges?: unknown; repositoryCheck?: unknown; asOfSeq?: number};
 export function checkoutReportsFor(dir: string, gen: string): CheckoutReportRead[] {
   const attemptNumber = (file: string): number =>
     file === 'checkout-report.json' ? 1 : Number(file.slice('checkout-report-'.length, -'.json'.length));

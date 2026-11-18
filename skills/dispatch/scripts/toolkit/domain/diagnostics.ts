@@ -12,7 +12,7 @@ import type { CoverageReason, FailureClass } from '../types.ts';
 const PHASE_NAMES = ['plan', 'plan review', 'implementation', 'code review', 'design', 'design review', 'integration review', 'ask'] as const;
 
 /** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
-export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
+type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
 
 /** Review phases carry the review machine's convergence result (findings re-raised across rounds, any escalation) and the resolved round `cap`. */
 export type Phase = { key: string; name: typeof PHASE_NAMES[number]; outcome?: string; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
@@ -26,15 +26,15 @@ export const CATEGORIES = {
   'instruction-clarity': 'Instruction clarity',
   'information-access': 'Information access',
 } as const;
-export type Category = keyof typeof CATEGORIES;
+type Category = keyof typeof CATEGORIES;
 
-export type ModelUsage = Counters & { bands?: Bands };
+type ModelUsage = Counters & { bands?: Bands };
 
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
 export type Usage = ModelUsage & { models?: Record<string, ModelUsage>; reasoningInOutput?: boolean };
 
 /** Tool-call durations can overlap; they do not measure session elapsed time. */
-export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
+type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
 
 /** One launch attempt (`phase` is a phase key; `outcome` is `ok` or a failure class). */
 export type DiagnosticEvent = {
@@ -58,7 +58,7 @@ export type InvocationFacts = {
  */
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
-export type SlotYieldAttempt = { provider: string; model: string; effort: string | null; usage?: Usage };
+type SlotYieldAttempt = { provider: string; model: string; effort: string | null; usage?: Usage };
 
 /** Per-responder review yield: findings raised and ruled, plus the slot's measured token cost. */
 export type SlotYieldFacts = {
@@ -102,13 +102,13 @@ export type RunFacts = {
   observations?: unknown;
 };
 
-export type RetroObservation = { id: string; component: string; category: Category; evidence: string; impact: string; proposedFix: string };
+type RetroObservation = { id: string; component: string; category: Category; evidence: string; impact: string; proposedFix: string };
 
 /** `source` is a heuristic id (`H1`…) or `retro`. */
 export type Finding = { source: string; run?: number; id?: string; category: Category; component: string; evidence: string; impact: string; proposedFix: string };
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
-export const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
+const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, maxRoundCap: 1000, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
 // NOTE: 1600 leaves room for the grounding Overview rule in references/diagnostics.md.
 export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1600 } as const;
 
@@ -676,13 +676,13 @@ function usageSummary(items: readonly InvocationFacts[]): string {
 }
 
 // Cost units: one host row, one `model#effort` entry of a launched CLI invocation, or one invocation without usage. Rollups sum unit costs.
-export type Unit = { platform: string; phase?: string; stage: string; role: string; model: string; effort: string; configured: boolean; usage?: ModelUsage; reasoningInOutput?: boolean; coverage?: readonly CoverageReason[]; cost: Cost | undefined; row: boolean };
+type Unit = { platform: string; phase?: string; stage: string; role: string; model: string; effort: string; configured: boolean; usage?: ModelUsage; reasoningInOutput?: boolean; coverage?: readonly CoverageReason[]; cost: Cost | undefined; row: boolean };
 
 function priceUnit(pricer: Pricer | undefined, platform: string, model: string, usage: ModelUsage | undefined, inOutput: boolean | undefined, onDate: string | undefined): Cost | undefined {
   return !pricer ? undefined : usage ? pricer.price(model, usage, !reasoningApart(platform, inOutput), onDate) : { low: 0, high: 0, priced: false, reasons: new Set<CostReason>(['no usage']) };
 }
 
-export function invocationUnits(
+function invocationUnits(
   i: { provider: string; model: string; effort?: string | null | undefined; usage?: Usage | undefined; reportedModels?: readonly string[] | undefined; coverage?: readonly CoverageReason[] | undefined },
   stage: string,
   phase: string | undefined,

@@ -160,7 +160,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   });
 }
 // SECTION: commit phase; one caller commit for a delivered increment, or a record of the user's own commit
-export async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
+async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
   const file=ctx.values['commit'];
   let message='';
   try{if(typeof file==='string'&&file.trim())message=fs.readFileSync(path.resolve(file),'utf8');}catch{message='';}

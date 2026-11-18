@@ -6,7 +6,7 @@ import type { RosterSlot } from '../toolkit/domain/types.ts';
 
 export const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-export const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   opencode: 'opencode', agy: 'agy', antigravity: 'agy', claude: 'claude', claudecode: 'claude', 'claude-code': 'claude',
   copilot: 'copilot', 'github-copilot': 'copilot', codex: 'codex', 'openai-codex': 'codex',
 };
@@ -19,7 +19,7 @@ export const normalizeProvider = (key: string): string => PROVIDER_ALIASES[key.t
 export type LevelMap<T> = Partial<Record<Level, T>>;
 
 /** Exact level, else the nearest defined below, else the lowest defined above. */
-export function selectLevel(defined: readonly Level[], level: Level): Level | undefined {
+function selectLevel(defined: readonly Level[], level: Level): Level | undefined {
   const requested = LEVELS.indexOf(level);
   const ordered = [...defined].sort((a, b) => LEVELS.indexOf(a) - LEVELS.indexOf(b));
   return ordered.findLast((item) => LEVELS.indexOf(item) <= requested) ?? ordered.find((item) => LEVELS.indexOf(item) > requested);
@@ -71,10 +71,10 @@ export function parsePins(text: string): Pins {
 
 // SECTION: Roster
 
-export type TargetEntry = { model?: string | readonly string[]; effort?: string };
+type TargetEntry = { model?: string | readonly string[]; effort?: string };
 export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagentsOnly?: boolean; sandbox?: boolean };
 export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
-export type Overrides = { model?: string; effort?: string };
+type Overrides = { model?: string; effort?: string };
 export type Orchestrator = { platform: string };
 
 export type RosterInput = {

@@ -380,7 +380,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   return result;
 }
 
-export type AgyTurnMetadata = {
+type AgyTurnMetadata = {
   model: string | null;
   effort: string | null;
   hasDisplayName?: boolean;
@@ -648,7 +648,7 @@ export function readAgySqliteGenMetadata(
   }
 }
 
-export type UsageContext = {
+type UsageContext = {
   appDataDir?: string;
   readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null;
   budget?: ReadBudget;

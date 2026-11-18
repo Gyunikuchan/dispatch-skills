@@ -8,10 +8,10 @@ export type Severity = 'MUST' | 'SHOULD' | 'CONSIDER';
 export type Impact = 'critical' | 'blocks' | 'degrades' | 'minor';
 export type Trigger = 'realistic' | 'contrived';
 export type ReviewKind = 'code' | 'plan' | 'design';
-export type FindingScope = 'in' | 'adjacent';
+type FindingScope = 'in' | 'adjacent';
 export type FindingOrigin = 'original' | 'fix-induced' | 'unknown';
 
-export type FindingFix = { paths: readonly string[]; dependencies: readonly FindingId[]; verification: readonly string[] };
+type FindingFix = { paths: readonly string[]; dependencies: readonly FindingId[]; verification: readonly string[] };
 
 /** Spec §7.7; `dupOf` names the first finding a duplicate repeats. */
 export type Finding = {
@@ -68,7 +68,7 @@ export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning';
 export type EvidenceClass = 'red' | 'check' | 'review';
 export type ChangeAction = 'NEW' | 'MODIFY' | 'DELETE' | 'GENERATED';
 
-export type PlanCommand = { command: string };
+type PlanCommand = { command: string };
 
 export type PlanCriterion = {
   satisfies?: readonly string[];
@@ -166,11 +166,11 @@ export type RosterSlot = {
 
 // SECTION: Rendered views
 
-export type ResolutionStatus =
+type ResolutionStatus =
   | 'accepted' | 'fixed' | 'rejected' | 'pending-rejection' | 'downgraded' | 'needs-user'
   | 'closed-by-reviewer' | 'closed-by-orchestrator' | 'superseded' | 'duplicate' | 'deferred';
 
-export type ResolutionEntry = {
+type ResolutionEntry = {
   id: FindingId;
   severity: Severity;
   status: ResolutionStatus;
@@ -185,11 +185,11 @@ export type ResolutionEntry = {
   originalTag?: string;
 };
 
-export type ReviewerView = { slot: SlotId; model?: string; effort?: string };
-export type FailedTargetView = { slot: SlotId; reason: string };
+type ReviewerView = { slot: SlotId; model?: string; effort?: string };
+type FailedTargetView = { slot: SlotId; reason: string };
 /** Host applicability of a round's findings to a later target revision; absent `action` means not assessed. */
-export type ApplicabilityView = { afterHash: string; reason: string; action?: 'reuse' | 'targeted' | 'full'; rationale?: string; paths?: readonly string[]; launchedRound?: number };
-export type ResolutionRound = {
+type ApplicabilityView = { afterHash: string; reason: string; action?: 'reuse' | 'targeted' | 'full'; rationale?: string; paths?: readonly string[]; launchedRound?: number };
+type ResolutionRound = {
   round: number;
   heading?: string;
   /** Target revision the round's reviewers actually reviewed. */
@@ -200,10 +200,10 @@ export type ResolutionRound = {
   entries: readonly ResolutionEntry[];
 };
 
-export type ChangeView = { action: ChangeAction; path: string; note: string };
-export type VerificationRow = { sc: string; outcome: string; evidence: string };
-export type RevisionView = { artifact: 'plan' | 'design'; reason: string };
-export type WalkthroughContext = {
+type ChangeView = { action: ChangeAction; path: string; note: string };
+type VerificationRow = { sc: string; outcome: string; evidence: string };
+type RevisionView = { artifact: 'plan' | 'design'; reason: string };
+type WalkthroughContext = {
   ask: string;
   decisions?: readonly string[];
   assumptions?: readonly string[];

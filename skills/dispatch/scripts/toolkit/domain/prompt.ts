@@ -3,7 +3,7 @@
 // heading and its first fence; substitution is single-pass over declared names, so undeclared grammar
 // placeholders (`<file>:L<line>`, `<tag>`) pass through and a value's own text is never re-scanned.
 
-export type Template = { variables: readonly string[]; template: string };
+type Template = { variables: readonly string[]; template: string };
 
 export function extractDocumentLayers(specStageMarkdown: string): string {
   const lines = specStageMarkdown.replace(/\r\n/g, '\n').split('\n');
@@ -168,7 +168,7 @@ function audienceAllows(tags: readonly string[] | null, consumer: QualityConsume
   return false;
 }
 
-export function rotate<T>(items: readonly T[], by: number): T[] {
+function rotate<T>(items: readonly T[], by: number): T[] {
   if (!items.length) return [];
   const shift = ((by % items.length) + items.length) % items.length;
   return [...items.slice(shift), ...items.slice(0, shift)];

@@ -8,7 +8,7 @@ import { ensureIntegration, integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths, taskSection } from './plan-view.ts';
 import { ToolError } from './output.ts';
 
-export type Launch = { launch: number; record: LedgerRecord; finished?: LedgerRecord; abandoned?: LedgerRecord; superseded: boolean };
+type Launch = { launch: number; record: LedgerRecord; finished?: LedgerRecord; abandoned?: LedgerRecord; superseded: boolean };
 export function launches(fold: Fold, task: string): Launch[] {
   const rows: Launch[]=[];
   for(const record of fold.records) {
@@ -32,7 +32,7 @@ const open = (launch: Launch | undefined): launch is Launch => !!launch && !laun
 function completion(fold: Fold, launch: Launch) {
   return launch.finished && fold.records.findLast(r=>r.kind==='integrate' && r.seq>launch.finished!.seq && r.data['task']===launch.record.data['task'] && (r.data['phase']==='done' || (r.data['phase']==='abandoned' && r.data['candidate']===launch.finished!.data['candidate'])));
 }
-export type Observation = {exists: boolean; dirty: boolean; head: string};
+type Observation = {exists: boolean; dirty: boolean; head: string};
 export function writerStates(fold: Fold, tasks: string[], observe: (path: string)=>Observation) {
   return tasks.flatMap(task=>{
     const rows=launches(fold,task);

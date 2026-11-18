@@ -11,12 +11,12 @@ export type DiscoveryFs = {
   executable(file: string): boolean;
 };
 
-export type Resolution =
+type Resolution =
   | { status: 'path'; path: string }
   | { status: 'missing'; path: null }
   | { status: 'unlaunchable'; path: string };
 
-export type DoctorRow = { provider: ProviderId; mode: ModeId } & Resolution;
+type DoctorRow = { provider: ProviderId; mode: ModeId } & Resolution;
 
 const isAbsolute = (file: string): boolean => /^(?:[a-zA-Z]:[/\\]|[/\\])/.test(file);
 const sep = (env: PlatformEnv): string => (env.os === 'win32' ? '\\' : '/');

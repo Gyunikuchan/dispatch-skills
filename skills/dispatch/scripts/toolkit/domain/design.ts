@@ -10,13 +10,13 @@ import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, P
 const lint = (code: LintDefect['code'], line: number | null, message: string): LintDefect => ({ code, severity: 'warning', line, message });
 
 const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Increments'];
-export const EXECUTION_STATUS_HEADING = '## Execution Status';
+const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
   'At a Glance', 'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
   'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',
 ];
 /** Design section order after the title and summary box: status and intent before architecture and increment detail. */
-export const DESIGN_SECTION_ORDER = [
+const DESIGN_SECTION_ORDER = [
   '## At a Glance', EXECUTION_STATUS_HEADING, ...REQUIRED_SECTIONS.filter((heading) => heading !== 'At a Glance').map((heading) => `## ${heading}`), RESOLUTION_HEADING,
 ] as const;
 const INCREMENT_FIELDS = [
@@ -128,7 +128,7 @@ function parseExecutionStatus(lines: readonly StructuralLine[], ids: ReadonlySet
 
 // SECTION: Public API
 
-export type DesignResult =
+type DesignResult =
   | { ok: true; design: ParsedDesign; warnings: LintDefect[] }
   | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
 /** Concrete design guard at journal-consuming machine boundaries. */

@@ -9,7 +9,7 @@ import { cleanupBinding } from './evidence.ts';
 import { ensureIntegration } from './integration.ts';
 import { headTree, testedTree } from './git.ts';
 import { ToolError } from './output.ts';
-export function shellArgv(os: string, command: string): string[] { return os === 'win32' ? ['cmd.exe', '/d', '/s', '/c', command] : ['sh', '-c', command]; }
+function shellArgv(os: string, command: string): string[] { return os === 'win32' ? ['cmd.exe', '/d', '/s', '/c', command] : ['sh', '-c', command]; }
 export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
   const {session,manifest,deps,values,args}=ctx;
   if(args.length) throw new ToolError(1,'invalid-input','check run takes only options');

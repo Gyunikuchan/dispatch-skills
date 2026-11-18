@@ -10,10 +10,10 @@ import { splitUsageKey, type Counters } from './usage/rows.ts';
 // SECTION: Types
 
 /** USD per 1M tokens. */
-export type Rates = { input: number; output: number; cacheRead?: number; cacheWrite5m?: number; cacheWrite1h?: number };
-export type Tier = { abovePromptTokens: number; rates: Rates };
-export type Period = { from: string; rates: Rates; tiers?: Tier[] };
-export type PriceEntry = { rates: Rates; tiers?: Tier[]; periods?: Period[] };
+type Rates = { input: number; output: number; cacheRead?: number; cacheWrite5m?: number; cacheWrite1h?: number };
+type Tier = { abovePromptTokens: number; rates: Rates };
+type Period = { from: string; rates: Rates; tiers?: Tier[] };
+type PriceEntry = { rates: Rates; tiers?: Tier[]; periods?: Period[] };
 export type CostReason = 'unpriced model' | 'no usage' | 'tier unknown' | 'cache TTL unknown';
 /** USD; `low` equals `high` unless a tier or cache TTL is unknown. */
 export type Cost = { low: number; high: number; priced: boolean; reasons: Set<CostReason> };

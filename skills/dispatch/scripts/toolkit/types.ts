@@ -10,7 +10,7 @@ export type FailureClass =
 export type QuotaKey = { provider: string; model: string | null; mode: string };
 export type QuotaGeneration = { schemaVersion: 1; key: QuotaKey; generation: string };
 export type QuotaObservation = QuotaGeneration & { bucket: number; observedAt: number };
-export type QuotaDecision = { key: QuotaKey; generation: string | null; skipped: boolean; reason: 'quota-cooldown' | null; observedAt?: number; expiresAt?: number };
+type QuotaDecision = { key: QuotaKey; generation: string | null; skipped: boolean; reason: 'quota-cooldown' | null; observedAt?: number; expiresAt?: number };
 export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: number; decisions: QuotaDecision[] };
 
 export type DiagnosticCounters = { input: number; output: number; cacheRead?: number; cacheWrite?: number; cacheWrite5m?: number; cacheWrite1h?: number; reasoning?: number };

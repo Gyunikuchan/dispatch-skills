@@ -110,7 +110,7 @@ Explain non-obvious rationale (e.g. quirks, non-obvious invariants, architectura
 - **Fixtures:** Keep unit fixtures in memory; use physical storage only when verifying filesystem behavior or byte output, preserving per-file timing budgets.
 - **Quality bar:** Apply [quality-bar.md § Testing](skills/dispatch/references/templates/quality-bar.md#testing) for test behavior, naming, and retention.
 - **Toolkit changes:** List callers with CodeGraph; test every caller family, including failures after each durable boundary.
-- **Hash-tracked changes:** When editing hash-tracked skill files, list them in `[GENERATED] skills/dispatch/skill-hashes.json`, run `npm run hashes`, then rerun `npm test`.
+- **Hash-tracked changes:** When editing hash-tracked skill files, list them in `[GENERATED] skills/dispatch/skill-hashes.json`, run `npm run maintain`.
 
 ## Long-Running Work and Handoff
 

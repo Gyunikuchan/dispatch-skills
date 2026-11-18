@@ -286,7 +286,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
 }
 
 /** Reads the un-locked facts used by `report render`. */
-export async function reportFacts(ctx: HandlerContext): Promise<ReportFacts> {
+async function reportFacts(ctx: HandlerContext): Promise<ReportFacts> {
   return materialize(ctx, await capture(ctx, foldLedger(ctx.session)));
 }
 

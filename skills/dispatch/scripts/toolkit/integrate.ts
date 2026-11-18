@@ -90,7 +90,7 @@ async function cherryHead(ctx: HandlerContext,cwd: string): Promise<string | und
   const picked=await git(ctx.deps,cwd,['rev-parse','--verify','CHERRY_PICK_HEAD']);
   return picked.exit===0 ? picked.stdout.trim():undefined;
 }
-export async function pickedCommit(ctx: HandlerContext,cwd: string,hash: string): Promise<string | undefined> {
+async function pickedCommit(ctx: HandlerContext,cwd: string,hash: string): Promise<string | undefined> {
   const head=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
   const message=await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
   if(message.includes('(cherry picked from commit '+hash+')'))return head;

@@ -3,8 +3,8 @@ import type { Fold } from './ledger.ts';
 import type { Check } from './plan-view.ts';
 
 /** Criteria whose tests a cleanup commit removed keep their evidence at their recorded tree. */
-export type CleanupBinding = {from:string; fromTree:string; removed:string[]; trees:Record<string,string>};
-export type CleanupEvidenceResult =
+type CleanupBinding = {from:string; fromTree:string; removed:string[]; trees:Record<string,string>};
+type CleanupEvidenceResult =
   | { ok: true; trees: Record<string, string> }
   | { ok: false; stale: string[] };
 type CurrentTree = { headTree: string; testedTree: string };

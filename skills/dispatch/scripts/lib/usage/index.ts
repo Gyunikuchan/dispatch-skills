@@ -66,8 +66,8 @@ function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases
     || usageKey(a.model, a.effort).localeCompare(usageKey(b.model, b.effort)));
 }
 
-export const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
-export type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
+const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
+type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
 export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = ADAPTERS): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
   if (!adapter) return { platform, rows: [], unavailable: 'no adapter' };

@@ -6,10 +6,10 @@ import type {
 import { criterionHeading, isCriterionId } from './criterion-id.ts';
 
 export const RESOLUTION_HEADING = '## Review Findings & Resolutions';
-export const TASK_MAP_HEADING = '## Task Map';
+const TASK_MAP_HEADING = '## Task Map';
 
 /** Plan section order after the title and summary box; every section is optional to this lint. */
-export const PLAN_SECTION_ORDER = [
+const PLAN_SECTION_ORDER = [
   '## At a Glance', '## Background', '## Key Interfaces & Data', '## Key Decisions & Context', '## Constraints', '## Open Questions & Assumptions', '## Out of Scope',
   TASK_MAP_HEADING, '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan',
   '## Rollback & Blast Radius', RESOLUTION_HEADING,
@@ -20,7 +20,7 @@ export const PLAN_SECTION_ORDER = [
 const unreachable = (value: never): never => { throw new Error(`unhandled lint code: ${String(value)}`); };
 
 /** Closed mapping; a new code fails to compile until it is classified. */
-export function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
+function lintSeverity(code: LintDefectCode): LintDefect['severity'] {
   switch (code) {
     case 'missing-success-criteria':
     case 'proposed-changes':
@@ -177,7 +177,7 @@ export function lintLongParagraphs(lines: readonly StructuralLine[]): { line: nu
   return out;
 }
 
-export type SectionRange = { start: number; end: number };
+type SectionRange = { start: number; end: number };
 
 /** Index ranges of each exact `heading` line up to the next `##` heading. */
 export function sectionRanges(lines: readonly StructuralLine[], heading: string): SectionRange[] {
@@ -220,18 +220,18 @@ export function lintSectionOrder(lines: readonly StructuralLine[], order: readon
 
 // SECTION: Summary box
 
-export type BoxEntry = { label: string | null; value: string; line: number; raw: string };
-export type ValueRule = RegExp | ((value: string) => string | null);
+type BoxEntry = { label: string | null; value: string; line: number; raw: string };
+type ValueRule = RegExp | ((value: string) => string | null);
 
 const BOX_LINE = /^> \*\*([^*]+?):\*\*(?: (.*))?$/;
-export const BOX_VALUE_RULES: Readonly<Record<string, RegExp>> = {
+const BOX_VALUE_RULES: Readonly<Record<string, RegExp>> = {
   Risk: /^(low|med|high) — \S/,
   Increments: /^[1-9]\d*$/,
   Status: /^(?:\d+\/\d+ SC passing|n\/a)$/,
 };
 
 /** Lines after optional `---` frontmatter and their 1-based line offset. */
-export function bodyLines(source: string): { lines: string[]; offset: number } {
+function bodyLines(source: string): { lines: string[]; offset: number } {
   const lines = source.split(/\r?\n/);
   if (lines[0]?.trim() === '---') {
     const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
@@ -246,7 +246,7 @@ export function documentTitle(source: string): string | null {
 }
 
 /** H1, one blank line, `> **Label:** value` lines with optional blank quote separators, then the first `##`; null when absent. */
-export function parseSummaryBox(source: string): { entries: BoxEntry[]; trailing: string | null } | null {
+function parseSummaryBox(source: string): { entries: BoxEntry[]; trailing: string | null } | null {
   const { lines, offset } = bodyLines(source);
   let index = lines.findIndex((line) => line.trim());
   if (index === -1 || !/^#\s+\S/.test(lines[index] ?? '')) return null;
@@ -365,7 +365,7 @@ export function normalizePlanPath(raw: string): { path: string | null; reason: s
 const LISTED_PATH = /^(`[^`]+`|[^\s,`]+)\s*,\s*/;
 
 /** Paths named by a change heading; only [DELETE] may group comma-separated paths, each bare or backticked. */
-export function headingPaths(action: ChangeAction, text: string): { paths: ReturnType<typeof normalizePlanPath>[] } | { error: string } {
+function headingPaths(action: ChangeAction, text: string): { paths: ReturnType<typeof normalizePlanPath>[] } | { error: string } {
   const parts: string[] = [];
   let rest = text.trim();
   // A comma ends a path only directly after it, so a trailing note after the last path may hold commas.
@@ -383,8 +383,8 @@ export function headingPaths(action: ChangeAction, text: string): { paths: Retur
 const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Scope'];
 /** Parent forms: a governing spec pinned by checksum or a design increment. */
 export const SPEC_PIN_VALUE = /^`([^`\s]+\.spec\.md)` · sha256:([0-9a-f]{64})$/;
-export const DESIGN_PIN_VALUE = /^`([^`\s]+\.design\.md)` · (I\d{2})$/;
-export const PARENT_VALUE = new RegExp(`(?:${SPEC_PIN_VALUE.source})|(?:${DESIGN_PIN_VALUE.source})`);
+const DESIGN_PIN_VALUE = /^`([^`\s]+\.design\.md)` · (I\d{2})$/;
+const PARENT_VALUE = new RegExp(`(?:${SPEC_PIN_VALUE.source})|(?:${DESIGN_PIN_VALUE.source})`);
 const TASK_HEADING = /^###\s+(T[1-9]\d*)\s+[—–-]\s+(\S.*?)\s*$/;
 const TASK_FIELD = /^[-*+]\s+(Outcome|Prerequisites|Criteria):\s*(.*?)\s*$/i;
 const CONSTRAINT_FIELD = /^[-*+]\s+Constraints:\s*(.*?)\s*$/i;
@@ -403,7 +403,7 @@ export const isTestPath = (value: string): boolean => TEST_PATH.test(value);
 // Lint hint only: paths under these segments look like support files, so the `undeclared-test-path` check skips them.
 const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//i;
 /** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` lint; a RED stage that changes or needs it must still list it in `Tests:`. */
-export const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
+const isTestSupportPath = (value: string): boolean => isTestPath(value) && TEST_SUPPORT_PATH.test(value);
 const unquote = (value: string): string => value.replace(/^[`'"]+|[`'"]+$/g, '');
 /** Path-like tokens of a Check command; whitespace inside quotes does not split, so a quoted path with a space stays whole. */
 const checkPathTokens = (command: string): string[] => (command.match(/(?:"[^"]*"|'[^']*'|\S)+/g) ?? []).map((token) => {
@@ -412,7 +412,7 @@ const checkPathTokens = (command: string): string[] => (command.match(/(?:"[^"]*
 });
 
 /** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
-export function planIdPattern(ids: readonly string[]): RegExp | null {
+function planIdPattern(ids: readonly string[]): RegExp | null {
   if (!ids.length) return null;
   const escaped = ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp(`(?<![A-Za-z0-9-])(?:${escaped.join('|')})(?![A-Za-z0-9])`, 'i');
@@ -423,11 +423,11 @@ const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
 type Criterion = PlanCriterion & { satisfies: readonly string[]; verifyLines: number[]; testsLine: number | null; redCommandLine: number | null; integration: string | null; mapped: boolean; evidenceRaw: string | null; evidenceLine: number; redLine: number; reviewLine: number; critical: boolean; valid: boolean };
 
-export type PlanResult =
+type PlanResult =
   | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
   | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
 
-export type PlanOptions = { placeholders?: PlaceholderVocabulary };
+type PlanOptions = { placeholders?: PlaceholderVocabulary };
 
 /** Parses and lints a plan; any defect-severity diagnostic fails the parse. */
 export function parsePlan(source: string, options: PlanOptions = {}): PlanResult {
@@ -1237,7 +1237,7 @@ function lintTaskCriteria(tasks: readonly DraftTask[], criteria: readonly Criter
 
 // SECTION: Derived task views
 
-export type TaskMapRow = { id: string; outcome: string; prerequisites: readonly string[]; criteria: readonly string[]; paths: readonly string[]; overlap: readonly { path: string; tasks: readonly string[] }[] };
+type TaskMapRow = { id: string; outcome: string; prerequisites: readonly string[]; criteria: readonly string[]; paths: readonly string[]; overlap: readonly { path: string; tasks: readonly string[] }[] };
 
 /** One row per task in Task Map order; Overlap names each written path that other tasks also write. */
 export function taskMapRows(plan: Pick<ParsedPlan, 'tasks'>): TaskMapRow[] {
@@ -1262,7 +1262,7 @@ export function taskExecutionSummary(tasks: readonly PlanTask[]): string[] {
   return tasks.map((task) => `${task.id} — ${task.title} (${task.prerequisites.length ? `after ${task.prerequisites.join(', ')}` : 'start'})`);
 }
 
-export type TaskBrief = {
+type TaskBrief = {
   task: PlanTask;
   changes: readonly PlanChange[];
   criteria: readonly PlanCriterion[];
@@ -1318,7 +1318,7 @@ function lintNotes(lines: readonly StructuralLine[], out: LintDefect[]): void {
     out.push(lint('filler-note', line, `Change note "${note}" ${reason}; say what changes in this file${grouping ? '; group these [DELETE] paths under one heading' : ''}.`));
   });
 }
-export function incrementPathMatches(file: string, scope: string): boolean {
+function incrementPathMatches(file: string, scope: string): boolean {
   const normalize = (value: string) => value.replace(/\\/g, '/').replace(/^\.\//, '');
   const target = normalize(file), pattern = normalize(scope);
   if (target.split('/').some((part) => part === '.' || part === '..') || target.startsWith('/') || /^[a-z]:/i.test(target)) return false;

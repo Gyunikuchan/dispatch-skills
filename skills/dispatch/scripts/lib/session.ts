@@ -5,14 +5,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const MANIFEST = 'manifest.json';
-export const SLUG_MAX = 40;
-export const CHAT_ID_ENV_VARS = [
+const MANIFEST = 'manifest.json';
+const SLUG_MAX = 40;
+const CHAT_ID_ENV_VARS = [
   'DISPATCH_CHAT_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'OPENAI_CODEX_THREAD_ID',
   'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'CLAUDE_CODE_SESSION_ID', 'COPILOT_CLI_SESSION_ID',
 ] as const;
 
-export type Location = 'workspace' | 'published' | 'moving-to-workspace' | 'moving-to-published';
+type Location = 'workspace' | 'published' | 'moving-to-workspace' | 'moving-to-published';
 
 export const FOLDER_NAME = /^\d{8}T\d{4}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/;
@@ -48,9 +48,9 @@ export function canonicalRepositoryRoot(root: string): string {
 
 // SECTION: Naming grammar
 
-export const safePathId = (value: string): string => (SAFE_ID.test(value) ? value : crypto.createHash('sha256').update(value).digest('hex').slice(0, 12));
+const safePathId = (value: string): string => (SAFE_ID.test(value) ? value : crypto.createHash('sha256').update(value).digest('hex').slice(0, 12));
 
-export function safeTitle(value: string): string {
+function safeTitle(value: string): string {
   const title = value.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, SLUG_MAX).replace(/-+$/g, '');
   return title || 'session';
 }
@@ -84,7 +84,7 @@ function ensureDir(dir: string): string {
   return fs.realpathSync(dir);
 }
 
-export const workspaceSessionRoot = (repositoryRoot: string): string => ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
+const workspaceSessionRoot = (repositoryRoot: string): string => ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
 
 export function readManifest(dir: string): Manifest {
   const file = path.join(dir, MANIFEST);
@@ -126,7 +126,7 @@ export function recordHost(sessionDir: string, host: string): void {
   writeManifest(sessionDir, { ...readManifest(sessionDir), host });
 }
 
-export type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; tempRoot?: string; waitMs?: number };
+type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; tempRoot?: string; waitMs?: number };
 
 /**
  * Finds or creates the chat's session folder. A published folder for the same identity is reactivated;
@@ -181,7 +181,7 @@ export function initSession(options: InitOptions): { path: string; reused: boole
   }
 }
 
-export const CLAIM_WAIT_MS = 5000;
+const CLAIM_WAIT_MS = 5000;
 
 function waitForClaim(root: string, sessionId: string, repo: string, claim: string, waitMs: number): string | null {
   const deadline = Date.now() + waitMs;

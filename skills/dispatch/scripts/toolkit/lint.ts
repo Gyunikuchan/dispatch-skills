@@ -8,7 +8,7 @@ import { parseSpec } from './domain/spec.ts';
 import { lintContextMap } from './domain/context.ts';
 import { ToolError } from './output.ts';
 
-export type LintArtifactOptions = { repositoryRoot?: string };
+type LintArtifactOptions = { repositoryRoot?: string };
 
 function safeRepoPath(value: string): boolean {
   if (!value || value.includes('\\') || value.includes('\0') || path.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
@@ -22,7 +22,7 @@ function within(root: string, candidate: string): boolean {
 }
 
 /** Reads only repository files whose resolved path remains inside the session's repository root. */
-export function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
+function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
   const root = path.resolve(repositoryRoot);
   let realRoot: string;
   try { realRoot = fs.realpathSync(root); } catch { return () => null; }

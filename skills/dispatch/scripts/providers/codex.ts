@@ -15,7 +15,7 @@ const REJECTED = [
 const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
 
 /** The final assistant message and thread id from the JSONL stream; tool events stay in the log. */
-export function parseCodexEvents(raw: string): { answer: string; threadId: string | null; error: string | null } {
+function parseCodexEvents(raw: string): { answer: string; threadId: string | null; error: string | null } {
   let answer = '';
   let threadId: string | null = null;
   let error: string | null = null;

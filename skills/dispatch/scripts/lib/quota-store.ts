@@ -6,8 +6,8 @@ import { publishExclusive } from './fs-ext.ts';
 import { nodeLinkFs } from './node-fs-ext.ts';
 import { canonicalRepositoryRoot, readManifest } from './session.ts';
 
-export type QuotaStoreOptions = { sessionDir: string; repositoryRoot: string; bucketWidth: number };
-export type QuotaState = { generations: QuotaGeneration[]; observations: QuotaObservation[]; warnings: string[] };
+type QuotaStoreOptions = { sessionDir: string; repositoryRoot: string; bucketWidth: number };
+type QuotaState = { generations: QuotaGeneration[]; observations: QuotaObservation[]; warnings: string[] };
 const WARNING = 'Quota state unavailable; use the normal provider cascade.';
 const samePath = (a: string, b: string): boolean => process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 const tuple = (key: QuotaKey): string => JSON.stringify([key.provider, key.model, key.mode]);

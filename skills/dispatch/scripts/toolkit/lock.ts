@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ToolError } from './output.ts';
 
-export type LockOwner = { pid: number; host: string; at: string; tool?: string };
+type LockOwner = { pid: number; host: string; at: string; tool?: string };
 export type LockDeps = {
   pid: number; host: string; clock: () => number;
   sleep: (ms: number) => Promise<void>; isAlive: (pid: number) => boolean;

@@ -5,12 +5,12 @@ import type { CliDeps } from './cli.ts';
 import { git, splitPaths } from './git.ts';
 
 export type RepositoryChange = { cwd: string; paths: string[] };
-export type RepositoryCheck = { state: 'unavailable'; reason: string };
-export type CheckoutEntryMap = Record<string, string>;
-export type CheckoutState = { cwd: string; head: string; entries: CheckoutEntryMap };
-export type CheckoutBaseline = { checkouts: CheckoutState[] };
+type RepositoryCheck = { state: 'unavailable'; reason: string };
+type CheckoutEntryMap = Record<string, string>;
+type CheckoutState = { cwd: string; head: string; entries: CheckoutEntryMap };
+type CheckoutBaseline = { checkouts: CheckoutState[] };
 export type CheckoutBaselineFile = CheckoutBaseline | { state: 'unavailable'; reason: string };
-export type CheckoutReport = { repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheck; asOfSeq?: number };
+type CheckoutReport = { repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheck; asOfSeq?: number };
 
 const UNAVAILABLE = (reason: string): RepositoryCheck => ({ state: 'unavailable', reason });
 

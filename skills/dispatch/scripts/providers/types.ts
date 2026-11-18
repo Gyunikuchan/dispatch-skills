@@ -14,7 +14,7 @@ export type ProviderId = ProviderKey;
 export type ModeId = 'cli' | 'desktop' | 'vscode';
 export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
 
-export type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
+type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
 
 export type UsageBaseline = 'cumulative' | 'none';
 
@@ -114,7 +114,7 @@ export type PreparePorts = {
   acquireGpuLock(): Promise<() => void | Promise<void>>;
 };
 
-export type SandboxSpec = {
+type SandboxSpec = {
   /** Flags `argv` adds only when `sandbox: true`. */
   flags: readonly string[];
   /** Output signature meaning the sandbox did not take effect. */

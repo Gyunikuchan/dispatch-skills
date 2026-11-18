@@ -46,7 +46,7 @@ export type SlotOutcome = {slot: string; blocked?: BlockedAttempt[]} & (
   {state: 'native'; promptPath: string; replyPath: string; provider: string; attempt: string; cwd: string; model?: string | readonly string[]; effort?: string; launchAs?: string; error?: string; cliFallback?: true; nativeError?: string} |
   {state: 'failed'; cls: FailureClass; reason: string; cliOnly?: true}
 );
-export type NativeFailure = {attempt: string; reason: string; reasonHash: string};
+type NativeFailure = {attempt: string; reason: string; reasonHash: string};
 
 const nativeModels = (model: string | readonly string[] | undefined): string[] => model === undefined ? [] : typeof model === 'string' ? [model] : [...model];
 const nativeLaunchAs = (provider: string, model: string | readonly string[] | undefined, effort: string | undefined): string => launchLine(provider, nativeModels(model), effort ?? null);

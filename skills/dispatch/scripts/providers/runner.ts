@@ -12,31 +12,31 @@ import { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome, UsageBaseline } from './types.ts';
 
-export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
-export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
+const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 export const KILL_ESCALATION_MS = 1000;
 /** Silence on both stdout and stderr that stops a delegate before its overall deadline. */
 export const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const BETWEEN_STEPS_MS = 60_000, IN_STEP_MS = 180_000, IDLE_CHECK_MS = 10_000;
 export const CONTINUE_PROMPT = 'Your previous turn stopped before a final answer. Continue the task from where you stopped and return your final answer in the format the original prompt requires.';
 /** Lead time before the run deadline when a nameable launch is stopped for wrap-up. */
-export const WRAP_UP_LEAD_MS = 5 * 60_000;
+const WRAP_UP_LEAD_MS = 5 * 60_000;
 /** Runs shorter than this never stop for wrap-up. */
-export const WRAP_UP_FLOOR_MS = 10 * 60_000;
+const WRAP_UP_FLOOR_MS = 10 * 60_000;
 /** Prompt for the one-time wrap-up resume; the run deadline line is prepended by the runner. */
 export const WRAP_UP_PROMPT = 'The delegate run is about to reach its deadline. Make no further tool calls. Wrap up now and return your final answer in the format the original prompt requires, based on the work done so far.';
 /** One-line deadline notice inside every guarded prompt. */
-export const deadlineNotice = (deadlineMs: number, remainingMs: number, wrapUpAtMs?: number): string =>
+const deadlineNotice = (deadlineMs: number, remainingMs: number, wrapUpAtMs?: number): string =>
   `[DEADLINE]: ${new Date(deadlineMs).toISOString()} (${Math.max(0, Math.round(remainingMs / 60_000))}m remaining${wrapUpAtMs === undefined ? '' : `; wrap-up at ${new Date(wrapUpAtMs).toISOString()}`})`;
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
-export const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
+const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
 const bytes = (text: string): number => Buffer.byteLength(text, 'utf8');
 
 // SECTION: Credential stripping
 
 /** Non-secret variables delegates may inherit; every credential is stripped by omission. */
-export const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
+const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'windir', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE',
   'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'ProgramData', 'PROGRAMFILES', 'ProgramFiles',
   'PROGRAMFILES(X86)', 'ProgramFiles(x86)', 'COMMONPROGRAMFILES', 'CommonProgramFiles', 'ALLUSERSPROFILE', 'SYSTEMDRIVE',
@@ -48,7 +48,7 @@ export const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
 ]);
 
 // NOTE: redundant with the whitelist by construction; catches a credential-shaped name added to it by mistake.
-export const SENSITIVE_ENV_KEY = /(KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/i;
+const SENSITIVE_ENV_KEY = /(KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/i;
 
 export function sanitizeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const clean: Record<string, string> = {};
@@ -60,7 +60,7 @@ export function sanitizeEnv(env: Readonly<Record<string, string | undefined>>): 
 
 // SECTION: Sensitive-file guardrail
 
-export const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
+const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
   /\.env($|\..+)/i, /\.(pem|key|pkcs12|pfx|p12|kdbx|keystore|jks)$/i, /\.(ovpn)$/i, /id_(rsa|dsa|ecdsa|ed25519)($|\.)/i, /\.npmrc$/i,
   /\.pypirc$/i, /\.netrc$/i, /\.htpasswd$/i, /\.pgpass$/i, /\.my\.cnf$/i, /\.s3cfg$/i, /\.boto$/i, /\.terraformrc$/i, /terraform\.rc$/i,
   /wp-config\.php$/i, /\.git[/\\]credentials/i, /\.git-credentials$/i, /\.aws[/\\]credentials/i, /\.ssh[/\\]/i, /\.gnupg[/\\]/i,
@@ -68,8 +68,8 @@ export const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
 ];
 // Basename only: a full-path test would flag any ancestor such as `my-token-service/`.
 // NOTE: `_` counts as a separator (`\b` treats it as a word char, so `api_token.txt` would slip through).
-export const SENSITIVE_BASENAME_PATTERNS: readonly RegExp[] = [/(?:^|[^a-z0-9])token(?:[^a-z0-9]|$)/i, /(?:^|[^a-z0-9])secrets?(?:[^a-z0-9]|$)/i];
-export const SENSITIVE_DIR_PATTERNS: readonly RegExp[] = [
+const SENSITIVE_BASENAME_PATTERNS: readonly RegExp[] = [/(?:^|[^a-z0-9])token(?:[^a-z0-9]|$)/i, /(?:^|[^a-z0-9])secrets?(?:[^a-z0-9]|$)/i];
+const SENSITIVE_DIR_PATTERNS: readonly RegExp[] = [
   /[/\\]\.ssh([/\\]|$)/i, /[/\\]\.gnupg([/\\]|$)/i, /[/\\]\.gpg([/\\]|$)/i, /[/\\]\.aws([/\\]|$)/i, /[/\\]\.azure([/\\]|$)/i,
   /[/\\]\.docker([/\\]|$)/i, /[/\\]\.password-store([/\\]|$)/i, /[/\\]\.kube([/\\]|$)/i, /[/\\]\.helm([/\\]|$)/i,
   /[/\\]\.terraform\.d([/\\]|$)/i, /[/\\]\.config[/\\]gcloud([/\\]|$)/i, /[/\\]\.config[/\\]gh([/\\]|$)/i, /[/\\]\.config[/\\]op([/\\]|$)/i,
@@ -87,7 +87,7 @@ const DENYLIST_BLOCK =
 export const GUARDRAIL_HEADER = '[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]';
 
 /** Where the word-pattern exemption applies; worktree roots stay excluded because they hold host source. */
-export type SessionScope = { sessionRoot?: string; sessionRealRoot?: string; worktreeRealRoot?: string; worktreeRoots?: readonly string[] };
+type SessionScope = { sessionRoot?: string; sessionRealRoot?: string; worktreeRealRoot?: string; worktreeRoots?: readonly string[] };
 
 export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string; attachedFiles?: readonly string[] } & SessionScope = {}): string {
   const lines: string[] = [];
@@ -165,7 +165,7 @@ export type RunnerFs = {
   readPrefix(file: string, maxBytes: number): string;
 };
 
-export type AttachmentBlock = { text: string; notes: string[]; attachedFiles: string[]; usedBytes: number };
+type AttachmentBlock = { text: string; notes: string[]; attachedFiles: string[]; usedBytes: number };
 
 /** Failed checkout discovery removes the exemption rather than failing open. */
 export function sessionScope(sessionRoot: string | undefined, fs: RunnerFs): SessionScope {
@@ -220,7 +220,7 @@ export function buildAttachmentBlock(files: readonly string[], fs: RunnerFs, non
 
 // SECTION: Argv spill
 
-export const isBatchLauncher = (os: OsId, binary: string): boolean => os === 'win32' && /\.(?:bat|cmd)$/i.test(binary);
+const isBatchLauncher = (os: OsId, binary: string): boolean => os === 'win32' && /\.(?:bat|cmd)$/i.test(binary);
 
 /** Whether the prompt must spill: over the argv ceiling, unsafe for a Windows command shim, or too large for a batch launcher. */
 export function mustSpill(prompt: string, env: PlatformEnv, binary: string, reservedBytes = 0): boolean {
@@ -231,7 +231,7 @@ export function mustSpill(prompt: string, env: PlatformEnv, binary: string, rese
 }
 
 /** Single line with no `%`: the pointer itself must survive a batch launcher. */
-export const spillPointer = (briefFile: string): string =>
+const spillPointer = (briefFile: string): string =>
   'Your full task brief was written to a file to keep it off the command line. '
   + `FIRST ACTION: read this file in full, then carry out the instructions it contains. Brief file: ${briefFile.replaceAll('\\', '/')}`;
 
@@ -407,7 +407,7 @@ function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefine
 }
 // SECTION: runDelegate
 
-export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void; elapsed?(): number };
+type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void; elapsed?(): number };
 
 export type RunnerPorts = {
   process: ProcessPort;
@@ -424,9 +424,9 @@ export type RunnerPorts = {
 };
 
 /** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
-export type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
+type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
-export type WrapUpPort = { runDeadline: number; enabled: boolean; nameSession: () => string | null };
+type WrapUpPort = { runDeadline: number; enabled: boolean; nameSession: () => string | null };
 /** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
 async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[], wrapUp?: WrapUpPort): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();

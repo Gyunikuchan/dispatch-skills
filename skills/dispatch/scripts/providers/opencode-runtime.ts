@@ -16,7 +16,7 @@ const merge = (a: Row, b: Row): Row => {
   for (const [key, value] of Object.entries(b)) out[key] = record(out[key]) && record(value) ? merge(out[key], value) : value;
   return out;
 };
-export type Introspect = (command: 'config' | 'agents') => Promise<unknown>;
+type Introspect = (command: 'config' | 'agents') => Promise<unknown>;
 
 export async function resolveEffectiveOpencodeLaunch(req: DelegateRequest, inspect: Introspect): Promise<DelegateRequest> {
   const sources = await inspect('config');
@@ -130,7 +130,7 @@ export async function fetchModels(endpoint: string, timeoutMs = 5000): Promise<r
 }
 
 type Owner = { host: string; pid: number; token: string };
-export const gpuLockPath = () => path.join(fs.realpathSync(os.tmpdir()), 'dispatch-skills', '.locks', 'opencode-local-gpu.lock');
+const gpuLockPath = () => path.join(fs.realpathSync(os.tmpdir()), 'dispatch-skills', '.locks', 'opencode-local-gpu.lock');
 export async function acquireGpuLock(timeoutMs = 30000, file = gpuLockPath()): Promise<() => Promise<void>> {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const owner: Owner = { host: os.hostname(), pid: process.pid, token: crypto.randomUUID() };
