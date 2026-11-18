@@ -2,14 +2,12 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-08
-- **Updated**: 2026-11-15
+- **Updated**: 2026-11-19
 - **Audience**: Maintainers
 
 ## Context
 
-Plan review took 69-100% of provider CLI tokens in the three runs that measured one (25.7M, 26.2M and 34.0M tokens). Cache reads are 86-91% of tokens, so cost follows turns times prefix size. Plans are 3-4x their spec. `Proposed Changes` is 29-59% of the file. `Review Findings & Resolutions` is 15-26% (10-13 KB), and reviewers re-read it while also receiving `### Settled in earlier rounds`. Plan review did not converge in two runs (20/20/13/14 and 24/12/11/10 findings). 19-27% of findings were duplicates.
-
-The same rules lived in several files: `qualityCriteria` tailored actor text with exact-string `replace` calls that silently no-op on wording drift, `explorer-brief.md` and `test-cleanup-brief.md` had no renderer so placeholders had no fill check, and the map byte budget was stated in four places.
+Each actor needs a focused context pack so it can read the rules relevant to its task without carrying unrelated instructions into every turn. Exact-string replacements could silently stop applying when rule wording changed. Explorer and test-cleanup templates had unchecked placeholders, and repeated budget references could drift. Rendering from canonical sources with fill checks addresses these risks. Reviewers need the current artifact and settled rulings, so the brief supplies each once.
 
 ## Decision
 
@@ -21,50 +19,16 @@ The toolkit renders explorer and test-cleanup briefs from their templates (`brie
 
 Plan and design reviewers read governed text from `.state/reviews/<review>/round-<n>.input.md`, which holds the artifact without its `Review Findings & Resolutions` section; `### Settled in earlier rounds` stays the only source of prior rulings. Hashes, review identity and the findings refresh are unchanged.
 
-The orchestrator loads only the current step's references: each verb guide carries a `| Step | Reads |` table with one relative link per step. Budgets enforced by `tests/integration/structural-targets.test.ts`:
-
-| Pack | Budget | Measured |
-| --- | --- | --- |
-| Every verb step (linked sections + `SKILL.md` + guide) | at most 37067 bytes | at most 27781 bytes |
-| Plan authoring steps | at most 36914 bytes | at most 23985 bytes |
-| Code reviewer prompt | 14333 bytes | 14333 bytes |
-| Plan reviewer prompt | 16690 bytes | 16690 bytes |
-| Design reviewer prompt | 12552 bytes | 12552 bytes |
-| Writer brief pack | 10784 bytes | 10456 bytes |
-| Explorer brief template | 7977 bytes | 7738 bytes |
-| Explorer pack | 12638 bytes | 10705 bytes |
-| Verifier brief | 4096 bytes | 3133 bytes |
-| Test-cleanup brief template | 1870 bytes | 1656 bytes |
-| Test-cleanup rendered quality | 7653 bytes | 7385 bytes |
-| Test-cleanup pack | 9523 bytes | 9041 bytes |
-| Driver TS LOC | 18186 lines | 18186 lines |
-| `SKILL.md` | 10100 bytes | 9622 bytes |
-| Increment orchestrator brief | 4096 bytes | 1674 bytes |
-| Ledger kinds | 14 | 14 |
-| Agent-facing prose line, excluding tables, fences, readme and quality bar | 1200 bytes | 1141 bytes |
+The orchestrator loads only the current step's references: each verb guide carries a `| Step | Reads |` table with one relative link per step. The [structural targets test](../../tests/integration/structural-targets.test.ts) enforces byte budgets. The [path workload measure](../../scripts/path-bytes.ts) tracks representative must-load reads across verbs.
 
 Structural ceilings are a hint, not a gate needing user authorization: cut or consolidate first; a genuine new behaviour or rule may raise a ceiling with the reason recorded beside it and reported in the handoff; duplicates never justify a raise. Dead exports are removed only on index or reference evidence, and duplicate helpers merge to one owner with error handling and validation kept; files split by responsibility, never by length.
 
-Step budgets sit 30% below the 52735 (plan authoring) and 52953 (implement launch through review) baselines. The structural test enforces pack totals plus standalone component ceilings (explorer brief template, verifier brief, test-cleanup brief template, and test-cleanup rendered quality) while allowing shared quality-bar edits inside pack totals. Branch-specific review-fix assignment and handle-recovery detail lives in [review-fixes.md](../../skills/dispatch/references/review-fixes.md) and loads only when accepted fixes run.
+The structural test enforces pack totals plus standalone component ceilings (explorer brief template, verifier brief, test-cleanup brief template, and test-cleanup rendered quality) while allowing shared quality-bar edits inside pack totals. Branch-specific review-fix assignment and handle-recovery detail lives in [review-fixes.md](../../skills/dispatch/references/review-fixes.md) and loads only when accepted fixes run.
 
 Canonical homes hold one copy per rule across `SKILL.md`, `quality-bar.md`, `spec-authoring.md`, `spec-stage.md`, `grounding.md`, `review-rules.md`, `review-coverage.md`, `decision-frame.md`, `providers.md`, `worktree-cleanup.md`, `toolkit.md`, and the actor templates; other references link to the canonical home or keep only their reader-specific action.
 
-## Baselines for the REQ-8 pilot
-
-| Signal | Baseline runs |
-| --- | --- |
-| Delegate tokens (provider CLI) | 25.7M, 26.2M, 34.0M; review share 69-100%; cache reads 86-91% |
-| Review rounds to settle | 20/20/13/14 and 24/12/11/10 (two runs did not converge) |
-| Duplicate-finding rate | 19-27% |
-| Findings-history weight | 15-26% of the plan file (10-13 KB), re-read alongside `### Settled in earlier rounds` |
-
-## Pilot follow-up
-
-- **Owner**: orchestrator of the first Dispatch plan run after merge.
-- **Trigger**: that run's `diagnostics render`.
-- **Note**: `.scratch/per-actor-packs-pilot.md`, comparing delegate tokens, review rounds and duplicate-finding rate against the baselines above.
-- The pilot result stays pending and does not gate delivery; the single sample is indicative.
+The advisory per-actor context pack pilot is pending. It measures delegate tokens, review rounds and duplicate-finding rate. Delivery can proceed while the pilot is pending.
 
 ## Consequences
 
-Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. The driver LOC ceiling is 18186 against a measured 18186, and `SKILL.md` sits at 9622 bytes against a 10100 ceiling. Writer and native token capture stays a follow-up; telemetry gaps stand.
+Delegate and subagent packs render from one source per rule with byte budgets that fail the build on regression. Reviewers stop re-reading findings history. Writer and native token capture stays a follow-up; telemetry gaps stand.
