@@ -1155,10 +1155,10 @@ test('skill prose and scripts stay host-neutral without subagentModels', () => {
     .filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   for (const file of tsFiles) {
     const content = fs.readFileSync(path.join(scriptsDir, file), 'utf8');
-    if (file === 'toolkit/fanout.ts') {
+    if (file === 'toolkit/fanout/state.ts') {
       const stripped = content.replace(/function normalizeNative\b[\s\S]*?\n\}/, '');
-      assert.doesNotMatch(stripped, /subagentModels/, 'fanout.ts names subagentModels only inside normalizeNative');
-      assert.match(content, /function normalizeNative\b[\s\S]*?subagentModels/, 'fanout.ts keeps subagentModels in normalizeNative');
+      assert.doesNotMatch(stripped, /subagentModels/, 'fanout/state.ts names subagentModels only inside normalizeNative');
+      assert.match(content, /function normalizeNative\b[\s\S]*?subagentModels/, 'fanout/state.ts keeps subagentModels in normalizeNative');
     } else {
       assert.doesNotMatch(content, /subagentModels/, `${file} omits subagentModels`);
     }

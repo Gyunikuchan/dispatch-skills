@@ -600,6 +600,8 @@ test('non-host target consumes a host reserve reply under its logical slot', asy
     assert.equal((pending as unknown as {provider: string}).provider, 'claude');
     const attempt = (pending as unknown as {attempt: string}).attempt;
     assert.ok(attempt.startsWith('claude[0]#'));
+    const {reserveUsedBy, nativeLaunched} = JSON.parse(fs.readFileSync(path.join(dir,'fanout.json'),'utf8'));
+    assert.deepEqual({reserveUsedBy, nativeLaunched}, {reserveUsedBy: 'agy[0]', nativeLaunched: true});
     const replyPath = (pending as unknown as {replyPath: string}).replyPath;
     const waved = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: providers} as never, f.deps);
     assert.equal(waved.find(outcome => outcome.slot === 'agy[0]')?.state, 'native');
@@ -634,6 +636,75 @@ test('host change while a native reserve is pending runs the reserve cli', async
     assert.ok(f.launches.some(launch => launch.provider === 'claude' && launch.request.targetSlot === 'agy[0]'));
   } finally {f.cleanup();}
 });
+
+for (const [title, nativeFirstProviders] of [
+  ['CLI-only concurrent failures claim one reserve', []],
+  ['native wave concurrent failures claim one reserve', ['codex']],
+] as const) {
+  test(title, async () => {
+    const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+    const f = sessionFixture({memory:true}); try {
+      const dir = path.join(f.session, 'concurrent-reserve');
+      const slots = [slot('agy'), slot('claude'), slot('copilot','good',true)];
+      if (nativeFirstProviders.length) slots.push(slot('codex'));
+
+      f.script('agy','good',{status:'fail',cls:'auth',detail:'denied'});
+      f.script('claude','good',{status:'fail',cls:'auth',detail:'denied'});
+      f.script('copilot','good','reserve answer');
+      const gate = () => {
+        let release!: () => void;
+        const promise = new Promise<void>(resolve => { release = resolve; });
+        return {promise, release};
+      };
+      const secondTargetStarted = gate();
+      const ownerReserveStarted = gate();
+      const contenderFinished = gate();
+      const ownersAtLaunch: (string | undefined)[] = [];
+      const delegate = f.deps.delegate;
+      f.deps.delegate = async (provider, request, mode) => {
+        if (provider === 'copilot') {
+          const statePath = path.join(dir,'fanout.json');
+          const saved = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath,'utf8')) : undefined;
+          ownersAtLaunch.push(saved?.reserveUsedBy);
+        }
+        const result = await delegate(provider, request, mode);
+        if (provider === 'agy') await secondTargetStarted.promise;
+        if (provider === 'claude') {
+          secondTargetStarted.release();
+          await ownerReserveStarted.promise;
+        }
+        if (provider === 'copilot') {
+          ownerReserveStarted.release();
+          // Keep the owner's substitute pending until the contender has tried the reserve.
+          if (request.targetSlot === 'agy[0]') await contenderFinished.promise;
+          else contenderFinished.release();
+        }
+        return result;
+      };
+
+      const input = {dir, slots, prompt:'question', validate, quota, nativeFirstProviders,
+        onFailed: (logical: string) => {
+          if (logical === 'claude[0]') contenderFinished.release();
+        },
+      };
+      if (nativeFirstProviders.length) {
+        const initial = await fanOut(input, f.deps);
+        assert.ok(initial.some(outcome => outcome.slot === 'codex[0]' && outcome.state === 'native'));
+        assert.deepEqual(f.launches, []);
+      }
+      const outcomes = await fanOut(input, f.deps);
+      assert.deepEqual(ownersAtLaunch, ['agy[0]']);
+      const reserveLaunches = f.launches.filter(launch => launch.provider === 'copilot');
+      assert.deepEqual(reserveLaunches.map(launch => launch.request.targetSlot), ['agy[0]']);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'fanout.json'),'utf8')).reserveUsedBy, 'agy[0]');
+      const owner = outcomes.find(outcome => outcome.slot === 'agy[0]');
+      assert.ok(owner?.state === 'done');
+      assert.equal(owner.text, 'reserve answer');
+      assert.deepEqual(owner.responder, {slot:'copilot[0]', provider:'copilot', model:'good', native:false});
+      assert.equal(outcomes.find(outcome => outcome.slot === 'claude[0]')?.state, 'failed');
+    } finally {f.cleanup();}
+  });
+}
 
 test('interrupted reservation resumes for its recorded owner only', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
@@ -869,6 +940,8 @@ test('host change while a native-only reserve is pending saves failed without a 
     const pending = first.find(outcome => outcome.slot === 'agy[0]') as unknown as {state: string; attempt: string};
     assert.equal(pending?.state, 'native');
     assert.ok(pending.attempt.startsWith('codex[0]#'));
+    const {reserveUsedBy, nativeLaunched} = JSON.parse(fs.readFileSync(path.join(dir,'fanout.json'),'utf8'));
+    assert.deepEqual({reserveUsedBy, nativeLaunched}, {reserveUsedBy: 'agy[0]', nativeLaunched: true});
     f.deps.orchestrator = {platform: 'opencode', model: null};
     f.launches.length = 0;
     const second = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['opencode']} as never, f.deps);
