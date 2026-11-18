@@ -1,5 +1,5 @@
 {
-  "asOf": "2026-11-16",
+  "asOf": "2026-11-18",
   "source": ["https://platform.claude.com/docs/en/about-claude/pricing", "https://developers.openai.com/api/docs/pricing", "https://aistudio.google.com/docs/pricing", "https://openrouter.ai/api/v1/models"],
   "models": {
     "claude-fable-5-2": {
@@ -34,6 +34,10 @@
       "rates": { "input": 0.1, "output": 0.5, "cacheRead": 0.01 },
       "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 0.2, "output": 0.75, "cacheRead": 0.02 } }]
     },
+    "gpt-6.2-sol": {
+      "rates": { "input": 2, "output": 10, "cacheRead": 0.1 },
+      "tiers": [{ "abovePromptTokens": 272000, "rates": { "input": 4, "output": 15, "cacheRead": 0.2 } }]
+    },
     "gemini-3.8-flash": {
       "rates": { "input": 0.75, "output": 3.75, "cacheRead": 0.075 },
       "periods": [{ "from": "2027-01-01", "rates": { "input": 1.5, "output": 7.5, "cacheRead": 0.15 } }]
@@ -53,10 +57,25 @@
       "rates": { "input": 0.1, "output": 0.2, "cacheRead": 0.002 }
     },
     "deepseek-v4.1-flash": {
-      "rates": { "input": 0.14, "output": 0.42, "cacheRead": 0.0042 }
+      "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.003 }
+    },
+    "deepseek-v4.1-flash-1017": {
+      "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.003 }
+    },
+    "glm-5.3": {
+      "rates": { "input": 1.4, "output": 4.4, "cacheRead": 0.26 }
     },
     "glm-5.3-flash": {
-      "rates": { "input": 0.0399, "output": 0.0784, "cacheRead": 0.03 }
+      "rates": { "input": 0.15, "output": 0.5, "cacheRead": 0.03 }
+    },
+    "hy4": {
+      "rates": { "input": 0.417, "output": 1.2505, "cacheRead": 0.021 }
+    },
+    "longcat-2.5-free": {
+      "rates": { "input": 0, "output": 0, "cacheRead": 0 }
+    },
+    "mimo-v2.6-pro": {
+      "rates": { "input": 0.435, "output": 0.87, "cacheRead": 0.003625 }
     },
     "minimax-m3.1-flash": {
       "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.015 }
