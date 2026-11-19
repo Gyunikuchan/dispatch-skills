@@ -1003,7 +1003,13 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   const fixRules = rules.split('The orchestrator runs steps 1–3')[1]!;
   const once = (needle: string) => assert.equal(fixRules.split(needle).length - 1, 1, needle);
   for (let n = 1; n <= 8; n++) assert.match(fixRules, new RegExp('^' + n + '\\. ', 'm'));
-  for (const text of ['accepted findings with their rulings', 'diff file', 'artifact path', 'governing spec path', 'citations copied from the diff', 'report only false citations', 'mode `inline`', 'advisory']) once(text);
+  for (const text of ['mode `inline`', 'advisory', '`brief fix-check <artifact> --session <session> --host <platform>`']) once(text);
+  // The fix-check task text lives in its template; each input slot and rule appears once there.
+  const fixCheckBrief = ref('templates/fix-check-brief.md');
+  for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixCheckBrief.split(text).length - 1, 1, text);
+  // REQ-4 bounds reads to the diff, artifact, spec and consumer searches; codegraph returns source outside that bound.
+  assert.doesNotMatch(fixCheckBrief, /codegraph explore/);
+  assert.match(skill, /Pass `--host <platform>`[^\n]*`brief fix-check`/);
   assert.match(fixRules, /code and integration fixes[\s\S]*whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/);
   assert.match(fixRules, /launches no subagent and changes no roster, cap or round rule/);
   assert.match(fixRules, /mark the check inline in the verb report/);

@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 18349 covers review timing and unknown evidence for native substitutions and malformed timing facts, user decisions in settled rows, hot units in the review summary head, and per-round review workload with its round windows and host read.
+  // NOTE: 18619 covers review timing and unknown evidence for native substitutions and malformed timing facts, user decisions in settled rows, hot units in the review summary head, per-round review workload with its round windows and host read, the rendered fix-check brief (`brief fix-check`) with its unrenderable-name citation withhold and the listed-path exclude for such a citation, and the per-round spec snapshot in `review run`.
   assert.ok(
-    lines <= 18349,
-    `driver TS LOC ${lines} exceeds 18349 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 18619,
+    `driver TS LOC ${lines} exceeds 18619 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,

@@ -15,7 +15,7 @@ Each normative rule has one canonical home and declares its audience with an `<!
 
 Review tags come from one per-kind allow-list (`REVIEW_TAGS_BY_KIND`) in `domain/report.ts`, checked by `reviewPrompt` against the rendered quality families plus `standards` and `adjacent`; the rendered prompt names them in one line under `### Tags` without a per-tag bullet list.
 
-The toolkit renders explorer and test-cleanup briefs from their templates (`brief explorer`, `brief test-cleanup`), writing under `.state/briefs/` with fill checks that refuse missing values without writing. Rendered briefs contain no relative links.
+The toolkit renders explorer, fix-check and test-cleanup briefs from their templates (`brief explorer`, `brief fix-check`, `brief test-cleanup`), writing under `.state/briefs/` with fill checks that refuse missing values without writing. Rendered briefs contain no relative links.
 
 Plan and design reviewers read governed text from `.state/reviews/<review>/round-<n>.input.md`, which holds the artifact without its `Review Findings & Resolutions` section; `### Settled in earlier rounds` stays the only source of prior rulings. Hashes, review identity and the findings refresh are unchanged.
 

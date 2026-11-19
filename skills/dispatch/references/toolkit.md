@@ -4,9 +4,9 @@
 
 ### call table
 
-Invoke `node <skills-dir>/dispatch/scripts/dispatch.ts <tool> <action> … --session <session>`. The orchestrator runs toolkit commands. Dispatched agents run no toolkit commands, with one exception: a subagent assigned a map (map explorer, or utility subagent correcting a map under [map checks](grounding.md#check-and-recover)) may run `lint run` on that assigned map only. Brief and descriptor results return launch `model`, `effort` and `launchAs` fields for native launches. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
+The orchestrator runs toolkit commands. Dispatched agents run no toolkit commands, with one exception: a subagent assigned a map (map explorer, or utility subagent correcting a map under [map checks](grounding.md#check-and-recover)) may run `lint run` on that assigned map only. Brief and descriptor results return launch `model`, `effort` and `launchAs` fields for native launches. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
 
-Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Common refusals include unreadable input, invalid manifest, ledger corruption and lock contention. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
+Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
 
 `node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` needs no session and prints one section of this file as raw text through the next heading, exit 0; it is the one command whose stdout is not JSON. An unknown or empty heading refuses with reason `usage` and lists the valid headings; an unreadable file refuses with reason `fault`, exit 2. A refusal may add `help`, the heading to read next; `native-pending` and `ok:true` results carry none.
 
@@ -20,6 +20,7 @@ In the table, `\|` separates alternative values. Append a record object or non-e
 | action | report complete | `report complete --session <session>` |
 | action | brief render | `brief render <task> --session <session> --host <platform>` |
 | action | brief explorer | `brief explorer <values.json> --session <session> --host <platform>` |
+| action | brief fix-check | `brief fix-check <artifact> --session <session> --host <platform>` |
 | action | brief test-cleanup | `brief test-cleanup <values.json> --session <session> --host <platform>` |
 | action | worktree integrate | `worktree integrate <task> --session <session> [--ack-stale <rationale>]` |
 | action | worktree continue | `worktree continue <task> --session <session>` |
@@ -124,6 +125,13 @@ Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unkno
 Arguments: `brief explorer <values.json> --session <session> --host <platform>`. `<values.json>` is a file path holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
 Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
+
+### brief fix-check
+
+Arguments: `brief fix-check <artifact> --session <session> --host <platform>`; `<artifact>` is the plan or design path that `review run` reviewed.
+Selects the latest completed round of that review whose recorded artifact is this artifact, then writes the current governed text, its diff from the round's `round-<n>.input.md` and a research brief under `<session>/.state/briefs/`. The brief carries the round's accepted findings, citations from the diff's added lines (sensitive, unlisted or outside paths withheld), the round's spec (and its reviewed snapshot when the spec changed), the reading bound and a consumer search command.
+Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, citation and withheld counts, `contextLimit`, `launchAs` and launch `model`/`effort` values.
+Refusals: a code-review artifact, no matching round, no accepted finding, no change since the round input, an unreadable spec, missing/unknown `--host`; a refusal leaves no file.
 
 ### brief test-cleanup
 

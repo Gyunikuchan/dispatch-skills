@@ -48,7 +48,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
     'references/providers.md#child-orchestrators': conditional('On a verified host'),
     'references/grounding.md#design-increments': unconditional, 'references/decision-frame.md#user-gate-boundaries': conditional('user gate'),
     'references/spec-stage.md#approval': conditional('otherwise'), [`${TOOLKIT}#worktree-deliver`]: conditional('With the opt-in'),
-  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
+  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), call('brief fix-check', 1), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
   // Normal review assumes a code target; plan/design edit records are conditional.
   review: { guide: 'references/verbs/review.md', links: {
     'references/spec-stage.md#readers-and-document-layers': unconditional, [`${TOOLKIT}#review-run`]: unconditional,
@@ -90,7 +90,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/verbs/implement.md': conditional('Notify affected writers'),
     },
     calls: [
-      call('doctor run', 1), call('brief explorer', 1), call('lint run', 3), call('review run', 2),
+      call('doctor run', 1), call('brief explorer', 1), call('lint run', 3), call('review run', 2), call('brief fix-check', 1),
       record('bind', 1), record('level', 1), record('approval', 1), record('ruling', 8), record('edit', 2),
     ],
   },

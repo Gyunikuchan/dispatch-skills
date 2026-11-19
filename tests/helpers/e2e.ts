@@ -73,7 +73,7 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   for (const key of Object.keys(env)) if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) delete (env as Record<string, string | undefined>)[key];
   const entry = path.join(skill, 'scripts/dispatch.ts');
   const running = new Set<ReturnType<typeof spawn>>();
-  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup']);
+  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup', 'brief fix-check']);
   function withHost(args: readonly string[]): readonly string[] {
     if (args.includes('--host')) return args;
     if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;

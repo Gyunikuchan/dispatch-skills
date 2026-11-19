@@ -10,13 +10,13 @@ import { ToolError } from './output.ts';
 
 type LintArtifactOptions = { repositoryRoot?: string };
 
-function safeRepoPath(value: string): boolean {
+export function safeRepoPath(value: string): boolean {
   if (!value || value.includes('\\') || value.includes('\0') || path.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
   const normalized = path.posix.normalize(value);
   return normalized !== '.' && normalized !== '..' && !normalized.startsWith('../') && !path.posix.isAbsolute(normalized);
 }
 
-function within(root: string, candidate: string): boolean {
+export function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 }

@@ -34,14 +34,21 @@ import type { LedgerRecord } from './records.ts';
 // NOTE: shared by every target rejection so the host can correct its target in one turn.
 const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
 
-type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
+type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; specSource?: string; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
 function atomic(file: string, value: unknown) {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
   finally {fs.rmSync(temp, {force: true});}
 }
-const same = (round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
+// NOTE: fix-check reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
+function writeSpecSnapshot(file: string, text: string): void {
+  const temp = file + '.' + crypto.randomUUID() + '.tmp';
+  try {fs.writeFileSync(temp, text); fs.renameSync(temp, file);}
+  catch {/* advisory evidence only */}
+  finally {try {fs.rmSync(temp, {force: true});} catch {/* advisory evidence only */}}
+}
+const same =(round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
 const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
@@ -329,7 +336,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
     if (kind !== 'code') {
       const source = fs.readFileSync(artifact, 'utf8');
-      return {artifactPath:fs.realpathSync.native(artifact),spec, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
+      return {artifactPath:fs.realpathSync.native(artifact),spec, specSource: specText, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
     }
     let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
     const revision = async (ref: string) => {
@@ -586,6 +593,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (n > 1) value.interRound = {diff: await interRoundDiff(captured, confirmationOnlyRound), accepted: acceptedSinceReview()};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
       if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
+      if ((kind === 'plan' || kind === 'design') && captured.specSource !== undefined) writeSpecSnapshot(path.join(dir, 'spec.snapshot.md'), captured.specSource);
       atomic(roundFile, value);
       return value;
     }

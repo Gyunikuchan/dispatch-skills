@@ -18,7 +18,7 @@ type LaunchValues = { model: string[] | null; effort: string | null; launchAs: s
 
 const launchValues = (resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues =>
   resolved ? {model: resolved.models, effort: resolved.effort, launchAs: launchLine(normalized, resolved.models, resolved.effort)} : {model: null, effort: null, launchAs: null};
-const briefSummary = (prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number) =>
+export const briefSummary = (prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number) =>
   capSummary(`${prefix}: ${host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : ''}${file} (${bytes} bytes)`);
 
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
@@ -36,7 +36,7 @@ function writerLaunchValues(skillRoot: string, host: string | undefined, level: 
 }
 
 /** Explorer, test-cleanup and writer utility entry; null when the host or config does not resolve. */
-function resolveHostUtility(skillRoot: string, host: string | undefined): ResolvedUtility | undefined {
+export function resolveHostUtility(skillRoot: string, host: string | undefined): ResolvedUtility | undefined {
   try {
     if (!host) return undefined;
     const {config} = loadConfig(skillRoot);
@@ -47,7 +47,7 @@ function resolveHostUtility(skillRoot: string, host: string | undefined): Resolv
 }
 
 /** Explorer and test-cleanup launch values from the `utility` entry; null when the host or config does not resolve. */
-function utilityLaunchValues(skillRoot: string, host: string | undefined): LaunchValues {
+export function utilityLaunchValues(skillRoot: string, host: string | undefined): LaunchValues {
   const normalized = host ? normalizeProvider(host) : '';
   return launchValues(resolveHostUtility(skillRoot, host), normalized);
 }
@@ -153,19 +153,19 @@ function explorerText(skillRoot: string, platform: string | undefined): string {
 }
 
 /** Shared `{{slot}}` substitution; an unknown slot name refuses instead of emitting raw braces. */
-function fillSlots(label: string, text: string, slots: Record<string, string>): string {
+export function fillSlots(label: string, text: string, slots: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
     if (!Object.hasOwn(slots, name)) throw new Error(`Unknown ${label} brief slot ${name}`);
     return slots[name]!;
   });
 }
 
-function assertFilled(label: string, text: string): void {
+export function assertFilled(label: string, text: string): void {
   if (/\{\{\w+\}\}/.test(text)) throw new ToolError(2, 'fault', `Unfilled ${label} brief placeholder`);
   if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text)) throw new ToolError(2, 'fault', `Rendered ${label} brief contains a relative link`);
 }
 
-function nextBriefPath(directory: string, base: string): string {
+export function nextBriefPath(directory: string, base: string): string {
   let index = 1;
   while (fs.existsSync(path.join(directory, `${base}-${index}.md`))) index++;
   return path.join(directory, `${base}-${index}.md`);

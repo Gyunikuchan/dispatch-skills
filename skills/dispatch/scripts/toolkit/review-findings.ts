@@ -17,7 +17,7 @@ type ReviewRow = WalkthroughView['reviewRows'][number];
 export type RoundLink = { review: string; round: number; findings: number; path: string };
 type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
 
-const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
+export const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
 const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
   .replace(/\r\n?/g, '\n').replace(/\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
 // Only captured responder metadata identifies the model; roster effort needs a matching CLI slot.

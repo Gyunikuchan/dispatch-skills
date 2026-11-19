@@ -735,3 +735,32 @@ test('hot unit: a round with no hot unit adds no hot-unit text to the summary', 
     assert.ok(second.output.summary.endsWith('; first 1: R2-F001 SHOULD: Other defect'), second.output.summary);
   } finally {f.cleanup();}
 });
+
+// SECTION: Reviewed spec snapshot
+
+test('spec snapshot: round directory holds the captured spec text for a plan round and no temporary file', async () => {
+  const f = await fixture();
+  try {
+    assert.equal((await f.call()).exit, 0);
+    const roundDir = path.join(f.directory, 'round-1');
+    assert.equal(fs.readFileSync(path.join(roundDir, 'spec.snapshot.md'), 'utf8'), fs.readFileSync(f.spec, 'utf8'));
+    assert.deepEqual(fs.readdirSync(roundDir).filter(name => name.endsWith('.tmp')), []);
+  } finally {f.cleanup();}
+});
+
+test('spec snapshot: a failed snapshot write does not refuse the round', async () => {
+  const f = await fixture();
+  const write = fs.writeFileSync;
+  try {
+    (fs as {writeFileSync: typeof fs.writeFileSync}).writeFileSync = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(file).includes('spec.snapshot.md')) throw new Error('EPERM: simulated snapshot failure');
+      return (write as (...args: unknown[]) => void)(file, ...rest);
+    }) as typeof fs.writeFileSync;
+    const result = await f.call();
+    assert.equal(result.exit, 0);
+    assert.equal(f.read(1, 'round.json').round, 1);
+  } finally {
+    (fs as {writeFileSync: typeof fs.writeFileSync}).writeFileSync = write;
+    f.cleanup();
+  }
+});
