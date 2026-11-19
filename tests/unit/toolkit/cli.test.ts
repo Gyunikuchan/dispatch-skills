@@ -13,7 +13,7 @@ import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+import { reviewFixFromCommit, reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
 
 function useMemoryAtomicWrite(): () => void {
   const writeAtomic = nodeLinkFs.writeAtomic;
@@ -59,6 +59,39 @@ describe('toolkit CLI contract', () => {
       f.lines.length = 0;
       assert.equal(await main(['worktree','commit','--reason',reason,'--session',f.session],f.deps),4);
       assert.equal(f.output().reason,'no-changes');
+    } finally { f.cleanup(); }
+  });
+  test('review-fix commit splits correction metadata into trailer lines of at most 100 characters', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const reason = 'repair bounded SHOULD';
+      fs.mkdirSync(path.join(f.session, '.state/worktrees/integration'), {recursive:true});
+      f.artifact('mission.spec.md', '# Mission\n');
+      f.artifact('work.plan.md', '# Work\n');
+      await appendRecord(f.session, {kind: 'bind', key: 'commit-inputs', by: 'orchestrator', data: {spec: 'mission.spec.md', plan: 'work.plan.md'}}, f.deps);
+      await appendRecord(f.session, {kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'dispatch/test/integration',base:'b'.repeat(40),dest:{path:f.root,branch:'main'}}}, f.deps);
+      const reviewFix = {review:'code-integration',round:3,generation:1,findings:['R3-F001','R3-F002','R3-F003','R3-F004','R3-F005','R3-F006'],from:'b'.repeat(40)};
+      const file = path.join(f.root, 'review-fix.json');
+      fs.writeFileSync(file, JSON.stringify(reviewFix));
+      let head = 'a'.repeat(40), message = '';
+      f.deps.run = async (argv) => {
+        const args = argv.slice(1);
+        if (args.join(' ') === 'rev-parse HEAD') return {exit:0,stdout:head,stderr:''};
+        if (args[0] === 'diff') return {exit:0,stdout:'src/a.ts\0',stderr:''};
+        if (args[0] === 'ls-files' || args[0] === 'add') return {exit:0,stdout:'',stderr:''};
+        if (args[0] === 'commit') {
+          message = args.filter((_, index) => args[index - 1] === '-m').join('\n\n');
+          head = 'c'.repeat(40);
+          return {exit:0,stdout:'',stderr:''};
+        }
+        throw Error('Unexpected Git call: ' + JSON.stringify(argv));
+      };
+      assert.equal(await main(['worktree','commit','--reason',reason,'--review-fix',file,'--session',f.session],f.deps),0);
+      const lines = message.split('\n');
+      assert.deepEqual(lines.filter(line => line.length > 100), []);
+      assert.ok(lines.filter(line => line.startsWith('Dispatch-Review-Fix-Data: ')).length > 1);
+      assert.deepEqual(reviewFixFromCommit(message), reviewFix);
+      assert.deepEqual(foldLedger(f.session).records.find(row => row.data['phase'] === 'fix')?.data['reviewFix'], reviewFix);
     } finally { f.cleanup(); }
   });
   test('usage errors print one line without a result path', async () => {

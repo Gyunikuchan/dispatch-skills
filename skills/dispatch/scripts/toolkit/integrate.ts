@@ -27,13 +27,17 @@ export function reviewFixIdentity(value: ReviewFix): { digest: string; data: str
     data: Buffer.from(canonical).toString('base64url'),
   };
 }
+const FIX_DATA = 'Dispatch-Review-Fix-Data: ';
+// NOTE: commitlint config-conventional caps body and footer lines at 100 characters, so the data trailer repeats in ordered chunks.
+export const reviewFixTrailers = (value: ReviewFix, {digest, data} = reviewFixIdentity(value)): string =>
+  ['Dispatch-Review-Fix: ' + digest, ...(data.match(new RegExp(`.{1,${100 - FIX_DATA.length}}`, 'g')) ?? []).map(chunk => FIX_DATA + chunk)].join('\n');
 export function reviewFixFromCommit(message: string): ReviewFix | undefined {
   const digests = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix: '));
-  const values = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix-Data: '));
+  const values = message.split(/\r?\n/).filter(line => line.startsWith(FIX_DATA));
   if (!digests.length && !values.length) return undefined;
-  if (digests.length !== 1 || values.length !== 1) throw new ToolError(1, 'invalid-review-fix', 'Expected one correction digest and metadata trailer');
+  if (digests.length !== 1 || !values.length) throw new ToolError(1, 'invalid-review-fix', 'Expected one correction digest and its metadata trailers');
   const digest = digests[0]!.slice('Dispatch-Review-Fix: '.length);
-  const encoded = values[0]!.slice('Dispatch-Review-Fix-Data: '.length);
+  const encoded = values.map(line => line.slice(FIX_DATA.length)).join('');
   try {
     const parsed = validateReviewFix(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')));
     if (digest !== reviewFixIdentity(parsed).digest) throw new Error('Correction digest mismatch');
@@ -206,8 +210,7 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
       return result({commit:hash,reason:why,from,...cleanup,trees:evidence.trees});
     }
     if(dirty) {
-      const metadata=reviewFix?reviewFixIdentity(reviewFix):undefined;
-      const identity=metadata?['-m','Dispatch-Review-Fix: '+metadata.digest,'-m','Dispatch-Review-Fix-Data: '+metadata.data]:[];
+      const identity=reviewFix?['-m',reviewFixTrailers(reviewFix)]:[];
       await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
       await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     } else {
