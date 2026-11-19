@@ -263,6 +263,7 @@ const EXPECTED = {
   'gemini-4-hydrogen': { rates: rates(1.50, 7.50, 0.075) },
   'gemini-4-carbon': { rates: rates(2, 10, 0.10), periods: [{ from: '2026-12-01', rates: rates(4, 20, 0.20) }] },
   'gemini-4-argon': { rates: rates(2, 10, 0.10), periods: [{ from: '2026-12-01', rates: rates(4, 20, 0.20) }] },
+  'gemini-4-neon': { rates: rates(3, 15, 0.15) },
   'muse-spark-1.3-contributor': { rates: rates(0.10, 0.20, 0.002) },
   'deepseek-v4.1-flash': { rates: rates(0.15, 0.60, 0.003) },
   'deepseek-v4.1-flash-1017': { rates: rates(0.15, 0.60, 0.003) },
@@ -276,16 +277,17 @@ const EXPECTED = {
 
 test('shipped rate table holds the recorded official rates per model and no unconfirmed model', () => {
   const file = JSON.parse(tableText) as Record<string, unknown>;
-  assert.equal(file['asOf'], '2026-11-18');
+  assert.equal(file['asOf'], '2026-11-19');
   assert.ok(Array.isArray(file['source']) && file['source'].length > 0 && file['source'].every((url) => typeof url === 'string' && url.startsWith('https://')));
   assert.deepEqual(table.models, EXPECTED);
   const pricer = shipped();
-  assert.equal(pricer.meta.asOf, '2026-11-18');
+  assert.equal(pricer.meta.asOf, '2026-11-19');
   assert.deepEqual(pricer.meta.source, file['source']);
   const usage = { input: 1_000_000, output: 0 };
   near(pricer.price('gemini-4-carbon', usage, undefined, '2026-11-30').low, 2);
   near(pricer.price('gemini-4-carbon', usage, undefined, '2026-12-01').low, 4);
   near(pricer.price('gemini-4-argon', usage, undefined, '2026-12-01').low, 4);
+  near(pricer.price('gemini-4-neon', usage, undefined, '2026-11-19').low, 3);
   near(pricer.price('gemini-3.8-flash', usage, undefined, '2026-12-31').low, 0.75);
   near(pricer.price('gemini-3.8-flash', usage, undefined, '2027-01-01').low, 1.5);
 });

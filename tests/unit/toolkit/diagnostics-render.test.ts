@@ -311,7 +311,7 @@ test('cost cells render from the skill rate table and fall back to not estimated
     fs.writeFileSync(table, shipped);
     assert.match(render(false), /not estimated/, 'no host');
     const text = render(true);
-    assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-18 · priced 1 · unpriced 0$/m);
+    assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-19 · priced 1 · unpriced 0$/m);
     assert.ok(stageRow(text).endsWith('| 1/1 | — | ~$2.00 |'), stageRow(text));
 
     writeJson(path.join(skill, 'config.local.jsonc'), { pricing: { 'claude-sonnet-5-5': { rates: { input: 1, output: 1 } }, bad: 'x' } });
