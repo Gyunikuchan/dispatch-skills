@@ -647,3 +647,53 @@ test('malformed timing slots and attempts stay unknown without leaking names', (
  assert.equal((timing.match(/\| — \| — \| — \|/g)??[]).length,2);
  assert.match(text,/\| a\[0\] \| — \| — \|/);
 });
+
+test('round workload renders observed calls, dashes for unavailable cells, and the not-counted note', () => {
+ const review='review-1234567890abcdef';
+ const text=render([facts({roundWorkload:[
+  {review,round:1,calls:{total:9,phases:[{key:'ledger-append',count:4},{key:'lint-run',count:3},{key:'brief-explorer',count:1},{key:'review-run-plan',count:1}]},hostTokens:8214330},
+  {review,round:2,calls:{total:1,phases:[{key:'review-run-plan',count:1}]},hostTokens:2901550},
+  {review,round:3},
+  {review,round:4,calls:{total:1,phases:[{key:'review-run-plan',count:1}]}},
+ ]})]);
+ assert.match(text,/### Review round workload\n\n\| Review \| Round \| Toolkit calls \| Host tokens \|\n\| --- \| ---: \| --- \| ---: \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 1 \| 9: ledger-append 4 · lint-run 3 · brief-explorer 1 · review-run-plan 1 \| 8,214,330 \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 2 \| 1: review-run-plan 1 \| 2,901,550 \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 3 \| — \| — \|/);
+ assert.match(text,/\| subject 1234567890abcdef \| 4 \| 1: review-run-plan 1 \| — \|/);
+ assert.match(text,/Observed toolkit calls only: `report` and `diagnostics` calls and work after the latest round are not counted\./);
+ assert.doesNotMatch(text,/capture storage failure/);
+});
+
+test('round workload notes storage failures once and is omitted without review rounds', () => {
+ const review='review-1234567890abcdef';
+ const failed=render([facts({roundWorkload:[{review,round:1,calls:{total:1,phases:[{key:'lint-run',count:1}]}}],collection:{storageFailed:2}})]);
+ assert.equal((failed.match(/2 capture storage failures: calls from failed updates may be missing from the counts above\./g)??[]).length,1);
+ assert.doesNotMatch(render([facts({})]),/### Review round workload/);
+ assert.doesNotMatch(render([facts({roundWorkload:[]})]),/### Review round workload/);
+});
+
+test('round workload follows review round timing and precedes review yield by slot', () => {
+ const review='review-1234567890abcdef';
+ const text=render([facts({
+  roundTiming:[{review,round:1,slots:[{slot:'claude[0]',attempts:[{startMs:0,endMs:100}]}]}],
+  roundWorkload:[{review,round:1,calls:{total:1,phases:[{key:'review-run-plan',count:1}]}}],
+ })]);
+ const at=(heading:string)=>text.indexOf(heading);
+ assert.ok(at('### Review round timing')>=0);
+ assert.ok(at('### Review round timing')<at('### Review round workload'));
+ assert.ok(at('### Review round workload')<at('### Review yield by slot'));
+});
+
+test('round workload survives sanitizing and drops malformed rows, keys, and fields', () => {
+ const review='review-1234567890abcdef';
+ const clean=sanitizeFacts(facts({roundWorkload:[
+  {review,round:1,calls:{total:2,phases:[{key:'lint-run',count:2},{key:'Bad Key',count:1}]},hostTokens:40,secret:'/private/path'},
+  {review:'plan-x',round:1,calls:{total:1,phases:[]}},
+  {review,round:2},
+ ] as never}));
+ assert.deepEqual(clean.roundWorkload,[
+  {review,round:1,calls:{total:2,phases:[{key:'lint-run',count:2}]},hostTokens:40},
+  {review,round:2},
+ ]);
+});

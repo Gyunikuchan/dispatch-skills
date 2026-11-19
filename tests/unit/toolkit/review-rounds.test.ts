@@ -462,6 +462,95 @@ test('inter-round: a failed diff or a missing governed input leaves the round ru
   }
 });
 
+// SECTION: User decisions
+
+let decisionKey = 0;
+const escalate = (f: RoundFixture, id: string, state: 'open' | 'resolved', summary: string, by: 'user' | 'orchestrator' | 'tool', quote?: string) =>
+  appendRecord(f.session, {kind: 'escalation', by, ...(quote === undefined ? {} : {quote}), key: 'decision-' + decisionKey++, data: {id, state, summary}}, f.deps);
+const decisionLine = (id: string, summary: string, quote: string) => `- ${id} — user decision: ${summary} — quote: "${quote}"`;
+const decisionLines = (prompt: string) => prompt.split('\n').filter(line => line.includes(' — user decision: '));
+const DECISION_CLOSED = 'Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided.';
+
+test('user decision: a later full round lists each user-resolved escalation of the same review with its summary and quote', async () => {
+  const f = await fixture();
+  try {
+    script(f, () => report());
+    assert.equal((await f.call()).exit, 0);
+    await escalate(f, 'ceiling:plan-work.plan:4', 'resolved', 're-author: Keep the compact stdout line', 'user', 'approve');
+    await escalate(f, 'ceiling:plan-other.plan:4', 'resolved', 're-author: Other review', 'user', 'approve');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F001:g1', 'resolved', 'Keep the recurrence closed', 'user', 'keep');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F002:g1', 'open', 'Still open', 'tool');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F003:g1', 'resolved', 'Orchestrator closed', 'orchestrator');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F004:g1', 'resolved', 'Kept closed', 'user', 'keep');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F004:g1', 'open', 'Reopened', 'tool');
+    await escalate(f, 'coverage:plan-work.plan:claude', 'resolved', 'accept: claude[0]', 'user', 'accept');
+    await escalate(f, 'missing-red:plan-work.plan:step-one:first-check:R1:g1', 'resolved', 'Accept the gap', 'user', 'ok');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F006:g1', 'resolved', 'Keep the superseded decision', 'user', 'yes');
+    await escalate(f, 'recurrence:plan-work.plan:R1-F006:g1', 'resolved', 'superseded: target moved', 'tool');
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    const expected = [
+      decisionLine('ceiling:plan-work.plan:4', 're-author: Keep the compact stdout line', 'approve'),
+      decisionLine('recurrence:plan-work.plan:R1-F001:g1', 'Keep the recurrence closed', 'keep'),
+      decisionLine('coverage:plan-work.plan:claude', 'accept: claude[0]', 'accept'),
+      decisionLine('missing-red:plan-work.plan:step-one:first-check:R1:g1', 'Accept the gap', 'ok'),
+      decisionLine('recurrence:plan-work.plan:R1-F006:g1', 'Keep the superseded decision', 'yes'),
+    ];
+    const prompts = promptsOf(f).slice(before);
+    assert.ok(prompts.length > 0);
+    for (const prompt of prompts) assert.deepEqual(decisionLines(prompt), expected);
+  } finally {f.cleanup();}
+});
+
+test('user decision: a confirmation-only round lists the decisions with the closed sentence', async () => {
+  const f = await fixture();
+  try {
+    let phase = 'finding';
+    script(f, (provider, prompt) => {
+      const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map(match => match[1]!);
+      if (phase === 'finding' && provider === 'agy') return report('§ Work', 'Concurrent writes overwrite captured results', 'MUST');
+      return JSON.stringify({status: 'CLEAN', findings: [], confirmations: ids.map(requestId => ({requestId, decision: 'agree', rationale: 'Checked the captured isolation'}))});
+    });
+    assert.equal((await f.call()).exit, 0);
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'rejected', rationale: 'The captured implementation prevents this'});
+    await escalate(f, 'recurrence:plan-work.plan:R1-F002:g1', 'resolved', 'Keep the recurrence closed', 'user', 'keep');
+    phase = 'confirmation';
+    const before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
+    const prompts = promptsOf(f).slice(before);
+    assert.ok(prompts.length > 0);
+    for (const prompt of prompts) {
+      assert.deepEqual(decisionLines(prompt), [decisionLine('recurrence:plan-work.plan:R1-F002:g1', 'Keep the recurrence closed', 'keep')]);
+      assert.ok(prompt.includes(DECISION_CLOSED), prompt);
+    }
+  } finally {f.cleanup();}
+});
+
+test('user decision: a re-entered round keeps the decisions recorded before its start', async () => {
+  const f = await fixture();
+  try {
+    script(f, () => report());
+    assert.equal((await f.call()).exit, 0);
+    await f.add('ruling', {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed'});
+    await escalate(f, 'recurrence:plan-work.plan:R1-F002:g1', 'resolved', 'Keep the recurrence closed', 'user', 'keep');
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    script(f, () => JSON.stringify({status: 'BLOCKED', reason: 'cannot read the artifact'}));
+    assert.equal((await f.call()).output.reason, 'review-failed');
+    const startSeq = f.read(2, 'round.json').startSeq;
+    await escalate(f, 'recurrence:plan-work.plan:R1-F003:g1', 'resolved', 'Recorded after the round started', 'user', 'late');
+    script(f, () => report());
+    const before = f.launches.length;
+    assert.equal((await f.call()).exit, 0);
+    assert.equal(f.read(2, 'round.json').startSeq, startSeq);
+    const prompts = promptsOf(f).slice(before);
+    assert.ok(prompts.length > 0);
+    for (const prompt of prompts) assert.deepEqual(decisionLines(prompt), [decisionLine('recurrence:plan-work.plan:R1-F002:g1', 'Keep the recurrence closed', 'keep')]);
+  } finally {f.cleanup();}
+});
+
 // SECTION: Finding origin
 
 test('origin: the round-2 prompt asks for it and findings.json and the summary carry the reply value', async () => {
@@ -527,4 +616,122 @@ test('review run stores finding units for every round', async () => {
     g.deps.delegate = async () => ({outcome: {status:'ok', text:CLEAN, resume:null, sessionId:null}, invocations: []});
     assert.equal((await g.call()).exit, 0); assert.deepEqual(g.read(2, 'findings.json').units, []);
   } finally {g.cleanup();}
+});
+
+// SECTION: Hot units in the summary
+
+const acceptAll = async (f: RoundFixture, ids: readonly string[]) => {
+  for (const id of ids) await f.add('ruling', {subject: 'review:plan-work.plan:' + id, ruling: 'accepted', rationale: 'Fixed'});
+};
+const itemsOf = (f: RoundFixture, round: number) => (f.read(round, 'findings.json').findings as {id: string; severity: string; defect: string}[]).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`);
+
+test('hot unit: the summary names each hot unit with its streak and byte delta before the items', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n### T2 — Other\nOriginal.\n## Review Findings & Resolutions\n');
+    f.deps.delegate = oneReviewerDelegate(replyOf(['§ T1 — Task', 'Defect on T1', 'SHOULD'], ['§ T2 — Other', 'Defect on T2', 'SHOULD']));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, ['R1-F001', 'R1-F002']);
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal and expanded.\n### T2 — Other\nOriginal and expanded too.\n## Review Findings & Resolutions\n');
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    const units = f.read(2, 'findings.json').units as {unit: string; delta?: number}[];
+    const t1 = units.find(entry => entry.unit === 'T1')!, t2 = units.find(entry => entry.unit === 'T2')!;
+    assert.ok(t1.delta! > 0 && t2.delta! > 0, JSON.stringify(units));
+    assert.ok(second.output.summary.includes(`; 2 hot units: T1 ×1 +${t1.delta} B, T2 ×1 +${t2.delta} B; first 2: ${itemsOf(f, 2).join('; ')}`), second.output.summary);
+  } finally {f.cleanup();}
+});
+
+test('hot unit: a spec unit has no byte size, so its streak alone is named', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = oneReviewerDelegate(replyOf(['§ REQ-1', 'Spec gap', 'SHOULD']));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, ['R1-F001']);
+    fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    assert.ok(second.output.summary.includes(`; 1 hot unit: spec:REQ-1 ×1; first 1: ${itemsOf(f, 2).join('; ')}`), second.output.summary);
+    assert.equal((f.read(2, 'findings.json').units as {unit: string; delta?: number}[]).find(entry => entry.unit === 'spec:REQ-1')!.delta, undefined);
+  } finally {f.cleanup();}
+});
+
+test('hot unit: six hot units with long names are all named within the bound, and items drop first', async () => {
+  const f = await fixture();
+  try {
+    const titles = Array.from({length: 6}, (_, i) => `Unit ${i + 1} of six with a long descriptive heading that the summary clips`);
+    fs.writeFileSync(f.plan, `# Work\n## Work\n${titles.map(title => `### ${title}\nOriginal.\n`).join('')}## Review Findings & Resolutions\n`);
+    f.deps.delegate = oneReviewerDelegate(replyOf(...titles.map(title => ['§ ' + title, 'Long defect ' + 'word '.repeat(30), 'SHOULD'] as const)));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, Array.from({length: 6}, (_, i) => 'R1-F00' + (i + 1)));
+    fs.writeFileSync(f.plan, `# Work\n## Work\n${titles.map(title => `### ${title}\nOriginal and expanded.\n`).join('')}## Review Findings & Resolutions\n`);
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    const { summary } = second.output;
+    assert.ok(summary.includes('; 6 hot units: '), summary);
+    for (let i = 1; i <= 6; i++) assert.ok(summary.includes(`§ Unit ${i} of six with a long`), summary);
+    assert.ok(Buffer.byteLength(summary) <= 1024, summary);
+    assert.ok(summary.includes(' more in result'), summary);
+  } finally {f.cleanup();}
+});
+
+test('hot unit: a hot list over the bound names the units that fit and points to findings.json', async () => {
+  const f = await fixture();
+  try {
+    const titles = Array.from({length: 25}, (_, i) => `Unit ${i + 1} of many with a long descriptive heading`);
+    fs.writeFileSync(f.plan, `# Work\n## Work\n${titles.map(title => `### ${title}\nOriginal.\n`).join('')}## Review Findings & Resolutions\n`);
+    f.deps.delegate = oneReviewerDelegate(replyOf(...titles.map(title => ['§ ' + title, 'A defect', 'SHOULD'] as const)));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, Array.from({length: 25}, (_, i) => 'R1-F' + String(i + 1).padStart(3, '0')));
+    fs.writeFileSync(f.plan, `# Work\n## Work\n${titles.map(title => `### ${title}\nOriginal and expanded.\n`).join('')}## Review Findings & Resolutions\n`);
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    const { summary } = second.output;
+    const match = /; 25 hot units: (.+), \+(\d+) more in findings\.json units/.exec(summary);
+    assert.ok(match, summary);
+    const named = match[1]!.split(', ');
+    assert.ok(named.length >= 1 && named.length + Number(match[2]) === 25, summary);
+    assert.ok(Buffer.byteLength(summary) <= 1024, summary);
+  } finally {f.cleanup();}
+});
+
+test('hot unit: a near-1,024-byte base head keeps the count and pointer before the repository suffix', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n## Review Findings & Resolutions\n');
+    f.deps.delegate = oneReviewerDelegate(replyOf(['§ T1 — Task', 'A defect', 'SHOULD']));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, ['R1-F001']);
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal and expanded.\n## Review Findings & Resolutions\n');
+    const paths = Array.from({length: 10}, (_, i) => `src/generated/${i}/${'x'.repeat(80)}.ts`);
+    f.deps.hook = point => {if (point === 'review:after-pending') {
+      const file = path.join(f.directory, 'round-2', 'pending.json');
+      const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+      value.repositoryChanges = [{cwd: '.', paths}];
+      fs.writeFileSync(file, JSON.stringify(value));
+      throw new Error('interrupt');
+    }};
+    await f.call();
+    delete f.deps.hook;
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    const { summary } = second.output;
+    const pointer = summary.indexOf('; 1 hot unit: +1 more in findings.json units');
+    assert.ok(pointer >= 0 && pointer < summary.indexOf(', repository changes: '), summary);
+  } finally {f.cleanup();}
+});
+
+test('hot unit: a round with no hot unit adds no hot-unit text to the summary', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n### T2 — Other\nOriginal.\n## Review Findings & Resolutions\n');
+    f.deps.delegate = oneReviewerDelegate(replyOf(['§ T1 — Task', 'A defect', 'SHOULD']));
+    assert.equal((await f.call()).exit, 0);
+    await acceptAll(f, ['R1-F001']);
+    f.deps.delegate = oneReviewerDelegate(replyOf(['§ T2 — Other', 'Other defect', 'SHOULD']));
+    const second = await f.call();
+    assert.equal(second.exit, 0);
+    assert.doesNotMatch(second.output.summary, /hot unit/);
+    assert.ok(second.output.summary.endsWith('; first 1: R2-F001 SHOULD: Other defect'), second.output.summary);
+  } finally {f.cleanup();}
 });

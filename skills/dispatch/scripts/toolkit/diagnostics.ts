@@ -4,8 +4,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
-import { type Milestone, type HostStage, type PhaseMilestone } from '../lib/usage/rows.ts';
-import { addYield, billedTokens, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
+import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
+import type { ProviderKey } from '../lib/platform.ts';
+import { addYield, billedTokens, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
@@ -238,6 +239,62 @@ export function stageMilestones(fold: Fold, captures: readonly RunFacts[], start
   return stages.sort((a,b)=>a.atMs-b.atMs);
 }
 
+// Host milestone name for a round; the review hash keeps it within the phase key gate.
+const roundPhase = (review: string, round: number) => `round-${review.slice(7)}-${round}`;
+
+/**
+ * Round starts open exclusive windows: a window runs to the next start, and the latest one closes at the end of its last `review run`.
+ * A capture belongs to the window holding its start, so closed windows never change on a later render.
+ */
+function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFacts[], reviewKeys: ReadonlyMap<string, string>): {rows: RoundWorkload[]; window?: {startMs: number; endMs: number; milestones: PhaseMilestone[]}} {
+  const owner = new Map<string, {key: string; round: number}>();
+  for (const round of rounds) for (const generation of round.generations) owner.set(generation.subject, {key: reviewKeys.get(round.review)!, round: round.round});
+  // Raw `tool-action[-kind]` key; a killed capture has invocations but no phases yet.
+  const callKey = (capture: RunFacts): string | undefined => capture.phases[0]?.key || capture.invocations[0]?.phase || undefined;
+  const reviewRuns = measured.flatMap(capture => capture.capture && callKey(capture)?.startsWith('review-run-') ? [{capture, start: capture.capture.start}] : []);
+  const starts = new Map<string, {key: string; round: number; start: number}>();
+  for (const {capture, start} of reviewRuns) for (const invocation of capture.invocations) {
+    const who = invocation.subject ? owner.get(invocation.subject) : undefined;
+    if (!who) continue;
+    const id = `${who.key}#${who.round}`, known = starts.get(id);
+    if (!known || start < known.start) starts.set(id, {...who, start});
+  }
+  const timeline = [...starts.values()].sort((a, b) => a.start - b.start || a.key.localeCompare(b.key) || a.round - b.round);
+  const last = timeline.at(-1);
+  const close = last === undefined ? undefined : Math.max(last.start, ...reviewRuns.filter(run => run.start >= last.start)
+    .flatMap(({capture, start}) => [capture.capture?.end ?? start, ...capture.invocations.map(invocation => invocation.endMs ?? start)]));
+  const calls = new Map<number, Map<string, number>>();
+  for (const capture of measured) {
+    const key = callKey(capture), start = capture.capture?.start;
+    if (key === undefined || start === undefined) continue;
+    let index = -1;
+    timeline.forEach((round, i) => { if (round.start <= start) index = i; });
+    if (index < 0 || (index === timeline.length - 1 && start > (close ?? start))) continue;
+    const counts = calls.get(index) ?? new Map<string, number>();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    calls.set(index, counts);
+  }
+  const rows = rounds.map((round): RoundWorkload => {
+    const review = reviewKeys.get(round.review)!;
+    const index = timeline.findIndex(t => t.key === review && t.round === round.round);
+    if (index < 0) return {review, round: round.round};
+    const phases = [...(calls.get(index) ?? new Map<string, number>())].map(([key, count]) => ({key, count}))
+      .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+    return {review, round: round.round, calls: {total: phases.reduce((sum, p) => sum + p.count, 0), phases}};
+  });
+  if (last === undefined || close === undefined) return {rows};
+  return {rows, window: {
+    startMs: timeline[0]!.start,
+    endMs: close,
+    milestones: [...timeline.map(t => ({phase: roundPhase(t.key, t.round), atMs: t.start})), {phase: 'outside', atMs: close}],
+  }};
+}
+
+function hostUsageRead(deps: CliDeps, platform: ProviderKey | null, input: {startMs: number; endMs: number; stages: readonly Milestone[]; phases: readonly PhaseMilestone[]}): HostUsageFacts {
+  const home = (process.platform === 'win32' ? deps.env['USERPROFILE'] ?? deps.env['HOME'] : deps.env['HOME'] ?? deps.env['USERPROFILE']) ?? os.homedir();
+  return readHostUsage(platform, {...input, home, env: name => deps.env[name]}, deps.hostUsageFs ?? nodeHostUsageFs);
+}
+
 /** Builds optional facts independently of the strict walkthrough reader. */
 export function sessionFacts(session: string, fold: Fold, outcome: string, hostContext?: {manifest: HandlerContext['manifest']; deps: CliDeps}): RunFacts {
   const collection = {completed:0, partial:0, corrupt:0, unreadable:0, incomplete:0, storageFailed:0};
@@ -380,20 +437,34 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
       return {slot:slot.slot,attempts:native?[...attempts,{}]:attempts};
     })};
   });
+  const workload=roundTimeline(rounds,measured,reviewKeys);
   let hostUsage: RunFacts['hostUsage'];
   if(hostContext) {
     const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
     const startMs=Date.parse(manifest.createdAt);
     try {
-      hostUsage = !Number.isFinite(startMs) ? {platform,rows:[],unavailable:'invalid session start'} : readHostUsage(platform,{startMs,endMs:deps.clock(),home:(process.platform==='win32' ? deps.env['USERPROFILE'] ?? deps.env['HOME'] : deps.env['HOME'] ?? deps.env['USERPROFILE']) ?? os.homedir(),env:name=>deps.env[name],stages:stageMilestones(fold,measured,startMs),phases:phaseMilestones},deps.hostUsageFs ?? nodeHostUsageFs);
+      hostUsage = !Number.isFinite(startMs) ? {platform,rows:[],unavailable:'invalid session start'} : hostUsageRead(deps,platform,{startMs,endMs:deps.clock(),stages:stageMilestones(fold,measured,startMs),phases:phaseMilestones});
     } catch(error) { hostUsage={platform,rows:[],unavailable:readErrorReason(error)}; }
+  }
+  // Second read: host rows attributed to each round window; a failure leaves the host tokens unavailable and never gates rendering.
+  let roundWorkload = workload.rows;
+  if(hostContext && workload.window) {
+    const {deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
+    let windowRead: HostUsageFacts;
+    try { windowRead = hostUsageRead(deps,platform,{startMs:workload.window.startMs,endMs:workload.window.endMs,stages:[],phases:workload.window.milestones}); }
+    catch(error) { windowRead={platform,rows:[],unavailable:readErrorReason(error)}; }
+    if(!windowRead.unavailable) {
+      const tokens=new Map<string,number>();
+      for(const row of windowRead.rows) if(row.role==='host'&&row.phase!==undefined) tokens.set(row.phase,(tokens.get(row.phase)??0)+billedTokens(row,windowRead.platform??'',row.reasoningInOutput));
+      roundWorkload=roundWorkload.map(row=>row.calls?{...row,hostTokens:tokens.get(roundPhase(row.review,row.round))??0}:row);
+    }
   }
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
     ...(typeof level==='string'?{level}:{}),...(tasks.length?{verb:'implement'}:{}),outcome,timingScope:'tool-calls',os:process.platform,...(host?{host}:{}),...(hosts.length?{hosts}:{}),...(startedAt?{startedAt}:{}),
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
-    ...(slotYield.length?{slotYield}:{}),...(roundTiming.length?{roundTiming}:{}),...(hostUsage?{hostUsage}:{}),
+    ...(slotYield.length?{slotYield}:{}),...(roundTiming.length?{roundTiming}:{}),...(roundWorkload.length?{roundWorkload}:{}),...(hostUsage?{hostUsage}:{}),
     retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };

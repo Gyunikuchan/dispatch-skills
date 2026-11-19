@@ -13,7 +13,7 @@ import { parsePlan, selectTaskBrief, structuralLines, governedPlanText } from '.
 import { parseIncrementGraph, governedDesignText } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import { taskMarkdown } from './brief.ts';
-import type { InterRound } from './domain/prompt.ts';
+import type { InterRound, UserDecision } from './domain/prompt.ts';
 import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
 import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
 import { git, gitOk, gitPaths } from './git.ts';
@@ -232,6 +232,26 @@ function blockedNotice(blocked: readonly BlockedEntry[], blockers: readonly Bloc
   }
   const omitted = items.length - shown.length;
   return shown.join('; ') + (omitted ? `; +${omitted} more blocked` : '');
+}
+// NOTE: names take only the bytes the rest of the head leaves; the count and pointer stay even when the suffixes overflow, so the CLI cap cuts the suffixes first.
+function hotUnitsNotice(units: readonly {unit: string; hot: boolean; hotStreak: number; delta?: number}[], restBytes: number): string {
+  const hot = units.filter(unit => unit.hot);
+  if (!hot.length) return '';
+  const names = hot.map(unit => clipBytes(unit.unit, 40) + ' ×' + unit.hotStreak + (unit.delta === undefined ? '' : ' ' + (unit.delta < 0 ? '-' : '+') + Math.abs(unit.delta) + ' B'));
+  const text = (shown: number) => `; ${hot.length} hot unit${hot.length === 1 ? '' : 's'}: ` + names.slice(0, shown).join(', ') + (shown === names.length ? '' : `${shown ? ', ' : ''}+${names.length - shown} more in findings.json units`);
+  let shown = names.length;
+  while (shown > 0 && Buffer.byteLength(text(shown), 'utf8') > 1024 - restBytes) shown--;
+  return text(shown);
+}
+// Ids are `<kind>:<review>:<tail>`; only a later open record of the same id reopens a decision, so tool resolutions neither list nor remove one.
+function userDecisions(records: readonly LedgerRecord[], review: string, startSeq: number): UserDecision[] {
+  const ofReview = records.filter(row => row.kind === 'escalation' && row.seq <= startSeq && String(row.data['id']).split(':')[1] === review);
+  return [...new Set(ofReview.map(row => String(row.data['id'])))].flatMap(id => {
+    const rows = ofReview.filter(row => String(row.data['id']) === id);
+    const decision = rows.findLast(row => row.by === 'user' && row.data['state'] === 'resolved' && !!row.quote?.trim());
+    if (!decision || rows.some(row => row.seq > decision.seq && row.data['state'] === 'open')) return [];
+    return [{id, summary: String(decision.data['summary']), quote: decision.quote!}];
+  });
 }
 // NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
 function specHashFor(root: string, input: string): string {
@@ -682,13 +702,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const targets = round!.roster.filter(entry => !entry.reserve);
       const confirmationRound = round!.scope.includes('(confirmation-only)');
       const interRound = round!.interRound ? {interRound: round!.interRound} : {};
+      // Decisions use the round's own start: a re-entered round keeps the list it first received.
+      const decisions = userDecisions(foldLedger(session).records, review, round!.startSeq);
       const prompt = (slot:RosterSlot)=>{
         if (confirmationRound) return confirmationPrompt(kind, {...interRound, spec: round!.spec, artifact: reviewerArtifact, target: round!.target, cwd: current.cwd, scope: round!.scope, taskSummary: current.taskSummary,
-          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), requests: requestsBySlot.get(slot.slot) ?? []});
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), requests: requestsBySlot.get(slot.slot) ?? [], settled: decisions});
         const position=targets.findIndex(entry=>entry.slot===slot.slot);
         return reviewPrompt(kind, {skillRoot: deps.skillRoot, spec: round!.spec, artifact: reviewerArtifact, scope: round!.scope, taskSummary: current.taskSummary, turnTarget: round!.turnTarget,
           ...(round!.contextMapPath ? {contextMapPath: round!.contextMapPath} : {}),
-          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled,...interRound,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
+          ...(bind?.data['plan'] ? {planPath: path.resolve(manifest.repositoryRoot, bind.data['plan'])} : {}), settled: [...settled, ...decisions],...interRound,requests:requestsBySlot.get(slot.slot) ?? [], rotation:position<0?0:position, round:round!.round});
       };
       const validate = (text: string,logicalSlot:string): Validation => {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
@@ -837,6 +859,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const changedPaths = (pending.repositoryChanges ?? []).flatMap(entry => entry.paths).sort();
     const changedSuffix = changedPaths.length ? `, repository changes: ${changedPaths.join(', ')}` : '';
     const checkSuffix = pending.repositoryCheck ? `, repository check unavailable: ${pending.repositoryCheck.reason}` : '';
+    const countsHead = `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`;
+    const suffixes = changedSuffix + checkSuffix;
+    const summaryHead = countsHead + hotUnitsNotice(pending.units, Buffer.byteLength(countsHead + suffixes, 'utf8')) + suffixes;
     return {
       ok: true, exit: 0,
       value: {
@@ -851,7 +876,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         // The summary is bounded, so only this list names every marked finding.
         ...(unresolved.length ? { unresolvedLoci: unresolved.map(({id, locus}) => ({id, locus})) } : {}),
       },
-      summary: summaryWithItems(`review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}${changedSuffix}${checkSuffix}`,
+      summary: summaryWithItems(summaryHead,
         [...unresolved.map(finding => `${finding.id} ${finding.severity}: ${finding.locus} — ${finding.defect}`),
           ...bySeverity.filter(finding => !isUnresolvedLocus(finding.locus)).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`)]),
     };

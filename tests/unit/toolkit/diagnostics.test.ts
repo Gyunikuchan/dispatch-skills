@@ -11,6 +11,7 @@ import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
@@ -755,4 +756,192 @@ test('sessionFacts records startedAt, hosts and slot yield billed tokens and att
   } finally {
     f.cleanup();
   }
+});
+
+// SECTION: round workload fixtures
+const reviewKey = (session: string, review: string) =>
+  'review-' + crypto.createHash('sha256').update(path.join(session, '.state', 'reviews', review)).digest('hex').slice(0, 16);
+
+const workloadRound = (session: string, review: string, round: number, generations = 1) => {
+  const roundDir = path.join(session, '.state', 'reviews', review, `round-${round}`);
+  writeJson(path.join(roundDir, 'round.json'), {round, generation: generations, cap: 4, roster: []});
+  for (let g = 1; g <= generations; g++) fs.mkdirSync(path.join(roundDir, `gen-${g}`), {recursive: true});
+};
+
+const workloadCapture = (session: string, name: string, capture: {start: number; end?: number}, phase: string | undefined, invocations: unknown[] = []) =>
+  writeJson(path.join(session, '.state', 'diagnostics', `${name}.json`), {
+    capture: {state: capture.end === undefined ? 'opened' : 'completed', ...capture},
+    phases: phase ? [{key: phase, name: 'plan review'}] : [], invocations, reviews: [],
+  });
+
+const reviewRun = (subject: string, extra: Record<string, unknown> = {}) => ({
+  phase: 'review-run-plan', subject, attempt: 1, provider: 'claude', model: 'm', surface: 'cli', launched: true, outcome: 'ok', slot: 'claude[0]', ...extra,
+});
+
+const usageLine = (id: string, at: number, input: number, output: number) =>
+  JSON.stringify({type: 'assistant', timestamp: new Date(at).toISOString(), message: {id, model: 'm', usage: {input_tokens: input, output_tokens: output}}});
+
+// Claude host thread plus one subagent transcript, read through the injected filesystem port.
+const claudeHostDeps = (f: ReturnType<typeof sessionFixture>, input: {clock: number; main: string[]; subagent?: string[]}) => {
+  const main = Buffer.from(input.main.join('\n'));
+  const subagent = Buffer.from((input.subagent ?? []).join('\n'));
+  return {
+    ...f.deps,
+    clock: () => input.clock,
+    orchestrator: {platform: 'claude' as const, model: 'm'},
+    env: {CLAUDE_CODE_SESSION_ID: 'host-1'},
+    hostUsageFs: {
+      list: (dir: string) => dir.endsWith('projects') ? ['p'] : dir.endsWith('subagents') ? ['agent-1.jsonl'] : [],
+      stat: (file: string) => file.endsWith('host-1.jsonl') ? {size: main.length, mtimeMs: input.clock}
+        : file.endsWith('agent-1.jsonl') ? {size: subagent.length, mtimeMs: input.clock} : null,
+      read: (file: string) => file.endsWith('agent-1.jsonl') ? subagent : main,
+      decompress: null,
+    },
+  };
+};
+
+const sessionRows = (session: string, hostContext?: {manifest: never; deps: CliDeps}) =>
+  sessionFacts(session, {records: [], lastSeq: 0, torn: null}, 'complete', hostContext).roundWorkload;
+
+test('round workload counts observed calls per round window by phase key', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-a', 1);
+    workloadRound(f.session, 'plan-a', 2);
+    workloadCapture(f.session, 'r1', {start: 1000, end: 1400}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1))]);
+    workloadCapture(f.session, 'l1', {start: 1100, end: 1110}, 'ledger-append');
+    workloadCapture(f.session, 'l2', {start: 1200, end: 1210}, 'lint-run');
+    workloadCapture(f.session, 'r2', {start: 5000, end: 5300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 2))]);
+    workloadCapture(f.session, 'after', {start: 6000, end: 6100}, 'report-render');
+    const key = reviewKey(f.session, 'plan-a');
+    assert.deepEqual(sessionRows(f.session), [
+      {review: key, round: 1, calls: {total: 3, phases: [{key: 'ledger-append', count: 1}, {key: 'lint-run', count: 1}, {key: 'review-run-plan', count: 1}]}},
+      {review: key, round: 2, calls: {total: 1, phases: [{key: 'review-run-plan', count: 1}]}},
+    ]);
+  } finally { f.cleanup(); }
+});
+
+test('round workload counts a later-generation rerun in its own round window', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-b', 1, 2);
+    workloadRound(f.session, 'plan-b', 2);
+    workloadCapture(f.session, 'first', {start: 1000, end: 1400}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1, 1))]);
+    workloadCapture(f.session, 'rerun', {start: 1500, end: 1900}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1, 2))]);
+    workloadCapture(f.session, 'second', {start: 5000, end: 5300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 2))]);
+    const rows = sessionRows(f.session)!;
+    assert.deepEqual(rows.map((row) => row.calls?.total), [2, 1]);
+    assert.deepEqual(rows[0]?.calls?.phases, [{key: 'review-run-plan', count: 2}]);
+    assert.equal(rows[0]?.review, reviewKey(f.session, 'plan-b'));
+  } finally { f.cleanup(); }
+});
+
+test('round workload attributes interleaved rounds of two reviews without double counting', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    for (const review of ['plan-a', 'plan-b']) for (const round of [1, 2]) workloadRound(f.session, review, round);
+    workloadCapture(f.session, 'a1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1))]);
+    workloadCapture(f.session, 'b1', {start: 1500, end: 1600}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1))]);
+    workloadCapture(f.session, 'lint', {start: 1700, end: 1710}, 'lint-run');
+    workloadCapture(f.session, 'a2', {start: 2000, end: 2100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 2))]);
+    workloadCapture(f.session, 'b2', {start: 2500, end: 2600}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 2))]);
+    const rows = sessionRows(f.session)!;
+    const keyA = reviewKey(f.session, 'plan-a');
+    assert.deepEqual(rows.map((row) => [row.review === keyA ? 'a' : 'b', row.round, row.calls?.total]), [
+      ['a', 1, 1], ['a', 2, 1], ['b', 1, 2], ['b', 2, 1],
+    ]);
+    assert.equal(rows.reduce((total, row) => total + (row.calls?.total ?? 0), 0), 5);
+  } finally { f.cleanup(); }
+});
+
+test('round workload leaves a round without a launched review run unstarted', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-c', 1);
+    workloadCapture(f.session, 'stopped', {start: 900}, undefined);
+    workloadCapture(f.session, 'later', {start: 1200, end: 1210}, 'lint-run');
+    assert.deepEqual(sessionRows(f.session), [{review: reviewKey(f.session, 'plan-c'), round: 1}]);
+  } finally { f.cleanup(); }
+});
+
+test('round workload counts a killed review run without phases or end and bounds the latest window', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-d', 1);
+    workloadCapture(f.session, 'killed', {start: 1000}, undefined, [reviewRun(roundSubject(f.session, 'plan-d', 1), {startMs: 1000, endMs: 1300})]);
+    workloadCapture(f.session, 'inside', {start: 1200, end: 1210}, 'lint-run');
+    workloadCapture(f.session, 'outside', {start: 1400, end: 1410}, 'lint-run');
+    assert.deepEqual(sessionRows(f.session)?.[0]?.calls, {total: 2, phases: [{key: 'lint-run', count: 1}, {key: 'review-run-plan', count: 1}]});
+  } finally { f.cleanup(); }
+});
+
+test('round workload attributes host rows by row time and excludes subagent rows past the latest window end', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-a', 1, 2);
+    workloadRound(f.session, 'plan-b', 1);
+    workloadCapture(f.session, 'a1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1, 1))]);
+    workloadCapture(f.session, 'b1', {start: 2000, end: 2100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1))]);
+    workloadCapture(f.session, 'a-rerun', {start: 2500, end: 2800}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1, 2))]);
+    const deps = claudeHostDeps(f, {
+      clock: 3000,
+      main: [usageLine('m1', 1500, 10, 1), usageLine('m2', 2200, 20, 2), usageLine('m3', 2600, 30, 3), usageLine('m4', 2900, 99, 0)],
+      subagent: [usageLine('s1', 1600, 1000, 0)],
+    });
+    const rows = sessionRows(f.session, {manifest: {createdAt: new Date(100).toISOString()} as never, deps})!;
+    assert.deepEqual(rows.map((row) => row.calls?.total), [1, 2]);
+    assert.deepEqual(rows.map((row) => row.hostTokens), [11, 55]);
+  } finally { f.cleanup(); }
+});
+
+test('round workload omits host tokens when host usage is unavailable', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-f', 1);
+    workloadCapture(f.session, 'r1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-f', 1))]);
+    const deps = {...f.deps, orchestrator: null, clock: () => 2000};
+    const rows = sessionRows(f.session, {manifest: {createdAt: new Date(100).toISOString()} as never, deps})!;
+    assert.equal(rows[0]?.calls?.total, 1);
+    assert.equal('hostTokens' in rows[0]!, false);
+  } finally { f.cleanup(); }
+});
+
+test('round workload keeps a closed window unchanged after later rounds and captures', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-g', 1);
+    workloadRound(f.session, 'plan-g', 2);
+    workloadRound(f.session, 'plan-g', 3);
+    workloadCapture(f.session, 'r1', {start: 1000, end: 1400}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 1))]);
+    workloadCapture(f.session, 'l1', {start: 1100, end: 1110}, 'lint-run');
+    workloadCapture(f.session, 'r2', {start: 5000, end: 5300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 2))]);
+    const deps = claudeHostDeps(f, {clock: 9500, main: [usageLine('h1', 1200, 10, 1), usageLine('h2', 5100, 20, 2), usageLine('h3', 9100, 30, 3)]});
+    const hostContext = {manifest: {createdAt: new Date(100).toISOString()} as never, deps};
+    const before = sessionRows(f.session, hostContext)!;
+    assert.deepEqual(before.slice(0, 2).map((row) => row.hostTokens), [11, 22]);
+    workloadCapture(f.session, 'r3', {start: 9000, end: 9300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 3))]);
+    workloadCapture(f.session, 'l2', {start: 9100, end: 9110}, 'lint-run');
+    assert.deepEqual(sessionRows(f.session, hostContext)!.slice(0, 2), before.slice(0, 2));
+  } finally { f.cleanup(); }
+});
+
+test('round workload reports storage-failure markers in one note', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadRound(f.session, 'plan-i', 1);
+    workloadCapture(f.session, 'r1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-i', 1))]);
+    writeJson(path.join(f.session, '.state', 'diagnostics', 'r1.json.failure.json'), {kind: 'storage-failure', count: 2});
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
+    assert.equal(facts.collection?.storageFailed, 2);
+    assert.equal(facts.roundWorkload?.[0]?.calls?.total, 1);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /2 capture storage failures: calls from failed updates may be missing/);
+  } finally { f.cleanup(); }
+});
+
+test('round workload is absent without review rounds', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    workloadCapture(f.session, 'lint', {start: 1000, end: 1010}, 'lint-run');
+    assert.equal(sessionRows(f.session), undefined);
+  } finally { f.cleanup(); }
 });

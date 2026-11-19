@@ -27,12 +27,19 @@ export function extractDocumentLayers(specStageMarkdown: string): string {
 
 export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string; severity?: string; rejectionConfirmed?: boolean };
 
-export function settledSection(settled: readonly Settled[], revisions = false, acceptedNew?: ReadonlySet<string>): string {
-  settled=settled.filter(entry=>entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
+// A user-resolved escalation: reviewers treat it as closed and it carries no locus or ruling.
+export type UserDecision = { id: string; summary: string; quote: string };
+export type SettledEntry = Settled | UserDecision;
+const isDecision = (entry: SettledEntry): entry is UserDecision => 'quote' in entry;
+
+export function settledSection(settled: readonly SettledEntry[], revisions = false, acceptedNew?: ReadonlySet<string>): string {
+  settled=settled.filter(entry=>isDecision(entry) || entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
   if (!settled.length) return '';
   const clip = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+  const head = (value: string) => value.split(/\r\n|\n|\r/)[0] ?? '';
   // Reviewers must re-read rejected and deferred text in full; accepted rows include the ruling rationale; duplicate rows need only identity.
-  const row = (entry: Settled) => {
+  const row = (entry: SettledEntry) => {
+    if (isDecision(entry)) return `- ${entry.id} — user decision: ${clip(head(entry.summary), 120)} — quote: "${clip(head(entry.quote), 120)}"`;
     const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
     const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '', reasonLine = entry.reason.split(/\r\n|\n|\r/)[0] ?? '';
     if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${reasonLine ? `: ${clip(reasonLine, 120)}` : ''}${suffix}`;

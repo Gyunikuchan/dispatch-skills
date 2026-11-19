@@ -470,3 +470,36 @@ test('legend defines symbols and units, and empty Grounding and Top findings are
     f.cleanup();
   }
 });
+
+test('round workload render reads host usage again only for rounds with a start', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill); f.deps.skillRoot = skill;
+    fs.writeFileSync(path.join(skill, 'config.local.jsonc'), '{"diagnostics":true}');
+    const manifestPath = path.join(f.session, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); manifest.createdAt = new Date(1000).toISOString(); fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    const roundDir = path.join(f.session, '.state', 'reviews', 'plan-w', 'round-1');
+    writeJson(path.join(roundDir, 'round.json'), {round: 1, generation: 1, cap: 4, roster: []});
+    fs.mkdirSync(path.join(roundDir, 'gen-1'), {recursive: true});
+    const subject = crypto.createHash('sha256').update(path.join(roundDir, 'gen-1')).digest('hex').slice(0, 16);
+    const label = crypto.createHash('sha256').update(path.join(f.session, '.state', 'reviews', 'plan-w')).digest('hex').slice(0, 16);
+    f.deps.orchestrator = {platform: 'claude', model: null}; f.deps.env = {CLAUDE_CODE_SESSION_ID: 'thread'}; f.deps.clock = () => 4000;
+    const line = Buffer.from(JSON.stringify({type: 'assistant', timestamp: new Date(1550).toISOString(), message: {id: 'one', model: 'm', usage: {input_tokens: 12, output_tokens: 3}}}));
+    let reads = 0;
+    f.deps.hostUsageFs = {list: (dir: string) => dir.endsWith('projects') ? ['project'] : [], stat: () => ({size: line.length, mtimeMs: 2000}), read: () => { reads++; return line; }, decompress: null};
+
+    const writeRun = () => writeJson(path.join(f.session, '.state', 'diagnostics', 'run.json'), {
+      capture: {state: 'completed', start: 1500, end: 1600}, phases: [{key: 'review-run-plan', name: 'plan review'}],
+      invocations: [{phase: 'review-run-plan', subject, attempt: 1, provider: 'claude', model: 'm', surface: 'cli', launched: true, outcome: 'ok'}], reviews: [],
+    });
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    assert.equal(reads, 1);
+    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| — \\| — \\|`));
+
+    writeRun();
+    f.lines.splice(0);
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    assert.equal(reads, 3);
+    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| 1: review-run-plan 1 \\| 15 \\|`));
+  } finally { f.cleanup(); }
+});

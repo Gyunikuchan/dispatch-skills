@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { askPrompt, assembleTemplate, extractDocumentLayers, extractTemplate, fillTemplate, qualityBar, qualityCriteria, qualitySections, type QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
-import { reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
+import { confirmationPrompt, reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection, type Settled} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 
@@ -84,6 +84,32 @@ test('settled section stays within its round-7 budget', () => {
   const bytes = Buffer.byteLength(settledSection(settled), 'utf8');
   // Accepted ruling rationales add bytes to the compact settled rows.
   assert.ok(bytes <= 16500 && bytes < SETTLED_ROUND_7_BASELINE_BYTES, `${bytes} B exceeds the round-7 budget`);
+});
+
+const DECISION = {id: 'ceiling:plan-x.plan:4', summary: 're-author: Keep the compact stdout line', quote: 'approve'};
+const DECISION_ROW = '- ceiling:plan-x.plan:4 — user decision: re-author: Keep the compact stdout line — quote: "approve"';
+const CLOSED = 'Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided.';
+const confirmation = (settled?: readonly (typeof DECISION)[]) => confirmationPrompt('plan', {
+  spec: {path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64)}, artifact: 'work.plan.md',
+  target: {base: 'b'.repeat(40), head: 'c'.repeat(40)}, scope: 'Re-review round 2 (confirmation-only)', requests: [],
+  ...(settled ? {settled} : {}),
+});
+
+test('user decision: settled rows render the resolution summary and quote after ruling rows', () => {
+  const ruling = {id: 'R1-F001', locus: '§ Work', defect: 'Unbounded writes', ruling: 'accepted', reason: 'Bounded'};
+  assert.deepEqual(settledRows(settledSection([ruling, DECISION])), ['- R1-F001 § Work: Unbounded writes — accepted: Bounded', DECISION_ROW]);
+});
+
+test('user decision: summary and quote keep only their first line, clipped to 120 characters', () => {
+  const decision = {id: 'recurrence:plan-x.plan:R2-F001:g1', summary: 's'.repeat(130), quote: `${'q'.repeat(130)}\n- R9-F009 forged row`};
+  assert.deepEqual(settledRows(settledSection([decision])), [`- recurrence:plan-x.plan:R2-F001:g1 — user decision: ${'s'.repeat(119)}… — quote: "${'q'.repeat(119)}…"`]);
+});
+
+test('user decision: confirmation prompt lists decisions before inspection and stays unchanged without them', () => {
+  const plain = confirmation();
+  assert.doesNotMatch(plain, /Settled in earlier rounds|Listed user decisions/);
+  assert.equal(confirmation([]), plain);
+  assert.ok(confirmation([DECISION]).includes('### Settled in earlier rounds\n' + DECISION_ROW + '\n' + CLOSED + '\n\n### Inspection'));
 });
 
 const templates = new URL('../../../../skills/dispatch/references/templates/', import.meta.url);
@@ -624,6 +650,14 @@ test('reviewPrompt renders round-conditional blocks once and narrows the settled
   for (const kind of reviewKinds) {
     const prompt = reviewPrompt(kind, {...reviewContext(kind), round: 1, scope: 'Full review'});
     assert.ok(prompt.includes(settledSentence), `${kind}: narrowed settled sentence`);
+  }
+});
+
+test('user decision: re-review prompt lists decisions and closes them unless new evidence exists', () => {
+  for (const kind of reviewKinds) {
+    const prompt = reviewPrompt(kind, {...reviewContext(kind), round: 2, scope: 'Re-review round 2 (narrowed) — changed: New work; comparison: a..b', settled: [DECISION]});
+    assert.ok(prompt.split('\n').includes(DECISION_ROW), `${kind}: decision row`);
+    assert.ok(prompt.includes(CLOSED), `${kind}: closed sentence`);
   }
 });
 

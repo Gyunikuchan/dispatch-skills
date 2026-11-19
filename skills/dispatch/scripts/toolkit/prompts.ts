@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qualityBar, settledSection, type InterRound, type Settled } from './domain/prompt.ts';
+import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qualityBar, settledSection, type InterRound, type Settled, type SettledEntry, type UserDecision } from './domain/prompt.ts';
 import { REVIEW_TAGS_BY_KIND } from './domain/report.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
@@ -33,7 +33,7 @@ export function changedHeadings(before: string, after: string): string[] {
 
 export function reviewPrompt(kind: ReviewKind, context: {
   skillRoot: string; spec: {path: string; hash: string}; artifact: string; planPath?: string;
-  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly Settled[]; interRound?: InterRound; requests?: readonly RejectionRequest[]; rotation?: number; round: number;
+  taskSummary?: string; scope: string; turnTarget: number; contextMapPath?: string; settled?: readonly SettledEntry[]; interRound?: InterRound; requests?: readonly RejectionRequest[]; rotation?: number; round: number;
 }): string {
   const directory = path.join(context.skillRoot, 'references/templates');
   const read = (name: string) => fs.readFileSync(path.join(directory, name), 'utf8');
@@ -67,7 +67,7 @@ export function reviewPrompt(kind: ReviewKind, context: {
 /** A compact round that asks the assigned source slots to confirm or dispute one rejection each. */
 export function confirmationPrompt(kind: ReviewKind, context: {
   spec: {path: string; hash: string}; artifact: string; target: ReviewTarget; cwd?: string;
-  planPath?: string; taskSummary?: string; scope: string; interRound?: InterRound; requests: readonly RejectionRequest[];
+  planPath?: string; taskSummary?: string; scope: string; interRound?: InterRound; requests: readonly RejectionRequest[]; settled?: readonly UserDecision[];
 }): string {
   const revision = typeof context.target === 'string' ? context.target : context.target.base + '..' + context.target.head;
   const kindContext = kind === 'plan' ? ['- Plan: ' + context.artifact]
@@ -96,6 +96,8 @@ export function confirmationPrompt(kind: ReviewKind, context: {
     '- Scope: ' + context.scope,
     '',
     ...(context.interRound ? [interRoundSection(context.interRound), ''] : []),
+    // NOTE: the compact prompt has no template, so it repeats the re-review template's closing sentence.
+    ...(context.settled?.length ? [settledSection(context.settled).trim(), 'Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided.', ''] : []),
     '### Inspection',
     'Inspect read-only: read files and run Git inspection commands in the foreground only. Do not edit or create files, write the ledger, launch subagents, or change the target, the session or the repository. Do not raise new findings; answer only the assigned requests below.',
     '',

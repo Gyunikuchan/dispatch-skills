@@ -58,6 +58,9 @@ export type InvocationFacts = {
  */
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
+/** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
+export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number };
+
 type SlotYieldAttempt = { provider: string; model: string; effort: string | null; usage?: Usage };
 
 /** Per-responder review yield: findings raised and ruled, plus the slot's measured token cost. */
@@ -98,6 +101,7 @@ export type RunFacts = {
   reviews: ReviewFacts[];
   slotYield?: SlotYieldFacts[];
   roundTiming?: {review:string; round:number; slots:{slot:string; attempts:{startMs?:number; endMs?:number}[]}[]}[];
+  roundWorkload?: RoundWorkload[];
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
 };
@@ -456,6 +460,16 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         return {slot:slot??DASH,attempts};
       });
       return [{review,round,slots}];
+    }) : undefined),
+    ...opt('roundWorkload', Array.isArray(r['roundWorkload']) ? r['roundWorkload'].slice(0, 1000).filter(record).flatMap((v): RoundWorkload[] => {
+      const review = match(/^review-[a-f0-9]{16}$/)(v['review']), round = count(v['round']);
+      if (!review || !round) return [];
+      const calls = record(v['calls']) ? v['calls'] : undefined, total = calls ? count(calls['total']) : undefined;
+      const phases = calls && Array.isArray(calls['phases']) ? calls['phases'].slice(0, 100).filter(record).flatMap(p => {
+        const key = phaseKey(p['key']), n = count(p['count']);
+        return key && n !== undefined ? [{key, count: n}] : [];
+      }) : [];
+      return [{review, round, ...opt('calls', total === undefined ? undefined : {total, phases}), ...opt('hostTokens', count(v['hostTokens']))}];
     }) : undefined),
     ...opt('slotYield', Array.isArray(r['slotYield']) ? r['slotYield'].filter(record).flatMap((v): SlotYieldFacts[] => {
       const kind = (['provider', 'native', 'tool'] as const).find((name) => name === v['kind']);
@@ -945,6 +959,16 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
     if(kept.length<timing.length)result.push('',`${timing.length-kept.length} review timing rounds omitted`);
     return result;
   });
+  const workload = runs.flatMap((run) => run.roundWorkload ?? []);
+  if (workload.length) {
+    const storageFailed = sum(runs.map((run) => run.collection?.storageFailed)) ?? 0;
+    lines.push('', '### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens']), '| --- | ---: | --- | ---: |',
+      ...workload.map((round) => row(['subject ' + round.review.slice(7), String(round.round),
+        round.calls ? `${num(round.calls.total)}${round.calls.phases.length ? ': ' + round.calls.phases.map((p) => `${p.key} ${num(p.count)}`).join(' · ') : ''}` : DASH,
+        round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH])),
+      '', 'Observed toolkit calls only: `report` and `diagnostics` calls and work after the latest round are not counted.',
+      ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : []));
+  }
   lines.push('', '### Review yield by slot', '',
     row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted', 'Cost', 'Cost / accepted', 'Cost notes']),
     '| --- | --- | ---: | ---: | ---: |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
