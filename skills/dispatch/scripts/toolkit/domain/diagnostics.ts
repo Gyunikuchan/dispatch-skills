@@ -724,7 +724,7 @@ function invocationUnits(
   return out;
 }
 
-function unitsOf(run: RunFacts, pricer: Pricer | undefined): Unit[] {
+export function unitsOf(run: RunFacts, pricer: Pricer | undefined): Unit[] {
   const out: Unit[] = [];
   const hostPlatform = run.hostUsage?.platform ?? DASH;
   for (const h of run.hostUsage?.rows ?? []) {

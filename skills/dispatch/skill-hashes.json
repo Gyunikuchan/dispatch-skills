@@ -98,7 +98,7 @@
   "scripts/toolkit/domain/context.ts": "31a664cfc49371a3f10cfe3bb4d028f192174c24ad0e89f83ca8487f570a42c2",
   "scripts/toolkit/domain/criterion-id.ts": "6cb262ff295d327493d4f1a62b5a0637ff0becba0ab9a5d1f8058e52c1a003cf",
   "scripts/toolkit/domain/design.ts": "3236ed2f5e62d30170d0eb40daac379f17e2a149b83ed6100417b88869704baf",
-  "scripts/toolkit/domain/diagnostics.ts": "300fa074b8b4592e634d32666fa97c9627b6e10f0a57b10c5cb82aeee8df1510",
+  "scripts/toolkit/domain/diagnostics.ts": "0baf40a188343a229d88a9ae16bfd4028465307c262aabae08ca00a3216f6cef",
   "scripts/toolkit/domain/fix-check.ts": "7a98474ea077a9a0bf3ae7ced22f8b74c6bd53a9600303ab56302fe0c5c9c704",
   "scripts/toolkit/domain/plan.ts": "953c2b8dde34d865674aca485f5db5b5936d78bd0d8d8693b0ed9ab3a4dd3234",
   "scripts/toolkit/domain/prompt.ts": "52058fd72fae3ecbe5c46b4344d4aa1e6e84cc35f75f650362dafbcdaf2b879a",
