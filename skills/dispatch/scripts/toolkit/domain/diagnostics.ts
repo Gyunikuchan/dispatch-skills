@@ -3,6 +3,7 @@ import { BANDS, boundModels, type Bands } from '../../lib/usage/bands.ts';
 import { addCounters, HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, tokenTotal, type Counters, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, FailureClass } from '../types.ts';
+import type { ReviewKind } from './types.ts';
 
 // Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
 // The caller supplies captured facts; this module applies heuristics without reading session state.
@@ -59,7 +60,7 @@ export type InvocationFacts = {
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
-export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number };
+export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number; hostTurns?: number; kind?: ReviewKind };
 
 type SlotYieldAttempt = { provider: string; model: string; effort: string | null; usage?: Usage };
 
@@ -469,7 +470,8 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         const key = phaseKey(p['key']), n = count(p['count']);
         return key && n !== undefined ? [{key, count: n}] : [];
       }) : [];
-      return [{review, round, ...opt('calls', total === undefined ? undefined : {total, phases}), ...opt('hostTokens', count(v['hostTokens']))}];
+      const kind = (['plan', 'design', 'code'] as const).find(kind => kind === v['kind']);
+      return [{review, round, ...opt('kind', kind), ...opt('hostTurns', count(v['hostTurns'])), ...opt('calls', total === undefined ? undefined : {total, phases}), ...opt('hostTokens', count(v['hostTokens']))}];
     }) : undefined),
     ...opt('slotYield', Array.isArray(r['slotYield']) ? r['slotYield'].filter(record).flatMap((v): SlotYieldFacts[] => {
       const kind = (['provider', 'native', 'tool'] as const).find((name) => name === v['kind']);
@@ -962,11 +964,15 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
   const workload = runs.flatMap((run) => run.roundWorkload ?? []);
   if (workload.length) {
     const storageFailed = sum(runs.map((run) => run.collection?.storageFailed)) ?? 0;
-    lines.push('', '### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens']), '| --- | ---: | --- | ---: |',
+    const eligible = workload.filter(round => round.kind === 'plan' || round.kind === 'design');
+    const over = eligible.filter(round => (round.calls?.total ?? 0) > 6 || (round.hostTurns ?? 0) > 25);
+    lines.push('', '### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens', 'Host turns']), '| --- | ---: | --- | ---: | ---: |',
       ...workload.map((round) => row(['subject ' + round.review.slice(7), String(round.round),
         round.calls ? `${num(round.calls.total)}${round.calls.phases.length ? ': ' + round.calls.phases.map((p) => `${p.key} ${num(p.count)}`).join(' · ') : ''}` : DASH,
-        round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH])),
-      '', 'Observed toolkit calls only: `report` and `diagnostics` calls and work after the latest round are not counted.',
+        round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH,
+        round.hostTurns === undefined ? 'unavailable' : num(round.hostTurns)])),
+      '', 'Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted.',
+      ...(eligible.length ? ['Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: ' + (over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') || 'none')] : []),
       ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : []));
   }
   lines.push('', '### Review yield by slot', '',

@@ -30,7 +30,7 @@ export type MeasureOptions = { baseDir: string; home: string; env: NodeJS.Proces
 export type PathForm = 'canonical' | 'as-given';
 export type DenialCounts = { config: number; hook: number; other: number };
 export type Denials = (DenialCounts & { inWindow: DenialCounts }) | { unavailable: string };
-export type PerRound = { review: string; round: number; calls?: number; hostTokens?: number };
+export type PerRound = { review: string; round: number; calls?: number; hostTokens?: number; hostTurns?: number };
 export type SideResult = {
   label: string; session: string; host: string; nativeId: string;
   window: { startMs: number; endMs: number; pathForm: PathForm };
@@ -349,8 +349,13 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
       review: row.review, round: row.round,
       ...(row.calls ? { calls: row.calls.total } : {}),
       ...(row.hostTokens === undefined ? {} : { hostTokens: row.hostTokens }),
+      ...(row.hostTurns === undefined ? {} : { hostTurns: row.hostTurns }),
     });
     if (!row.calls) unavailable.push(`perRound: ${row.review} ${row.round} calls: no round starts`);
+    if (row.hostTurns === undefined) {
+      const reason = hostRoleNotes.length ? 'partial: ' + hostRoleNotes.join(', ') : hostReason ?? 'no turn data';
+      unavailable.push('perRound: ' + row.review + ' ' + row.round + ' hostTurns: ' + (row.calls ? reason : 'no round starts'));
+    }
     if (row.hostTokens === undefined) {
       unavailable.push(`perRound: ${row.review} ${row.round} hostTokens: ${row.calls ? hostReason ?? 'no usage records' : 'no round starts'}`);
     }
@@ -412,9 +417,9 @@ export function renderComparison(comparison: Comparison): string {
     lines.push(metric('Host tokens in rounds', (side) => withPartial(sumOf(side.perRound.map((row) => row.hostTokens)), flagged(side, HOST_TOKENS_PARTIAL))));
     lines.push(metric('Denials (config / hook / other)', denialText));
     lines.push(metric('Cost (USD)', costText));
-    lines.push('', '### Per-round', '', '| Side | Review | Round | Calls | Host tokens |', '| --- | --- | ---: | ---: | ---: |');
+    lines.push('', '### Per-round', '', '| Side | Review | Round | Calls | Host tokens | Host turns |', '| --- | --- | ---: | ---: | ---: | ---: |');
     for (const side of sides) {
-      for (const row of side.perRound) lines.push(`| ${side.label} | ${row.review} | ${row.round} | ${row.calls ?? '—'} | ${row.hostTokens ?? '—'} |`);
+      for (const row of side.perRound) lines.push(`| ${side.label} | ${row.review} | ${row.round} | ${row.calls ?? '—'} | ${row.hostTokens ?? '—'} | ${row.hostTurns ?? 'unavailable'} |`);
     }
     const gaps = sides.flatMap((side) => side.unavailable.map((entry) => `- ${side.label}: ${entry}`));
     if (gaps.length) lines.push('', 'Unavailable:', ...gaps);

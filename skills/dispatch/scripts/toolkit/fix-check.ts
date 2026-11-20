@@ -168,6 +168,10 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     const ordinal = Math.max(0, ...fold.records.filter(record => record.kind === 'note' && record.key.startsWith(notePrefix))
       .flatMap(record => /^[1-9]\d*$/.test(record.key.slice(notePrefix.length)) ? [Number(record.key.slice(notePrefix.length))] : [])) + 1;
     const noteKey = notePrefix + ordinal;
+    const noteSkeleton = {
+      kind: 'note', by: 'orchestrator', key: noteKey,
+      data: {text: `kind ${kind}; raised <n>; confirmed <n>; rejected <id: evidence | none>; mode <explorer|inline>`},
+    };
 
     const bar = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'templates', 'quality-bar.md'), 'utf8');
     const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
@@ -194,11 +198,14 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     const entry = resolveHostUtility(ctx.deps.skillRoot, host);
     const launch = utilityLaunchValues(ctx.deps.skillRoot, host);
     const value = {
-      briefPath: briefFile, bytes: Buffer.byteLength(text), review, round: round.number, noteKey, diffPath: diffFile,
+      briefPath: briefFile, bytes: Buffer.byteLength(text), review, round: round.number, noteKey, noteSkeleton, diffPath: diffFile,
       citations: kept.length, withheld: withheld.length, contextLimit: entry ? entry.contextLimit : null, ...launch,
     };
     const summary = `fix-check brief ${review} round ${round.number}: ${questions.length} accepted, ${kept.length} citations, ${withheld.length} withheld`;
-    return { ok: true, exit: 0, value, summary: briefSummary(summary, host, launch, briefFile, value.bytes) };
+    return { ok: true, exit: 0, value, summary: briefSummary(summary, host, launch, briefFile, value.bytes, {
+      tail: `; skeleton ${JSON.stringify(noteSkeleton)}`,
+      shortPath: `.state/briefs/${path.basename(briefFile)}`,
+    }) };
   } catch (error) {
     for (const file of written) fs.rmSync(file, { force: true });
     throw error;

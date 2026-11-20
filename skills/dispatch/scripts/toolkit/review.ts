@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { nodeLinkFs } from '../lib/node-fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
@@ -25,7 +26,7 @@ import { LEVELS, type Level } from './types.ts';
 import { clipBytes, summaryWithItems, ToolError } from './output.ts';
 import { redGaps } from './red.ts';
 import { applicableReviewIds, loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
-import { refreshFindingsSection } from './review-findings.ts';
+import { refreshFindingsSection, renderFindingsFile, rulingsTemplate } from './review-findings.ts';
 import { coverageState } from './coverage.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import type { BlockedAttempt } from './fanout.ts';
@@ -850,6 +851,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     await deps.hook?.('review:after-append');
     const finalCapture = await capture();
     if (!same(round, finalCapture) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during finalization');}
+    const relativeDir = path.relative(session, dir).split(path.sep).join('/');
+    const findingsFile = relativeDir + '/findings.md', rulingsFile = relativeDir + '/rulings.json';
+    nodeLinkFs.writeAtomic(path.join(session, findingsFile), renderFindingsFile(pending.findings));
+    atomic(path.join(session, rulingsFile), rulingsTemplate(review, n, pending.findings));
     fs.renameSync(pendingFile, path.join(dir, 'findings.json'));
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;
@@ -867,13 +872,16 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const changedPaths = (pending.repositoryChanges ?? []).flatMap(entry => entry.paths).sort();
     const changedSuffix = changedPaths.length ? `, repository changes: ${changedPaths.join(', ')}` : '';
     const checkSuffix = pending.repositoryCheck ? `, repository check unavailable: ${pending.repositoryCheck.reason}` : '';
-    const countsHead = `review ${review} round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}${blockedSummary ? '; ' + blockedSummary : ''}${underfillNote(round)}`;
+    const countsAndFiles = ` round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}; findings ${findingsFile}; rulings ${rulingsFile}`;
+    // Leave room for the cap's ellipsis if the notices push the summary over budget.
+    const summaryReview = Buffer.byteLength('review ' + review + countsAndFiles, 'utf8') > 1021 ? clipBytes(review, 40) : review;
+    const countsHead = 'review ' + summaryReview + countsAndFiles + (blockedSummary ? '; ' + blockedSummary : '') + underfillNote(round);
     const suffixes = changedSuffix + checkSuffix;
     const summaryHead = countsHead + hotUnitsNotice(pending.units, Buffer.byteLength(countsHead + suffixes, 'utf8')) + suffixes;
     return {
       ok: true, exit: 0,
       value: {
-        path: file, review, round: n, budget,
+        path: file, review, round: n, budget, findingsFile, rulingsFile,
         ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}),
         ...(pending.repositoryChanges ? {repositoryChanges: pending.repositoryChanges} : {}),
         ...(pending.repositoryCheck ? {repositoryCheck: pending.repositoryCheck} : {}),

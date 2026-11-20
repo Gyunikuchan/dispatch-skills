@@ -243,16 +243,16 @@ export function stageMilestones(fold: Fold, captures: readonly RunFacts[], start
 const roundPhase = (review: string, round: number) => `round-${review.slice(7)}-${round}`;
 
 /**
- * Round starts open exclusive windows: a window runs to the next start, and the latest one closes at the end of its last `review run`.
+ * Each window closes at its last run, ruling or fix-check note, before the next round starts.
  * A capture belongs to the window holding its start, so closed windows never change on a later render.
  */
-function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFacts[], reviewKeys: ReadonlyMap<string, string>): {rows: RoundWorkload[]; window?: {startMs: number; endMs: number; milestones: PhaseMilestone[]}} {
-  const owner = new Map<string, {key: string; round: number}>();
-  for (const round of rounds) for (const generation of round.generations) owner.set(generation.subject, {key: reviewKeys.get(round.review)!, round: round.round});
+function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFacts[], reviewKeys: ReadonlyMap<string, string>, records: Fold['records']): {rows: RoundWorkload[]; window?: {startMs: number; endMs: number; milestones: PhaseMilestone[]}} {
+  const owner = new Map<string, {key: string; review: string; round: number}>();
+  for (const round of rounds) for (const generation of round.generations) owner.set(generation.subject, {key: reviewKeys.get(round.review)!, review: round.review, round: round.round});
   // Raw `tool-action[-kind]` key; a killed capture has invocations but no phases yet.
   const callKey = (capture: RunFacts): string | undefined => capture.phases[0]?.key || capture.invocations[0]?.phase || undefined;
   const reviewRuns = measured.flatMap(capture => capture.capture && callKey(capture)?.startsWith('review-run-') ? [{capture, start: capture.capture.start}] : []);
-  const starts = new Map<string, {key: string; round: number; start: number}>();
+  const starts = new Map<string, {key: string; review: string; round: number; start: number}>();
   for (const {capture, start} of reviewRuns) for (const invocation of capture.invocations) {
     const who = invocation.subject ? owner.get(invocation.subject) : undefined;
     if (!who) continue;
@@ -260,16 +260,32 @@ function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFact
     if (!known || start < known.start) starts.set(id, {...who, start});
   }
   const timeline = [...starts.values()].sort((a, b) => a.start - b.start || a.key.localeCompare(b.key) || a.round - b.round);
-  const last = timeline.at(-1);
-  const close = last === undefined ? undefined : Math.max(last.start, ...reviewRuns.filter(run => run.start >= last.start)
-    .flatMap(({capture, start}) => [capture.capture?.end ?? start, ...capture.invocations.map(invocation => invocation.endMs ?? start)]));
+  const closes = timeline.map((round, index) => {
+    const nextStart = timeline[index + 1]?.start ?? Infinity;
+    let close = round.start;
+    for (const {capture, start} of reviewRuns) {
+      if (start < round.start || start >= nextStart) continue;
+      const invocations = capture.invocations.filter(invocation => {
+        const who = invocation.subject ? owner.get(invocation.subject) : undefined;
+        return who?.key === round.key && who.round === round.round;
+      });
+      if (invocations.length) close = Math.max(close, capture.capture?.end ?? start, ...invocations.map(invocation => invocation.endMs ?? start));
+    }
+    for (const record of records) {
+      const at = Date.parse(record.at);
+      if (!(at >= round.start && at < nextStart)) continue;
+      if ((record.kind === 'ruling' && record.data['subject']?.startsWith(`review:${round.review}:`))
+        || (record.kind === 'note' && record.key.startsWith(`fix-check:${round.review}:${round.round}:`))) close = Math.max(close, at);
+    }
+    return Math.min(close, nextStart - 1);
+  });
   const calls = new Map<number, Map<string, number>>();
   for (const capture of measured) {
     const key = callKey(capture), start = capture.capture?.start;
     if (key === undefined || start === undefined) continue;
     let index = -1;
     timeline.forEach((round, i) => { if (round.start <= start) index = i; });
-    if (index < 0 || (index === timeline.length - 1 && start > (close ?? start))) continue;
+    if (index < 0 || start > closes[index]!) continue;
     const counts = calls.get(index) ?? new Map<string, number>();
     counts.set(key, (counts.get(key) ?? 0) + 1);
     calls.set(index, counts);
@@ -277,16 +293,22 @@ function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFact
   const rows = rounds.map((round): RoundWorkload => {
     const review = reviewKeys.get(round.review)!;
     const index = timeline.findIndex(t => t.key === review && t.round === round.round);
-    if (index < 0) return {review, round: round.round};
+    const kind = (['plan', 'design', 'code'] as const).find(kind => round.review.startsWith(kind + '-'));
+    const row = {review, ...(kind ? {kind} : {}), round: round.round};
+    if (index < 0) return row;
     const phases = [...(calls.get(index) ?? new Map<string, number>())].map(([key, count]) => ({key, count}))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
-    return {review, round: round.round, calls: {total: phases.reduce((sum, p) => sum + p.count, 0), phases}};
+    return {...row, calls: {total: phases.reduce((sum, p) => sum + p.count, 0), phases}};
   });
-  if (last === undefined || close === undefined) return {rows};
+  const close = closes.at(-1);
+  if (close === undefined) return {rows};
   return {rows, window: {
     startMs: timeline[0]!.start,
     endMs: close,
-    milestones: [...timeline.map(t => ({phase: roundPhase(t.key, t.round), atMs: t.start})), {phase: 'outside', atMs: close}],
+    milestones: timeline.flatMap((t, i) => [
+      {phase: roundPhase(t.key, t.round), atMs: t.start},
+      {phase: 'outside', atMs: closes[i]! + 1},
+    ]),
   }};
 }
 
@@ -437,7 +459,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
       return {slot:slot.slot,attempts:native?[...attempts,{}]:attempts};
     })};
   });
-  const workload=roundTimeline(rounds,measured,reviewKeys);
+  const workload=roundTimeline(rounds,measured,reviewKeys,fold.records);
   let hostUsage: RunFacts['hostUsage'];
   if(hostContext) {
     const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
@@ -455,8 +477,20 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     catch(error) { windowRead={platform,rows:[],unavailable:readErrorReason(error)}; }
     if(!windowRead.unavailable) {
       const tokens=new Map<string,number>();
-      for(const row of windowRead.rows) if(row.role==='host'&&row.phase!==undefined) tokens.set(row.phase,(tokens.get(row.phase)??0)+billedTokens(row,windowRead.platform??'',row.reasoningInOutput));
-      roundWorkload=roundWorkload.map(row=>row.calls?{...row,hostTokens:tokens.get(roundPhase(row.review,row.round))??0}:row);
+      const turns = new Map<string, number>();
+      const missingTurns = new Set<string>();
+      for (const row of windowRead.rows) {
+        if (row.role !== 'host' || row.phase === undefined) continue;
+        tokens.set(row.phase, (tokens.get(row.phase) ?? 0) + billedTokens(row, windowRead.platform ?? '', row.reasoningInOutput));
+        if (row.turns === undefined) missingTurns.add(row.phase);
+        else turns.set(row.phase, (turns.get(row.phase) ?? 0) + row.turns);
+      }
+      roundWorkload = roundWorkload.map(row => {
+        if (!row.calls) return row;
+        const phase = roundPhase(row.review, row.round);
+        return {...row, hostTokens: tokens.get(phase) ?? 0,
+          ...(!Object.keys(windowRead.notes?.host ?? {}).length && !missingTurns.has(phase) ? {hostTurns: turns.get(phase) ?? 0} : {})};
+      });
     }
   }
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.

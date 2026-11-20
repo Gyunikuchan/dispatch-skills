@@ -13,7 +13,7 @@ const port = (read: (db: string, id: string, options: OpencodeReadOptions) => Op
 const message = (depth: number, createdMs: number, model: string | null, effort: string | null, input: number, output: number, extra: Partial<OpencodeMessage> = {}): OpencodeMessage =>
   ({ depth, createdMs, model, effort, input, output, ...extra });
 
-test('opencode host usage keeps each message model and effort for host and nested subagent rows', () => {
+test('turns: opencode host usage keeps each message model and effort for host and nested subagent rows', () => {
   let seen: { db: string; id: string; options: OpencodeReadOptions } | undefined;
   const result = readHostUsage('opencode', {
     ...input,
@@ -38,9 +38,9 @@ test('opencode host usage keeps each message model and effort for host and neste
   assert.deepEqual(seen, { db: opencodeDbPath('/home', session), id: 'ses_host-1', options: { fromMs: 2000, toMs: 5000 } });
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(result.rows, [
-    { stage: 'spec', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', effort: 'max', input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3, bands: { le100k: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3 } }, reasoningInOutput: false },
-    { stage: 'plan', role: 'host', model: '', effort: null, input: 1, output: 2, bands: { le100k: { input: 1, output: 2 } }, reasoningInOutput: false },
-    { stage: 'plan', role: 'host', model: 'lmstudio/qwen3.8-27b@iq4_xs', effort: 'high', input: 7, output: 4, bands: { le100k: { input: 7, output: 4 } }, reasoningInOutput: false },
+    { stage: 'spec', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', turns: 1, effort: 'max', input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3, bands: { le100k: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3 } }, reasoningInOutput: false },
+    { stage: 'plan', role: 'host', model: '', turns: 1, effort: null, input: 1, output: 2, bands: { le100k: { input: 1, output: 2 } }, reasoningInOutput: false },
+    { stage: 'plan', role: 'host', model: 'lmstudio/qwen3.8-27b@iq4_xs', turns: 1, effort: 'high', input: 7, output: 4, bands: { le100k: { input: 7, output: 4 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'subagent', model: 'anthropic/claude-opus', effort: null, input: 20, output: 8, bands: { le100k: { input: 20, output: 8 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'subagent', model: 'openai/gpt-5', effort: 'low', input: 3, output: 1, cacheRead: 0, bands: { le100k: { input: 3, output: 1, cacheRead: 0 } }, reasoningInOutput: false },
   ]);

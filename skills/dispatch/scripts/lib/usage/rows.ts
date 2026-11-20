@@ -16,8 +16,9 @@ export type UsageRow = Counters & {
   atMs: number;
   wholeSecond?: true;
   reasoningInOutput: boolean;
+  turns?: number;
 };
-export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; reasoningInOutput?: boolean };
+export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; reasoningInOutput?: boolean; turns?: number };
 export type HostUnavailable = typeof HOST_UNAVAILABLE[number];
 export type HostNote = typeof HOST_NOTES[number];
 export type HostNotes = Partial<Record<HostRole, Partial<Record<HostNote, number>>>>;

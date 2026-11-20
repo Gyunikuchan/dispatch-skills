@@ -652,16 +652,17 @@ test('round workload renders observed calls, dashes for unavailable cells, and t
  const review='review-1234567890abcdef';
  const text=render([facts({roundWorkload:[
   {review,round:1,calls:{total:9,phases:[{key:'ledger-append',count:4},{key:'lint-run',count:3},{key:'brief-explorer',count:1},{key:'review-run-plan',count:1}]},hostTokens:8214330},
-  {review,round:2,calls:{total:1,phases:[{key:'review-run-plan',count:1}]},hostTokens:2901550},
+  {review,kind:'plan',round:2,calls:{total:1,phases:[{key:'review-run-plan',count:1}]},hostTokens:2901550},
   {review,round:3},
   {review,round:4,calls:{total:1,phases:[{key:'review-run-plan',count:1}]}},
  ]})]);
- assert.match(text,/### Review round workload\n\n\| Review \| Round \| Toolkit calls \| Host tokens \|\n\| --- \| ---: \| --- \| ---: \|/);
+ assert.match(text,/### Review round workload\n\n\| Review \| Round \| Toolkit calls \| Host tokens \| Host turns \|\n\| --- \| ---: \| --- \| ---: \| ---: \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 1 \| 9: ledger-append 4 · lint-run 3 · brief-explorer 1 · review-run-plan 1 \| 8,214,330 \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 2 \| 1: review-run-plan 1 \| 2,901,550 \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 3 \| — \| — \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 4 \| 1: review-run-plan 1 \| — \|/);
- assert.match(text,/Observed toolkit calls only: `report` and `diagnostics` calls and work after the latest round are not counted\./);
+ assert.match(text,/Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted\./);
+ assert.match(text,/Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: none/);
  assert.doesNotMatch(text,/capture storage failure/);
 });
 

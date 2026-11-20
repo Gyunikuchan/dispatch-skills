@@ -4,6 +4,7 @@ import { readManifest } from '../lib/session.ts';
 import { artifactHash, artifactKind, readArtifact, type ArtifactKind } from './artifacts.ts';
 import { currentRating, IMPACTS, TRIGGERS } from './domain/severity.ts';
 import { stableValue } from './domain/stable-value.ts';
+import { lintArtifact } from './lint.ts';
 import { withLock, type LockDeps } from './lock.ts';
 import { ToolError } from './output.ts';
 import { defaultKey, KINDS, validateRecord, type LedgerRecord, type RecordInput } from './records.ts';
@@ -356,6 +357,59 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
       data: {text: 'Broke stale lock from pid ' + broken.pid + ' on ' + broken.host},
     });
     return fn({fold,append});
+  });
+}
+
+export async function appendLintEdit(
+  session: string,
+  artifactPath: string,
+  fields: { class: string; affects: string[]; rationale: string; diffRef: string; before?: string },
+  deps: LockDeps,
+) {
+  return withLedger(session, 'lint run', deps, async tx => {
+    const repositoryRoot = readManifest(session).repositoryRoot;
+    const value = lintArtifact(artifactPath, { repositoryRoot });
+    if (value.errors.length) return { value };
+    const { kind: artifact, hash: after } = value;
+    if (!artifact || artifact === 'context') throw new ToolError(1, 'invalid-input', '--edit cannot record a context map');
+    const bound = latest(tx.fold, 'bind')?.data[artifact] as string | undefined;
+    if (!bound) throw new ToolError(1, 'invalid-record', 'Artifact kind is not bound: ' + artifact);
+    const boundPath = path.resolve(repositoryRoot, bound);
+    let isBoundPath = false;
+    try {
+      isBoundPath = path.relative(fs.realpathSync(boundPath), fs.realpathSync(artifactPath)) === '';
+    } catch { /* A missing or unreadable path cannot match the binding. */ }
+    if (!isBoundPath) throw new ToolError(1, 'invalid-record', 'Linted path must match the bound ' + artifact + ' path: ' + bound);
+
+    let matchingBinding = false;
+    let editCount = 0;
+    let previous: LedgerRecord | undefined;
+    for (const row of tx.fold.records) {
+      if (row.kind === 'bind') {
+        // Compare stored paths because an earlier target may have moved or been removed.
+        const boundAtEdit = row.data[artifact] as string | undefined;
+        matchingBinding = !!boundAtEdit && path.relative(boundPath, path.resolve(repositoryRoot, boundAtEdit)) === '';
+      } else if (row.kind === 'edit' && row.data['artifact'] === artifact) {
+        editCount++;
+        if (matchingBinding) previous = row;
+      }
+    }
+    const { before: explicitBefore, ...details } = fields;
+    if (previous) {
+      const earlierBefore = previous.data['before'] as string;
+      const candidate = { artifact, before: explicitBefore ?? earlierBefore, after, ...details };
+      if (stableValue(previous.data) === stableValue(candidate)) {
+        return { value, edit: { seq: previous.seq, deduped: true, before: earlierBefore, after } };
+      }
+    }
+    const before = explicitBefore ?? (previous?.data['after'] as string | undefined);
+    if (before === undefined) throw new ToolError(1, 'invalid-input', '--edit requires before for the first ' + artifact + ' edit at the bound path');
+    if (before === after) throw new ToolError(1, 'no-change', 'Lint hash equals before for ' + artifact);
+    const appended = await tx.append({
+      kind: 'edit', by: 'orchestrator', key: `lint-edit:${artifact}:${editCount + 1}`,
+      data: { artifact, before, after, ...details },
+    });
+    return { value, edit: { ...appended, before, after } };
   });
 }
 

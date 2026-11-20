@@ -1004,6 +1004,9 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   const once = (needle: string) => assert.equal(fixRules.split(needle).length - 1, 1, needle);
   for (let n = 1; n <= 8; n++) assert.match(fixRules, new RegExp('^' + n + '\\. ', 'm'));
   for (const text of ['mode `inline`', 'advisory', '`brief fix-check <artifact> --session <session> --host <platform>`']) once(text);
+  assert.match(fixRules, /Repeat the check once at most per batch and only when the batch fixed an accepted MUST finding/);
+  assert.match(fixRules, /For each edited artifact per batch, run `lint run --edit`/);
+  assert.match(toolkit.split('### edit')[1]!, /For each edited artifact per fix batch, run `lint run --edit`/);
   // The fix-check task text lives in its template; each input slot and rule appears once there.
   const fixCheckBrief = ref('templates/fix-check-brief.md');
   for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixCheckBrief.split(text).length - 1, 1, text);

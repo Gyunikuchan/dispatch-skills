@@ -7,7 +7,7 @@ import { admission, renderBudget } from './findings.ts';
 import { readReviews, type ReviewRound } from './diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { effectiveSeverity, RANK } from './domain/severity.ts';
-import type { Severity } from './domain/types.ts';
+import type { Finding, Severity } from './domain/types.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
 import { sectionRanges, structuralLines } from './domain/plan.ts';
 import type { WalkthroughView } from './walkthrough.ts';
@@ -112,6 +112,27 @@ export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readon
   }
   if (budget) out.push('', budget);
   return out.join('\n');
+}
+
+export function renderFindingsFile(findings: readonly Finding[]): string {
+  if (!findings.length) return 'No findings.\n';
+  const field = (value: unknown) => line(value) || '—';
+  const sorted = [...findings].sort((a, b) => RANK[b.severity] - RANK[a.severity]);
+  return sorted.map(finding => [
+    `### ${line(finding.id)} ${line(finding.severity)}`,
+    `- Rating: ${field(finding.impact)}/${field(finding.trigger)}; category ${field(finding.category)}; scope ${field(finding.scope)}; origin ${field(finding.origin)}`,
+    `- Locus: ${field(finding.locus)}`,
+    `- Defect: ${field(finding.defect)}`,
+    `- Required change: ${field(finding.requiredChange)}`,
+    `- Sources: ${field(finding.sources?.join(', '))}`,
+  ].join('\n')).join('\n\n') + '\n';
+}
+
+export function rulingsTemplate(review: string, round: number, findings: readonly Finding[]) {
+  return findings.map(({id}) => ({
+    kind: 'ruling', by: 'orchestrator', key: `ruling:${review}:${round}:${id}`,
+    data: {subject: `review:${review}:${id}`, ruling: '', rationale: ''},
+  }));
 }
 
 function lineStarts(source: string, lines: ReturnType<typeof structuralLines>): number[] {

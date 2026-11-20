@@ -71,7 +71,7 @@ function createAgyFs(
   };
 }
 
-test('agy collects host and recursive subagent usage row fields with gen_metadata model effort and reasoning', () => {
+test('turns: agy collects host and recursive subagent usage row fields with gen_metadata model effort and reasoning', () => {
   const hostId = 'host-session';
   const child1Id = 'child-1';
   const child2Id = 'child-2';
@@ -244,6 +244,7 @@ test('agy collects host and recursive subagent usage row fields with gen_metadat
       stage: 'spec',
       role: 'host',
       model: 'gemini-4-argon',
+      turns: 1,
       effort: 'medium',
       depth: 0,
       atMs: 1500,
@@ -257,6 +258,7 @@ test('agy collects host and recursive subagent usage row fields with gen_metadat
       stage: 'plan',
       role: 'host',
       model: 'gemini-3.8-flash',
+      turns: 1,
       effort: 'high',
       depth: 0,
       atMs: 3500,
@@ -356,6 +358,7 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
       stage: 'spec',
       role: 'host',
       model: 'gemini-2.5-flash',
+      turns: 1,
       effort: null,
       depth: 0,
       atMs: 1500,

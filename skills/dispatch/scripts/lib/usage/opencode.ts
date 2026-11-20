@@ -38,6 +38,7 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
       depth: message.depth,
       atMs: message.createdMs,
       reasoningInOutput: false,
+        ...(message.depth === 0 && rootRole === 'host' ? { turns: 1 } : {}),
       input: message.input,
       output: message.output,
     };

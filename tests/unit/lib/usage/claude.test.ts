@@ -4,17 +4,18 @@ import { foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts
 import { claudeCode, claudeUsage } from '../../../../skills/dispatch/scripts/lib/usage/claude.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
-test('claude counts the last in-window message usage row fields once by stage and excludes synthetic usage', () => {
+test('turns: claude counts the last in-window message usage row fields once by stage and excludes synthetic usage', () => {
   const message = (id: string, at: number, input: number, model = 'opus') => ({
     type: 'assistant', timestamp: new Date(at).toISOString(), effort: 'high',
     message: { id, model, usage: { input_tokens: input, output_tokens: 2, cache_read_input_tokens: 3 }, text: 'secret transcript' },
   });
   const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100000 } }, memoryFs({
-    '/home/.claude/projects/p/host.jsonl': lines(message('a', 1000, 1), message('a', 3000, 5), message('synthetic', 3000, 100, '<synthetic>'), message('late', 20000, 100)),
+    '/home/.claude/projects/p/host.jsonl': lines(message('a', 2000, 1), message('a', 3000, 5), message('second', 4000, 8), message('synthetic', 3000, 100, '<synthetic>'), message('late', 20000, 100)),
     '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(message('b', 2500, 7)),
   }));
   assert.deepEqual(result.rows, [
-    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, turns: 1, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 4000, reasoningInOutput: true, turns: 1, input: 8, output: 2, cacheRead: 3 },
     { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2500, reasoningInOutput: true, input: 7, output: 2, cacheRead: 3 },
   ]);
   assert.ok(!JSON.stringify(result).includes('secret transcript'));

@@ -815,8 +815,8 @@ test('round workload counts observed calls per round window by phase key', () =>
     workloadCapture(f.session, 'after', {start: 6000, end: 6100}, 'report-render');
     const key = reviewKey(f.session, 'plan-a');
     assert.deepEqual(sessionRows(f.session), [
-      {review: key, round: 1, calls: {total: 3, phases: [{key: 'ledger-append', count: 1}, {key: 'lint-run', count: 1}, {key: 'review-run-plan', count: 1}]}},
-      {review: key, round: 2, calls: {total: 1, phases: [{key: 'review-run-plan', count: 1}]}},
+      {review: key, kind: 'plan', round: 1, calls: {total: 3, phases: [{key: 'ledger-append', count: 1}, {key: 'lint-run', count: 1}, {key: 'review-run-plan', count: 1}]}},
+      {review: key, kind: 'plan', round: 2, calls: {total: 1, phases: [{key: 'review-run-plan', count: 1}]}},
     ]);
   } finally { f.cleanup(); }
 });
@@ -848,9 +848,9 @@ test('round workload attributes interleaved rounds of two reviews without double
     const rows = sessionRows(f.session)!;
     const keyA = reviewKey(f.session, 'plan-a');
     assert.deepEqual(rows.map((row) => [row.review === keyA ? 'a' : 'b', row.round, row.calls?.total]), [
-      ['a', 1, 1], ['a', 2, 1], ['b', 1, 2], ['b', 2, 1],
+      ['a', 1, 1], ['a', 2, 1], ['b', 1, 1], ['b', 2, 1],
     ]);
-    assert.equal(rows.reduce((total, row) => total + (row.calls?.total ?? 0), 0), 5);
+    assert.equal(rows.reduce((total, row) => total + (row.calls?.total ?? 0), 0), 4);
   } finally { f.cleanup(); }
 });
 
@@ -860,7 +860,7 @@ test('round workload leaves a round without a launched review run unstarted', ()
     workloadRound(f.session, 'plan-c', 1);
     workloadCapture(f.session, 'stopped', {start: 900}, undefined);
     workloadCapture(f.session, 'later', {start: 1200, end: 1210}, 'lint-run');
-    assert.deepEqual(sessionRows(f.session), [{review: reviewKey(f.session, 'plan-c'), round: 1}]);
+    assert.deepEqual(sessionRows(f.session), [{review: reviewKey(f.session, 'plan-c'), kind: 'plan', round: 1}]);
   } finally { f.cleanup(); }
 });
 
@@ -885,12 +885,13 @@ test('round workload attributes host rows by row time and excludes subagent rows
     workloadCapture(f.session, 'a-rerun', {start: 2500, end: 2800}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1, 2))]);
     const deps = claudeHostDeps(f, {
       clock: 3000,
-      main: [usageLine('m1', 1500, 10, 1), usageLine('m2', 2200, 20, 2), usageLine('m3', 2600, 30, 3), usageLine('m4', 2900, 99, 0)],
+      main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 2600, 30, 3), usageLine('m4', 2900, 99, 0)],
       subagent: [usageLine('s1', 1600, 1000, 0)],
     });
     const rows = sessionRows(f.session, {manifest: {createdAt: new Date(100).toISOString()} as never, deps})!;
-    assert.deepEqual(rows.map((row) => row.calls?.total), [1, 2]);
-    assert.deepEqual(rows.map((row) => row.hostTokens), [11, 55]);
+    assert.deepEqual(rows.map((row) => row.calls?.total), [1, 1]);
+    assert.deepEqual(rows.map((row) => row.hostTokens), [11, 22]);
+    assert.deepEqual(rows.map((row) => row.hostTurns), [1, 1]);
   } finally { f.cleanup(); }
 });
 
@@ -943,5 +944,60 @@ test('round workload is absent without review rounds', () => {
   try {
     workloadCapture(f.session, 'lint', {start: 1000, end: 1010}, 'lint-run');
     assert.equal(sessionRows(f.session), undefined);
+  } finally { f.cleanup(); }
+});
+
+test('round turns: counts host responses through the fix-check note', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const review = 'plan-a';
+    workloadRound(f.session, review, 1);
+    workloadCapture(f.session, 'run', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 1))]);
+    workloadCapture(f.session, 'fix-check', {start: 1400, end: 1500}, 'brief-fix-check');
+    workloadCapture(f.session, 'after', {start: 1800, end: 1900}, 'report-render');
+    const deps = claudeHostDeps(f, {
+      clock: 2000,
+      main: [usageLine('first', 1050, 1, 1), usageLine('check', 1450, 2, 2), usageLine('outside', 1750, 3, 3)],
+      subagent: [usageLine('sub', 1050, 20, 20)],
+    });
+    const manifest = {createdAt: new Date(100).toISOString()} as never;
+    const records = [{kind: 'note', key: 'fix-check:plan-a:1:1', at: new Date(1600).toISOString()}] as Fold['records'];
+    const facts = sessionFacts(f.session, {records, lastSeq: 1, torn: null}, 'complete', {manifest, deps});
+    const row = facts.roundWorkload?.[0];
+    assert.deepEqual([row?.calls?.total, row?.hostTokens, row?.hostTurns], [2, 6, 2]);
+  } finally { f.cleanup(); }
+});
+
+test('round turns: in-window rulings and notes set the close without counting gaps', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const review = 'plan-a';
+    workloadRound(f.session, review, 1);
+    workloadRound(f.session, review, 2);
+    workloadRound(f.session, 'plan-b', 1);
+    workloadCapture(f.session, 'r1', {start: 500, end: 800}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 1))]);
+    workloadCapture(f.session, 'r2', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 2))]);
+    workloadCapture(f.session, 'ruling', {start: 1200, end: 1250}, 'ledger-append');
+    workloadCapture(f.session, 'check', {start: 1400, end: 1450}, 'brief-fix-check');
+    workloadCapture(f.session, 'gap', {start: 1700, end: 1750}, 'lint-run');
+    const main = [usageLine('prior', 700, 1, 1), ...[1100, 1250, 1500, 1700, 2100, 2300].map(at => usageLine(String(at), at, 1, 1))];
+    const manifest = {createdAt: new Date(100).toISOString()} as never;
+    const at = (ms: number) => new Date(ms).toISOString();
+    const ruling = {kind: 'ruling', data: {subject: 'review:plan-a:earlier-finding'}, at: at(1250)};
+    const note = {kind: 'note', key: 'fix-check:plan-a:2:1', at: at(1500)};
+    const unrelated = {kind: 'note', key: 'unrelated', at: at(1800)};
+    const late = {...ruling, at: at(2300)};
+    const read = (records: unknown[], host = main, subagent = ['malformed']) => {
+      const deps = claudeHostDeps(f, {clock: 2500, main: host, subagent});
+      return sessionFacts(f.session, {records: records as Fold['records'], lastSeq: records.length, torn: null}, 'complete', {manifest, deps}).roundWorkload;
+    };
+    const workload = (row: NonNullable<ReturnType<typeof read>>[number] | undefined) => [row?.calls?.total, row?.hostTurns];
+    assert.deepEqual(workload(read([unrelated])?.[1]), [1, 1]);
+    assert.deepEqual(workload(read([ruling, unrelated])?.[1]), [2, 2]);
+    const before = read([ruling, note, unrelated])?.[1];
+    assert.deepEqual(workload(before), [3, 3]);
+    workloadCapture(f.session, 'other', {start: 2000, end: 2100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1))]);
+    assert.deepEqual(read([ruling, note, unrelated, late])?.[1], before);
+    assert.deepEqual(workload(read([ruling, note, unrelated, late], [...main, 'malformed'])?.[1]), [3, undefined]);
   } finally { f.cleanup(); }
 });

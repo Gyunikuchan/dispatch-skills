@@ -24,7 +24,7 @@ import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { lintArtifact } from './lint.ts';
-import { appendRecords, foldLedger, queryLedger } from './ledger.ts';
+import { appendLintEdit, appendRecords, foldLedger, queryLedger } from './ledger.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
@@ -34,6 +34,7 @@ import { reportComplete, reportRender } from './report.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { diagnosticsRender, observeTool } from './diagnostics.ts';
 import { refreshFindingsSection, rulingReview } from './review-findings.ts';
+import { validateRecord } from './records.ts';
 import { reviewId } from './confirmations.ts';
 
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
@@ -122,6 +123,34 @@ export function nodeDeps(): CliDeps {
   };
 }
 
+function readLintEditFields(file: string) {
+  let source: string;
+  try { source = fs.readFileSync(path.resolve(file), 'utf8'); }
+  catch { throw new ToolError(1, 'invalid-input', 'Cannot read --edit fields file ' + file); }
+  let input: unknown;
+  try { input = JSON.parse(stripBom(source)); }
+  catch { throw new ToolError(1, 'invalid-input', '--edit fields file is not valid JSON: ' + file); }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ToolError(1, 'invalid-input', '--edit fields must be a JSON object');
+  }
+  const fields = input as Record<string, unknown>;
+  const unknownKey = Object.keys(fields).find(key => !['class', 'affects', 'rationale', 'diffRef', 'before'].includes(key));
+  if (unknownKey !== undefined) throw new ToolError(1, 'invalid-input', 'Unknown --edit field: ' + unknownKey);
+
+  // The ledger supplies these fields under the lock. Use valid placeholders to check caller fields now.
+  const placeholder = 'sha256:' + '0'.repeat(64);
+  try {
+    validateRecord({
+      kind: 'edit', by: 'orchestrator', key: 'lint-edit:plan:1',
+      data: { before: placeholder, ...fields, artifact: 'plan', after: placeholder },
+    });
+  } catch (error) {
+    if (error instanceof ToolError) throw new ToolError(1, 'invalid-input', error.message);
+    throw error;
+  }
+  return fields as { class: string; affects: string[]; rationale: string; diffRef: string; before?: string };
+}
+
 const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResult>> = {
   'ask run': askRun,
   'review run': reviewRun,
@@ -207,12 +236,19 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const value = await statusReport(session, manifest.repositoryRoot, deps);
     return { ok: true, value, summary: JSON.stringify(value), exit: 0 };
   },
-  'lint run': async ({ args, manifest }) => {
+  'lint run': async ({ args, manifest, session, values, deps }) => {
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'artifact requires one path');
-    const value = lintArtifact(path.resolve(args[0]!), { repositoryRoot: manifest.repositoryRoot });
+    const artifactPath = path.resolve(args[0]!);
+    const checked = typeof values['edit'] === 'string'
+      ? await appendLintEdit(session, artifactPath, readLintEditFields(values['edit']), deps)
+      : { value: lintArtifact(artifactPath, { repositoryRoot: manifest.repositoryRoot }) };
+    const { value } = checked;
     const ok = value.errors.length === 0;
     const items = [...value.errors, ...value.warnings].map(defect => 'L' + (defect.line ?? '-') + ' ' + defect.code + ': ' + defect.message);
-    return { ok, value, summary: summaryWithItems(value.kind + ': ' + value.errors.length + ' errors, ' + value.warnings.length + ' warnings; ' + value.hash, items),
+    const edit = 'edit' in checked ? checked.edit : undefined;
+    const suffix = edit ? `; edit seq ${edit.seq} ${edit.deduped ? 'deduped' : 'appended'}` : '';
+    return { ok, value: edit ? { ...value, edit } : value,
+      summary: summaryWithItems(value.kind + ': ' + value.errors.length + ' errors, ' + value.warnings.length + ' warnings; ' + value.hash + suffix, items),
       exit: ok ? 0 : 4, ...(ok ? {} : { reason: 'lint-errors' }) };
   },
 };
@@ -238,10 +274,11 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
       'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, task: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
-      'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'},
+      'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
     } });
     [tool = '', action = ''] = parsed.positionals;
     if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
+    if (parsed.values['edit'] !== undefined && (tool !== 'lint' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--edit is only for lint run');
     if (parsed.values['task'] !== undefined && (tool !== 'check' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--task is only for check run');
     if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
     if (parsed.values['commit'] !== undefined && (tool !== 'worktree' || action !== 'deliver')) throw new ToolError(1, 'invalid-input', '--commit is only for worktree deliver');

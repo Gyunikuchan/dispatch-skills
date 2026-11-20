@@ -14,7 +14,7 @@ const event = (total: number, at = 3000, counters: { input_tokens: number; cache
   payload: { type: 'token_count', info: { total_token_usage: { total_tokens: total }, last_token_usage: counters } },
 });
 
-test('codex counts resumed host and direct child usage row fields once by model', () => {
+test('turns: codex counts resumed host and direct child usage row fields once by model', () => {
   const host = rollout('00-01', 'host'); const resumedHost = rollout('00-02', 'host');
   const child = rollout('00-03', 'child'); const resumedChild = rollout('00-04', 'child');
   const otherModel = { type: 'turn_context', payload: { model: 'other', effort: 'low' } };
@@ -29,6 +29,7 @@ test('codex counts resumed host and direct child usage row fields once by model'
     [rollout('00-07', 'guardian')]: lines(meta('host', 'guardian_review'), context, event(23)),
   };
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, memoryFs(files));
+  assert.deepEqual(result.rows.map(row => row.turns), [1, 1, 1, undefined, undefined, undefined]);
   assert.deepEqual(result.rows.map(row => [row.role, row.model, row.effort, row.depth, row.atMs, row.reasoningInOutput, row.input, row.output, row.cacheRead, row.reasoning]), [
     ['host', 'm', 'high', 0, 3000, true, 6, 5, 4, 2],
     ['host', 'm', 'high', 0, 4000, true, 3, 2, 1, undefined],

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, appendRecords, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { fixture, report } from '../../helpers/review-fixture.ts';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -511,3 +511,82 @@ test('fix-check advisory notes: the ordinal skips past existing keys, ignores ot
     assert.equal((await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: value!['noteKey'], data: {text: 'Advisory result'}}, f.deps)).deduped, false);
   } finally { f.cleanup(); }
 });
+
+test('note skeleton: the summary keeps the absolute path and the filled note appends under the displayed key', async () => {
+  const f = await fixture();
+  try {
+    await reviewed(f);
+    gitStub(f, ['skills/writer.ts']);
+    const {exit, output, value} = await brief(f);
+    assert.equal(exit, 0);
+    const [head, json] = output.summary.split('; skeleton ');
+    assert.ok(head!.includes(value!['briefPath']));
+    assert.ok(json, 'summary must include a note skeleton');
+    const skeleton = JSON.parse(json);
+    assert.deepEqual(skeleton, {
+      kind: 'note', by: 'orchestrator', key: value!['noteKey'],
+      data: {text: 'kind plan; raised <n>; confirmed <n>; rejected <id: evidence | none>; mode <explorer|inline>'},
+    });
+    assert.deepEqual(value!['noteSkeleton'], skeleton);
+    const filled = {...skeleton, data: {text: 'kind plan; raised 1; confirmed 1; rejected none; mode explorer'}};
+    const appended = await appendRecords(f.session, filled, f.deps);
+    assert.equal(appended.deduped, false);
+    assert.equal(foldLedger(f.session).records.at(-1)?.key, skeleton.key);
+  } finally { f.cleanup(); }
+});
+
+for (const [label, basename, model, keepLaunch, sessionBytes] of [
+  ['shortens a long absolute path', 'work.plan', 'haiku', true, 950],
+  ['prioritizes the launch line over a long prefix', 'a'.repeat(245) + '.plan', 'h'.repeat(240), true, 600],
+  ['clips a long launch line after giving up the prefix', 'a'.repeat(245) + '.plan', '界'.repeat(230), false, 600],
+] as const) {
+  test(`note skeleton: ${label}`, async () => {
+    const f = await fixture();
+    try {
+      const segments = sessionBytes === 950 ? [180, 180, 180, 180, 130] : [180, 180, 100];
+      const parent = path.join(f.root, ...segments.map(size => 's'.repeat(size)));
+      const folder = path.basename(f.session);
+      const session = path.join(parent, 's'.repeat(sessionBytes - 2 - Buffer.byteLength(parent + folder)), folder);
+      fs.mkdirSync(session, {recursive: true});
+      const manifest = JSON.parse(fs.readFileSync(path.join(f.session, 'manifest.json'), 'utf8'));
+      fs.writeFileSync(path.join(session, 'manifest.json'), JSON.stringify({...manifest, folderName: path.basename(session)}));
+      const artifact = f.artifact(basename + '.md', '# Work\n## Work\nOriginal body.\n');
+      const review = 'plan-' + basename;
+      const target = {...f, session};
+      await reviewed(f);
+      const round = path.join(session, '.state', 'reviews', review, 'round-1');
+      fs.mkdirSync(round, {recursive: true});
+      const originalRound = path.join(f.directory, 'round-1');
+      fs.copyFileSync(path.join(originalRound, 'findings.json'), path.join(round, 'findings.json'));
+      const metadata = f.read(1, 'round.json');
+      fs.writeFileSync(path.join(round, 'round.json'), JSON.stringify({...metadata, artifactPath: artifact}));
+      await appendRecords(session, {kind: 'ruling', by: 'orchestrator', key: 'accepted-finding', data: {
+        subject: `review:${review}:R1-F001`, ruling: 'accepted', rationale: 'Applied',
+      }}, f.deps);
+      fs.appendFileSync(artifact, '\n## Fix\nChanged.\n');
+      gitStub(f, ['skills/writer.ts']);
+      fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({
+        'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+        'utility-subagents': {claude: {model, effort: 'medium', 'context-limit': 150000}},
+      }));
+      const {exit, output, value} = await brief(target, artifact);
+      assert.equal(exit, 0);
+      const [head, json] = output.summary.split('; skeleton ');
+      assert.ok(json, 'summary must include a note skeleton');
+      assert.ok(Buffer.byteLength(output.summary) <= 1024);
+      assert.deepEqual(JSON.parse(json), value!['noteSkeleton']);
+      assert.equal(JSON.parse(json).key, `fix-check:${review}:1:1`);
+      const rel = /session-relative (\S+) \(\d+ bytes\)$/.exec(head!)?.[1];
+      assert.ok(rel);
+      assert.equal(path.resolve(session, rel), value!['briefPath']);
+      assert.ok(fs.existsSync(value!['briefPath']));
+      assert.equal(head!.includes(value!['launchAs']), keepLaunch);
+      if (keepLaunch && basename.length === 250) {
+        assert.match(head!, /^fix-check brief .*…: launch: model /);
+      }
+      if (!keepLaunch) {
+        assert.match(head!, /^launch: model 界+…; /);
+      }
+    } finally { f.cleanup(); }
+  });
+}

@@ -105,7 +105,8 @@ export function memoryNodeFs(root: string): () => void {
   });
   replace('openSync', (real, file, flags, mode) => {
     if (!inside(file)) return real(file, flags, mode);
-    if (flags !== 'a') throw new Error('Unscripted virtual open flags ' + flags);
+    if (flags !== 'a' && flags !== 'wx') throw new Error('Unscripted virtual open flags ' + flags);
+    if (flags === 'wx' && storage.exists(key(file))) fail('EEXIST', file);
     if (!storage.exists(key(file))) write(file, '');
     const fd = next--; descriptors.set(fd, key(file)); return fd;
   });

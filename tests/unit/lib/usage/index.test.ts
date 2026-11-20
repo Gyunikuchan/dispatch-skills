@@ -226,3 +226,15 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
   assert.ok((result.rows[1] as { bands?: unknown }).bands);
   assert.equal(stageAt([{ stage: 'spec', atMs: 100 }, { stage: 'plan', atMs: 200 }], 0), 'spec');
 });
+
+test('turns: host rows sum per key only when all inputs for that key carry turns', () => {
+  const row = { stage: 'spec' as const, role: 'host' as const, model: 'complete', effort: null, input: 10, output: 2, atMs: 3000, depth: 0, reasoningInOutput: true };
+  const rows = [{ ...row, turns: 1 }, { ...row, turns: 2 }, { ...row, model: 'missing' },
+    { ...row, model: 'mixed', turns: 1 }, { ...row, model: 'mixed' }];
+  const result = readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
+    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows }) },
+  });
+  assert.deepEqual(result.rows.map(item => [item.model, item.input, item.turns]), [
+    ['complete', 20, 3], ['missing', 10, undefined], ['mixed', 20, undefined],
+  ]);
+});

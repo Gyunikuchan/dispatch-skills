@@ -7,7 +7,7 @@ import { agy, readAgySqliteGenMetadata } from './agy.ts';
 import { claudeCode } from './claude.ts';
 import { codex } from './codex.ts';
 import { opencode } from './opencode.ts';
-import { boundModels, foldRows, type BandedCounters } from './bands.ts';
+import { boundModels, foldRows, OTHER_KEY, type BandedCounters } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
 import { HOST_ROLES, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
 
@@ -40,7 +40,12 @@ function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases
     for (const [k, value] of Object.entries(bounded)) {
       const { model, effort } = splitUsageKey(k);
       const typed = value as BandedCounters & { reasoningInOutput?: boolean };
+      const inputs = k === OTHER_KEY
+        ? [...byKey].flatMap(([key, list]) => key === OTHER_KEY || !Object.hasOwn(bounded, key) ? list : [])
+        : byKey.get(k)!;
+      const turns = inputs.every(r => r.turns !== undefined) ? inputs.reduce((total, r) => total + r.turns!, 0) : undefined;
       const row: HostUsageRow = {
+        ...(turns === undefined ? {} : { turns }),
         stage: group.stage,
         ...(group.phase === undefined ? {} : { phase: group.phase }),
         role: group.role,

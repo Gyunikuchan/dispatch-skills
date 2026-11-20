@@ -35,7 +35,7 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
       const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
       if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
       if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
-      const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at, reasoningInOutput: true, input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens };
+      const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at, reasoningInOutput: true, ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}), input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens };
       if (!/\.\d+/.test(entry.timestamp)) hostRow.wholeSecond = true;
       if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens;
       if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens;

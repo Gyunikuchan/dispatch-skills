@@ -4,7 +4,7 @@
 
 ### call table
 
-The orchestrator runs toolkit commands. Dispatched agents run no toolkit commands, with one exception: a subagent assigned a map (map explorer, or utility subagent correcting a map under [map checks](grounding.md#check-and-recover)) may run `lint run` on that assigned map only. Brief and descriptor results return launch `model`, `effort` and `launchAs` fields for native launches. All tool calls need an initialized session. Artifact paths are relative to the repository root unless stated otherwise; record JSON filenames and question filenames resolve from the current directory.
+Dispatched agents run no toolkit commands, with one exception. A subagent assigned a map may run `lint run` on that map only, without `--edit`. Briefs and descriptors return `model`, `effort` and `launchAs` for native launches. Initialize the session before calling tools. Resolve artifact paths from the repository root unless stated otherwise. Resolve record and question files from the current directory.
 
 Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
 
@@ -38,7 +38,7 @@ In the table, `\|` separates alternative values. Append a record object or non-e
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
 | action | doctor run | `doctor run --session <session> --host <platform> [--level <level>]` |
 | action | status show | `status show --session <session>` |
-| action | lint run | `lint run <artifact> --session <session>` |
+| action | lint run | `lint run <artifact> --session <session> [--edit <fields.json>]` |
 | action | diagnostics render | `diagnostics render --session <session>` |
 | record | bind | - |
 | record | approval | - |
@@ -69,7 +69,7 @@ Refusals: unreadable question, invalid level, level-unapproved, no read delegate
 ### review run
 
 Arguments: `review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`. Pass `--spec` until a spec is bound. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
-Result path: the full findings, sources, failures, round, coverage, continuation and escalation details, blocked attempts and native slots are in the `findings.json` file named by the result.
+Result path: `findings.json` holds the full round. Completed-round summaries name `findings.md` and `rulings.json`. The session-relative `value.findingsFile` and `value.rulingsFile` survive summary clipping. Use them to [rule the round](review-rules.md#rulings-and-fix-scope).
 - `findings.json` carries `units` (`{unit, findings, hot, hotStreak, bytes?, delta?, growthStreak?}`), one entry per unit with findings in the round; the summary head lists hot units after the counts as `<unit> ×<hotStreak>` plus ` ±<delta> B` when sized, within 1,024 bytes (items drop first; else `+<k> more in findings.json units`).
 - A round that ran a host-platform voice as a native subagent also reports `repositoryChanges` (`[{cwd, paths}]`) and persists it to `gen-<n>/checkout-report.json` and `findings.json`; a failed capture or compare keeps all replies and reports `repositoryCheck: {state: "unavailable", reason}` instead.
 - The summary names changed paths.
@@ -130,7 +130,7 @@ Refusals: unreadable values, a missing or unknown value, missing/unknown `--host
 
 Arguments: `brief fix-check <artifact> --session <session> --host <platform>`; `<artifact>` is the plan or design path that `review run` reviewed.
 Selects the latest completed round of that review whose recorded artifact is this artifact, then writes the current governed text, its diff from the round's `round-<n>.input.md` and a research brief under `<session>/.state/briefs/`. The brief carries the round's accepted findings, citations from the diff's added lines (sensitive, unlisted or outside paths withheld), the round's spec (and its reviewed snapshot when the spec changed), the reading bound and a consumer search command.
-Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, citation and withheld counts, `contextLimit`, `launchAs` and launch `model`/`effort` values.
+Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, citation and withheld counts, `contextLimit`, `launchAs` and launch `model`/`effort`. The summary ends with the full `noteSkeleton`, also in the result value. To fit it, the summary shortens the brief path to session-relative form, then clips the counts and review ID, then the launch line as needed.
 Refusals: a code-review artifact, no matching round, no accepted finding, no change since the round input, an unreadable spec, missing/unknown `--host`; a refusal leaves no file.
 
 ### brief test-cleanup
@@ -268,9 +268,10 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 ### lint run
 
-Arguments: `lint run <artifact> --session <session>`. Pass the artifact as the positional argument, for example `node <skills-dir>/dispatch/scripts/dispatch.ts lint run .scratch/dispatch-skills/<folder>/<name>.plan.md --session <session>`.
-Result path: artifact kind/hash, parse errors and warnings. Summary items are `L<line|-> <code>: <message>`, errors before warnings. A `.context.md` map is checked against the session repository for unsafe or missing refs, invalid line ranges and invariant quote mismatches. Context hashes cover the raw source; other artifact hashes are formatting-tolerant canonical hashes that approval, edit and gate records use.
-Refusals: unreadable/unknown artifact or lint-errors. Blocking defects cover REQ IDs, criterion IDs, Check commands and task paths; other findings are warnings for review. A plan whose pinned design names increments warns `outside-increment` once per change path outside the pinned increment's Paths, on that change's line; a pinned design or increment that cannot be read gives one such warning that names it.
+Arguments: `lint run <artifact> --session <session> [--edit <fields.json>]`. Pass the artifact path positionally.
+Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read.
+Refusals: unreadable/unknown artifact or lint errors.
+With `--edit`, pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
 
 ### diagnostics render
 
@@ -285,7 +286,7 @@ Result path: `diagnostics.md` in the session folder, rendered from the whole ses
 - Host and subagent stages are time-derived from session and capture milestones; delegate stages use recorded phases.
 - See [diagnostics coverage](readme/troubleshooting.md#understand-diagnostics-coverage) for limits and recovery.
 - `Review round timing` shows retry-inclusive wall time and marks the latest finisher only when every slot is measured; unknown slots show `—`.
-- `Review round workload` (omitted without review rounds) has one row per review round: observed toolkit calls by phase key, most frequent first, and `host` tokens. A round starts at the earliest `review run` capture that invoked one of its generations; its window runs to the next start of any review, and the latest window ends at its last `review run` end. A capture counts in the window holding its start, so a closed window does not change on re-render. `—` marks a round without a start, and host tokens when usage is unavailable. Not counted: `report` and `diagnostics` calls, work after the latest window, and `subagent` rows. A storage-failure note follows when capture writes failed.
+- `Review round workload` shows calls by phase, host tokens and Host turns (model responses or `unavailable`). A round opens at its first captured review generation. It closes at the latest review run end, ruling for that review or fix-check note for that round, bounded by the next round start of any review. Calls count by start time. Gaps, report/diagnostics calls and subagent usage are excluded. A storage-failure note follows failed capture writes. For plan or design rounds, the advisory budget line lists rounds exceeding 6 calls or 25 host turns, or `none`. Code-only tables omit it.
 - `Review yield by slot` adds `Cost`, `Cost / accepted` and `Cost notes` using the same units and reasons as the stage table; when `Accepted` is `0`, per-accepted cells show `0 accepted`.
 - A native row renders model `native`; the tool row renders provider `tool` and model `—`; `partial` marks a row whose launched attempts are not all measured.
 - When diagnostics are off, the summary is `diagnostics off` and no file is written.
@@ -344,7 +345,9 @@ data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` i
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical before/after hashes, the diff reference and rationale; bind the revised spec, then append its `edit` record so the ledger can validate the chain. Non-intent orchestrator edits extend approved hash chains; intent, dependency and discard need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol). Use lint canonical hashes, excluding incidental report history. For each edited artifact per fix batch, run `lint run` once and append one `edit` record: `before` is its current canonical hash (bound or last recorded `after`), `after` is the lint result `value.hash`, and `rationale` names every accepted finding the batch fixes in that artifact. For a qualifying plan/design SHOULD correction, also record the baseline, correction and verification as an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool.
+For a confirmed spec revision before initial bind, retain canonical hashes, diff reference and rationale, bind the revised spec, then append its `edit` record. Non-intent edits extend approved hashes. Other classes need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol).
+For each edited artifact per fix batch, run `lint run --edit`. Name every accepted finding the batch fixes in its rationale. For a qualifying plan/design SHOULD correction, record the baseline, correction and verification in an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 

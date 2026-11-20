@@ -7,7 +7,7 @@ import { qualityCriteria } from './domain/prompt.ts';
 import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
-import { capSummary, ToolError } from './output.ts';
+import { capSummary, clipBytes, ToolError } from './output.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
 import { launchLine, summaryLaunch } from '../lib/platform.ts';
@@ -18,8 +18,25 @@ type LaunchValues = { model: string[] | null; effort: string | null; launchAs: s
 
 const launchValues = (resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues =>
   resolved ? {model: resolved.models, effort: resolved.effort, launchAs: launchLine(normalized, resolved.models, resolved.effort)} : {model: null, effort: null, launchAs: null};
-export const briefSummary = (prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number) =>
-  capSummary(`${prefix}: ${host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : ''}${file} (${bytes} bytes)`);
+export function briefSummary(
+  prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number,
+  suffix?: {tail: string; shortPath: string},
+): string {
+  let launch = host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : '';
+  const absolute = `${prefix}: ${launch}${file} (${bytes} bytes)`;
+  if (!suffix) return capSummary(absolute);
+  const {tail, shortPath} = suffix;
+  if (Buffer.byteLength(absolute + tail) <= 1024) return absolute + tail;
+
+  const ending = `session-relative ${shortPath} (${bytes} bytes)${tail}`;
+  const headBudget = 1024 - Buffer.byteLength(ending);
+  const prefixBudget = headBudget - Buffer.byteLength(launch);
+  const heading = prefixBudget < 5 ? '' : `${clipBytes(prefix, prefixBudget - 2)}: `;
+  if (prefixBudget < 0) {
+    launch = headBudget < 5 ? '' : `${clipBytes(launch.slice(0, -2), headBudget - 2)}; `;
+  }
+  return heading + launch + ending;
+}
 
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {

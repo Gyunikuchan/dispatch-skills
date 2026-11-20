@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
-import { foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecords, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { renderFindingsSection, reviewRows, refreshFindingsSection, rulingReview } from '../../../skills/dispatch/scripts/toolkit/review-findings.ts';
+import * as findingsFiles from '../../../skills/dispatch/scripts/toolkit/review-findings.ts';
+import type { Finding } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
 import type { Manifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 function fixture() {
@@ -251,5 +253,56 @@ test('origin: marker renders beside a recurrence marker', () => {
     assert.match(rendered, /\| Open \(origin original\) \|/);
     assert.match(rendered, /\| Open \(recurs R0-F001\) \(origin fix-induced\) \|/);
     assert.match(rendered, /R1-F003 \| 1 \| SHOULD \| — \| Open \|/);
+  } finally { f.cleanup(); }
+});
+
+const ratedFinding: Finding = {
+  id: 'R1-F002', severity: 'MUST', impact: 'blocks', trigger: 'realistic', category: 'reliability',
+  locus: '§ Work', defect: 'Lost write\n## heading', requiredChange: 'Apply under lock',
+  sources: ['agy[0]', 'claude[0]'], scope: 'in', origin: 'fix-induced',
+};
+const legacyFinding = {id: 'R1-F001', severity: 'SHOULD'} as Finding;
+
+test('findings file: renders Markdown in severity order with neutralized text and missing ratings', () => {
+  assert.equal(findingsFiles.renderFindingsFile([legacyFinding, ratedFinding]), [
+    '### R1-F002 MUST',
+    '- Rating: blocks/realistic; category reliability; scope in; origin fix-induced',
+    '- Locus: § Work',
+    '- Defect: Lost write ## heading',
+    '- Required change: Apply under lock',
+    '- Sources: agy[0], claude[0]',
+    '',
+    '### R1-F001 SHOULD',
+    '- Rating: —/—; category —; scope —; origin —',
+    '- Locus: —',
+    '- Defect: —',
+    '- Required change: —',
+    '- Sources: —',
+    '',
+  ].join('\n'));
+  assert.equal(findingsFiles.renderFindingsFile([]), 'No findings.\n');
+  assert.deepEqual(findingsFiles.rulingsTemplate('plan-work.plan', 1, []), []);
+});
+
+test('findings file: a filled batch appends and a later ruling needs a new key', async () => {
+  const f = fixture();
+  const deps = {pid: 42, host: 'test', clock: () => 0, sleep: async () => {}, isAlive: () => false};
+  try {
+    fs.writeFileSync(path.join(f.session, 'manifest.json'), JSON.stringify({
+      schemaVersion: 1, folderName: path.basename(f.session), sessionId: 'test', safeSessionId: 'test', repositoryRoot: f.root,
+    }));
+    const review = 'plan-work.plan';
+    const template = findingsFiles.rulingsTemplate(review, 1, [ratedFinding, legacyFinding]);
+    assert.deepEqual(template, ['R1-F002', 'R1-F001'].map(id => ({
+      kind: 'ruling', by: 'orchestrator', key: 'ruling:plan-work.plan:1:' + id,
+      data: {subject: 'review:plan-work.plan:' + id, ruling: '', rationale: ''},
+    })));
+    await assert.rejects(appendRecords(f.session, template, deps), {reason: 'invalid-record'});
+    const filled = template.map(entry => ({...entry, data: {...entry.data, ruling: 'accepted', rationale: 'Verified the defect'}}));
+    assert.equal((await appendRecords(f.session, filled, deps)).seq, 2);
+    const initial = filled[0]!;
+    const later = {...initial, data: {...initial.data, ruling: 'deferred', rationale: 'Schedule separately'}};
+    await assert.rejects(appendRecords(f.session, later, deps), {reason: 'key-conflict'});
+    assert.equal((await appendRecords(f.session, {...later, key: later.key + ':2'}, deps)).seq, 3);
   } finally { f.cleanup(); }
 });

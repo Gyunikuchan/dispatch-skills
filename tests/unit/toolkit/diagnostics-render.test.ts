@@ -494,12 +494,45 @@ test('round workload render reads host usage again only for rounds with a start'
     });
     assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
     assert.equal(reads, 1);
-    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| — \\| — \\|`));
+    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| — \\| — \\| unavailable \\|`));
 
     writeRun();
     f.lines.splice(0);
     assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
     assert.equal(reads, 3);
-    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| 1: review-run-plan 1 \\| 15 \\|`));
+    assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| 1: review-run-plan 1 \\| 15 \\| 1 \\|`));
+  } finally { f.cleanup(); }
+});
+
+test('round turns: renders observed turns and flags only plan and design rounds over budget', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const text = fs.readFileSync(writeDiagnostics(f.session, {
+      outcome: 'complete', phases: [], invocations: [], reviews: [],
+      roundWorkload: [
+        {review: 'review-aaaaaaaaaaaaaaaa', kind: 'plan', round: 1, calls: {total: 6, phases: []}, hostTurns: 26},
+        {review: 'review-bbbbbbbbbbbbbbbb', kind: 'design', round: 2, calls: {total: 6, phases: []}},
+        {review: 'review-cccccccccccccccc', kind: 'code', round: 3, calls: {total: 7, phases: []}, hostTurns: 30},
+      ],
+    }), 'utf8');
+    for (const row of [
+      '| subject aaaaaaaaaaaaaaaa | 1 | 6 | — | 26 |',
+      '| subject bbbbbbbbbbbbbbbb | 2 | 6 | — | unavailable |',
+      '| subject cccccccccccccccc | 3 | 7 | — | 30 |',
+    ]) assert.ok(text.includes(row), row);
+    const budget = text.split('\n').find(line => line.startsWith('Advisory budget per round'));
+    assert.equal(budget, 'Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: subject aaaaaaaaaaaaaaaa round 1');
+  } finally { f.cleanup(); }
+});
+
+test('round turns: renders code review workloads without the advisory budget', () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const text = fs.readFileSync(writeDiagnostics(f.session, {
+      outcome: 'complete', phases: [], invocations: [], reviews: [],
+      roundWorkload: [{review: 'review-cccccccccccccccc', kind: 'code', round: 1, calls: {total: 7, phases: []}, hostTurns: 30}],
+    }), 'utf8');
+    assert.match(text, /\| subject cccccccccccccccc \| 1 \| 7 \| — \| 30 \|/);
+    assert.doesNotMatch(text, /Advisory budget per round/);
   } finally { f.cleanup(); }
 });

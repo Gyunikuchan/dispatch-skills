@@ -135,7 +135,7 @@ function io(fx: Fixture, stdout: string[], stderr: string[]) {
   return { cwd: fx.root, home: fx.root, env: fx.env, stdout: (text: string) => stdout.push(text), stderr: (text: string) => stderr.push(text) };
 }
 
-test('measures rounds and per-round calls and host tokens for completed rounds only', () => {
+test('round turns: measures rounds and per-round calls, host tokens and host turns for completed rounds only', () => {
   const fx = fixture();
   try {
     const session = makeSession(fx);
@@ -148,8 +148,8 @@ test('measures rounds and per-round calls and host tokens for completed rounds o
     assert.deepEqual(side.window, { startMs: E0, endMs: E0 + 21000, pathForm: 'canonical' });
     assert.deepEqual(side.rounds, { total: 2, byReview: { [key]: 2 } });
     assert.deepEqual(side.perRound, [
-      { review: key, round: 1, calls: 2, hostTokens: 150 },
-      { review: key, round: 2, calls: 1, hostTokens: 0 },
+      { review: key, round: 1, calls: 2, hostTokens: 150, hostTurns: 1 },
+      { review: key, round: 2, calls: 1, hostTokens: 0, hostTurns: 0 },
     ]);
     assert.equal(side.hostTokens, 1150);
     // Round 3 is unfinished: it stays out of the totals and is named as excluded.
@@ -271,15 +271,15 @@ test('a moved session keeps its rounds but drops per-round calls with a no round
     assert.deepEqual(side.perRound, [{ review: key, round: 1 }, { review: key, round: 2 }]);
     assert.deepEqual(side.unavailable, [
       `rounds: ${key} 3 excluded: no readable round result`,
-      `perRound: ${key} 1 calls: no round starts`, `perRound: ${key} 1 hostTokens: no round starts`,
-      `perRound: ${key} 2 calls: no round starts`, `perRound: ${key} 2 hostTokens: no round starts`,
+      `perRound: ${key} 1 calls: no round starts`, `perRound: ${key} 1 hostTurns: no round starts`, `perRound: ${key} 1 hostTokens: no round starts`,
+      `perRound: ${key} 2 calls: no round starts`, `perRound: ${key} 2 hostTurns: no round starts`, `perRound: ${key} 2 hostTokens: no round starts`,
     ]);
   } finally {
     fx.cleanup();
   }
 });
 
-test('a Claude side without a host transcript reports the missing transcript and partial cost', () => {
+test('round turns: a Claude side without a host transcript reports the missing transcript and partial cost', () => {
   const fx = fixture();
   try {
     const session = makeSession(fx);
@@ -290,6 +290,8 @@ test('a Claude side without a host transcript reports the missing transcript and
     assert.equal(side.cost.partial, true);
     assert.ok(side.unavailable.includes('denials: host transcript missing'));
     assert.ok(side.unavailable.includes('hostTokens: host id file missing'));
+    assert.ok(side.unavailable.includes('perRound: ' + reviewKey(session) + ' 1 hostTurns: host id file missing'));
+    assert.equal(side.perRound[0]?.hostTurns, undefined);
   } finally {
     fx.cleanup();
   }

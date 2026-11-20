@@ -281,6 +281,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
         atMs: s.atMs,
         ...(s.wholeSecond ? { wholeSecond: true as const } : {}),
         reasoningInOutput: false,
+        ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}),
         input: s.input_tokens,
         output: s.output_tokens,
       };

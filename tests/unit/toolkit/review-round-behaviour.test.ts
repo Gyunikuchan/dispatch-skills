@@ -8,6 +8,7 @@ import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts
 import { governedPlanText } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { governedDesignText } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
 import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
+import type { Finding } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
 import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
 
 // SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
@@ -21,10 +22,11 @@ const resolveCeiling = (f: ReviewFixture, review: string, ceiling: number, summa
 test('review rounds capture dedupe clusters scope caps and design prompts',async()=>{
   const f=await fixture();
   try {
+    const reviewedSource = fs.readFileSync(f.plan, 'utf8');
     const first=await f.call(); assert.equal(first.exit,0);
     const round=f.read(1,'round.json'), findings=f.read(1,'findings.json');
     assert.equal(round.generation,1); assert.equal(round.cap,2); assert.match(round.target,/^sha256:/);
-    assert.equal(fs.readFileSync(path.join(f.directory,'round-1/target.snapshot.md'),'utf8'),fs.readFileSync(f.plan,'utf8'));
+    assert.equal(fs.readFileSync(path.join(f.directory,'round-1/target.snapshot.md'),'utf8'), reviewedSource);
     assert.equal(findings.findings[0].id,'R1-F001'); assert.equal(findings.clusters.length,1);
     assert.equal(findings.clusters[0].file,f.plan); assert.ok(findings.findings[0].sources.length>=2);
     assert.match(first.output.summary,/round 1\/2/); assert.match(first.output.summary,/1 SHOULD/);
@@ -87,10 +89,11 @@ test('review rounds reuse slots supersede generations and reject moving targets'
       assert.equal(fs.existsSync(path.join(f.directory,'round-1/findings.json')),false);
       const gen1=fs.readdirSync(path.join(f.directory,'round-1/gen-1/slots'));
       if(moved==='spec')await f.add('edit',{artifact:'spec',before:specBefore,after:artifactHash('spec',fs.readFileSync(f.spec,'utf8')),class:'non-intent',affects:[],rationale:'Record the spec revision',diffRef:'test diff'});
+      const reviewedSource = fs.readFileSync(f.plan, 'utf8');
       assert.equal((await f.call()).exit,0); assert.equal(f.read(1,'round.json').generation,2);
       if(moved==='spec')assert.equal(f.read(1,'round.json').spec.hash,artifactHash('spec',fs.readFileSync(f.spec,'utf8')));
       assert.deepEqual(fs.readdirSync(path.join(f.directory,'round-1/gen-1/slots')),gen1);
-      assert.equal(fs.readFileSync(path.join(f.directory,'round-1/target.snapshot.md'),'utf8'),fs.readFileSync(f.plan,'utf8'));
+      assert.equal(fs.readFileSync(path.join(f.directory,'round-1/target.snapshot.md'),'utf8'), reviewedSource);
       assert.ok(!fs.readdirSync(path.join(f.directory,'round-1')).some(name=>name.startsWith('superseded-')));
     } finally {f.cleanup();}
   }
@@ -251,7 +254,7 @@ test('review native-pending and resumed final results report and retain underfil
     const done = await f.call();
     assert.equal(done.exit, 0);
     assert.deepEqual(done.value.underfill, underfilled);
-    assert.match(done.output.summary, /failed slots; underfill 2\/2 targets, host codex, excluded native-only: copilot, repository check unavailable: Unit tests must not spawn processes; first 1: R1-F\d{3} SHOULD/);
+    assert.match(done.output.summary, /failed slots; .*underfill 2\/2 targets, host codex, excluded native-only: copilot, repository check unavailable: Unit tests must not spawn processes; first 1: R1-F\d{3} SHOULD/);
   } finally {f.cleanup();}
 });
 
@@ -319,3 +322,89 @@ test('review run forwards round 2 on repository-rerun with empty settled', async
   } finally { f.cleanup(); }
 });
 
+
+test('findings file: completed review writes raw Markdown and a JSON template beside findings.json', async () => {
+  const f = await fixture();
+  try {
+    const result = await f.call();
+    assert.equal(result.exit, 0, result.output.summary);
+    const round = '.state/reviews/plan-work.plan/round-1';
+    const findingsFile = round + '/findings.md', rulingsFile = round + '/rulings.json';
+    assert.equal(result.value.findingsFile, findingsFile);
+    assert.equal(result.value.rulingsFile, rulingsFile);
+    assert.ok(result.output.summary.includes(`; findings ${findingsFile}; rulings ${rulingsFile}`));
+    const markdown = fs.readFileSync(path.join(f.session, findingsFile), 'utf8');
+    assert.match(markdown, /^### R1-F001 SHOULD\n- Rating: degrades\/realistic; category reliability; scope in; origin original\n/);
+    assert.match(markdown, /\n- Defect: Concurrent writes overwrite captured results\n/);
+    assert.deepEqual(f.read(1, 'rulings.json'), [{
+      kind: 'ruling', by: 'orchestrator', key: 'ruling:plan-work.plan:1:R1-F001',
+      data: {subject: 'review:plan-work.plan:R1-F001', ruling: '', rationale: ''},
+    }]);
+  } finally { f.cleanup(); }
+});
+
+test('findings file: an all-failed round publishes neither file', async () => {
+  const f = await fixture();
+  try {
+    f.deps.delegate = async () => ({outcome: {status: 'fail', cls: 'config', detail: 'Invalid launch'}, invocations: []});
+    const result = await f.call();
+    assert.equal(result.output.reason, 'review-failed');
+    for (const file of ['findings.md', 'rulings.json']) {
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-1', file)), false, file);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('findings file: long review IDs and trailing notices retain both paths in the capped summary', async () => {
+  const f = await fixture(false);
+  try {
+    const planName = 'a'.repeat(245) + '.plan';
+    const review = 'plan-' + planName;
+    assert.equal(Buffer.byteLength(review), 255);
+    const plan = f.artifact(planName + '.md', fs.readFileSync(f.plan, 'utf8'));
+    f.artifact(planName + '.context.md', CONTEXT_MAP);
+    await f.add('bind', {spec: 'mission.spec.md', plan: planName + '.md'});
+    const directory = path.join(f.session, '.state', 'reviews', review);
+    for (let round = 1; round <= 3; round++) {
+      f.deps.delegate = async () => ({outcome: {status: 'ok', text: report('§ Work', 'Defect ' + round, 'MUST'), resume: null, sessionId: null}, invocations: []});
+      const result = await f.call('plan', plan);
+      assert.equal(result.exit, 0, result.output.summary);
+      assert.match(result.output.summary, /1 MUST/);
+      const {findings} = JSON.parse(fs.readFileSync(result.value.path, 'utf8'));
+      assert.equal(findings.length, 1, result.output.summary);
+      await f.add('ruling', {subject: `review:${review}:${findings[0].id}`, ruling: 'accepted', rationale: 'Fix the defect'});
+      fs.appendFileSync(plan, '\n## New work ' + round + '\nChanged.\n');
+    }
+
+    await f.add('ruling', {subject: `review:${review}:R4-F001`, ruling: 'accepted', rationale: 'Fix the defect'});
+    f.deps.delegate = async provider => ({outcome: {status: 'ok',
+      text: provider === 'agy' ? JSON.stringify({status: 'BLOCKED', reason: 'Denied ' + 'x'.repeat(170)}) : report('§ Work', 'Defect four', 'MUST'),
+      resume: null, sessionId: null}, invocations: []});
+    const pendingFile = path.join(directory, 'round-4', 'pending.json');
+    f.deps.hook = point => { if (point === 'review:after-pending') throw Error('Interrupted after writing pending findings'); };
+    assert.equal((await f.call('plan', plan)).exit, 2);
+    delete f.deps.hook;
+
+    // Resume from saved evidence sized to stress each summary count and suffix.
+    const pending = JSON.parse(fs.readFileSync(pendingFile, 'utf8'));
+    const first: Finding = pending.findings[0];
+    pending.findings = (['MUST', 'SHOULD', 'CONSIDER'] as const).flatMap((severity, group) =>
+      Array.from({length: 100}, (_, i) => ({
+        ...first, severity, id: 'R4-F' + String(group * 100 + i + 1).padStart(3, '0'),
+        ...(group === 0 ? {locus: 'unresolved-locus: missing', origin: 'fix-induced', recurrence: {of: 'R3-F001'}} : {}),
+      })));
+    pending.failed = Array.from({length: 100}, (_, i) => ({slot: 'agy[' + i + ']', reason: 'blocked'}));
+    pending.repositoryChanges = [{paths: Array.from({length: 5}, (_, i) => 'src/' + 'p'.repeat(220) + i)}];
+    fs.writeFileSync(pendingFile, JSON.stringify(pending));
+
+    const result = await f.call('plan', plan);
+    assert.equal(result.exit, 0, result.output.summary);
+    assert.equal(result.value.budget.state, 'requires-ceiling-resolution');
+    assert.match(result.output.summary, /100 MUST, 100 SHOULD, 100 CONSIDER, 300 recurrences, .*100 failed slots, 100 unresolved loci, 100 fix-induced/);
+    assert.ok(result.value.blocked.length);
+    assert.equal(result.value.repositoryChanges[0].paths.length, 5);
+    assert.ok(Buffer.byteLength(result.output.summary) <= 1024);
+    const round = `.state/reviews/${review}/round-4`;
+    assert.ok(result.output.summary.includes(`; findings ${round}/findings.md; rulings ${round}/rulings.json;`));
+  } finally { f.cleanup(); }
+});
