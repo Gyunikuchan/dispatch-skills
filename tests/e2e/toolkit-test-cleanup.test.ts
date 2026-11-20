@@ -136,18 +136,23 @@ test('test cleanup commit refuses missing evidence, unchanged test paths and emp
   } finally { r.cleanup(); }
 });
 
-test('an interrupted test cleanup commit records on retry without a second commit', async () => {
-  const r = await integrated();
+test('an interrupted test cleanup commit with split trailers records on retry without a second commit', async () => {
+  const criterion = 'SC' + '1'.repeat(320);
+  const data = { ...removal, removed: [criterion] };
+  const r = await integrated(true, source.replaceAll('SC1', criterion));
   try {
     const before = r.git(['rev-parse', 'HEAD'], r.integration);
     fs.rmSync(path.join(r.integration, target));
-    const crashed = await commit(r, removal, point => { if (point === 'commit:after-commit') throw Error('crash'); });
+    const crashed = await commit(r, data, point => { if (point === 'commit:after-commit') throw Error('crash'); });
     assert.equal(crashed.exit, 2);
     assert.equal(cleanups(r).length, 0);
     const head = r.git(['rev-parse', 'HEAD'], r.integration);
     assert.notEqual(head, before);
-    assert.equal((await commit(r, { ...removal, deleted: 9 })).output.ok, false);
-    const retried = await commit(r, removal);
+    const lines = r.git(['log', '-1', '--format=%B'], r.integration).split(/\r?\n/);
+    assert.ok(lines.every(line => line.length <= 100));
+    assert.ok(lines.filter(line => line.startsWith('Dispatch-Test-Cleanup-Data: ')).length > 1);
+    assert.equal((await commit(r, { ...data, deleted: 9 })).output.ok, false);
+    const retried = await commit(r, data);
     assert.equal(retried.output.ok, true, JSON.stringify(retried));
     assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
     assert.equal(cleanups(r).length, 1);

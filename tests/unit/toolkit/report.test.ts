@@ -269,9 +269,10 @@ test('uncommitted consumers render the working-tree delivery from source with it
  }finally{f.cleanup();}
 });
 
-test('cap-ending SHOULD fixes report baseline and correction separately',async()=>{
+test('review fix status: no current verification leaves the fix not verified',async()=>{
  const f=await fixture(1);try{
   await completeFixture(f);
+  stubReviewFixGit(f);
   const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:'c'.repeat(40)};
   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit:'d'.repeat(40),reason:'repair accepted SHOULD',reviewFix}},f.deps);
   const result=await invoke(f,'report','render');assert.equal(result.exit,0);
@@ -282,7 +283,7 @@ test('cap-ending SHOULD fixes report baseline and correction separately',async()
  }finally{f.cleanup();}
 });
 
-test('report render fills review focus and visuals from ledger and design',async()=>{
+test('review fix status: completed re-review retains earlier fixes and their paths after cleanup',async()=>{
  const f=await fixture(1);try{
   const source=planSource(1).replace('# Report fixture',[
    '# Report fixture','',
@@ -319,8 +320,12 @@ test('report render fills review focus and visuals from ledger and design',async
   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit,reason,reviewFix}},f.deps);
   for(const check of checks(loadPlan(f.session,readManifest(f.session))))await appendRecord(f.session,{kind:'evidence',by:'tool',data:{criterion:check.criterion,commandDigest:check.commandDigest,tree,clean:true,before:tree,after:tree,exit:0,path:'.state/evidence/'+check.criterion+'.json'}},f.deps);
   const metadata=reviewFixIdentity(reviewFix),message=[`fix(dispatch): ${reason}`,'',`Dispatch-Fix: ${readManifest(f.session).safeSessionId}`,`Dispatch-Review-Fix: ${metadata.digest}`,`Dispatch-Review-Fix-Data: ${metadata.data}`,''].join('\n');
-  const git=fakeGit(state);f.deps.run=async(argv)=>{
+  const git=fakeGit(state);f.deps.run=async(argv,options)=>{
    const args=argv.slice(1),output=(stdout='')=>({exit:0,stdout,stderr:''});
+   if(args[0]==='merge-base' && args[1]==='--is-ancestor') {
+    assert.equal(options?.cwd,readManifest(f.session).repositoryRoot);
+    return {exit:args[2]===args[3]?0:1,stdout:'',stderr:''};
+   }
    if(args[0]==='rev-list'&&args[1]==='--reverse'&&args[2]==='--parents')return output(`${commit} ${baseline}\n`);
    if(args[0]==='diff-tree'&&args.includes(commit))return output('src/task-1.ts\0src/shared.ts\0');
    if(args[0]==='log'&&args[1]==='-1'&&args[2]==='--format=%B'&&args[3]===commit)return output(message);
@@ -335,10 +340,8 @@ test('report render fills review focus and visuals from ledger and design',async
   const focus=text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes'));
   assert.match(focus,/Risk: med/);assert.match(focus,/Rejected SHOULD finding review-alpha:R1-F001/);assert.doesNotMatch(focus,/R1-F002|deferred|More evidence is needed/i);
   assert.match(focus,/Inspect the delivered retry boundary\. — Evidence: \[evidence\/retry-boundary\.md\]\(evidence\/retry-boundary\.md\)/);
-  assert.match(focus,/Cap-ending SHOULD fix R3-F001: verified but not re-reviewed — see Deviations & Follow-ups/);
   const deviations=text.slice(text.indexOf('## Deviations & Follow-ups'),text.indexOf('## Review Findings & Resolutions'));
   assert.match(deviations,/- Follow-up: deferred review-alpha:R1-F002/);
-  assert.match(deviations,/- Deviation: cap-ending SHOULD fix R3-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/task-1\.ts, src\/shared\.ts/);
   const visuals=text.slice(text.indexOf('## Visuals'),text.indexOf('## Review Focus'));
   assert.ok(visuals.includes('[design visuals](')); assert.ok(!visuals.includes('| Component | Boundary |'));
   const bind=latest(foldLedger(f.session),'bind')!;const hashes=currentHashes(f.root,bind),appendix=text.slice(text.indexOf('## Appendix'));
@@ -351,14 +354,86 @@ test('report render fills review focus and visuals from ledger and design',async
   writeJson(path.join(nextDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'CLEAN',findings:[]})});
   const reviewed=await invoke(f,'report','render');assert.equal(reviewed.exit,0);
   const reviewedValue=JSON.parse(fs.readFileSync(reviewed.output.path!,'utf8'));
-  assert.deepEqual(reviewedValue.reviewFixes,[]);
+  assert.equal(reviewedValue.reviewFixes[0]?.status,'re-reviewed','Retain the fix after the integration review starts after it');
+  assert.match(focus,/Review fix R3-F001: verified but not re-reviewed — see Deviations & Follow-ups/);
+  assert.match(deviations,/- Deviation: review fix R3-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/task-1\.ts, src\/shared\.ts/);
+  const unfinished=path.join(f.session,'.state/reviews/code-integration/round-5');
+  writeJson(path.join(unfinished,'round.json'),{round:5,generation:2,target:{head:commit},scope:'Re-review round 5 (full)'});
+  for(const removed of [false,true]) {
+   if(removed)fs.rmSync(path.join(f.session,'.state/worktrees/integration'),{recursive:true});
+   const rendered=await invoke(f,'report','render');
+   assert.equal(rendered.exit,0,rendered.output.summary);
+   const value=JSON.parse(fs.readFileSync(rendered.output.path!,'utf8'));
+   assert.equal(value.reviewedCodeBaseline,undefined);
+   const fix=value.reviewFixes[0];
+   assert.equal(fix?.status,'re-reviewed');
+   assert.deepEqual(fix?.paths,['src/task-1.ts','src/shared.ts']);
+   const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
+   assert.doesNotMatch(text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes')),/Review fix R3-F001/);
+   assert.match(text,/- Deviation: review fix R3-F001: re-reviewed; commit dddddddddddd; paths src\/task-1\.ts, src\/shared\.ts/);
+  }
   assert.doesNotMatch(fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8'),/Code Review Corrections/);
  }finally{f.cleanup();}
 });
 
+function stubReviewFixGit(f: Awaited<ReturnType<typeof fixture>>, ancestor = false) {
+ const git=f.deps.run;
+ f.deps.run=async(argv,options)=>{
+  if(argv[1]==='diff-tree'||argv[1]==='merge-base') {
+   assert.equal(options?.cwd,readManifest(f.session).repositoryRoot);
+   if(argv[1]==='diff-tree') {
+    assert.deepEqual(argv.slice(2,7),['--no-commit-id','--name-only','--no-renames','-r','-z']);
+    return {exit:0,stdout:'src/task-1.ts\0',stderr:''};
+   }
+   return {exit:ancestor&&argv[4]===HEAD?0:1,stdout:'',stderr:''};
+  }
+  return git(argv,options);
+ };
+}
+
+for(const roundKind of ['unfinished','all-failed','confirmation-only'] as const) {
+ test('review fix status: '+roundKind+' rounds do not count as re-review',async()=>{
+  const f=await fixture(1);
+  try {
+   await completeFixture(f);
+   stubReviewFixGit(f,true);
+   const commit='d'.repeat(40),reviewFix={review:'code-integration',round:1,generation:1,findings:['R1-F001'],from:'c'.repeat(40)};
+   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit,reason:'repair',reviewFix}},f.deps);
+   for(const check of checks(loadPlan(f.session,readManifest(f.session)))) {
+    await appendRecord(f.session,{kind:'evidence',by:'tool',data:{criterion:check.criterion,commandDigest:check.commandDigest,tree:TREE,clean:true,before:TREE,after:TREE,exit:0,path:'.state/evidence/'+check.criterion+'.json'}},f.deps);
+   }
+   const dir=path.join(f.session,'.state/reviews/code-integration/round-2');
+   const roster=[{slot:'codex[0]',reserve:false},{slot:'codex[1]',reserve:true}];
+   writeJson(path.join(dir,'round.json'),{round:2,generation:2,target:{head:HEAD},scope:roundKind==='confirmation-only'?'Re-review round 2 (confirmation-only)':'Re-review round 2 (full)',roster});
+   if(roundKind!=='unfinished')writeJson(path.join(dir,'findings.json'),{findings:[],failed:[]});
+   for(const generation of [1,2]) {
+    const outcome=generation===2&&roundKind==='all-failed'
+     ? {slot:'codex[0]',state:'failed',cls:'timeout',reason:'timeout'}
+     : {slot:'codex[0]',state:'done',text:'{}'};
+    writeJson(path.join(dir,'gen-'+generation,'slots/codex[0].json'),outcome);
+   }
+   const status=async()=>{
+    const result=await invoke(f,'report','render');
+    assert.equal(result.exit,0,result.output.summary);
+    return JSON.parse(fs.readFileSync(result.output.path!,'utf8')).reviewFixes[0]?.status;
+   };
+   assert.equal(await status(),'verified but not re-reviewed');
+   if(roundKind==='unfinished') {
+    fs.rmSync(path.join(f.session,'.state/worktrees/integration'),{recursive:true});
+    assert.equal(await status(),'not verified');
+   }
+   if(roundKind==='all-failed') {
+    writeJson(path.join(dir,'gen-2/slots/codex[0].json'),{slot:'codex[0]',state:'done',text:'{}',responder:{slot:'codex[1]'}});
+    assert.equal(await status(),'re-reviewed');
+   }
+  } finally { f.cleanup(); }
+ });
+}
+
 test('walkthrough reports coverage unreadable state and open slots beside review-fix records',async()=>{
  const f=await fixture(1);try{
   await completeFixture(f);
+  stubReviewFixGit(f);
   const reviewFix={review:'code-integration',round:1,generation:1,findings:['R1-F001'],from:'c'.repeat(40)};
   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit:'d'.repeat(40),reason:'repair accepted SHOULD',reviewFix}},f.deps);
   const dir=path.join(f.session,'.state/reviews/code-integration/round-1'),slots=path.join(dir,'gen-1/slots');

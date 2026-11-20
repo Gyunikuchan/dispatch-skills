@@ -96,8 +96,8 @@ test('walkthrough review focus points to attention details in their owning secti
     '- Manual criterion SC2 — see Verification',
     '- Waived criterion SC3 — see Verification',
     '- Missing criterion SC4 — see Verification',
-    '- Cap-ending SHOULD fix R2-F001: verified but not re-reviewed — see Deviations & Follow-ups',
-    '- Cap-ending SHOULD fix R2-F002: not verified — see Deviations & Follow-ups',
+    '- Review fix R2-F001: verified but not re-reviewed — see Deviations & Follow-ups',
+    '- Review fix R2-F002: not verified — see Deviations & Follow-ups',
     '- Unplanned path src/orphan.ts — see Deviations & Follow-ups',
     '- Rejected SHOULD finding review-alpha:R1-F010 — see Review Findings & Resolutions',
     '- Plan edit (intent) seq 2 — see Deviations & Follow-ups',
@@ -111,8 +111,8 @@ test('walkthrough review focus points to attention details in their owning secti
   const deviations = section(rendered, '## Deviations & Follow-ups', '## Review Findings & Resolutions');
   for (const detail of [
     'No user decision is needed.', 'diff/plan.patch', 'Confirm the remaining owner.', 'review-alpha:R1-F011', 'src/orphan.ts',
-    '- Deviation: cap-ending SHOULD fix R2-F001: verified but not re-reviewed; commit dddddddddddd; paths src/report.ts',
-    '- Deviation: cap-ending SHOULD fix R2-F002: not verified; commit eeeeeeeeeeee; paths none',
+    '- Deviation: review fix R2-F001: verified but not re-reviewed; commit dddddddddddd; paths src/report.ts',
+    '- Deviation: review fix R2-F002: not verified; commit eeeeeeeeeeee; paths none',
   ]) assert.ok(deviations.includes(detail), detail);
   const findings = section(rendered, '## Review Findings & Resolutions', '## Appendix');
   for (const detail of ['R1-F011', 'The evidence is incomplete.', 'R1-F012', 'The rejected CONSIDER stays with findings.']) {
@@ -194,11 +194,24 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
 
   assert.ok(section(rendered, '## Verification', '## Deviations & Follow-ups').includes('- **Test cleanup:** deleted 3 · merged 1 tests; criteria with tests removed: SC1 at fedcba654321'));
   const deviations = section(rendered, '## Deviations & Follow-ups');
+  assert.match(section(rendered, '## Review Focus', '## Behaviour Changes'), /- Review fix R1-F001: verified but not re-reviewed — see Deviations & Follow-ups/);
+  assert.match(deviations, /- Deviation: review fix R1-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/report\.ts/);
   for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010']) assert.ok(deviations.includes(detail), detail);
   const findings = section(rendered, '## Review Findings & Resolutions');
   for (const detail of ['| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |', '[findings](.state/reviews/review-alpha/round-1/findings.json)']) assert.ok(findings.includes(detail), detail);
   assert.ok(!appendix.includes('Review Findings & Resolutions') && !appendix.includes('Deviations & Follow-ups'));
   assert.ok(rendered.indexOf('## Verification') < rendered.indexOf('## Deviations & Follow-ups') && rendered.indexOf('## Review Findings & Resolutions') < rendered.indexOf('## Appendix'));
+});
+
+test('walkthrough lists a re-reviewed fix only in deviations', () => {
+  const rendered = renderWalkthrough(view({
+    reviewFixes: [{
+      commit: 'd'.repeat(40), reason: 'repair', status: 're-reviewed', paths: ['src/report.ts'],
+      metadata: { review: 'code-integration', round: 1, generation: 1, findings: ['R1-F001'], from: 'c'.repeat(40) },
+    }],
+  }));
+  assert.doesNotMatch(section(rendered, '## Review Focus', '## Behaviour Changes'), /R1-F001/);
+  assert.match(section(rendered, '## Deviations & Follow-ups'), /- Deviation: review fix R1-F001: re-reviewed; commit dddddddddddd; paths src\/report\.ts/);
 });
 
 test('walkthrough names the evidence tree of removed criteria', () => {

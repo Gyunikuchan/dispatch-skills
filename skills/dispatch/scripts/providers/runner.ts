@@ -60,8 +60,9 @@ export function sanitizeEnv(env: Readonly<Record<string, string | undefined>>): 
 
 // SECTION: Sensitive-file guardrail
 
+const DENIED_EXTENSIONS = ['pem', 'key', 'pkcs12', 'pfx', 'p12', 'kdbx', 'keystore', 'jks', 'ovpn'] as const;
 const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
-  /\.env($|\..+)/i, /\.(pem|key|pkcs12|pfx|p12|kdbx|keystore|jks)$/i, /\.(ovpn)$/i, /id_(rsa|dsa|ecdsa|ed25519)($|\.)/i, /\.npmrc$/i,
+  /\.env($|\..+)/i, new RegExp(`\\.(?:${DENIED_EXTENSIONS.join('|')})$`, 'i'), /id_(rsa|dsa|ecdsa|ed25519)($|\.)/i, /\.npmrc$/i,
   /\.pypirc$/i, /\.netrc$/i, /\.htpasswd$/i, /\.pgpass$/i, /\.my\.cnf$/i, /\.s3cfg$/i, /\.boto$/i, /\.terraformrc$/i, /terraform\.rc$/i,
   /wp-config\.php$/i, /\.git[/\\]credentials/i, /\.git-credentials$/i, /\.aws[/\\]credentials/i, /\.ssh[/\\]/i, /\.gnupg[/\\]/i,
   /\.docker[/\\]config\.json$/i, /\.vault-token$/i, /credentials\.json$/i, /service[-_]?account.*\.json$/i,
@@ -77,10 +78,11 @@ const SENSITIVE_DIR_PATTERNS: readonly RegExp[] = [
   /[/\\]AppData[/\\]Roaming[/\\]GitHub CLI([/\\]|$)/i, /[/\\]Microsoft[/\\]Credentials([/\\]|$)/i,
 ];
 
-// NOTE: hand-written prose mirroring the patterns above; readable examples beat regex noise. Keep in sync.
+// Keep the handwritten patterns in sync with the regexes above.
 const DENYLIST_BLOCK =
-  '[DENIED FILE PATTERNS]: .env*, *.pem, *.key, *.ovpn, id_rsa*, .npmrc, .pypirc, .netrc, .htpasswd, .pgpass, .my.cnf, .s3cfg, .boto, '
-  + '.terraformrc, terraform.rc, wp-config.php, .git-credentials, .docker/config.json, .vault-token, credentials.json, service-account*.json, *token*, *secret*\n'
+  `[DENIED FILE PATTERNS]: .env*, ${DENIED_EXTENSIONS.map(extension => '*.' + extension).join(', ')}, id_rsa*, .npmrc, .pypirc, .netrc, .htpasswd, .pgpass, .my.cnf, .s3cfg, .boto, `
+  + '.terraformrc, terraform.rc, wp-config.php, .git-credentials, .docker/config.json, .vault-token, credentials.json, service-account*.json, '
+  + 'whole basename words token, secret, or secrets (case-insensitive, with any character other than ASCII letters and digits as a separator, e.g. api_token.txt and client-secrets.json)\n'
   + '[DENIED DIRECTORIES]: .ssh/, .gnupg/, .gpg/, .aws/, .azure/, .docker/, .password-store/, .kube/, .helm/, .terraform.d/, .config/gcloud/, '
   + '.config/gh/, .config/op/, .local/share/keyrings/, AppData/Roaming/gcloud/, AppData/Roaming/GitHub CLI/, Microsoft/Credentials/';
 
@@ -100,7 +102,7 @@ export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string;
   const worktreeReal = physicalWorktree && physicalWorktree !== worktree ? ` (resolved ${physicalWorktree})` : '';
   const checkouts = scope.worktreeRoots?.length ? ` or a resolved checkout directory (${scope.worktreeRoots.join(', ')})` : '';
   const sessionExemption = scope.sessionRoot
-    ? `[SESSION ARTIFACTS]: a file under ${scope.sessionRoot}${real} whose resolved path is also under ${scope.sessionRealRoot ?? scope.sessionRoot} is exempt from *token* and *secret*, except a file under ${worktree}${worktreeReal}${checkouts}; every other denied pattern applies; if the path cannot be resolved, no exemption applies.\n`
+    ? `[SESSION ARTIFACTS]: a file under ${scope.sessionRoot}${real} whose resolved path is also under ${scope.sessionRealRoot ?? scope.sessionRoot} is exempt from the whole basename words token, secret, and secrets, except a file under ${worktree}${worktreeReal}${checkouts}; every other denied pattern applies; if the path cannot be resolved, no exemption applies.\n`
     : '';
   return `${GUARDRAIL_HEADER}\n`
     + 'You are running in strict READ-ONLY analysis mode.\n'

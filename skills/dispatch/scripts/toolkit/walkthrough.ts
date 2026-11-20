@@ -3,18 +3,10 @@ import { neutralizeComments } from './domain/sanitize.ts';
 import type { CoverageState } from './coverage.ts';
 import type { CriterionStatus } from './evidence.ts';
 import { renderFindingsSection, type RoundLink } from './review-findings.ts';
-import type { ReviewFix } from './records.ts';
+import type { ReviewFixReport } from './report.ts';
 
 type Status = CriterionStatus;
 type Owner = { id: string; title: string };
-type ReviewFixReport = {
-  commit: string;
-  reason: string;
-  metadata: ReviewFix;
-  status: 'verified but not re-reviewed' | 'not verified';
-  paths: readonly string[];
-  verification?: { tree: string; criteria: readonly string[]; contract: readonly string[] };
-};
 
 export type WalkthroughView = {
   title: string;
@@ -124,7 +116,7 @@ function reviewFocus(view: WalkthroughView): string[] {
     attention.push(`- ${label} criterion ${line(row.criterion)} — see Verification`);
   }
   for (const fix of view.reviewFixes ?? []) {
-    attention.push(`- Cap-ending SHOULD fix ${reviewFixFindings(fix)}: ${fix.status} — see Deviations & Follow-ups`);
+    if (fix.status !== 're-reviewed') attention.push(`- Review fix ${reviewFixFindings(fix)}: ${fix.status} — see Deviations & Follow-ups`);
   }
   for (const file of view.unplannedPaths) attention.push(`- Unplanned path ${line(file)} — see Deviations & Follow-ups`);
   for (const row of view.reviewRows) {
@@ -248,7 +240,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     `- Deviation: ${line(edit.artifact)} edit (${line(edit.class)}) seq ${edit.seq}: ${line(edit.rationale)}; diff ${line(edit.diffRef)}; affects ${edit.affects.length ? edit.affects.map(line).join(', ') : 'none'}`);
   deviations.push(...view.unplannedPaths.map((path) => `- Deviation: unplanned change ${line(path)}`));
   deviations.push(...(view.reviewFixes ?? []).map((fix) =>
-    `- Deviation: cap-ending SHOULD fix ${reviewFixFindings(fix)}: ${fix.status}; commit ${line(fix.commit).slice(0, 12)}; paths ${fix.paths.length ? fix.paths.map(line).join(', ') : 'none'}`));
+    `- Deviation: review fix ${reviewFixFindings(fix)}: ${fix.status}; commit ${line(fix.commit).slice(0, 12)}; paths ${fix.paths.length ? fix.paths.map(line).join(', ') : 'none'}`));
   const followUps = [
     ...view.openEscalations.map((item) => `- Follow-up: escalation ${line(item.id)}: ${line(item.summary)}`),
     ...view.deferredRulings.map((item) => `- Follow-up: deferred ${line(item.review)}:${line(item.finding)}`),

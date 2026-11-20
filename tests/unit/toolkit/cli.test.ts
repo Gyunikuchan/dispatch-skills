@@ -14,6 +14,7 @@ import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { reviewFixFromCommit, reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+import { checks as checkPlan, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 
 function useMemoryAtomicWrite(): () => void {
   const writeAtomic = nodeLinkFs.writeAtomic;
@@ -22,6 +23,57 @@ function useMemoryAtomicWrite(): () => void {
 }
 
 describe('toolkit CLI contract', () => {
+  test('test cleanup trailer: clips a multiline reason and recovers the interrupted commit', async () => {
+    const f = sessionFixture({memory:true});
+    try {
+      const from = 'a'.repeat(40), to = 'b'.repeat(40), tree = 'c'.repeat(40);
+      const why = 'remove\n\t' + 'x'.repeat(77) + '😀' + 'y'.repeat(120);
+      const criterion = 'SC1';
+      const cleanup = { removed: [criterion], deleted: 2, merged: 1 };
+      fs.mkdirSync(path.join(f.session, '.state/worktrees/integration'), {recursive:true});
+      f.artifact('mission.spec.md', '# Mission\n');
+      f.artifact('work.plan.md', [
+        '# Work', '## Task Map', '| ID | Title | Outcome | Prerequisites | Criteria |',
+        '| --- | --- | --- | --- | --- |', '| T1 | Tests | Tests pass | none | ' + criterion + ' |',
+        '## Proposed Changes', '### T1 — Tests', '#### [MODIFY] tests/step.ts', '- Purpose: Tests behavior.',
+        '## Success Criteria', '- [' + criterion + '] Tests pass', '  - Changes: tests/step.ts',
+        '  - Tests: tests/step.ts', '  - Check: `node --version`', '  - Evidence: check',
+        '## Verification Plan', '### Automated Tests', '- `node --version`',
+      ].join('\n'));
+      await appendRecord(f.session, {kind:'bind',key:'commit-inputs',by:'orchestrator',data:{spec:'mission.spec.md',plan:'work.plan.md'}}, f.deps);
+      await appendRecord(f.session, {kind:'integrate',by:'tool',data:{phase:'opened',path:'.state/worktrees/integration',branch:'dispatch/test/integration',base:from,dest:{path:f.root,branch:'main'}}}, f.deps);
+      const check = checkPlan(loadPlan(f.session, readManifest(f.session))).find(row => row.criterion === criterion)!;
+      await appendRecord(f.session, {kind:'evidence',by:'tool',data:{
+        criterion, commandDigest:check.commandDigest, tree, before:tree, after:tree, clean:true, exit:0, path:'.state/evidence/test.json',
+      }}, f.deps);
+      const file = path.join(f.root, 'test-cleanup.json');
+      fs.writeFileSync(file, JSON.stringify(cleanup));
+      let head = from, message = '';
+      f.deps.run = async (argv) => {
+        const args = argv.slice(1);
+        let stdout = '';
+        if (args[0] === 'rev-parse') {
+          stdout = args[1] === 'HEAD' ? head : args[1] === 'HEAD^' ? from : tree;
+        } else if (args[0] === 'diff') {
+          if (head === from || args.includes(from)) stdout = 'tests/step.ts\0';
+        } else if (args[0] === 'commit') {
+          message = args.filter((_, index) => args[index - 1] === '-m').join('\n\n');
+          head = to;
+        } else if (args[0] === 'log') {
+          stdout = message;
+        } else if (args[0] !== 'ls-files' && args[0] !== 'add') {
+          throw Error('Unexpected Git call: ' + JSON.stringify(argv));
+        }
+        return {exit:0,stdout,stderr:''};
+      };
+      const args = ['worktree','commit','--reason',why,'--test-cleanup',file,'--session',f.session];
+      assert.equal(await main(args, {...f.deps, hook: () => { throw Error('interrupted'); }}), 2);
+      assert.equal(message.split('\n\n')[0], 'fix(dispatch): remove ' + 'x'.repeat(77));
+      f.lines.length = 0;
+      assert.equal(await main(args, f.deps), 0);
+      assert.equal(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reason, why);
+    } finally { f.cleanup(); }
+  });
   test('commit retries distinguish corrupt correction metadata from completed retries', async () => {
     const f = sessionFixture({memory:true});
     try {

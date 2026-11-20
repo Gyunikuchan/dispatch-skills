@@ -29,8 +29,10 @@ export function reviewFixIdentity(value: ReviewFix): { digest: string; data: str
 }
 const FIX_DATA = 'Dispatch-Review-Fix-Data: ';
 // NOTE: commitlint config-conventional caps body and footer lines at 100 characters, so the data trailer repeats in ordered chunks.
+const dataTrailers = (prefix: string, data: string): string[] =>
+  (data.match(new RegExp(`.{1,${100 - prefix.length}}`, 'g')) ?? []).map(chunk => prefix + chunk);
 export const reviewFixTrailers = (value: ReviewFix, {digest, data} = reviewFixIdentity(value)): string =>
-  ['Dispatch-Review-Fix: ' + digest, ...(data.match(new RegExp(`.{1,${100 - FIX_DATA.length}}`, 'g')) ?? []).map(chunk => FIX_DATA + chunk)].join('\n');
+  ['Dispatch-Review-Fix: ' + digest, ...dataTrailers(FIX_DATA, data)].join('\n');
 export function reviewFixFromCommit(message: string): ReviewFix | undefined {
   const digests = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix: '));
   const values = message.split(/\r?\n/).filter(line => line.startsWith(FIX_DATA));
@@ -177,12 +179,17 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
     const dirty=(await changedPaths(ctx.deps,cwd,'HEAD')).length>0;
     const message=dirty?'':await gitOk(ctx.deps,cwd,['log','-1','--format=%B']);
     const lines=message.split('\n');
-    const cleanupTrailer=lines.find(line=>line.startsWith(TRAILER));
+    const cleanupTrailers=lines.filter(line=>line.startsWith(TRAILER));
     if(cleanup) {
       // SECTION: test cleanup commit; a clean tree recovers an interrupted commit from its trailer
       if(tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='test-cleanup'))refuse('test-cleanup-recorded');
-      const trailer=TRAILER+stableValue(cleanup);
-      if(!dirty && (lines[0]!=='fix(dispatch): '+why || !lines.includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || cleanupTrailer!==trailer))refuse('no-changes');
+      const header='fix(dispatch): '+why.replace(/\s+/g,' ').slice(0,85).replace(/[\uD800-\uDBFF]$/u,'').trimEnd();
+      const canonical=stableValue(cleanup);
+      if(!dirty) {
+        const encoded=cleanupTrailers.map(line=>line.slice(TRAILER.length)).join('');
+        if(lines[0]!==header || !lines.includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) ||
+            !/^[A-Za-z0-9_-]+$/.test(encoded) || Buffer.from(encoded,'base64url').toString('utf8')!==canonical)refuse('no-changes');
+      }
       const from=dirty?hash:await gitOk(ctx.deps,cwd,['rev-parse','HEAD^']);
       const fromTree=await gitOk(ctx.deps,cwd,['rev-parse',from+'^{tree}']);
       const plan=loadPlan(ctx.session,ctx.manifest);
@@ -203,7 +210,8 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
       const untouched=cleanup.removed.filter(id=>!changed.some(file=>matchesDeclared(file,plan.criteria.find(c=>c.id===id)!.tests)));
       if(untouched.length)refuse('test-cleanup-paths-unchanged','No declared Tests path changed for '+untouched.join(', '));
       if(dirty) {
-        await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,'-m',trailer]);
+        const trailer=dataTrailers(TRAILER,Buffer.from(canonical).toString('base64url')).join('\n');
+        await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m',header,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,'-m',trailer]);
         await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
       }
       await tx.append({kind:'integrate',by:'tool',data:{phase:'test-cleanup',from,fromTree,to:hash,...cleanup,trees:evidence.trees}});
@@ -214,7 +222,7 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
       await gitOk(ctx.deps,cwd,['add','-A']); await gitOk(ctx.deps,cwd,['commit','-m','fix(dispatch): '+why,'-m','Dispatch-Fix: '+ctx.manifest.safeSessionId,...identity]);
       await ctx.deps.hook?.('commit:after-commit'); hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     } else {
-      if(cleanupTrailer!==undefined || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='test-cleanup' && r.data['to']===hash))refuse('no-changes');
+      if(cleanupTrailers.length || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='test-cleanup' && r.data['to']===hash))refuse('no-changes');
       if(lines[0]!=='fix(dispatch): '+why || !lines.includes('Dispatch-Fix: '+ctx.manifest.safeSessionId) || tx.fold.records.some(r=>r.kind==='integrate' && r.data['phase']==='fix' && r.data['commit']===hash))refuse('no-changes');
       const recorded=reviewFixFromCommit(message);
       if(recorded && reviewFix && stableValue(recorded)!==stableValue(reviewFix))refuse('no-changes');

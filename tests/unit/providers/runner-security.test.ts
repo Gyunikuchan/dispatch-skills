@@ -239,6 +239,20 @@ test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked 
   for (const name of ['tokenizer.ts', 'secretary.md']) assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
 });
 
+test('denylist prose: names every denied extension', () => {
+  const prompt = formatSafetyPrompt('Review it');
+  for (const extension of ['pem', 'key', 'pkcs12', 'pfx', 'p12', 'kdbx', 'keystore', 'jks', 'ovpn']) {
+    assert.equal(findSensitiveMatch(`x.${extension}`, (file) => file), 'file', `.${extension} remains denied`);
+    assert.match(prompt, new RegExp(`\\*\\.${extension}(?=,|\\s|$)`), `prompt names .${extension}`);
+  }
+});
+
+test('denylist prose: describes the whole basename word rule', () => {
+  const prompt = formatSafetyPrompt('Review it');
+  assert.match(prompt, /whole basename words token, secret, or secrets/);
+  assert.match(prompt, /ASCII letters and digits/);
+});
+
 test('session artifact word patterns are exempt', async () => {
   const session = '/sessions/20261101T0000Z-prose-token-diet';
   const file = `${session}/round-notes-token.md`;
@@ -349,7 +363,7 @@ test('relocated worktree word patterns stay denied', () => {
 
 test('safety prompt states session exemption', async () => {
   const session = '/sessions/20261101T0000Z-prose-token-diet';
-  const line = `[SESSION ARTIFACTS]: a file under ${session} whose resolved path is also under ${session} is exempt from *token* and *secret*, except a file under ${session}/.state/worktrees; every other denied pattern applies; if the path cannot be resolved, no exemption applies.`;
+  const line = `[SESSION ARTIFACTS]: a file under ${session} whose resolved path is also under ${session} is exempt from the whole basename words token, secret, and secrets, except a file under ${session}/.state/worktrees; every other denied pattern applies; if the path cannot be resolved, no exemption applies.`;
   const prompt = formatSafetyPrompt('Review it', { sessionRoot: session });
   assert.ok(prompt.includes(line), prompt);
   assert.ok(prompt.indexOf('[DENIED DIRECTORIES]') < prompt.indexOf('[SESSION ARTIFACTS]'));

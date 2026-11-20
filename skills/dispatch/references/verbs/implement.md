@@ -11,7 +11,7 @@ Resolve the [governing spec](../spec-stage.md#readers-and-document-layers) and p
 7. Apply [shared](../templates/quality-bar.md#shared) and [testing](../templates/quality-bar.md#testing) when scoping and adjudicating cleanup; its retention gates match code review's [testing](../templates/quality-bar.md#testing) bar.
    - Run the test cleanup after step 6 passes and before code review, at every run level.
    - Launch it when `git diff --name-only <base>..HEAD` in the integration worktree names a path declared in any plan criterion `Tests:` field.
-   - Otherwise judge each changed path against host test conventions and skip only when none is a test, fixture or helper file; a skip records and commits nothing.
+   - Otherwise judge each changed path against host test conventions and skip only when none is a test, fixture or helper file; for a skip, append a `note` keyed `test-cleanup:skip` naming the judged paths and commit nothing.
    - To launch, render the [test-cleanup brief](../templates/test-cleanup-brief.md) with the [`brief test-cleanup`](../toolkit.md#brief-test-cleanup) action from a values file holding `base` and `integrationPath`; the action derives `planPath` from the bind record and refuses when no plan is bound.
    - Launch one utility subagent ([routing](../../SKILL.md#routing)) on the `brief test-cleanup` result; it runs only its edited test files.
    - When it reports, check that the report ends with its JSON block, every `removed` ID is a plan criterion and the counts are non-negative integers; then copy the block to `<session>/.state/test-cleanup.json`.

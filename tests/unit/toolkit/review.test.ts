@@ -1279,3 +1279,147 @@ test('review run refuses with host-sandboxed under sandboxed claude host', async
   }
 });
 
+
+const WRONG_REVIEW_TARGET = 'implement code review targets integration, not worktree';
+const NO_VERIFICATION = 'no current runtime verification recorded before integration review';
+const NO_TEST_CLEANUP = 'no test cleanup recorded before integration review';
+const INTEGRATION_BASE = 'c'.repeat(40);
+const INTEGRATION_HEAD = 'd'.repeat(40);
+const CLEANUP_HEAD = 'e'.repeat(40);
+const integrationPath = '.state/worktrees/integration';
+
+async function openReviewIntegration(f: ReviewFixture) {
+  fs.mkdirSync(path.join(f.session, integrationPath), {recursive: true});
+  await f.add('integrate', {phase: 'opened', path: integrationPath, branch: 'integration', base: INTEGRATION_BASE, dest: {path: f.root, branch: 'main'}});
+  await f.add('integrate', {phase: 'done', task: 'T1', commit: INTEGRATION_HEAD});
+}
+
+function recordReviewVerification(f: ReviewFixture, open: string[] = []) {
+  return f.add('integrate', {phase: 'verification', cycle: 1, outcome: open.length ? 'partial' : 'proved', head: INTEGRATION_HEAD, reason: 'Runtime checks', open, report: 'verification.md'});
+}
+
+function recordCleanupSkip(f: ReviewFixture) {
+  return addRecord(f, {kind: 'note', by: 'orchestrator', key: 'test-cleanup:skip', data: {text: 'Reviewed src/file.ts'}});
+}
+
+function writeCleanupReport(f: ReviewFixture, deleted: number, prefix = '') {
+  fs.writeFileSync(path.join(f.session, '.state/test-cleanup.json'), prefix + JSON.stringify({removed: [], deleted, merged: 0}));
+}
+
+function assertReviewWarning(f: ReviewFixture, result: Awaited<ReturnType<ReviewFixture['call']>>, warning: string | undefined) {
+  assert.equal(result.exit, 0, JSON.stringify(result));
+  assert.ok(fs.existsSync(path.join(f.session, result.value.findingsFile)), 'round persisted findings.json');
+  assert.equal(result.value.warning, warning);
+  const prefix = warning === undefined ? 'review ' : 'warning: ' + warning + '; review ';
+  assert.ok(result.output.summary.startsWith(prefix), result.output.summary);
+  assert.ok(Buffer.byteLength(result.output.summary, 'utf8') <= 1024);
+}
+
+for (const integrated of [true, false]) {
+  test('review warning: ' + (integrated ? 'worktree after task integration' : 'standalone worktree has none'), async () => {
+    const f = await fixture();
+    try {
+      worktreeRun(f);
+      if (integrated) await openReviewIntegration(f);
+      const result = await f.call('code', 'worktree', 'low');
+      assertReviewWarning(f, result, integrated ? WRONG_REVIEW_TARGET : undefined);
+    } finally { f.cleanup(); }
+  });
+}
+
+const integrationWarningCases: {
+  name: string;
+  prepare?: (f: ReviewFixture) => unknown;
+  arrange?: (f: ReviewFixture) => unknown;
+  warning?: string;
+  dirty?: boolean;
+  cleanupCommit?: boolean;
+}[] = [
+  {name: 'missing verification and cleanup', warning: NO_VERIFICATION + '; ' + NO_TEST_CLEANUP},
+  {name: 'verification from before integration opened', prepare: recordReviewVerification, arrange: recordCleanupSkip, warning: NO_VERIFICATION},
+  {name: 'verification still has open items', arrange: async f => {
+    await recordReviewVerification(f);
+    await recordReviewVerification(f, ['1:V1']);
+    await recordCleanupSkip(f);
+  }, warning: NO_VERIFICATION},
+  {name: 'verification overturned by an accepted ruling', arrange: async f => {
+    await recordReviewVerification(f);
+    await f.add('ruling', {subject: 'verification:1:V1', ruling: 'accepted', rationale: 'Needs repair'});
+    await recordCleanupSkip(f);
+  }, warning: NO_VERIFICATION},
+  {name: 'cleanup brief with no report', arrange: async f => {
+    await recordReviewVerification(f);
+    fs.mkdirSync(path.join(f.session, '.state/briefs'), {recursive: true});
+    fs.writeFileSync(path.join(f.session, '.state/briefs/test-cleanup-1.md'), 'Cleanup requested');
+  }, warning: NO_TEST_CLEANUP},
+  {name: 'nonzero cleanup report without a record', arrange: async f => {
+    await recordReviewVerification(f);
+    writeCleanupReport(f, 1);
+  }, warning: NO_TEST_CLEANUP},
+  {name: 'zero-count cleanup report with an uncommitted rewrite', arrange: async f => {
+    await recordReviewVerification(f);
+    writeCleanupReport(f, 0);
+  }, warning: NO_TEST_CLEANUP, dirty: true},
+  {name: 'zero-count cleanup report on a clean worktree', arrange: async f => {
+    await recordReviewVerification(f);
+    writeCleanupReport(f, 0, '\uFEFF');
+  }},
+  {name: 'verification followed by recorded cleanup commit', arrange: async f => {
+    await recordReviewVerification(f);
+    writeCleanupReport(f, 1);
+    await f.add('integrate', {phase: 'test-cleanup', from: INTEGRATION_HEAD, fromTree: INTEGRATION_HEAD, to: CLEANUP_HEAD, removed: [], deleted: 1, merged: 0, trees: {}});
+  }, cleanupCommit: true},
+  {name: 'verification and cleanup skip', arrange: async f => {
+    await f.add('ruling', {subject: 'verification:1:V1', ruling: 'accepted', rationale: 'Needs repair'});
+    await recordReviewVerification(f);
+    await recordCleanupSkip(f);
+  }},
+];
+
+for (const item of integrationWarningCases) {
+  test('review warning: ' + item.name, async () => {
+    const f = await fixture();
+    try {
+      fs.writeFileSync(f.plan, VALID_TASK_PLAN);
+      await item.prepare?.(f);
+      await openReviewIntegration(f);
+      await item.arrange?.(f);
+      f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
+        argv[1] === 'rev-parse' ? (item.cleanupCommit ? CLEANUP_HEAD : INTEGRATION_HEAD)
+          : argv[1] === 'diff' ? 'src/file.ts\0'
+            : argv.includes('status') && item.dirty ? ' M src/file.ts\0' : ''});
+      const result = await f.call('code', 'integration', 'low');
+      assertReviewWarning(f, result, item.warning);
+    } finally { f.cleanup(); }
+  });
+}
+
+test('review warning: re-review reports missing verification ahead of long repository-change paths', async () => {
+  const f = await fixture();
+  try {
+    fs.writeFileSync(f.plan, VALID_TASK_PLAN);
+    await openReviewIntegration(f);
+    await recordReviewVerification(f);
+    await recordCleanupSkip(f);
+    let head = INTEGRATION_HEAD;
+    f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
+      argv[1] === 'rev-parse' ? head : argv[1] === 'diff' ? 'src/file.ts\0' : ''});
+    const first = await f.call('code', 'integration', 'low');
+    assert.equal(first.exit, 0, JSON.stringify(first));
+    const findings = JSON.parse(fs.readFileSync(first.value.path, 'utf8')).findings;
+    for (const finding of findings) {
+      await f.add('ruling', {subject: 'review:code-integration:' + finding.id, ruling: 'accepted', rationale: 'Fixed'});
+    }
+    await recordReviewVerification(f, ['1:V1']);
+    head = CLEANUP_HEAD;
+    const fanout = path.join(f.session, '.state/reviews/code-integration/round-2/gen-1');
+    fs.mkdirSync(fanout, {recursive: true});
+    const removedPaths = Object.fromEntries(Array.from({length: 12}, (_, i) => ['src/' + 'a'.repeat(115) + i + '.ts', '? removed - old-hash']));
+    fs.writeFileSync(path.join(fanout, 'checkout-baseline.json'), JSON.stringify({checkouts: [{cwd: path.join(f.session, integrationPath), head, entries: removedPaths}]}));
+    planDelegate(f, CLEAN);
+    const second = await f.call('code', 'integration', 'low');
+    assertReviewWarning(f, second, NO_VERIFICATION);
+    assert.equal(second.value.round, 2);
+    assert.match(second.output.summary, /repository changes: .*…$/);
+  } finally { f.cleanup(); }
+});

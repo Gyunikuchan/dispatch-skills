@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { nodeLinkFs } from '../lib/node-fs-ext.ts';
+import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
-import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Hashes } from './ledger.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Fold, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
@@ -275,6 +276,39 @@ const planPaths = (source: string) => {const parsed = parsePlan(source); return 
 const designPaths = (source: string) => parseIncrementGraph(structuralLines(source)).increments.flatMap(increment => increment.paths);
 const turnTarget = (paths: string[]) => 6 + 2 * new Set(paths).size;
 
+async function cleanupComplete(ctx: HandlerContext, records: Fold['records'], cwd: string): Promise<boolean> {
+  if (records.some(row => (row.kind === 'integrate' && row.data['phase'] === 'test-cleanup') ||
+      (row.kind === 'note' && row.key === 'test-cleanup:skip'))) return true;
+  try {
+    const report = JSON.parse(stripBom(fs.readFileSync(path.join(ctx.session, '.state/test-cleanup.json'), 'utf8')));
+    if (!Array.isArray(report?.removed) || report.removed.length || report.deleted !== 0 || report.merged !== 0) return false;
+    const status = await git(ctx.deps, cwd, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+    return status.exit === 0 && !status.stdout;
+  } catch {
+    // Unreadable evidence still permits review.
+    return false;
+  }
+}
+
+async function reviewWarning(ctx: HandlerContext, target: string, cwd: string): Promise<string> {
+  const fold = foldLedger(ctx.session);
+  if (target === 'worktree' && latest(fold, 'bind')?.data['plan'] &&
+      fold.records.some(row => row.kind === 'integrate' && row.data['phase'] === 'done'))
+    return 'implement code review targets integration, not worktree';
+  if (target !== 'integration') return '';
+  const opened = integrationRecord(fold)!;
+  // Use the delivery proof rule so a subsequent cleanup commit preserves verification.
+  const records = fold.records.filter(row => row.seq > opened.seq);
+  const proof = records.findLast(row => row.kind === 'integrate' && row.data['phase'] === 'verification');
+  const warnings: string[] = [];
+  if (!proof || proof.data['open'].length || records.some(row => row.seq > proof.seq && row.kind === 'ruling' &&
+      row.data['subject'].startsWith('verification:') && row.data['ruling'] === 'accepted'))
+    warnings.push('no current runtime verification recorded before integration review');
+  if (!(await cleanupComplete(ctx, fold.records, cwd)))
+    warnings.push('no test cleanup recorded before integration review');
+  return warnings.join('; ');
+}
+
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const {session, manifest, deps} = ctx;
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One review target is required: ' + CODE_TARGETS + '; plan and design targets are artifact paths');
@@ -441,6 +475,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
     let round = read<Round>(roundFile);
     if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
+    const warning = kind === 'code' && (requested === 'integration' || requested === 'worktree')
+      ? await reviewWarning(ctx, requested, current.cwd) : '';
+    const warningPrefix = warning ? 'warning: ' + warning + '; ' : '';
+    const warningValue = warning ? {warning} : {};
     const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {}, confirmationRounds:ConfirmationRound[]=[];
     for (let i = 1; i < n; i++) {
       const value = read<FindingsValue>(path.join(directory, 'round-' + i, 'findings.json'));
@@ -753,7 +791,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         await writeBaselineIfMissing(dir, round.generation, baselineDirs, session, deps);
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
         const wave = cliWaveState(fanoutDir);
-        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: summaryWithItems('review ' + review + ': ' + nativePendingNote(native.length, wave) + (notice ? '; ' + notice : '') + underfillNote(round), nativeSummaryItems(native))};
+        return {ok: false, exit: 4, reason: 'native-pending', value: {review, round: n, pending: native, ...warningValue, ...(wave !== undefined ? {cliWave: wave} : {}), ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}), ...(state.blocked.length ? {blocked: publicBlocked()} : {}), ...(state.blockers.length ? {blockers: state.blockers} : {}), ...(round.underfill ? {underfill: round.underfill} : {})}, summary: summaryWithItems(warningPrefix + 'review ' + review + ': ' + nativePendingNote(native.length, wave) + (notice ? '; ' + notice : '') + underfillNote(round), nativeSummaryItems(native))};
       }
       // A capture or compare failure never blocks finalization: it keeps all
       // replies and reports repositoryCheck. Runs after the existing same check,
@@ -874,14 +912,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const checkSuffix = pending.repositoryCheck ? `, repository check unavailable: ${pending.repositoryCheck.reason}` : '';
     const countsAndFiles = ` round ${n}/${round.cap}: ${counts('MUST')} MUST, ${counts('SHOULD')} SHOULD, ${counts('CONSIDER')} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ''}${fixInduced ? `, ${fixInduced} fix-induced` : ''}; findings ${findingsFile}; rulings ${rulingsFile}`;
     // Leave room for the cap's ellipsis if the notices push the summary over budget.
-    const summaryReview = Buffer.byteLength('review ' + review + countsAndFiles, 'utf8') > 1021 ? clipBytes(review, 40) : review;
-    const countsHead = 'review ' + summaryReview + countsAndFiles + (blockedSummary ? '; ' + blockedSummary : '') + underfillNote(round);
+    const summaryReview = Buffer.byteLength(warningPrefix + 'review ' + review + countsAndFiles, 'utf8') > 1021 ? clipBytes(review, 40) : review;
+    const countsHead = warningPrefix + 'review ' + summaryReview + countsAndFiles + (blockedSummary ? '; ' + blockedSummary : '') + underfillNote(round);
     const suffixes = changedSuffix + checkSuffix;
     const summaryHead = countsHead + hotUnitsNotice(pending.units, Buffer.byteLength(countsHead + suffixes, 'utf8')) + suffixes;
     return {
       ok: true, exit: 0,
       value: {
-        path: file, review, round: n, budget, findingsFile, rulingsFile,
+        path: file, review, round: n, budget, findingsFile, rulingsFile, ...warningValue,
         ...(ignoredFailureReports.length ? {ignoredFailureReports} : {}),
         ...(pending.repositoryChanges ? {repositoryChanges: pending.repositoryChanges} : {}),
         ...(pending.repositoryCheck ? {repositoryCheck: pending.repositoryCheck} : {}),

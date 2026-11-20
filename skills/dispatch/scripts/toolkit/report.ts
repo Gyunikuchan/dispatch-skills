@@ -1,10 +1,10 @@
-import { reviewIdentity, type ReviewIdentity } from './review-identity.ts';
+import { reviewIdentity } from './review-identity.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { cleanupBinding, criterionStatuses, latestCleanup, verifiedStage, type CriterionStatus } from './evidence.ts';
-import { git, gitOk, headTree, testedTree } from './git.ts';
+import { git, gitOk, headTree, splitPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
 import { readArtifact } from './artifacts.ts';
@@ -21,11 +21,11 @@ import type { ParsedPlan } from './domain/types.ts';
 import { loadRejections, applicableReviewIds, type RejectionState } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
 type Current = { headTree: string; testedTree: string };
-type ReviewFixReport = {
+export type ReviewFixReport = {
   commit: string;
   reason: string;
   metadata: ReviewFix;
-  status: 'verified but not re-reviewed' | 'not verified';
+  status: 're-reviewed' | 'verified but not re-reviewed' | 'not verified';
   paths: string[];
   verification?: { tree: string; criteria: string[]; contract: string[] };
 };
@@ -78,6 +78,36 @@ function recordForDestination(fold: Fold, integration: LedgerRecord): LedgerReco
     record.data['dest']?.path === dest?.path && record.data['dest']?.branch === dest?.branch);
 }
 
+function completedReviewHeads(session: string): string[] {
+  const root = path.join(session, '.state/reviews/code-integration');
+  const heads = new Set<string>();
+  if (!isDirectory(root)) return [];
+  for (const name of fs.readdirSync(root, {withFileTypes: true})) {
+    if (!name.isDirectory() || !/^round-\d+$/.test(name.name)) continue;
+    const directory = path.join(root, name.name);
+    if (!fs.existsSync(path.join(directory, 'findings.json'))) continue;
+    const round = readReviewJson<{scope?: string; generation?: number; target?: {head?: string}}>(path.join(directory, 'round.json'));
+    const head = round?.target?.head;
+    const generation = round?.generation;
+    if (typeof head !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ||
+        /\(confirmation-only\)/i.test(round?.scope ?? '') ||
+        typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1) continue;
+    const slots = path.join(directory, `gen-${generation}`, 'slots');
+    if (isDirectory(slots) && fs.readdirSync(slots, {withFileTypes: true}).some(file =>
+      file.isFile() && file.name.endsWith('.json') &&
+      readReviewJson<{state?: string}>(path.join(slots, file.name))?.state === 'done')) heads.add(head);
+  }
+  return [...heads];
+}
+
+function readReviewJson<T>(file: string): T | undefined {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; }
+  catch (error) {
+    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 /** Captures only the plan, ledger and Git facts needed to decide completion. */
 async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   const bind = latest(fold, 'bind');
@@ -104,37 +134,40 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   }
   const checkRows = checks(plan);
   const cleanup=cleanupBinding(fold),cleanupRecord=latestCleanup(fold);
-  let fixRecords=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['reviewFix']);
+  const fixRecords=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['reviewFix']);
   let reviewedCodeBaseline:string|undefined;
-  let corrections:ReviewIdentity|undefined;
   if(fixRecords.length&&integrationPath&&integration&&head&&typeof integration.data['base']==='string') {
     try {
-      corrections=await reviewIdentity(ctx,fold,integrationPath,head,integration.data['base']);
-      reviewedCodeBaseline=corrections.baseline;
+      reviewedCodeBaseline=(await reviewIdentity(ctx,fold,integrationPath,head,integration.data['base'])).baseline;
     } catch(error) {
       if(!(error instanceof ToolError&&error.reason==='review-required'))throw error;
     }
   }
-  if(corrections)fixRecords=fixRecords.filter(record=>record.seq>corrections!.startSeq);
-  const correctionVerified=():boolean=>{
-    if(!fixRecords.length||!corrections||!checkRows.length)return false;
-    return !!current&&verifiedStage(fold,checkRows,current,cleanup);
-  };
-  const hasCurrentVerification=correctionVerified();
-  const reviewFixes:ReviewFixReport[]=fixRecords.map(record=>{
+  const reviewHeads=fixRecords.length?completedReviewHeads(ctx.session):[];
+  const hasCurrentVerification=fixRecords.length&&current&&checkRows.length&&verifiedStage(fold,checkRows,current,cleanup);
+  const reviewFixes:ReviewFixReport[]=[];
+  const repository=ctx.manifest.repositoryRoot;
+  for(const record of fixRecords) {
+    const commit=String(record.data['commit']);
     const metadata=record.data['reviewFix'] as ReviewFix;
-    const accepted=corrections?.corrections.find(correction=>correction.commit===record.data['commit']&&correction.seq===record.seq);
-    const verification=accepted&&hasCurrentVerification?{
+    const isAncestor=async(target:string)=>(await git(ctx.deps,repository,['merge-base','--is-ancestor',commit,target])).exit===0;
+    let reviewed=false;
+    for(const target of reviewHeads) {
+      if(await isAncestor(target)) { reviewed=true; break; }
+    }
+    const verification=!reviewed&&head&&hasCurrentVerification&&await isAncestor(head)?{
       tree:current!.headTree,
       criteria:checkRows.filter(check=>check.criterion!=='contract').map(check=>check.criterion),
       contract:checkRows.filter(check=>check.criterion==='contract').map(check=>check.criterion),
     }:undefined;
-    return {
-      commit:String(record.data['commit']),reason:String(record.data['reason']),metadata,
-      status:verification?'verified but not re-reviewed':'not verified',paths:accepted?.paths??[],
+    const names=await git(ctx.deps,repository,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]);
+    reviewFixes.push({
+      commit,reason:String(record.data['reason']),metadata,
+      status:reviewed?'re-reviewed':verification?'verified but not re-reviewed':'not verified',
+      paths:names.exit===0?splitPaths(names.stdout):[],
       ...(verification?{verification}:{}),
-    };
-  });
+    });
+  }
   const statusRows = criterionStatuses(fold, checkRows, current, cleanup);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
   const deliveredAtHead = Boolean(delivered && head && delivered.data['source'] === head);
