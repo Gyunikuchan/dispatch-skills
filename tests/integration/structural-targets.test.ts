@@ -16,10 +16,10 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: Raised from 18887 to 19346 for I01's new contracts.ts (help call table schemas), hints.ts (B1 advisory stepHint), and input.ts (unified stdin/inline payload reader), plus recordSchemas() and cli.ts wiring; to be consolidated/reset in I04.
+  // NOTE: Raised from 19346 to 19763 for within-run check deduplication, opt-in --reuse command caching, strict latest-record evidence checks, and blocking citation validation (including unified ordered container-stack fence/section tracking and spaced-path/command filtering) until monolith decomposition.
   assert.ok(
-    lines <= 19346,
-    `driver TS LOC ${lines} exceeds 19346 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
+    lines <= 19763,
+    `driver TS LOC ${lines} exceeds 19763 budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
   );
   assert.ok(
     KINDS.length <= 14,

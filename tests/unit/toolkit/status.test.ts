@@ -225,3 +225,41 @@ test('status reports coverage admission for open and unreadable slots', async ()
       coverage: { state: 'readable', open: ['codex[0]'], decision: 'rerun', use: 'free' } });
   } finally { f.cleanup(); }
 });
+
+test('statusReport reflects latest strict criterion evidence across pass-fail-pass', async () => {
+  const { fakeGit } = await import('./helpers/fake-git.ts');
+  const { checks: planChecks, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
+  const { readManifest } = await import('../../../skills/dispatch/scripts/lib/session.ts');
+  const f = sessionFixture();
+  try {
+    f.artifact('mission.spec.md', 'mission');
+    f.artifact('work.plan.md', PLAN);
+    await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'tool', data: { spec: 'mission.spec.md', plan: 'work.plan.md' } }, f.deps);
+    const cwd = path.join(f.session, '.state/worktrees/integration');
+    fs.mkdirSync(cwd, { recursive: true });
+    const head = 'a'.repeat(40), tree = 'b'.repeat(40);
+    f.deps.run = fakeGit({ session: f.session, head, tree, testedTree: tree, changes: [], calls: [] });
+    await appendRecord(f.session, { kind: 'integrate', key: 'opened', by: 'tool', data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'integration', base: head, dest: { path: f.root, branch: 'main' } } }, f.deps);
+    const sc1 = planChecks(loadPlan(f.session, readManifest(f.session))).find((row) => row.criterion === 'SC1')!;
+    const appendEv = (seqTag: string, exit: number) => appendRecord(f.session, {
+      kind: 'evidence', key: `sc1-${seqTag}`, by: 'tool',
+      data: { criterion: 'SC1', commandDigest: sc1.commandDigest, tree, clean: true, before: tree, after: tree, exit, path: `.state/evidence/${seqTag}.json` },
+    }, f.deps);
+    const readStatus = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
+      const report = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return {
+        state: report.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state,
+        needsCheck: report.criteria.includes('SC1'),
+      };
+    };
+
+    await appendEv('pass-1', 0);
+    assert.deepEqual(await readStatus(), { state: 'verified', needsCheck: false });
+    await appendEv('fail-1', 1);
+    assert.deepEqual(await readStatus(), { state: 'missing', needsCheck: true });
+    await appendEv('pass-2', 0);
+    assert.deepEqual(await readStatus(), { state: 'verified', needsCheck: false });
+  } finally { f.cleanup(); }
+});

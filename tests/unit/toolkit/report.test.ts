@@ -557,3 +557,42 @@ test('report carries cleanup evidence trees into the walkthrough view', async ()
   assert.ok(!text.includes(cleanupFrom.slice(0,12)));
  }finally{f.cleanup();}
 });
+
+test('reportFacts reports missing after a later failure on the same tree', async () => {
+  const f = await fixture(1);
+  try {
+    fs.mkdirSync(path.join(f.session, '.state', 'worktrees', 'integration'), { recursive: true });
+    const state = { session: f.session, head: HEAD, tree: TREE, testedTree: TREE, changes: [] as { status: string; path: string }[], calls: [] as { argv: string[]; locked: boolean }[] };
+    f.deps.run = fakeGit(state);
+    await appendRecord(f.session, {
+      kind: 'integrate', by: 'tool', key: 'integrate:opened:report-strict',
+      data: { phase: 'opened', path: '.state/worktrees/integration', branch: 'dispatch/test/integration', base: 'c'.repeat(40), dest: { path: f.root, branch: 'main' } },
+    }, f.deps);
+    const planChecks = checks(loadPlan(f.session, readManifest(f.session)));
+    const sc1 = planChecks.find((row) => row.criterion === 'SC1')!;
+    const contract = planChecks.find((row) => row.criterion === 'contract')!;
+    await appendRecord(f.session, {
+      kind: 'evidence', by: 'tool', key: 'ev-contract-pass',
+      data: { criterion: 'contract', commandDigest: contract.commandDigest, tree: TREE, clean: true, before: TREE, after: TREE, exit: 0, path: '.state/evidence/contract.json' },
+    }, f.deps);
+    await appendRecord(f.session, {
+      kind: 'evidence', by: 'tool', key: 'ev-sc1-pass',
+      data: { criterion: 'SC1', commandDigest: sc1.commandDigest, tree: TREE, clean: true, before: TREE, after: TREE, exit: 0, path: '.state/evidence/sc1-pass.json' },
+    }, f.deps);
+
+    const passed = await invoke(f, 'report', 'render');
+    assert.equal(passed.exit, 0);
+    assert.match(passed.output.summary, /SC verified 2, manual 0, waived 0, missing 0/);
+
+    await appendRecord(f.session, {
+      kind: 'evidence', by: 'tool', key: 'ev-sc1-fail',
+      data: { criterion: 'SC1', commandDigest: sc1.commandDigest, tree: TREE, clean: true, before: TREE, after: TREE, exit: 1, path: '.state/evidence/sc1-fail.json' },
+    }, f.deps);
+
+    const failed = await invoke(f, 'report', 'render');
+    assert.equal(failed.exit, 0);
+    assert.match(failed.output.summary, /SC verified 1, manual 0, waived 0, missing 1/);
+    const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
+    assert.match(walkthrough, /- SC1 · no eligible evidence/);
+  } finally { f.cleanup(); }
+});

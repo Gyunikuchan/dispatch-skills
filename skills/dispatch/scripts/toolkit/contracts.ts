@@ -35,7 +35,7 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
   'worktree create': { arguments: 'worktree create <task> --session <session> [--relaunch]' },
   'worktree submit': { arguments: 'worktree submit <task> --session <session>' },
   'worktree abandon': { arguments: 'worktree abandon <task> --session <session> --reason <reason>' },
-  'check run': { arguments: 'check run --session <session> [--criteria SC1,SC2,contract | --task T<n>]' },
+  'check run': { arguments: 'check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]' },
   'brief verifier': { arguments: 'brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>' },
   'ledger append': { arguments: 'ledger append <record.json|-> --session <session>' },
   'ledger query': { arguments: 'ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]' },

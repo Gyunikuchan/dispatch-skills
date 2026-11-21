@@ -77,7 +77,7 @@ function inlineReferences(text: string, allowBare: boolean): ContextReference[] 
     return ref ? [ref] : [];
   });
 }
-function safeRelativePath(value: string): boolean {
+export function safeRelativePath(value: string): boolean {
   if (!value || value.includes('\\') || value.includes('\0') || path.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
   const normalized = path.posix.normalize(value);
   return normalized !== '.' && normalized !== '..' && !normalized.startsWith('../') && !path.posix.isAbsolute(normalized);

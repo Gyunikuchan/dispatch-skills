@@ -457,3 +457,35 @@ test('check run is registered, accepts --task, and verify run is unknown', async
     assert.equal(f.output().reason, 'usage');
   } finally { f.cleanup(); }
 });
+
+test('rejects --reuse and --fresh outside check run or combined', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    for (const flag of ['--reuse', '--fresh']) {
+      for (const argv of [
+        ['status', 'show', flag, '--session', f.session],
+        ['doctor', 'run', flag, '--host', 'opencode', '--session', f.session],
+      ]) {
+        f.lines.length = 0;
+        assert.equal(await main(argv, f.deps), 1, argv.join(' '));
+        assert.equal(f.output().reason, 'invalid-input', argv.join(' '));
+      }
+
+      let seenFlag: unknown;
+      f.lines.length = 0;
+      const exit = await main(['check', 'run', flag, '--session', f.session], {
+        ...f.deps,
+        handler: async (ctx) => {
+          seenFlag = ctx.values[flag.slice(2)];
+          return { ok: true, summary: 'ok', value: {}, exit: 0 };
+        },
+      });
+      assert.equal(exit, 0, flag);
+      assert.equal(seenFlag, true, flag);
+    }
+
+    f.lines.length = 0;
+    assert.equal(await main(['check', 'run', '--reuse', '--fresh', '--session', f.session], f.deps), 1);
+    assert.equal(f.output().reason, 'invalid-input');
+  } finally { f.cleanup(); }
+});

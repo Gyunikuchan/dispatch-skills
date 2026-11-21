@@ -2,19 +2,38 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { Check } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 describe('evidence eligibility', () => {
-  test('only clean passing current tree and command evidence verifies a check', async () => {
-    const { eligibility } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
+  test('criterionStatuses enforces latest-record strict ordering for pass-fail-pass and fail-pass-fail', async () => {
+    const { criterionStatuses, eligibility, verifiedStage } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const checks: Check[] = [{ criterion: 'SC1', commands: ['node a'], commandDigest: 'digest', evidenceClass: 'check' }];
-    const good = { criterion: 'SC1', commandDigest: 'digest', tree: 'tree', clean: true, before: 'tree', after: 'tree', exit: 0 };
-    const fold = (data: object[]) => ({ records: data.map((data, i) => ({ seq: i + 1, key: '' + i, at: '', kind: 'evidence', by: 'tool', data })), lastSeq: data.length, torn: null });
+    const good = { criterion: 'SC1', commandDigest: 'digest', tree: 'tree', clean: true, before: 'tree', after: 'tree', exit: 0, path: 'sc1.json' };
+    const fail = { ...good, exit: 1, path: 'sc1-fail.json' };
+    const fold = (data: object[]) => ({
+      records: data.map((entry, index) => ({ seq: index + 1, key: `ev-${index}`, at: '', kind: 'evidence', by: 'tool', data: entry })),
+      lastSeq: data.length,
+      torn: null,
+    });
     const trees = { headTree: 'tree', testedTree: 'tree' };
-    assert.equal(eligibility(fold([good]), checks, trees)[0]!.state, 'verified');
-    for (const patch of [{tree:'old'}, {clean:false}, {after:'other'}, {exit:1}, {commandDigest:'old'}]) {
-      assert.equal(eligibility(fold([{...good, ...patch}]), checks, trees)[0]!.state, 'missing');
+
+    const observe = (records: object[], current = trees) => {
+      const f = fold(records);
+      return {
+        status: criterionStatuses(f, checks, current)[0]!,
+        eligible: eligibility(f, checks, current)[0]!.state,
+        verified: verifiedStage(f, checks, current),
+      };
+    };
+
+    assert.equal(observe([good]).status.state, 'verified');
+    for (const patch of [{ tree: 'old' }, { clean: false }, { after: 'other' }, { exit: 1 }, { commandDigest: 'old' }]) {
+      assert.equal(observe([{ ...good, ...patch }]).eligible, 'missing');
     }
-    assert.equal(eligibility(fold([good]), checks, {...trees, testedTree:'dirty'})[0]!.state, 'missing');
-    assert.equal(eligibility(fold([{...good, exit:1}, good]), checks, trees)[0]!.state, 'verified');
-    assert.equal(eligibility(fold([good, {...good, exit:1}]), checks, trees)[0]!.state, 'verified');
+    assert.equal(observe([good], { ...trees, testedTree: 'dirty' }).eligible, 'missing');
+    assert.equal(observe([fail, good]).eligible, 'verified');
+    assert.deepEqual(observe([good, fail]), { status: { criterion: 'SC1', state: 'missing' }, eligible: 'missing', verified: false });
+    assert.deepEqual(observe([good, fail, good]), { status: { criterion: 'SC1', state: 'verified', evidence: 'sc1.json' }, eligible: 'verified', verified: true });
+    assert.deepEqual(observe([fail, good, fail]), { status: { criterion: 'SC1', state: 'missing' }, eligible: 'missing', verified: false });
+    assert.deepEqual(observe([good, { ...good, clean: false }]).status, { criterion: 'SC1', state: 'missing' });
+    assert.deepEqual(observe([good, { ...good, after: 'other' }]).status, { criterion: 'SC1', state: 'missing' });
   });
 
   test('criterion statuses', async () => {
@@ -152,7 +171,7 @@ test('review evidence never qualifies on the current or cleanup tree', async () 
   const cleanup = { from: 'source-commit', fromTree: 'source', removed: ['SC1', 'SC2'], trees: { SC1: 'source', SC2: 'source' } };
   const current = { headTree: 'target', testedTree: 'target' };
 
-  assert.deepEqual(eligibility(fold, [checks[1]!], current, true), [{ criterion: 'SC2', state: 'missing' }]);
+  assert.deepEqual(eligibility(fold, [checks[1]!], current), [{ criterion: 'SC2', state: 'missing' }]);
   assert.deepEqual(criterionStatuses(fold, checks, current, cleanup).map(({ criterion, state }) => [criterion, state]), [
     ['SC1', 'verified'], ['SC2', 'missing'], ['contract', 'verified'],
   ]);

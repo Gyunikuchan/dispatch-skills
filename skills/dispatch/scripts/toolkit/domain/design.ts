@@ -10,7 +10,7 @@ import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, P
 const lint = (code: LintDefect['code'], line: number | null, message: string): LintDefect => ({ code, severity: 'warning', line, message });
 
 const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Increments'];
-const EXECUTION_STATUS_HEADING = '## Execution Status';
+export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
   'At a Glance', 'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
   'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',

@@ -103,10 +103,10 @@ export const lint = (code: LintDefectCode, line: number | null, message: string)
 
 export type StructuralLine = { line: number; text: string; original: string; fenced: boolean };
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+export const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 // NOTE: `<!--` inside a closed inline code span is literal (CommonMark); unmatched backticks stay literal too.
-function commentOpenOutsideCode(original: string, from: number): number {
+export function commentOpenOutsideCode(original: string, from: number): number {
   const run = /`+/g;
   let cursor = from;
   for (;;) {

@@ -48,6 +48,10 @@ Standalone `verify` runs `check run` first only when `status show` reports both 
 
 The verifier brief embeds ten stack-neutral proof standards inline with no external URL or host-layout assumption.
 
+### Command deduplication and opt-in `--reuse` boundary
+
+Within a single `check run`, passing, clean, Git-non-mutating commands (`cmdClean && before === after && exit === 0`) deduplicate per `(command, tree)` unless `--fresh` is passed (for commands sharing mutable gitignored or external state). Cross-call reuse requires opt-in `--reuse` (mutually exclusive with `--fresh`) and validates the cached entry against the exact same clean Git tree (`testedTree === headTree === cached.tree`), because `testedTree` covers Git-visible files only and excludes gitignored files, environment variables, and external services.
+
 ## Consequences
 
 Agents and maintainers can distinguish checks from runtime verification by name. Standalone `verify` reports deterministic test status alongside runtime proof. `implement` skips redundant full check runs before test cleanup while keeping removed-criterion proof tied to unchanged code and keeping the post-cleanup all-criteria run before delivery. Pre-existing plans using `Verify:` or `Evidence: verify` fail `lint run` until updated.

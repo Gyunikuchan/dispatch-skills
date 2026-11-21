@@ -1219,7 +1219,7 @@ test('checks passed condition has one home in brief verifier', () => {
   const toolkit = section(ref('toolkit.md'), 'brief verifier');
   const verify = ref('verbs/verify.md');
   const implement = ref('verbs/implement.md');
-  assert.match(toolkit, /executed > 0/);
+  assert.match(toolkit, /executed \+ reused > 0/);
   assert.match(toolkit, /no bound integration is targeted/);
   for (const guide of [verify, implement]) {
     assert.ok(links(guide).includes('../toolkit.md#brief-verifier'));

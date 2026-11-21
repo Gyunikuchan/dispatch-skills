@@ -31,6 +31,8 @@ import { applicableReviewIds, loadRejections, reviewId, rejectionRequest, type R
 import { refreshFindingsSection, renderFindingsFile, rulingsTemplate } from './review-findings.ts';
 import { coverageState } from './coverage.ts';
 import { sanitizeText } from './domain/sanitize.ts';
+import { lintCitations } from './domain/citations.ts';
+import { repositoryReader } from './lint.ts';
 import type { BlockedAttempt } from './fanout.ts';
 import type { LedgerRecord } from './records.ts';
 
@@ -633,7 +635,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       return value;
     }
 
+    const assertCitations = (source: string | undefined) => {
+      if ((kind !== 'plan' && kind !== 'design') || source === undefined) return;
+      const defects = lintCitations(source, kind, repositoryReader(manifest.repositoryRoot));
+      if (defects.length) throw new ToolError(4, 'lint-errors', JSON.stringify(defects));
+    };
+
     async function supersede(captured: Capture) {
+      assertCitations(captured.source);
       const staffed = replacement().targets.some(slot => !slot.reserve)
         || rejectionStates().filter(state => state.state === 'pending').some(state => state.request.sourceSlots.some(source => confirmationRounds.some(round => round.metadata.roster.some(slot => slot.slot === source))));
       if (!staffed) throw new ToolError(4, 'level-unapproved', noReviewer());
@@ -708,7 +717,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // baseline also lists the target's own change, which the orchestrator explains.
     }
     const hadPending = fs.existsSync(pendingFile);
-    if (!round) round = await start(1, current);
+    if (!round) {
+      if (!hadPending) assertCitations(current.source);
+      round = await start(1, current);
+    }
     else if (!same(round, current) || (round.rulingSnapshot!==undefined && round.rulingSnapshot!==rulingSnapshot())) {
       await supersede(current);
       if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');

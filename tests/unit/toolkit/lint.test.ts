@@ -6,6 +6,10 @@ import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { parseSpec } from '../../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 import { parseDesign } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
+import { lintArtifact } from '../../../skills/dispatch/scripts/toolkit/lint.ts';
+import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 const scoped = sessionFixture({ memory: true });
 after(() => scoped.cleanup());
@@ -91,4 +95,25 @@ describe('lint severity', () => {
       assert.ok(r.warnings.some(x => x.code === code));
     }
   });
+});
+
+test('lintArtifact reports broken-citation while loadPlan stays immune', async t => {
+  const f = sessionFixture({ memory: true });
+  t.after(f.cleanup);
+  fs.mkdirSync(path.join(f.root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(f.root, 'src', 'file.ts'), 'export const value = 1;\n');
+  const planSource = PLAN.replace(
+    '- Purpose: implements behavior.',
+    '- Purpose: implements behavior (`src/file.ts:99` and `src/missing.ts:1`).',
+  );
+  const planFile = f.artifact('drifted.plan.md', planSource);
+  const designFile = f.artifact('drifted.design.md', '# Design\n## Approach\nRef `src/missing.ts:1`.\n## Increment Dependency Graph\n| I01 | 1 | First | none | src/file.ts |\n');
+  const planLint = lintArtifact(planFile, { repositoryRoot: f.root });
+  assert.ok(planLint.errors.some(d => d.code === 'broken-citation'));
+  const designLint = lintArtifact(designFile, { repositoryRoot: f.root });
+  assert.ok(designLint.errors.some(d => d.code === 'broken-citation'));
+  f.artifact('s.spec.md', SPEC);
+  await appendRecord(f.session, { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 's.spec.md', plan: 'drifted.plan.md' } }, f.deps);
+  const loaded = loadPlan(f.session, readManifest(f.session));
+  assert.equal(loaded.tasks[0]?.id, 'T1');
 });

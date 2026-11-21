@@ -78,23 +78,17 @@ export function cleanupEvidence(
   return stale.length ? { ok: false, stale } : { ok: true, trees };
 }
 
-function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree, strict=false): EvidenceRecord | undefined {
+function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree): EvidenceRecord | undefined {
   if (check.evidenceClass === 'review') return undefined;
   if (current.testedTree !== current.headTree) return undefined;
-  if (strict) {
-    const row = strictEvidence(fold, check);
-    return row && row.data['tree'] === current.headTree ? row : undefined;
-  }
-  return fold.records.findLast(({ kind, data }) => kind === 'evidence' &&
-    data['criterion'] === check.criterion && data['exit'] === 0 && data['clean'] === true &&
-    data['before'] === data['after'] && data['tree'] === current.headTree &&
-    data['commandDigest'] === check.commandDigest);
+  const row = strictEvidence(fold, check);
+  return row && row.data['tree'] === current.headTree ? row : undefined;
 }
 
-export function eligibility(fold: Fold, checks: readonly Check[], current: CurrentTree, strict=false) {
+export function eligibility(fold: Fold, checks: readonly Check[], current: CurrentTree) {
   return checks.map((check) => ({
     criterion: check.criterion,
-    state: eligibleEvidence(fold, check, current,strict) ? 'verified' as const : 'missing' as const,
+    state: eligibleEvidence(fold, check, current) ? 'verified' as const : 'missing' as const,
   }));
 }
 
@@ -107,21 +101,21 @@ export function cleanupBinding(fold: Fold): CleanupBinding | null {
   return record ? {from:record.data['from'],fromTree:record.data['fromTree'],removed:record.data['removed'],trees:record.data['trees']??{}} : null;
 }
 
-function boundEvidence(fold: Fold, check: Check, current: CurrentTree | null, cleanup: CleanupBinding | null | undefined, strict: boolean): EvidenceRecord | undefined {
-  const row=current ? eligibleEvidence(fold,check,current,strict) : undefined;
+function boundEvidence(fold: Fold, check: Check, current: CurrentTree | null, cleanup: CleanupBinding | null | undefined): EvidenceRecord | undefined {
+  const row=current ? eligibleEvidence(fold,check,current) : undefined;
   if(row || !cleanup?.removed.includes(check.criterion)) return row;
   const tree=cleanup.trees&&Object.hasOwn(cleanup.trees,check.criterion)?cleanup.trees[check.criterion]:undefined;
   if(!tree) return undefined;
-  return eligibleEvidence(fold,check,{headTree:tree,testedTree:tree},true);
+  return eligibleEvidence(fold,check,{headTree:tree,testedTree:tree});
 }
 
 export function verifiedStage(fold:Fold, checks:readonly Check[], current:CurrentTree, cleanup?:CleanupBinding|null):boolean {
-  return checks.filter(check=>check.evidenceClass!=='review').every(check=>!!boundEvidence(fold,check,current,cleanup,true));
+  return checks.filter(check=>check.evidenceClass!=='review').every(check=>!!boundEvidence(fold,check,current,cleanup));
 }
 
 export function criterionStatuses(fold: Fold, checks: readonly Check[], current: CurrentTree | null, cleanup?: CleanupBinding | null): CriterionStatus[] {
   return checks.map((check) => {
-    const evidence = boundEvidence(fold,check,current,cleanup,false);
+    const evidence = boundEvidence(fold,check,current,cleanup);
     if (evidence) {
       return {
         criterion: check.criterion,

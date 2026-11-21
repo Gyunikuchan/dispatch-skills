@@ -32,7 +32,7 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
 | action | worktree submit | `worktree submit <task> --session <session>` |
 | action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
-| action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>]` |
+| action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>] [--reuse \| --fresh]` |
 | action | brief verifier | `brief verifier [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
 | action | ledger append | `ledger append <record.json\|-> --session <session>` |
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
@@ -101,6 +101,7 @@ Result path: `findings.json` holds the full round. Completed-round summaries nam
 - Findings carry `origin` (`original`, `fix-induced`, `unknown`); the header adds `<n> fix-induced` when nonzero.
 - Rounds after the first store `interRound` (`diff`, `accepted`) in `round.json`; plan and design rounds write `round-<n>/inter-round.diff` when the governed text differs.
 Refusals: invalid input/kind/revision, malformed `--pins` or unknown/excluded provider (`invalid-input`), unreadable or conflicting spec, lint-errors, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), `host-sandboxed` (exit 4), native-pending, target-moved, escalation-open, round-cap, review-ceiling, `coverage-decision`, `coverage-required` or missing/unknown `--host`.
+- Plan and design rounds also run blocking `broken-citation` validation (`lint-errors`) on new or superseded round starts (not `native-pending` resumes) for backticked repo-relative `path:line` and `path:start-end` refs in governed sections.
 - `coverage-decision` (exit 4) names the user decisions: accept reduced coverage or grant one more coverage round.
 - `coverage-required` (exit 4) means coverage state cannot be read.
 - Rules: [failed-slot coverage](review-coverage.md#failed-slot-coverage).
@@ -245,14 +246,18 @@ Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and f
 
 ### check run
 
-Arguments: `check run --session <session> [--criteria SC1,SC2,contract | --task T<n>]`. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
-Result path: checks with command digests, tree identity, clean/before/after state, exit and evidence/log paths; failed, mutated and dirty lists. Within one run, criteria with identical commands on an unchanged tree share one execution and each gets its own evidence.
-Refusals: unknown criterion or unknown task, which names each unknown ID and the valid IDs; `--task` with `--criteria`; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
+Arguments: `check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]`. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
+Result path: checks with command digests, tree identity, clean/before/after state, exit, and evidence/log paths; `executed`, `reused`, `failed`, `mutated`, and `dirty` (`; reused <n>` in summary when `reused > 0`).
+- Within one run (unless `--fresh`), passing clean Git-non-mutating commands deduplicate per `(command, tree)` (`mode: 'dedup'`, preserving provenance without incrementing `executed` or `reused`).
+- `--reuse` (mutually exclusive with `--fresh`) reuses a prior clean passing execution in `.state/evidence/commands/index/<cacheHex>.json` (`<execId>.json`/`.log`) on the exact same clean Git tree (`testedTree === headTree === cached.tree`) after live hash and invariant validation, falling back to fresh execution on any mismatch; without `--reuse`, cross-call cache entries are never reused.
+- `--fresh` bypasses within-run per-command deduplication (use when commands share mutable gitignored or external state).
+- Each run mints a `runId` and writes immutable criterion JSON at `.state/evidence/<evidenceHex>.json` (`runId` and per-command `commands` provenance) plus combined `.log` (`value.checks[].logPath`), while appended `evidence` ledger records keep the unchanged field set.
+Refusals: unknown criterion or unknown task, which names each unknown ID and the valid IDs; `--task` with `--criteria`; `--reuse` with `--fresh`; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 
 ### brief verifier
 
-Arguments: `brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
+Arguments: `brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed + reused > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
 Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
 Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
@@ -283,7 +288,7 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 ### lint run
 
 Arguments: `lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]`. Pass the artifact path positionally.
-Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read.
+Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read. Plan and design artifacts also fail closed with `broken-citation` on invalid backticked repo-relative `path:line` and `path:start-end` refs in governed sections (excluding fenced blocks and HTML comments, and ignoring bare paths without line numbers).
 Refusals: unreadable/unknown artifact or lint errors.
 With `--edit` (file or stdin `-`) or `--json` (mutually exclusive), pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
 

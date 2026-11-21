@@ -209,3 +209,22 @@ test('lint edit refusals leave the ledger without edits', async t => {
   assert.match((await run(fields, undefined, ['ledger', 'query'])).summary, /--edit is only for lint run/);
   assert.deepEqual(edits(), []);
 });
+
+test('lint run --edit refuses broken-citation and succeeds when repaired', async t => {
+  const { f, edits, run } = await fixture(t);
+  const before = artifactHash('plan', PLAN);
+  const broken = f.artifact(PLAN_NAME, PLAN.replace('- Purpose: implements behavior.', '- Purpose: see `src/missing.ts:1`.'));
+  const refused = await run({ ...FIELDS, before }, broken);
+  assert.equal(refused.exit, 4);
+  assert.equal(refused.reason, 'lint-errors');
+  assert.ok(refused.value.errors.some((d: { code: string }) => d.code === 'broken-citation'));
+  assert.deepEqual(edits(), []);
+
+  fs.mkdirSync(f.root + '/src', { recursive: true });
+  fs.writeFileSync(f.root + '/src/file.ts', 'export const ok = true;\n');
+  const repaired = f.artifact(PLAN_NAME, PLAN.replace('- Purpose: implements behavior.', '- Purpose: see `src/file.ts:1`.'));
+  const accepted = await run({ ...FIELDS, before }, repaired);
+  assert.equal(accepted.exit, 0, accepted.summary);
+  assert.equal(edits().length, 1);
+  assert.equal(accepted.value.edit.deduped, false);
+});

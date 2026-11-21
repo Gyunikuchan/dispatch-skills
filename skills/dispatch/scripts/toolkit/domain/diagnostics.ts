@@ -131,7 +131,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('scripts/lib/usage', 'agy bands claude codex delegate index opencode read rows', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime runner types', '.ts'),
-  ...files('scripts/toolkit/domain', 'context criterion-id design diagnostics fix-check plan prompt report sanitize severity spec stable-value types', '.ts'),
+  ...files('scripts/toolkit/domain', 'citations context criterion-id design diagnostics fix-check plan prompt report sanitize severity spec stable-value types', '.ts'),
   ...files('scripts/toolkit', 'artifacts ask brief check cli confirmations contracts coverage deliver diagnostics doctor evidence fanout fanout/state fanout/voice fanout/native fanout/wave findings fix-check git hints input integrate integration ledger lint lock output plan-view prompts records red report review review-checkout review-findings review-identity status types walkthrough writers', '.ts'),
   ...files('scripts', 'dispatch', '.ts'),
   'scripts/package.json',

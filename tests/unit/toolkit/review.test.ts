@@ -1483,3 +1483,91 @@ test('review warning: re-review reports missing verification ahead of long repos
     assert.match(second.output.summary, /repository changes: .*…$/);
   } finally { f.cleanup(); }
 });
+
+test('reviewRun refuses broken-citation on new and superseded rounds but not native-pending resume', async () => {
+  // 1. New round start refuses broken citation in plan and design without creating round.json or launching reviewers.
+  const f1 = await fixture();
+  try {
+    fs.writeFileSync(f1.plan, '# Work\n## Work\nSee `src/missing.ts:1`.\n');
+    const refusedPlan = await f1.call('plan', f1.plan);
+    assert.equal(refusedPlan.exit, 4);
+    assert.equal(refusedPlan.output.reason, 'lint-errors');
+    assert.match(refusedPlan.output.summary, /broken-citation/);
+    assert.equal(f1.launches.length, 0);
+    assert.equal(fs.existsSync(path.join(f1.directory, 'round-1', 'round.json')), false);
+
+    const design = f1.artifact('strategy.design.md', '# Strategy\n## Approach\nSee `src/missing.ts:1`.\n');
+    const refusedDesign = await f1.call('design', design);
+    assert.equal(refusedDesign.exit, 4);
+    assert.equal(refusedDesign.output.reason, 'lint-errors');
+    assert.match(refusedDesign.output.summary, /broken-citation/);
+    assert.equal(f1.launches.length, 0);
+  } finally { f1.cleanup(); }
+
+  // 2. Target acquiring broken citation after pending.json (supersede) refuses before deleting pending.json or mutating round state.
+  const f2 = await fixture();
+  try {
+    fs.mkdirSync(path.join(f2.root, 'src'), {recursive: true});
+    fs.writeFileSync(path.join(f2.root, 'src', 'real.ts'), 'export const x = 1;\n');
+    fs.writeFileSync(f2.plan, '# Work\n## Work\nSee `src/real.ts:1`.\n');
+    f2.deps.hook = async (point) => {
+      if (point === 'review:after-pending') {
+        fs.writeFileSync(f2.plan, '# Work\n## Work\nSee `src/missing.ts:1`.\n');
+      }
+    };
+    const duringFinalize = await f2.call('plan', f2.plan);
+    assert.equal(duringFinalize.exit, 4);
+    assert.equal(duringFinalize.output.reason, 'lint-errors');
+    assert.match(duringFinalize.output.summary, /broken-citation/);
+    const pendingPath = path.join(f2.directory, 'round-1', 'pending.json');
+    assert.equal(fs.existsSync(pendingPath), true);
+    assert.equal(f2.read(1, 'round.json').generation, 1);
+
+    // Retry while pending.json exists and target still has broken citation also refuses before deleting pending.json.
+    delete f2.deps.hook;
+    const retry = await f2.call('plan', f2.plan);
+    assert.equal(retry.exit, 4);
+    assert.equal(retry.output.reason, 'lint-errors');
+    assert.equal(fs.existsSync(pendingPath), true);
+    assert.equal(f2.read(1, 'round.json').generation, 1);
+  } finally { f2.cleanup(); }
+
+  // 3. Target acquiring broken citation during fan-out (before pending.json) refuses in supersede() before incrementing generation.
+  const f3 = await fixture();
+  try {
+    fs.mkdirSync(path.join(f3.root, 'src'), {recursive: true});
+    fs.writeFileSync(path.join(f3.root, 'src', 'real.ts'), 'export const x = 1;\n');
+    fs.writeFileSync(f3.plan, '# Work\n## Work\nSee `src/real.ts:1`.\n');
+    f3.deps.delegate = async (provider, request, mode) => {
+      f3.launches.push({provider, request, mode});
+      fs.writeFileSync(f3.plan, '# Work\n## Work\nSee `src/missing.ts:1`.\n');
+      return {outcome: {status: 'ok', text: CLEAN, resume: null, sessionId: null}, invocations: []};
+    };
+    const duringFanout = await f3.call('plan', f3.plan);
+    assert.equal(duringFanout.exit, 4);
+    assert.equal(duringFanout.output.reason, 'lint-errors');
+    assert.match(duringFanout.output.summary, /broken-citation/);
+    assert.equal(f3.read(1, 'round.json').generation, 1);
+  } finally { f3.cleanup(); }
+
+  // 4. Native-pending resume on an unchanged round is unaffected even if cited file disappears externally.
+  const f4 = await fixture();
+  try {
+    fs.mkdirSync(path.join(f4.root, 'src'), {recursive: true});
+    const realFile = path.join(f4.root, 'src', 'real.ts');
+    fs.writeFileSync(realFile, 'export const x = 1;\n');
+    fs.writeFileSync(f4.plan, '# Work\n## Work\nSee `src/real.ts:1`.\n');
+    f4.deps.orchestrator = {platform: 'claude', model: null} as typeof f4.deps.orchestrator;
+    const pending = await f4.call('plan', f4.plan);
+    assert.equal(pending.exit, 4);
+    assert.equal(pending.output.reason, 'native-pending');
+
+    fs.rmSync(realFile);
+    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+    const cliWave = await f4.call('plan', f4.plan);
+    assert.equal(cliWave.exit, 4);
+    assert.equal(cliWave.output.reason, 'native-pending');
+    const resumed = await f4.call('plan', f4.plan);
+    assert.equal(resumed.exit, 0, JSON.stringify(resumed.output));
+  } finally { f4.cleanup(); }
+});

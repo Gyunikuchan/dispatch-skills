@@ -282,10 +282,13 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
       json: { type: 'string' }, text: { type: 'string' }, message: { type: 'string' }, base: { type: 'string' }, 'integration-path': { type: 'string' },
       'review-fix-json': { type: 'string' }, 'test-cleanup-json': { type: 'string' },
+      reuse: { type: 'boolean' }, fresh: { type: 'boolean' },
     } });
     [tool = '', action = ''] = parsed.positionals;
     const fullAction = tool + ' ' + action;
     if (!handlers[fullAction]) throw new Error('Unknown tool or action');
+    if (parsed.values['reuse'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--reuse is only for check run');
+    if (parsed.values['fresh'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--fresh is only for check run');
     if (parsed.values['edit'] !== undefined && fullAction !== 'lint run') throw new ToolError(1, 'invalid-input', '--edit is only for lint run');
     if (parsed.values['json'] !== undefined && !['brief explorer', 'brief test-cleanup', 'brief verifier', 'lint run'].includes(fullAction)) {
       throw new ToolError(1, 'invalid-input', '--json is only for brief explorer, brief test-cleanup, brief verifier and lint run');

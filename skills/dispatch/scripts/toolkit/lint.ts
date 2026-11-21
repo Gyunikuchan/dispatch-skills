@@ -6,6 +6,7 @@ import { lint as lintDefect, outsideIncrementWarnings, parentPin, parsePlan, str
 import { parseDesign, parseIncrementGraph } from './domain/design.ts';
 import { parseSpec } from './domain/spec.ts';
 import { lintContextMap } from './domain/context.ts';
+import { lintCitations, type CitationDefect } from './domain/citations.ts';
 import { ToolError } from './output.ts';
 
 type LintArtifactOptions = { repositoryRoot?: string };
@@ -22,7 +23,7 @@ export function within(root: string, candidate: string): boolean {
 }
 
 /** Reads only repository files whose resolved path remains inside the session's repository root. */
-function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
+export function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
   const root = path.resolve(repositoryRoot);
   let realRoot: string;
   try { realRoot = fs.realpathSync(root); } catch { return () => null; }
@@ -62,7 +63,10 @@ export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
   }
   const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source);
   const hash = artifactHash(kind!, source);
-  const errors = result.ok ? [] : result.defects;
+  const citationErrors: CitationDefect[] = (kind === 'plan' || kind === 'design') && options.repositoryRoot
+    ? lintCitations(source, kind, repositoryReader(options.repositoryRoot))
+    : [];
+  const errors = [...(result.ok ? [] : result.defects), ...citationErrors];
   const warnings = [...result.warnings];
   if (result.ok && 'plan' in result && options.repositoryRoot) warnings.push(...pinnedIncrementWarnings(source, result.plan.changes, options.repositoryRoot));
   return { kind, hash, errors, warnings };
