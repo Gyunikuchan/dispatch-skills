@@ -19,6 +19,10 @@ config used only a small subset of the permissive shapes, so compatibility would
 without serving current use. Later optional root tables (`diagnostics`, `write-concurrency`,
 `utility-subagents` (renamed from `explore-subagents`, with a required `context-limit`), `read-commands`) follow the same strict validation.
 
+Static `doctor run` validates configuration. Opt in to `doctor run --probe` to check live
+readiness and sandbox capability for configured read delegates and catch setup failures
+before launch.
+
 ### Read delegates and models
 
 - Each provider is `{ sandbox?, targets: [...] }`. The non-empty `targets` array contains level

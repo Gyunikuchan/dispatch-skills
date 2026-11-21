@@ -94,8 +94,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
     assert.doesNotMatch(skeleton, /#### \[|Changes:/);
     assert.match(skeleton, /<summary>Audit records<\/summary>/);
     assert.match(skeleton, /\| SC \| Evidence \|/);
-    const labels = [...skeleton.matchAll(/^- \*\*(What|Artifacts|Counts):\*\*/gm)].map((match) => match[1]);
-    assert.deepEqual(labels, ['What', 'Artifacts', 'Counts']);
+    const labels = [...skeleton.matchAll(/^- \*\*(What|Artifacts|Summary|Counts):\*\*/gm)].map((match) => match[1]);
+    assert.deepEqual(labels, ['What', 'Artifacts', 'Summary', 'Counts']);
+    assert.match(skeleton, /<details>\n<summary>Detailed counts<\/summary>\n\n- \*\*Counts:\*\*/);
     const headings = (text: string) => [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
     assert.deepEqual(headings(skeleton), ['## At a Glance', '## Visuals', '## Review Focus', '## Behaviour Changes', '## Verification', '## Runtime Proof', '## Deviations & Follow-ups', '## Review Findings & Resolutions', '## Appendix']);
     const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
@@ -114,7 +115,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
       reviewRows: [], reviewRounds: [], reviewFixes: [],
     } as Parameters<typeof renderWalkthrough>[0]);
     assert.deepEqual(headings(skeleton), headings(rendered));
-    const summaryLabels = (text: string) => [...text.matchAll(/^- \*\*(What|Artifacts|Counts):\*\*/gm)].map((match) => match[1]);
+    const summaryLabels = (text: string) => [...text.matchAll(/^- \*\*(What|Artifacts|Summary|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(summaryLabels(skeleton), summaryLabels(rendered));
     assert.match(rendered, /### T1 — Add a file\n\n- The new file supports the feature\. \(\[plan task\]\(example\.plan\.md#t1--add-a-file\)\)\n\n<details>\n\n- `src\/new\.ts` · created\n\n<\/details>/);
     assert.match(rendered, /### Manual\n\n- SC1 · User evidence: manual\/proof\.md; quote: approved/);
@@ -157,6 +158,21 @@ test('readable artifact templates: human layout sections, callouts, details and 
     assert.deepEqual(result.warnings.filter(({ code }) => ['missing-section', 'section-order', 'long-paragraph'].includes(code)), []);
   });
 
+});
+
+test('decision-frame keeps four-part structure and collapses spec-approval metadata', () => {
+  const frame = readFileSync(new URL('../decision-frame.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const parts = [...frame.matchAll(/^\d\. \*\*([^*]+):\*\*/gm)].map((match) => match[1]);
+  assert.deepEqual(parts, ['Conflict or blocker', 'Verified facts', 'Recommendation', 'Consequences']);
+  const approval = frame.split('### Spec approval\n')[1]!.split('\n### ')[0]!;
+  const [visible, metadata] = (approval.split('```markdown\n')[1] ?? '').split('<details>\n<summary>Metadata</summary>\n\n');
+  assert.ok(metadata, 'spec approval collapses path and SHA-256 in Metadata');
+  for (const label of ['Stated intent', 'Assumed intent', 'Core REQs', 'Settled DECs', 'Unresolved material questions', 'Recommendation', 'Consequences']) {
+    assert.ok(visible!.includes(label + ':'), label + ' is visible');
+  }
+  assert.match(visible!, /^- Recommendation: <`plan` or `design`,/m);
+  assert.doesNotMatch(visible!, /Canonical path|SHA-256/);
+  assert.match(metadata, /^Canonical path: .+\nSHA-256: .+\n\n<\/details>/);
 });
 
 test('templates: every kept template exists and none are extra', () => {

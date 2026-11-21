@@ -332,3 +332,56 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
     assert.deepEqual(aliased.writers, { claude: { models: ['writer'], effort: 'low' } });
   } finally { f.cleanup(); }
 });
+test('doctorReportWithProbe preserves static doctor output and wires sandboxRequired and probe-failed', async () => {
+  const { doctorReport, doctorReportWithProbe } = await import('../../../skills/dispatch/scripts/toolkit/doctor.ts');
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    const config = path.join(skill, 'config.jsonc');
+    const targets = [{ low: { model: 'reader' } }];
+    const base = {
+      'write-subagents': { codex: { low: { model: 'writer' } } },
+      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+    };
+    const calls: string[] = [];
+    const probe: import('../../../skills/dispatch/scripts/providers/probe.ts').ProbeDeps = {
+      platform: { os: 'win32', bubblewrap: false, arch: 'x64', wsl: false, argvLimit: 10000, home: '/home/probe', path: [], pathExt: [] },
+      discovery: { resolve: name => ({ status: 'path', path: name }), doctor: () => [], probes: 0 },
+      spawn: async name => {
+        calls.push(name);
+        return { exit: 0, stdout: '1.2.3', stderr: '' };
+      },
+    };
+    const args = [f.session, skill, 'low', 'codex', undefined, undefined, undefined] as const;
+    fs.writeFileSync(config, '{"unknown":true}');
+    assert.deepEqual(await doctorReportWithProbe(...args, probe), doctorReport(...args));
+    assert.equal(calls.length, 0);
+
+    fs.writeFileSync(config, JSON.stringify({ ...base, 'read-delegates': { claude: { sandbox: false, targets } } }));
+    const staticReport = doctorReport(...args);
+    assert.equal(staticReport.ok, true);
+    assert.equal('probes' in staticReport, false);
+    const passing = await doctorReportWithProbe(...args, probe);
+    assert.deepEqual(calls, ['claude']);
+    assert.ok('probeSummary' in passing);
+    assert.deepEqual([passing.ok, passing.probeSummary], [true, { ok: 1, failed: 0, unprobeable: 1, unverified: 0 }]);
+
+    calls.length = 0;
+    fs.writeFileSync(config, JSON.stringify({ ...base, 'read-delegates': { 'openai-codex': { targets } } }));
+    const failing = await doctorReportWithProbe(...args, {
+      ...probe,
+      discovery: {
+        ...probe.discovery!,
+        resolve(name) {
+          calls.push(name);
+          return { status: 'missing', path: null };
+        },
+      },
+      spawn: async () => assert.fail('a missing host binary must not spawn'),
+    });
+    assert.ok(calls.length > 0 && calls.every(name => name === 'codex'));
+    assert.ok('probeSummary' in failing);
+    assert.deepEqual([failing.ok, failing.reason, failing.probeSummary], [false, 'probe-failed', { ok: 0, failed: 1, unprobeable: 0, unverified: 1 }]);
+  } finally { f.cleanup(); }
+});

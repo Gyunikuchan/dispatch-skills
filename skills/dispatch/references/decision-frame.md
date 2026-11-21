@@ -19,7 +19,26 @@ Use the four-part format above with the following concrete content.
 
 ### Spec approval
 
-Present the canonical path/hash, stated and assumed intent separately, core REQs, settled DECs, unresolved material questions and the `plan` or `design` recommendation from the scope check. Follow [spec confirmation](spec-stage.md#resolve-and-author) and [approval provenance](spec-stage.md#approval).
+Use the scope check for the next-stage recommendation. Follow [spec confirmation](spec-stage.md#resolve-and-author) and [approval provenance](spec-stage.md#approval).
+
+```markdown
+Approve the spec?
+- Stated intent: <user-stated intent>
+- Assumed intent: <assumptions>
+- Core REQs: <requirements>
+- Settled DECs: <decisions>
+- Unresolved material questions: <questions or none>
+- Recommendation: <`plan` or `design`, with rationale>
+- Consequences: <trade-offs and effect of alternatives>
+
+<details>
+<summary>Metadata</summary>
+
+Canonical path: <spec path>
+SHA-256: <spec hash>
+
+</details>
+```
 
 ### Plan or design approval
 

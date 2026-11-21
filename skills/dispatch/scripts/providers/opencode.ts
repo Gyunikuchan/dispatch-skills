@@ -61,7 +61,7 @@ function endpointHost(endpoint: string): string | null {
 }
 
 /** Bubblewrap: read-only root, private /tmp, writable OpenCode state; the delegate cannot write the project. */
-function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[] {
+export function bwrapArgv(req: Pick<LaunchRequest, 'platform' | 'cwd' | 'briefFile'>, inner: readonly string[]): string[] {
   const home = req.platform.home;
   const xdg = req.platform.xdg ?? {};
   // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf.

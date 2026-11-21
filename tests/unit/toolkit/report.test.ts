@@ -400,7 +400,8 @@ test('review fix status: completed re-review retains earlier fixes and their pat
   const text=fs.readFileSync(path.join(f.session,'report.walkthrough.md'),'utf8');
   assert.match(text,/- \*\*What:\*\* Plan output is delivered without a legacy summary\./);
   const focus=text.slice(text.indexOf('## Review Focus'),text.indexOf('## Behaviour Changes'));
-  assert.match(focus,/Risk: med/);assert.match(focus,/Rejected SHOULD finding review-alpha:R1-F001/);assert.doesNotMatch(focus,/R1-F002|deferred|More evidence is needed/i);
+  assert.match(focus,/Risk: med/);assert.match(focus,/Rejected SHOULD finding review-alpha:R1-F001/);
+  assert.match(focus,/Deferred finding review-alpha:R1-F002 — see Deviations & Follow-ups/);assert.doesNotMatch(focus,/More evidence is needed/i);
   assert.match(focus,/Inspect the delivered retry boundary\. — Evidence: \[evidence\/retry-boundary\.md\]\(evidence\/retry-boundary\.md\)/);
   const deviations=text.slice(text.indexOf('## Deviations & Follow-ups'),text.indexOf('## Review Findings & Resolutions'));
   assert.match(deviations,/- Follow-up: deferred review-alpha:R1-F002/);

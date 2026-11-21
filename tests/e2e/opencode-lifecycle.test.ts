@@ -355,3 +355,103 @@ test('stdout lines reach the line hook through a real process', async () => {
     assert.deepEqual(lines, ['one', 'two', 'last']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leaves no files', async () => {
+  const { nodeProbeSpawn, probeProviders } = await import('../../skills/dispatch/scripts/providers/probe.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-'));
+  const probeCwd = path.join(root, 'probe-cwd');
+  const pidFile = path.join(root, 'descendant.pid');
+  fs.mkdirSync(probeCwd);
+  const before = fs.readdirSync(probeCwd);
+  try {
+    const secret = '1.2.3-AbCdEf123456';
+    const output = ['-e', `process.stdout.write(${JSON.stringify(secret)} + 'x'.repeat(200000)); process.stderr.write('y'.repeat(200000));`];
+    const capped = await nodeProbeSpawn(process.execPath, output, { cwd: probeCwd, timeoutMs: 2500 });
+    assert.deepEqual([capped.exit, Buffer.byteLength(capped.stdout), Buffer.byteLength(capped.stderr)], [0, 65536, 65536]);
+    const { probes } = await probeProviders([{ provider: 'codex', sandboxRequired: false }], {
+      cwd: probeCwd,
+      discovery: { resolve: () => ({ status: 'path', path: process.execPath }), doctor: () => [], probes: 0 },
+      spawn: (binary, _args, launch) => nodeProbeSpawn(binary, output, launch),
+    });
+    assert.equal(probes[0]!.version, null);
+    assert.equal(JSON.stringify(probes).includes(secret), false);
+
+    for (const overflow of [false, true]) {
+      const sources = {
+        config: `process.stdout.write(JSON.stringify([{ value: ${JSON.stringify(secret)} + 'x'.repeat(100000) }]));`,
+        agents: `const array = JSON.stringify([{ name: 'explore', description: 'x'.repeat(100000) }]);
+          process.stdout.write(${overflow} ? array.padEnd(1024 * 1024) + '!' : array);`,
+      };
+      const debugBytes: [number, number][] = [];
+      const { probes } = await probeProviders([{ provider: 'opencode', sandboxRequired: false }], {
+        cwd: probeCwd,
+        platform: { ...currentPlatform(), bubblewrap: false },
+        discovery: { resolve: () => ({ status: 'path', path: process.execPath }), doctor: () => [], probes: 0 },
+        spawn: async (binary, args, launch) => {
+          const debug = args[2] === 'config' || args[2] === 'agents' ? args[2] : undefined;
+          const source = debug ? sources[debug] : "process.stdout.write('1.2.3');";
+          const actual = await nodeProbeSpawn(binary, ['-e', source + "process.stderr.write('y'.repeat(200000));"], launch);
+          if (debug) debugBytes.push([Buffer.byteLength(actual.stdout), Buffer.byteLength(actual.stderr)]);
+          return actual;
+        },
+      });
+      assert.equal(probes[0]!.readiness, overflow ? 'error' : 'ok');
+      assert.equal(probes[0]!.failureCategory, overflow ? 'config-error' : null);
+      assert.deepEqual(debugBytes.map(([, stderr]) => stderr), [64 * 1024, 64 * 1024]);
+      assert.ok(debugBytes.every(([stdout]) => stdout > 64 * 1024));
+      if (overflow) assert.equal(debugBytes[1]![0], 1024 * 1024);
+      assert.equal(JSON.stringify(probes).includes(secret), false);
+    }
+
+    const source = `
+      const descendant = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit', windowsHide: true });
+      require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
+    `;
+    const timedOut = await nodeProbeSpawn(process.execPath, ['-e', source + 'setInterval(() => {}, 1000);'], { cwd: probeCwd, timeoutMs: 1100 });
+    assert.equal(timedOut.timedOut, true);
+    await assertOwnedProcessExited(Number(fs.readFileSync(pidFile, 'utf8')));
+    assert.deepEqual(fs.readdirSync(probeCwd), before);
+  } finally {
+    if (fs.existsSync(pidFile)) {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      if (ownedProcessAlive(pid)) process.kill(pid, 'SIGKILL');
+    }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('nodeProbeSpawn runs Windows batch shims with a spaced path and argument', { skip: process.platform !== 'win32' && 'Windows .cmd shim test' }, async () => {
+  const { nodeProbeSpawn } = await import('../../skills/dispatch/scripts/providers/probe.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch probe-'));
+  try {
+    const shim = path.join(root, 'probe tool.cmd');
+    const script = path.join(root, 'probe.cjs');
+    fs.writeFileSync(script, 'process.stdout.write(process.argv[2]);');
+    fs.writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+    const output = await nodeProbeSpawn(shim, ['version label'], { cwd: root, timeoutMs: 2500 });
+    assert.deepEqual([output.exit, output.stdout], [0, 'version label']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('nodeProbeSpawn tears down a POSIX process group after its leader exits', { skip: process.platform === 'win32' && 'POSIX process-group test' }, async () => {
+  const { nodeProbeSpawn } = await import('../../skills/dispatch/scripts/providers/probe.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-'));
+  const pidFile = path.join(root, 'descendant.pid');
+  try {
+    const source = `
+      const descendant = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' });
+      require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
+      process.exit(0);
+    `;
+    const output = await nodeProbeSpawn(process.execPath, ['-e', source], { cwd: root, timeoutMs: 2500 });
+    assert.equal(output.exit, 0);
+    await assertOwnedProcessExited(Number(fs.readFileSync(pidFile, 'utf8')));
+  } finally {
+    if (fs.existsSync(pidFile)) {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      if (ownedProcessAlive(pid)) process.kill(pid, 'SIGKILL');
+    }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});

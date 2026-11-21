@@ -36,7 +36,7 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | action | brief verifier | `brief verifier [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
 | action | ledger append | `ledger append <record.json\|-> --session <session>` |
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
-| action | doctor run | `doctor run --session <session> --host <platform> [--level <level>]` |
+| action | doctor run | `doctor run --session <session> --host <platform> [--level <level>] [--probe]` |
 | action | status show | `status show --session <session>` |
 | action | lint run | `lint run <artifact> --session <session> [--edit <fields.json\|-> \| --json <json>]` |
 | action | diagnostics render | `diagnostics render --session <session>` |
@@ -275,9 +275,10 @@ Refusals: positional arguments or invalid filters. Invalid `kind` names the allo
 
 ### doctor run
 
-Arguments: `doctor run --session <session> --host <platform> [--level <level>]`.
-Result path: integrity, configuration path, `problems` (including a problem when the host has no `utility-subagents` or `write-subagents` entry) and `warnings` (one message per malformed `pricing` entry, which Dispatch ignores; warnings never set `ok` false or block a launch; see [price overrides](readme/configuration.md#override-rates-for-cost-estimates)), selected level, configured writer models/efforts, `writeConcurrency` (the configured `write-concurrency`, or 1 when omitted or invalid), `host` (`{platform, source}`: the declared session host and `declared`, or `null` and `none` when absent or invalid) and `utility` (per canonical platform `claude`, `agy`, `copilot`, `opencode` or `codex`: its `utility-subagents` entry with `contextLimit`; independent of level). `sandboxRemoved` lists each live non-host read delegate that an unpinned roster drops because its requested sandbox cannot run on the host platform, derived from the provider table. `--level` selects writer models. Doctor does not probe provider/mode availability, authentication or runtime sandbox activation.
-Refusals: positional arguments, invalid configuration or missing/unknown `--host`. Inspect ok and reason for failed integrity or unavailable capabilities.
+Arguments: `doctor run --session <session> --host <platform> [--level <level>] [--probe]`.
+Result path: integrity, configuration path, `problems` (including a problem when the host has no `utility-subagents` or `write-subagents` entry) and `warnings` (one message per malformed `pricing` entry, which Dispatch ignores; warnings never set `ok` false or block a launch; see [price overrides](readme/configuration.md#override-rates-for-cost-estimates)), selected level, configured writer models/efforts, `writeConcurrency` (the configured `write-concurrency`, or 1 when omitted or invalid), `host` (`{platform, source}`: the declared session host and `declared`, or `null` and `none` when absent or invalid) and `utility` (per canonical platform `claude`, `agy`, `copilot`, `opencode` or `codex`: its `utility-subagents` entry with `contextLimit`; independent of level). `sandboxRemoved` lists each live non-host read delegate that an unpinned roster drops because its requested sandbox cannot run on the host platform, derived from the provider table. `--level` selects writer models.
+With `--probe` and valid config, check configured `read-delegates` live. `probes` exposes only `provider`, `binaryFound`, `version`, `readiness`, `sandbox`, `failureCategory` and `remediation`. `probeSummary` counts `ok`, `failed`, `unprobeable` and `unverified`. Dispatch keeps subprocess output in memory and writes no probe files.
+Refusals: positional arguments, invalid configuration or missing/unknown `--host`. A failed live probe sets `ok: false` and `reason: probe-failed` and keeps the probe results. Inspect `ok` and `reason` for failed integrity or unavailable capabilities.
 
 ### status show
 

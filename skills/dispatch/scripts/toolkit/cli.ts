@@ -28,7 +28,8 @@ import { appendLintEdit, appendRecords, currentHashes, foldLedger, latest, query
 import { readJsonPayload } from './input.ts';
 import { isHintExcludedAction, stepHint } from './hints.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
-import { doctorReport } from './doctor.ts';
+import { doctorReport, doctorReportWithProbe } from './doctor.ts';
+import { nodeProbeSpawn, type ProbeDeps } from '../providers/probe.ts';
 import { statusReport } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
@@ -42,6 +43,7 @@ import { reviewId } from './confirmations.ts';
 export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
+  probe?: ProbeDeps;
   readStdin?: () => string;
   hostUsageFs?: HostUsageFs;
   diagnostics?: (event: DiagnosticEvent) => void;
@@ -72,7 +74,9 @@ export function nodeDeps(): CliDeps {
   });
   const modes = (provider:ProviderId) => SPECS[provider].modes.filter(mode=>discovery.resolve(provider,mode.id).status==='path').map(mode=>mode.id);
   const runnerFs = nodeRunnerFs;
+  const clock = () => Date.now();
   return {
+    probe: { spawn: nodeProbeSpawn, platform, discovery, exists: fs.existsSync, cwd: process.cwd(), now: clock },
     modes, orchestrator:null, readStdin: () => fs.readFileSync(0, 'utf8'),
     liveness:Object.fromEntries(Object.keys(SPECS).map(provider=>[provider,modes(provider as ProviderId).length>0])),
     sandboxSupported:Object.fromEntries(Object.entries(SPECS).map(([provider,spec])=>[provider,!sandboxBlocked(spec,true,platform)])),
@@ -118,7 +122,7 @@ export function nodeDeps(): CliDeps {
       child.stdin.on('error', error => { if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(error); });
       child.stdin.end(options.stdin);
     }),
-    stdout: (line) => { process.stdout.write(line); }, env: process.env, clock: () => Date.now(),
+    stdout: (line) => { process.stdout.write(line); }, env: process.env, clock,
     sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)), pid: process.pid, host: os.hostname(),
     isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } },
     skillRoot: fileURLToPath(new URL('../..', import.meta.url)),
@@ -230,7 +234,9 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'doctor run': async ({ session, manifest, values, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'doctor takes only options');
     const fold = values['level'] === undefined ? foldLedger(session) : undefined;
-    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null, deps.liveness, deps.sandboxSupported, fold);
+    const host = orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null;
+    const reportArgs = [session, deps.skillRoot, values['level'], host, deps.liveness, deps.sandboxSupported, fold] as const;
+    const value = values['probe'] ? await doctorReportWithProbe(...reportArgs, deps.probe) : doctorReport(...reportArgs);
     return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}), ...(fold ? { postFold: fold } : {}) };
   },
   'status show': async ({ session, manifest, args, deps }) => {
@@ -282,10 +288,11 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
       json: { type: 'string' }, text: { type: 'string' }, message: { type: 'string' }, base: { type: 'string' }, 'integration-path': { type: 'string' },
       'review-fix-json': { type: 'string' }, 'test-cleanup-json': { type: 'string' },
-      reuse: { type: 'boolean' }, fresh: { type: 'boolean' },
+      reuse: { type: 'boolean' }, fresh: { type: 'boolean' }, probe: { type: 'boolean' },
     } });
     [tool = '', action = ''] = parsed.positionals;
     const fullAction = tool + ' ' + action;
+    if (parsed.values['probe'] !== undefined && fullAction !== 'doctor run') throw new ToolError(1, 'invalid-input', '--probe is only for doctor run');
     if (!handlers[fullAction]) throw new Error('Unknown tool or action');
     if (parsed.values['reuse'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--reuse is only for check run');
     if (parsed.values['fresh'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--fresh is only for check run');

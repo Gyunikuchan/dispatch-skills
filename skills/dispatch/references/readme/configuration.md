@@ -83,9 +83,25 @@ node scripts/dispatch.ts session init --objective "Check Dispatch setup" --host 
 node scripts/dispatch.ts doctor run --session <returned-session-path> --host <platform> --level high
 ```
 
-Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports the `utility` entry per platform with its `contextLimit`. It does not probe provider executables, authentication or runtime sandbox activation; provider launches expose those failures.
+Every tool returns JSON with `ok`, `summary` and a result `path`. Read the result file even when the exit code is zero. Doctor checks skill integrity and configuration, resolves writer models at the selected level, and reports the `utility` entry per platform with its `contextLimit`.
 
 If doctor blocks with `config-invalid`, check that `write-subagents` and `utility-subagents` include the host platform. A read delegate is not a substitute for a native writer. A review or ask voice on the host platform always runs as a native subagent; a native failure takes a reserve, then `failed`.
+
+### Check providers live
+
+Add `--probe` to the doctor command to check CLI launch and supported runtime capabilities for configured `read-delegates`, including the host when configured. OpenCode checks standalone configuration, agent discovery, and bubblewrap on Linux when available. Authentication for Claude, Codex, Copilot, and Antigravity is `unprobeable`. Dispatch keeps probe subprocess output in memory. Provider CLIs can still write their own caches.
+
+If doctor returns `probe-failed`, read each failed provider's `failureCategory` and `remediation` in the result file.
+
+| Failure category | Action |
+| --- | --- |
+| `not-found` | Install the provider CLI and make its launcher discoverable. |
+| `timeout` | Check whether the CLI starts promptly, then retry the probe. |
+| `unsupported-version` | Upgrade OpenCode to a release with standalone mode. |
+| `sandbox-unavailable` | Check bubblewrap and OpenCode state directories. |
+| `sandbox-unsupported` | Set `sandbox: false` for this provider to opt out of OS isolation, or use a platform that supports its sandbox. |
+| `config-error` | Check the provider configuration and available agents. |
+| `probe-error` | Check that the installed provider CLI starts successfully. |
 
 ## Sandboxing and provider details
 

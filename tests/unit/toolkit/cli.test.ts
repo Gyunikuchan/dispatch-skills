@@ -489,3 +489,36 @@ test('rejects --reuse and --fresh outside check run or combined', async () => {
     assert.equal(f.output().reason, 'invalid-input');
   } finally { f.cleanup(); }
 });
+test('rejects --probe outside doctor run and surfaces probe-failed on doctor run --probe', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skillRoot = path.join(f.root, 'probe-skill');
+    fs.mkdirSync(skillRoot);
+    fs.writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify({
+      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
+      'write-subagents': { codex: { low: { model: 'writer' } } },
+      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+    }));
+    const calls: string[] = [];
+    const deps = { ...f.deps, skillRoot, probe: {
+      discovery: { resolve: () => ({ status: 'path' as const, path: 'codex' }), doctor: () => [], probes: 0 },
+      spawn: async (binary: string) => {
+        calls.push(binary);
+        return { exit: 1, stdout: 'untrusted subprocess text', stderr: '' };
+      },
+    } };
+    assert.equal(await main(['status', 'show', '--session', f.session, '--probe'], deps), 1);
+    assert.equal(f.output().reason, 'invalid-input');
+    assert.match(f.output().summary, /--probe is only for doctor run/);
+    assert.deepEqual(calls, []);
+
+    f.lines.length = 0;
+    assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'codex', '--level', 'low', '--probe'], deps), 0);
+    const output = f.output();
+    assert.deepEqual([output.ok, output.reason, calls], [false, 'probe-failed', ['codex']]);
+    const reportText = fs.readFileSync(output.path!, 'utf8');
+    const report = JSON.parse(reportText);
+    assert.deepEqual([report.level, report.reason, report.probes[0].failureCategory], ['low', 'probe-failed', 'probe-error']);
+    assert.equal(reportText.includes('untrusted subprocess text'), false);
+  } finally { f.cleanup(); }
+});

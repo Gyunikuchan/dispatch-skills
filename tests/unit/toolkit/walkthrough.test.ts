@@ -50,15 +50,46 @@ test('walkthrough follows reviewer order and states counts once', () => {
   const glance = section(rendered, '## At a Glance', '## Visuals');
   assert.match(glance, /- \*\*What:\*\* The plan behaviour is visible to readers\./);
   assert.match(glance, /- \*\*Artifacts:\*\* \[spec\]/);
-  assert.equal((glance.match(/^- \*\*Counts:\*\*/gm) ?? []).length, 1);
+  const counts = glance.split('<details>\n<summary>Detailed counts</summary>\n\n')[1]!;
+  assert.equal((counts.match(/^- \*\*Counts:\*\*/gm) ?? []).length, 1);
   for (const count of ['1/1 criteria', '1 files', '0 recorded edits', '0 unplanned paths', '0 findings']) {
-    assert.equal((rendered.match(new RegExp(count, 'g')) ?? []).length, 1, count);
+    assert.equal((counts.match(new RegExp(count, 'g')) ?? []).length, 1, count);
   }
   assert.equal(section(rendered, '## Review Focus', '## Behaviour Changes'),
     '## Review Focus\n\n- Risk: low · Delivery matched the plan and all criteria are verified.\n\n');
   const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
   assert.match(verification, /- \*\*Status:\*\* complete/);
   assert.doesNotMatch(verification, /\d+\/\d+|\d+ files|\d+ findings/);
+});
+
+test('renderWalkthrough keeps human summary and follow-ups visible while collapsing verbose audit details', () => {
+  const deferredRulings = [{ review: 'review-alpha', finding: 'R1-F001' }];
+  const deferredEscalations = [{ id: 'E-2', summary: 'Confirm after release.' }];
+  for (const [followUps, pointer] of [
+    [{ deferredRulings }, 'Deferred finding review-alpha:R1-F001'],
+    [{ deferredEscalations }, 'Deferred escalation E-2'],
+  ] as const) {
+    const focus = section(renderWalkthrough(view(followUps)), '## Review Focus', '## Behaviour Changes');
+    assert.doesNotMatch(focus, /Delivery matched the plan/);
+    assert.ok(focus.includes(`- ${pointer} — see Deviations & Follow-ups`));
+  }
+  const rendered = renderWalkthrough(view({
+    deferredRulings,
+    deferredEscalations,
+    statuses: [{ criterion: 'SC1', state: 'verified', evidence: 'evidence/sc1.json' }],
+    changes: [{ action: 'MODIFY', path: 'src/a.ts', owners: [] }],
+    edits: [{ seq: 1, artifact: 'plan', class: 'non-intent', rationale: 'Clarified scope.', diffRef: 'diff/plan.patch', affects: ['T1'] }],
+    reviewRows: [{ review: 'review-alpha', id: 'R1-F001', round: 1, severity: 'SHOULD', ruling: 'deferred', rationale: 'Confirm later.' }],
+    reviewRounds: [{ review: 'review-alpha', round: 1, findings: 1, path: 'review/findings.json' }],
+    coverage: 'unreadable',
+  }));
+  const glance = section(rendered, '## At a Glance', '## Visuals');
+  assert.match(glance, /- \*\*Summary:\*\* 1\/1 criteria satisfied · 1 files changed · 0 open findings · 2 deferred follow-ups\n\n<details>/);
+  const deviations = section(rendered, '## Deviations & Follow-ups', '## Review Findings & Resolutions');
+  assert.match(deviations, /- Follow-up: deferred review-alpha:R1-F001\n- Follow-up: deferred escalation E-2: Confirm after release\.\n\n<details>\n<summary>Deviations \(1\)<\/summary>\n\n- Deviation: .*diff\/plan\.patch.*\n\n<\/details>/);
+  const findings = section(rendered, '## Review Findings & Resolutions', '## Appendix');
+  assert.match(findings, /1 findings across 1 rounds \(0 open\)\n\n- Coverage state unreadable\n\n<details>\n<summary>Findings table \(1\)<\/summary>\n\n\| Review \| ID \|/);
+  assert.match(findings, /\| Deferred \| Confirm later\. \|\n\n- Round 1 .*\[findings\]\(review\/findings\.json\)\n\n<\/details>/);
 });
 
 test('walkthrough review focus points to attention details in their owning sections', () => {
@@ -93,6 +124,7 @@ test('walkthrough review focus points to attention details in their owning secti
   assert.deepEqual(focus.split('\n').filter((line) => line.startsWith('- ')), [
     '- Risk: high',
     '- Open escalation E-1 — see Deviations & Follow-ups',
+    '- Deferred finding review-alpha:R1-F011 — see Deviations & Follow-ups',
     '- Open finding review-alpha:R1-F009 (MUST) — see Review Findings & Resolutions',
     '- Manual criterion SC2 — see Verification',
     '- Waived criterion SC3 — see Verification',
@@ -266,7 +298,9 @@ test('walkthrough reports coverage open slots, majority reduction, overrides wit
       targets: ['codex[0]', 'opencode[1]', 'claude[2]'], completed: ['opencode[1]', 'claude[2]'], open: ['codex[0]'], coverageRounds: [2, 3], decision: 'majority',
     }),
   })));
-  assert.match(majority, /^- Round 1 \(code-integration\): 0 findings — \[findings\]\(.+\)\n\n- Open coverage slots: codex\[0\]; reduced coverage accepted under the majority rule \(2 of 3 target slots completed\)$/m);
+  assert.match(majority, /^- Open coverage slots: codex\[0\]; reduced coverage accepted under the majority rule \(2 of 3 target slots completed\)$/m);
+  assert.match(majority, /^- Round 1 \(code-integration\): 0 findings — \[findings\]\(.+\)$/m);
+  assert.doesNotMatch(majority, /<details>/);
   assert.match(majority, /^- Coverage rounds: 2, 3$/m);
 
   const overridden = findings(renderWalkthrough(view({
@@ -310,6 +344,6 @@ test('walkthrough links governing artifacts instead of restating them', () => {
 
 test('walkthrough fixture render stays below its pre-link byte size', () => {
   const bytes = Buffer.byteLength(renderWalkthrough(linkFixture(), '/sessions/run'));
-  // Render of this fixture at 7677a380.
+  // 1,707 B before adding the visible summaries and collapsed counts. The pre-link cap still holds.
   assert.ok(bytes < 2910, 'render bytes: ' + bytes);
 });

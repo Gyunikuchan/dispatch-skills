@@ -108,6 +108,12 @@ function reviewFocus(view: WalkthroughView): string[] {
   for (const item of view.openEscalations) {
     attention.push(`- Open escalation ${line(item.id)} — see Deviations & Follow-ups`);
   }
+  for (const item of view.deferredRulings) {
+    attention.push(`- Deferred finding ${line(item.review)}:${line(item.finding)} — see Deviations & Follow-ups`);
+  }
+  for (const item of view.deferredEscalations) {
+    attention.push(`- Deferred escalation ${line(item.id)} — see Deviations & Follow-ups`);
+  }
   for (const row of view.reviewRows) {
     if (row.ruling === null) attention.push(`- Open finding ${line(row.review)}:${line(row.id)} (${line(row.severity)}) — see Review Findings & Resolutions`);
   }
@@ -167,6 +173,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   const deleted = view.changes.filter((change) => change.action === 'DELETE').length;
   const changeSummary = `${view.changes.length} files (${added} new · ${modified} modified · ${deleted} deleted)`;
   const openReviews = view.reviewRows.filter((row) => row.ruling === null).length;
+  const deferredFollowUps = view.deferredRulings.length + view.deferredEscalations.length;
   const integration = view.delivered === null
     ? 'not delivered'
     : view.delivered.source === null
@@ -185,7 +192,14 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     '',
     `- **What:** ${delivered}`,
     `- **Artifacts:** [spec](${href(view.specPath)}) · [plan](${planHref})${view.designPath ? ` · [design](${href(view.designPath)})` : ''}`,
+    `- **Summary:** ${satisfied}/${criteria.length} criteria satisfied · ${view.changes.length} files changed · ${openReviews} open findings · ${deferredFollowUps} deferred follow-ups`,
+    '',
+    '<details>',
+    '<summary>Detailed counts</summary>',
+    '',
     `- **Counts:** ${satisfied}/${criteria.length} criteria (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing}); ${changeSummary}; ${view.edits.length} recorded edits; ${view.unplannedPaths.length} unplanned paths; ${view.openEscalations.length} open escalations; ${view.deferredRulings.length} deferred rulings; ${view.deferredEscalations.length} deferred escalations; ${view.reviewRows.length} findings (${openReviews} open)`,
+    '',
+    '</details>',
     '',
     '## Visuals',
     '',
@@ -252,9 +266,18 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     : view.delivered.source === null
       ? `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; not delivered`
       : `source ${line(view.delivered.source)} · branch ${line(view.delivered.branch)} · ref ${line(view.delivered.ref)}`;
+  out.push('## Deviations & Follow-ups', '');
+  if (followUps.length) out.push(...followUps, '');
+  if (deviations.length) out.push('<details>', `<summary>Deviations (${deviations.length})</summary>`, '', ...deviations, '', '</details>', '');
+  if (!deviations.length && !followUps.length) out.push('None.', '');
+
+  const findingCount = view.reviewRows.length;
+  const findings = renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir);
+  out.push('## Review Findings & Resolutions', '', `${findingCount} findings across ${view.reviewRounds.length} rounds (${openReviews} open)`, ...coverageLines(view.coverage), '');
+  if (findingCount) out.push('<details>', `<summary>Findings table (${findingCount})</summary>`, '', findings, '', '</details>', '');
+  else out.push(findings, '');
+
   out.push(
-    '## Deviations & Follow-ups', '', ...(deviations.length || followUps.length ? [...deviations, ...followUps] : ['None.']), '',
-    '## Review Findings & Resolutions', '', renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir), ...coverageLines(view.coverage), '',
     '## Appendix', '', '<details>', '', '<summary>Audit records</summary>', '',
     '### Provenance', '',
     `- Spec: [${line(view.specPath)}](${href(view.specPath)}) · ${hashPrefix(view.specHash)}`,

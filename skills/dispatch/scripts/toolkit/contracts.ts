@@ -39,7 +39,7 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
   'brief verifier': { arguments: 'brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>' },
   'ledger append': { arguments: 'ledger append <record.json|-> --session <session>' },
   'ledger query': { arguments: 'ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]' },
-  'doctor run': { arguments: 'doctor run --session <session> --host <platform> [--level <level>]' },
+  'doctor run': { arguments: 'doctor run --session <session> --host <platform> [--level <level>] [--probe]' },
   'status show': { arguments: 'status show --session <session>' },
   'lint run': { arguments: 'lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]' },
   'diagnostics render': { arguments: 'diagnostics render --session <session>' },
