@@ -6,10 +6,11 @@ Repository-wide instructions for work in this checkout. `.claude/CLAUDE.md` syml
 
 Dispatch enables high-confidence development across native agent harnesses: catch flawed assumptions early and verify delivery with minimal routine human coordination. Guide changes with these principles:
 
+- **AX / DX / UX balance:** Evaluate code and prose across **AX** (agents running the skill: reliability, context and tool-call cost), **DX** (human and agent maintainers), and **UX** (human users). Protect **UX** outcomes and **AX** reliability first; use **DX** to serve both without adding runtime friction.
 - **Proportional assurance:** Balance correctness, token efficiency, and speed against task risk. Preserve acceptance and safety boundaries with the simplest, least costly workflow.
 - **Native collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs.
 - **Evidence and intent:** Treat delegate findings as claims. Check them against governing intent, rules, and artifacts; resolve findings with evidence, never vote counts.
-- **Lean context:** Keep always-loaded contracts and initial briefs focused. Disclose detail progressively, retain evidence in linked artifacts, and prefer deterministic enforcement over recurring prose. Delegate token-heavy reading and research to cheaper native explorer subagents that return distilled, cited results to protect orchestrator context.
+- **Lean context:** Keep always-loaded contracts and initial briefs focused, disclose detail progressively, retain evidence in linked artifacts, and prefer deterministic enforcement over recurring prose. Delegate token-heavy reading and research to cheaper native explorer subagents returning distilled, cited results to protect orchestrator context.
 - **Scripts as spine:** Scripts guide agents and do deterministic work for them. Add a check only when it prevents a likely, costly fault that instructions and review cannot; prefer trusting an instructed agent over guarding against it. A check warns and lets the agent decide; it blocks only to protect a user gate or to prevent loss of work. Remove checks that restrict routine progress or cost more than the fault they prevent.
 - **Diagnostics:** Capture metrics identifying defects and bottlenecks. Minimize token overhead when disabled; load instructions and collect observations only when enabled.
 - **Informed handoffs:** State objective, decisions, constraints, current state, next action, and verified evidence at each handoff. Link artifacts for detail.
@@ -53,7 +54,7 @@ Use the procedure's bounded manual repair fallback only when a demonstrated cont
 
 ## Product Architecture and Key Areas
 
-`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. `dispatch-plan`, `dispatch-implement`, `dispatch-code-review`, and `dispatch-verify` are thin compatibility aliases mapping arguments to one verb; `dispatch` never references them.
+`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. `dispatch-plan`, `dispatch-implement`, `dispatch-code-review`, and `dispatch-verify` are thin compatibility aliases; `dispatch` never references them.
 
 Key boundaries:
 - Reference skills by name or sibling-relative `<skills-dir>` paths, never host-specific paths.
@@ -74,11 +75,11 @@ Dual-audience: Canonical documents serve both humans and agents. Keep outcome su
 
 ## Documentation Standards
 
-Integrate new prose into existing structure before adding text: rephrase, reorder, and remove redundant or obsolete material. Keep each rule in one canonical home. Apply progressive disclosure: inline essentials and link branch-specific detail. Keep a rule that every branch needs inline in `skills/dispatch/SKILL.md`, because a must-load file adds a tool call to each run; raise the `SKILL.md` byte budget when such rules need the room. Treat structural ceilings as a hint: cut or consolidate first; a genuine new behaviour or rule may raise a ceiling with the reason recorded beside it and reported in the handoff; duplicates never justify a raise; no user authorization is needed. Use the fewest tokens that preserve meaning and execution.
+Integrate edits into existing structure—rephrase, reorder, and prune stale or duplicate material before adding text. Keep each rule in one canonical home. Keep a rule that every branch needs inline in `skills/dispatch/SKILL.md`, because a must-load file adds a tool call to each run; raise the `SKILL.md` byte budget when such rules need the room. Treat structural ceilings as a hint: cut or consolidate first; a genuine new behaviour or rule may raise a ceiling with the reason recorded beside it and reported in the handoff; duplicates never justify a raise; no user authorization is needed.
 
-- **Human documentation:** Explain concepts plainly around user tasks; provide realistic examples, setups, limits, and recovery steps. The root and dispatch READMEs serve as style examples, not rigid outlines.
-- **Agent-facing prose:** Applies to skills, prompts, templates, operational references, and script-emitted instructions. Follow [.agents/skills/writing-for-agents/SKILL.md](.agents/skills/writing-for-agents/SKILL.md). Prefer established industry-standard terms and high-density domain concepts (recruiting pretraining priors at minimal token cost) over verbose explanations. Define explicit triggers, sequence, boundaries, and checkable completion criteria. Include rationale only when it alters execution. Format skills with YAML frontmatter (`name`, `description`).
-- **Maintainer knowledge base (`docs/`):** Preserve long-term rationale, not operational requirements (which belong in `skills/dispatch/references/`). ADRs (`docs/decisions/`) record current state: focus on active decisions and rationale; omit historical logs and superseded context. Store transient sweeps, logs, and scratch in `.scratch/`, not `docs/`.
+- **Human documentation:** Explain concepts plainly around user tasks with realistic examples, setups, limits, and recovery steps. Use the root and dispatch READMEs as style examples, not rigid outlines.
+- **Agent-facing prose:** Applies to skills, prompts, templates, operational references, and script-emitted instructions. Follow [.agents/skills/writing-for-agents/SKILL.md](.agents/skills/writing-for-agents/SKILL.md) (progressive disclosure, leading words, checkable criteria, pruning, and `SKILL-MECHANICS.md` for skill frontmatter/routing). Include rationale only when it alters execution.
+- **Maintainer knowledge base (`docs/`):** Preserve long-term rationale; keep operational requirements in `skills/dispatch/references/` and transient scratch in `.scratch/`. ADRs (`docs/decisions/`) record active decisions and rationale only—omit historical logs and superseded context.
 
 ## Code and Cross-Platform Conventions
 
