@@ -295,7 +295,7 @@ test('fix-check spec: drift without a snapshot states the reviewed spec text is 
   } finally { f.cleanup(); }
 });
 
-test('fix-check withholding: sensitive, outside, session, unlisted and missing citations are withheld with reasons', async () => {
+test('fix-check withholding: sensitive, outside, session and unlisted citations are withheld with reasons', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -321,12 +321,64 @@ test('fix-check withholding: sensitive, outside, session, unlisted and missing c
     assert.ok(text.includes('`.scratch/dispatch-skills/20261022T0000Z-other/a.md`: session'));
     assert.ok(text.includes('`' + sessionRel + '/.state/briefs/x.md`: session'));
     assert.ok(text.includes('`ignored/y.ts`: not listed'));
-    assert.ok(text.includes('`missing.ts`: missing'));
+    assert.ok(text.includes('`missing.ts`: no match'));
+    const unresolved = text.split('- Unresolved citations. You may read their listed matches:')[1]?.split('\n\n- Withheld paths. Do not read them:')[0];
+    const withheld = text.split('- Withheld paths. Do not read them:')[1]?.split('\n\n## Reading bound')[0];
+    assert.ok(unresolved?.includes('`missing.ts`: no match'), unresolved);
+    assert.ok(withheld?.includes('`../x.md`: outside repository'), withheld);
     assert.ok(text.includes('`' + sessionRel + '/notes.md:1`') || text.includes('`' + sessionRel + '/notes.md`'), 'current session artifact is kept');
     assert.ok(text.includes('`skills/writer.ts:1`'));
-    assert.equal(value!['withheld'], sensitive.length + 5);
+    assert.equal(value!['unresolved'], 1);
+    assert.equal(value!['withheld'], sensitive.length + 4);
   } finally { f.cleanup(); }
 });
+
+const citationCases = [
+  {name: 'unique basename keeps its span', cited: 'writer.ts', files: ['lib/writer.ts'], expected: '- `lib/writer.ts:1-3`', counts: [1, 0, 0]},
+  {name: 'two matches list both paths', cited: 'index.ts', files: ['a/index.ts', 'b/index.ts'], expected: '- `index.ts`: several matches: a/index.ts, b/index.ts', counts: [0, 1, 0]},
+  {name: 'several matches omit withheld names and cap readable matches', cited: 'index.ts',
+    files: ['a/index.ts', 'b/index.ts', 'c/index.ts', 'd/index.ts', 'e/index.ts', 'f/index.ts', '{{x}}/index.ts', '.ssh/index.ts'],
+    expected: '- `index.ts`: several matches: a/index.ts, b/index.ts, c/index.ts, d/index.ts, e/index.ts, +1 more', counts: [0, 1, 0]},
+  {name: 'directory is unresolved even with a file suffix match', cited: 'dir.ts', files: ['dir.ts/child.ts', 'lib/dir.ts'], expected: '- `dir.ts`: not a file', counts: [0, 1, 0]},
+  {name: 'unique sensitive match is withheld', cited: 'secrets.ts', files: ['src/secrets.ts'], expected: '- `src/secrets.ts`: sensitive', counts: [0, 0, 1]},
+  {name: 'unique other-session match is withheld', cited: 'hidden.ts', files: ['.scratch/dispatch-skills/20261022T0000Z-other/hidden.ts'], expected: '- `.scratch/dispatch-skills/20261022T0000Z-other/hidden.ts`: session', counts: [0, 0, 1]},
+  {name: 'nonexistent other-session path is withheld', cited: '.scratch/dispatch-skills/20261022T0000Z-other/absent.ts', files: [], expected: '- `.scratch/dispatch-skills/20261022T0000Z-other/absent.ts`: session', counts: [0, 0, 1]},
+  {name: 'nonexistent unrenderable path is withheld', cited: '{{x}}/absent.ts', files: [], expected: '- `{ {x} }/absent.ts`: unrenderable name', counts: [0, 0, 1]},
+  {name: 'tracked deleted match is unresolved', cited: 'deleted.ts', files: [], deleted: 'lib/deleted.ts', expected: '- `deleted.ts`: no match', counts: [0, 1, 0]},
+];
+
+for (const {name, cited, files, deleted, expected, counts} of citationCases) {
+  test(`fix-check citation resolution: ${name}`, async () => {
+    const f = await fixture();
+    try {
+      await reviewed(f);
+      for (const file of files) put(f, file);
+      gitStub(f, deleted ? [...files, deleted] : files, () => ({exit: 1, stderr: '', stdout: '+Cites `' + cited + ':1-3`.\n'}));
+      const {exit, value, text} = await brief(f);
+      assert.equal(exit, 0);
+      const section = counts[0] ? 'Citations from' : counts[1] ? 'Unresolved citations' : 'Withheld paths';
+      const body = text.split('- ' + section)[1]?.split('\n\n')[1];
+      assert.ok(body?.split('\n').includes(expected), body);
+      assert.deepEqual([value!['citations'], value!['unresolved'], value!['withheld']], counts);
+    } finally { f.cleanup(); }
+  });
+}
+
+for (const aliases of [['writer.ts', 'lib/writer.ts'], ['lib/writer.ts', 'writer.ts']]) {
+  test(`fix-check citation resolution: keeps one span when ${aliases[0]} appears first`, async () => {
+    const f = await fixture();
+    try {
+      await reviewed(f);
+      put(f, 'lib/writer.ts');
+      const citations = aliases.map(alias => '`' + alias + ':1-3`');
+      gitStub(f, ['lib/writer.ts'], () => ({exit: 1, stderr: '', stdout: '+Cites ' + citations.join(' and ') + '.\n'}));
+      const {exit, value, text} = await brief(f);
+      assert.equal(exit, 0);
+      assert.equal(text.split('- `lib/writer.ts:1-3`').length - 1, 1);
+      assert.deepEqual([value!['citations'], value!['unresolved'], value!['withheld']], [1, 0, 0]);
+    } finally { f.cleanup(); }
+  });
+}
 
 test('fix-check consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs', async () => {
   const f = await fixture();
@@ -520,6 +572,7 @@ test('note skeleton: the summary keeps the absolute path and the filled note app
     const {exit, output, value} = await brief(f);
     assert.equal(exit, 0);
     const [head, json] = output.summary.split('; skeleton ');
+    assert.match(head!, /1 accepted, 0 citations, 1 unresolved, 0 withheld/);
     assert.ok(head!.includes(value!['briefPath']));
     assert.ok(json, 'summary must include a note skeleton');
     const skeleton = JSON.parse(json);

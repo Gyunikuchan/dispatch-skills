@@ -126,21 +126,22 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     fs.writeFileSync(diffFile, diff.stdout);
     written.push(diffFile);
 
-    const kept: string[] = [];
+    const kept = new Set<string>();
+    const unresolved: string[] = [];
     const withheld: string[] = [];
     const seen = new Set<string>();
     const unrenderable = new Set<string>();
     const citationReason = (rel: string): string | null => {
-      // Template slots refuse `{{`, `}}` and `](`, so such a name is withheld, not rendered.
-      if (/\{\{|\}\}|\]\(/.test(rel)) return 'unrenderable name';
+      // Names must fit a Markdown list line and pass template validation.
+      if (/[\r\n`]|\{\{|\}\}|\]\(/.test(rel)) return 'unrenderable name';
       const abs = path.resolve(root, rel);
       if (!safeRepoPath(rel) || !within(root, abs)) return 'outside repository';
       if (inSessions(rel) && !ownSession(rel)) return 'session';
       const real = realpathOrNull(abs);
-      if (real === null) return 'missing';
+      if (real === null) return 'no match';
       if (!within(root, real)) return 'outside repository';
+      if (!fs.statSync(real, {throwIfNoEntry: false})?.isFile()) return 'not a file';
       if (findSensitiveMatch(abs, realpathOrNull)) return 'sensitive';
-      if (!fs.statSync(real).isFile()) return 'missing';
       return listed.has(rel) ? null : 'not listed';
     };
     for (const citation of addedCitations(diff.stdout)) {
@@ -149,9 +150,31 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
       const key = span(normalized);
       if (seen.has(key)) continue;
       seen.add(key);
-      const reason = citationReason(normalized.path);
-      if (reason === null) kept.push('- `' + key + '`');
-      else { withheld.push(safeText(`- \`${normalized.path}\`: ${reason}`)); if (reason === 'unrenderable name') unrenderable.add(normalized.path); }
+      let reason = citationReason(normalized.path);
+      if (reason === 'no match') {
+        const matches = [...listed].filter(rel => rel === normalized.path || rel.endsWith('/' + normalized.path));
+        if (matches.length === 1) {
+          const match = matches[0]!;
+          const real = realpathOrNull(path.resolve(root, match));
+          if (real !== null && fs.statSync(real, {throwIfNoEntry: false})?.isFile()) {
+            normalized.path = match;
+            reason = citationReason(match);
+          }
+        } else if (matches.length > 1) {
+          const readable = matches.filter(rel => citationReason(rel) === null);
+          const shown = readable.slice(0, 5);
+          if (readable.length > 5) shown.push(`+${readable.length - 5} more`);
+          unresolved.push(`- \`${normalized.path}\`: several matches${shown.length ? ': ' + shown.join(', ') : ''}`);
+          continue;
+        }
+      }
+      if (reason === null) kept.add('- `' + span(normalized) + '`');
+      else if (reason === 'no match' || reason === 'not a file') unresolved.push(`- \`${normalized.path}\`: ${reason}`);
+      else {
+        const display = normalized.path.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/`/g, '%60');
+        withheld.push(safeText(`- \`${display}\`: ${reason}`));
+        if (reason === 'unrenderable name') unrenderable.add(normalized.path);
+      }
     }
 
     // Flagged listed paths drop out of the search: sensitive ones and listed ones cited as unrenderable are excludes (glob-rendered when unsafe); an unsafe sensitive one is also withheld.
@@ -184,7 +207,8 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
       diffPath: safeText(diffFile),
       artifact: safeText(artifact),
       spec: safeText(specLine),
-      citations: list(kept),
+      citations: list([...kept]),
+      unresolved: unresolved.length ? list(unresolved) : '- none',
       withheld: list(withheld),
       consumerSearch,
       replyLimit: DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US'),
@@ -199,9 +223,9 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     const launch = utilityLaunchValues(ctx.deps.skillRoot, host);
     const value = {
       briefPath: briefFile, bytes: Buffer.byteLength(text), review, round: round.number, noteKey, noteSkeleton, diffPath: diffFile,
-      citations: kept.length, withheld: withheld.length, contextLimit: entry ? entry.contextLimit : null, ...launch,
+      citations: kept.size, unresolved: unresolved.length, withheld: withheld.length, contextLimit: entry ? entry.contextLimit : null, ...launch,
     };
-    const summary = `fix-check brief ${review} round ${round.number}: ${questions.length} accepted, ${kept.length} citations, ${withheld.length} withheld`;
+    const summary = `fix-check brief ${review} round ${round.number}: ${questions.length} accepted, ${kept.size} citations, ${unresolved.length} unresolved, ${withheld.length} withheld`;
     return { ok: true, exit: 0, value, summary: briefSummary(summary, host, launch, briefFile, value.bytes, {
       tail: `; skeleton ${JSON.stringify(noteSkeleton)}`,
       shortPath: `.state/briefs/${path.basename(briefFile)}`,

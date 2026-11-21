@@ -14,6 +14,8 @@ import type { RosterSlot } from '../domain/types.ts';
 import type { DiagnosticUsage } from '../types.ts';
 import { atomic, mergeBlocked, type BlockedAttempt, type Emit, type FanOutInput, type SlotOutcome, type Validation, type slotFiles } from './state.ts';
 
+export const VOICE_DEADLINE_MS = 30 * 60 * 1000;
+
 function savedUsage(value: unknown): DiagnosticUsage | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
@@ -64,8 +66,8 @@ export function cliVoice(input: Pick<FanOutInput, 'dir' | 'quota' | 'sessionRoot
     const config = {slot: physical.slot, platform: provider, models, modes, modeCascadeOn:SPECS[provider].modeCascadeOn};
     let position = {model:0,mode:0};
     const targetForEmit: RosterSlot = {...physical, slot: logicalSlot};
-    // A reserve runs on its own 35-minute budget from its start; targets share the wave deadline.
-    const voiceDeadline = physical.reserve ? deps.clock() + 35 * 60 * 1000 : deadline;
+    // A reserve runs on its own 30-minute budget from its start; targets share the wave deadline.
+    const voiceDeadline = physical.reserve ? deps.clock() + VOICE_DEADLINE_MS : deadline;
     let resumesUsed = 0, reportResumes = 0, resumeSessionId: string | null = null;
     let sessionUsage: DiagnosticUsage | undefined;
     let usageBaseline: UsageBaseline = 'cumulative';

@@ -61,6 +61,7 @@ type ReportFacts = Snapshot & {
   unplannedPaths: string[];
   openEscalations: WalkthroughView['openEscalations'];
   deferredRulings: WalkthroughView['deferredRulings'];
+  deferredEscalations: WalkthroughView['deferredEscalations'];
   userRecords: WalkthroughView['userRecords'];
 };
 
@@ -231,7 +232,16 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       });
     }
   }
-  const edits = snapshot.fold.records.filter((record) => record.kind === 'edit').map((record) => ({
+  const root = ctx.manifest.repositoryRoot;
+  let bindingAtEdit: LedgerRecord | undefined;
+  const edits = snapshot.fold.records.filter((record) => {
+    if (record.kind === 'bind') bindingAtEdit = record;
+    if (record.kind !== 'edit') return false;
+    const artifact = record.data['artifact'];
+    const bound = bindingAtEdit?.data[artifact];
+    const reported = snapshot.bind.data[artifact];
+    return !!bound && !!reported && path.relative(path.resolve(root, reported), path.resolve(root, bound)) === '';
+  }).map((record) => ({
     seq: record.seq,
     artifact: String(record.data['artifact']),
     class: String(record.data['class']),
@@ -244,6 +254,10 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   const openEscalations = [...escalations.values()].filter((record) => record.data['state'] === 'open').map((record) => ({
     id: String(record.data['id']), summary: String(record.data['summary']),
   }));
+  const deferredEscalations = [...escalations.values()].flatMap((record) => {
+    const summary = String(record.data['summary']);
+    return record.data['state'] === 'resolved' && summary.startsWith('defer:') ? [{ id: String(record.data['id']), summary }] : [];
+  });
   const rulings = new Map<string, LedgerRecord>();
   for (const record of snapshot.fold.records) if (record.kind === 'ruling') rulings.set(String(record.data['subject']), record);
   const deferredRulings = [...rulings.values()].flatMap((record) => {
@@ -307,6 +321,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     unplannedPaths,
     openEscalations,
     deferredRulings,
+    deferredEscalations,
     userRecords,
     reviewRows: review.rows,
     reviewRounds: review.rounds,
@@ -315,7 +330,7 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
     ...(snapshot.testCleanup ? { testCleanup: snapshot.testCleanup } : {}),
   };
-  return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, userRecords };
+  return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, deferredEscalations, userRecords };
 }
 
 /** Reads the un-locked facts used by `report render`. */
@@ -352,6 +367,7 @@ function resultValue(facts: ReportFacts, session: string, walkthroughPath: strin
     deviations: { edits: facts.edits, unplannedPaths: facts.unplannedPaths },
     openEscalations: facts.openEscalations,
     deferredRulings: facts.deferredRulings,
+    deferredEscalations: facts.deferredEscalations,
     userRecords: facts.userRecords,
     delivered: facts.view.delivered,
     rejectionConfirmations:facts.rejectionConfirmations,confirmationError:facts.confirmationError,

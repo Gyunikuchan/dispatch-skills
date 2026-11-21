@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { renameRetrying } from '../../lib/node-fs-ext.ts';
 import type { quotaSnapshot } from '../../policy/quota.ts';
 import type { Roster } from '../../policy/roster.ts';
 import { launchLine, summaryLaunch } from '../../lib/platform.ts';
@@ -68,7 +69,7 @@ export function atomic(file: string, value: unknown): void {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {
     fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600});
-    fs.renameSync(temp, file);
+    renameRetrying(temp, file);
   } finally { fs.rmSync(temp, {force: true}); }
 }
 

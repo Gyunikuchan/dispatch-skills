@@ -20,6 +20,7 @@ function view(overrides: Record<string, unknown> = {}) {
     unplannedPaths: [],
     openEscalations: [],
     deferredRulings: [],
+    deferredEscalations: [],
     userRecords: [],
     reviewRows: [],
     reviewRounds: [],
@@ -170,6 +171,7 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     unplannedPaths: ['src/orphan.ts'],
     openEscalations: [{ id: 'E-1', summary: 'Confirm the remaining owner.' }],
     deferredRulings: [{ review: 'review-alpha', finding: 'R1-F010' }],
+    deferredEscalations: [{ id: 'E-2', summary: 'defer: confirm after release' }],
     userRecords: [{ seq: 7, kind: 'manual-complete', summary: 'manual-result evidence', quote: 'the user approved this row | <!-- literal -->' }],
     reviewRows: [
       { review: 'review-alpha', id: 'R1-F001', round: 1, severity: 'SHOULD', ruling: 'accepted' as const, recurrence: 'R1-F001', rationale: 'bounded fix accepted' },
@@ -194,6 +196,8 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
 
   assert.ok(section(rendered, '## Verification', '## Deviations & Follow-ups').includes('- **Test cleanup:** deleted 3 · merged 1 tests; criteria with tests removed: SC1 at fedcba654321'));
   const deviations = section(rendered, '## Deviations & Follow-ups');
+  assert.match(deviations, /^- Follow-up: deferred escalation E-2: defer: confirm after release$/m);
+  assert.match(section(rendered, '## At a Glance'), /; 1 deferred rulings; 1 deferred escalations;/);
   assert.match(section(rendered, '## Review Focus', '## Behaviour Changes'), /- Review fix R1-F001: verified but not re-reviewed — see Deviations & Follow-ups/);
   assert.match(deviations, /- Deviation: review fix R1-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/report\.ts/);
   for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010']) assert.ok(deviations.includes(detail), detail);

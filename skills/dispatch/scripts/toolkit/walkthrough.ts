@@ -30,6 +30,7 @@ export type WalkthroughView = {
   unplannedPaths: readonly string[];
   openEscalations: readonly { id: string; summary: string }[];
   deferredRulings: readonly { review: string; finding: string }[];
+  deferredEscalations: readonly { id: string; summary: string }[];
   userRecords: readonly { seq: number; kind: string; summary: string; quote: string }[];
   reviewRows: readonly {
     review: string;
@@ -184,7 +185,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     '',
     `- **What:** ${delivered}`,
     `- **Artifacts:** [spec](${href(view.specPath)}) · [plan](${planHref})${view.designPath ? ` · [design](${href(view.designPath)})` : ''}`,
-    `- **Counts:** ${satisfied}/${criteria.length} criteria (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing}); ${changeSummary}; ${view.edits.length} recorded edits; ${view.unplannedPaths.length} unplanned paths; ${view.openEscalations.length} open escalations; ${view.deferredRulings.length} deferred rulings; ${view.reviewRows.length} findings (${openReviews} open)`,
+    `- **Counts:** ${satisfied}/${criteria.length} criteria (verified ${verified} · manual ${manual} · waived ${waived} · missing ${missing}); ${changeSummary}; ${view.edits.length} recorded edits; ${view.unplannedPaths.length} unplanned paths; ${view.openEscalations.length} open escalations; ${view.deferredRulings.length} deferred rulings; ${view.deferredEscalations.length} deferred escalations; ${view.reviewRows.length} findings (${openReviews} open)`,
     '',
     '## Visuals',
     '',
@@ -244,6 +245,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   const followUps = [
     ...view.openEscalations.map((item) => `- Follow-up: escalation ${line(item.id)}: ${line(item.summary)}`),
     ...view.deferredRulings.map((item) => `- Follow-up: deferred ${line(item.review)}:${line(item.finding)}`),
+    ...view.deferredEscalations.map((item) => `- Follow-up: deferred escalation ${line(item.id)}: ${line(item.summary)}`),
   ];
   const integrationRecord = view.delivered === null
     ? 'not delivered'

@@ -130,9 +130,9 @@ Refusals: unreadable values, a missing or unknown value, missing/unknown `--host
 ### brief fix-check
 
 Arguments: `brief fix-check <artifact> --session <session> --host <platform>`; `<artifact>` is the plan or design path that `review run` reviewed.
-Selects the latest completed round of that review whose recorded artifact is this artifact, then writes the current governed text, its diff from the round's `round-<n>.input.md` and a research brief under `<session>/.state/briefs/`. The brief carries the round's accepted findings, citations from the diff's added lines (sensitive, unlisted or outside paths withheld), the round's spec (and its reviewed snapshot when the spec changed), the reading bound and a consumer search command.
-Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, citation and withheld counts, `contextLimit`, `launchAs` and launch `model`/`effort`. The summary ends with the full `noteSkeleton`, also in the result value. To fit it, the summary shortens the brief path to session-relative form, then clips the counts and review ID, then the launch line as needed.
-Refusals: a code-review artifact, no matching round, no accepted finding, no change since the round input, an unreadable spec, missing/unknown `--host`; a refusal leaves no file.
+Selects latest completed round for `<artifact>`. Writes current governed text, diff from `round-<n>.input.md` and brief under `<session>/.state/briefs/`. The brief includes accepted findings, added-line citations, the round spec and any reviewed snapshot, reading bounds and a consumer search. Unique listed suffix matches resolve short citations. The unresolved list shows up to five readable matches each. Withheld reasons: `sensitive`, `outside repository`, `session`, `unrenderable name`, `not listed`.
+Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, `noteSkeleton`, `citations`, `unresolved` and `withheld` counts, `contextLimit`, `launchAs`, launch `model`/`effort`. The summary counts unresolved citations and ends with `noteSkeleton`. To fit, it shortens the path to session-relative, then clips counts/review ID and the launch line as needed.
+Refusals: code-review artifacts, no matching round or accepted finding, no change since round input, unreadable spec, or missing/unknown `--host`. Refusals write no file.
 
 ### brief test-cleanup
 

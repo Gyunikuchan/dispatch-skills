@@ -8,7 +8,7 @@ Toolkit report tools render this reviewer-first debrief. See [review rules](../r
 ## At a Glance
 - **What:** <plan At a Glance What, or integration status>
 - **Artifacts:** [spec](<relative href>) · [plan](<relative href>)[ · [design](<relative href>)]
-- **Counts:** <satisfied>/<total> criteria (verified <n> · manual <n> · waived <n> · missing <n>); <n> files (<n> new · <n> modified · <n> deleted); <n> recorded edits; <n> unplanned paths; <n> open escalations; <n> deferred rulings; <n> findings (<n> open)
+- **Counts:** <satisfied>/<total> criteria (verified <n> · manual <n> · waived <n> · missing <n>); <n> files (<n> new · <n> modified · <n> deleted); <n> recorded edits; <n> unplanned paths; <n> open escalations; <n> deferred rulings; <n> deferred escalations; <n> findings (<n> open)
 
 ## Visuals
 
@@ -108,5 +108,5 @@ Not recorded.
 - Behaviour Changes: give each task its `### T<n> — <task title>` heading and one visible Task Map outcome linked to its plan task, followed by a label-free `<details>` block with compact `path · action` lines. Do not add per-file headings or repeat task titles. Put unplanned paths under Unplanned changes; omit empty entries.
 - Verification: show one status line. Keep Manual, Waived and Missing criteria visible outside `<details>`; omit empty subsections. Keep verified evidence in the Appendix.
 - Runtime Proof: list the outcome, proved HEAD, reason, evidence links and later fixes.
-- Deviations & Follow-ups: list recorded edits with diff references, unplanned paths, review fixes with their status (re-reviewed, verified but not re-reviewed, or not verified), open escalations and deferred rulings, or `None.`.
+- Deviations & Follow-ups: list recorded edits with diff references, unplanned paths, review fixes with their status (re-reviewed, verified but not re-reviewed, or not verified), open escalations, deferred rulings and deferred escalations, or `None.`.
 - Appendix: keep verified evidence, user-attributed records and quotes, and provenance with linked spec, plan and bound design paths, 12-character hashes, and integration source/ref. Keep wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.

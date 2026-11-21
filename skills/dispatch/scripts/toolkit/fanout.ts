@@ -11,7 +11,7 @@ import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 import { atomic, mergeBlocked, normalizeNative, persistDeferredMarker, readState, savedOrphanTargets, sessionOf, slotFiles, throwRejected, writeState, type BlockedAttempt, type Emit, type FanOutInput, type FanoutState, type NativeFailure, type SlotOutcome } from './fanout/state.ts';
-import { cliVoice } from './fanout/voice.ts';
+import { cliVoice, VOICE_DEADLINE_MS } from './fanout/voice.ts';
 import { attemptOf, blockedEntry, firstModelOf, isNativeFirstProvider, isNativeFirstSlot, nativeVoice, parseBlockedFile, reportEvidence } from './fanout/native.ts';
 import { runNativeWave } from './fanout/wave.ts';
 
@@ -114,7 +114,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const session = sessionOf(input.dir), manifest = readManifest(session);
   const cwd = input.cwd ?? manifest.repositoryRoot;
   const store = {sessionDir: session, repositoryRoot: manifest.repositoryRoot, bucketWidth: H};
-  const deadline = deps.clock() + 35 * 60 * 1000;
+  const deadline = deps.clock() + VOICE_DEADLINE_MS;
   const readCommands = loadReadCommands(deps.skillRoot);
   const rerun = fs.existsSync(path.join(input.dir, 'logs'));
   for (const dir of ['prompts','slots','replies','logs']) fs.mkdirSync(path.join(input.dir, dir), {recursive: true});

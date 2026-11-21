@@ -114,6 +114,68 @@ test('report render writes every missing criterion without Git and rewrites the 
   } finally { f.cleanup(); }
 });
 
+test('report deferral: renders only the latest deferred escalations as follow-ups', async () => {
+  const f = await fixture();
+  try {
+    const deferId = 'ceiling:plan-report.plan:1';
+    const settledId = 'ceiling:plan-report.plan:2';
+    for (const [id, step, summary] of [
+      [deferId, 'initial', 're-author: separate the change'],
+      [deferId, 'final', 'defer: revisit next release'],
+      [settledId, 'initial', 'defer: revisit the split'],
+      [settledId, 'final', 're-author: split the change'],
+    ]) {
+      await appendRecord(f.session, {
+        kind: 'escalation', by: 'user', quote: summary, key: `${id}:${step}`,
+        data: { id, state: 'resolved', summary },
+      }, f.deps);
+    }
+    const result = await invoke(f, 'report', 'render');
+    assert.equal(result.exit, 0, result.output.summary);
+    const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
+    assert.match(walkthrough, /; 1 deferred escalations;/);
+    assert.deepEqual(walkthrough.match(/^- Follow-up: deferred escalation .*$/gm), [
+      `- Follow-up: deferred escalation ${deferId}: defer: revisit next release`,
+    ]);
+  } finally { f.cleanup(); }
+});
+
+test('report edit scope: reports the bound plan and spec edits when plans share a hash', async () => {
+  const f = await fixture();
+  try {
+    const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    const edit = (artifact: 'spec' | 'plan', before: string, after: string, rationale: string) =>
+      appendRecord(f.session, {
+        kind: 'edit', by: 'tool', key: `edit:${rationale}`,
+        data: { artifact, before, after, class: 'intent', rationale, diffRef: 'edit.diff', affects: [] },
+      }, f.deps);
+    const initial = hashes();
+    const editedPlan = planSource().replace('# Report fixture', '# First plan edited');
+    f.artifact('report.plan.md', editedPlan);
+    f.artifact('brief.spec.md', '# Brief updated\n');
+    const updated = hashes();
+    await edit('plan', initial.plan!, updated.plan!, 'updated the first plan');
+    await edit('spec', initial.spec!, updated.spec!, 'updated the shared spec');
+
+    f.artifact('next.plan.md', editedPlan);
+    await appendRecord(f.session, {
+      kind: 'bind', by: 'tool', key: 'bind:next',
+      data: { spec: './brief.spec.md', plan: 'next.plan.md' },
+    }, f.deps);
+    assert.equal(hashes().plan, updated.plan);
+    f.artifact('next.plan.md', editedPlan.replace('# First plan edited', '# Next plan edited'));
+    await edit('plan', updated.plan!, hashes().plan!, 'updated the second plan');
+
+    const result = await invoke(f, 'report', 'render');
+    assert.equal(result.exit, 0, result.output.summary);
+    const walkthrough = fs.readFileSync(path.join(f.session, 'next.walkthrough.md'), 'utf8');
+    assert.match(walkthrough, /Deviation: spec edit .*updated the shared spec/);
+    assert.match(walkthrough, /Deviation: plan edit .*updated the second plan/);
+    assert.doesNotMatch(walkthrough, /Deviation: plan edit .*updated the first plan/);
+    assert.match(walkthrough, /; 2 recorded edits;/);
+  } finally { f.cleanup(); }
+});
+
 test('report render keeps tool evidence for review criteria in the missing section', async () => {
   const source = planSource(1).replace(
     '  - Evidence: check',

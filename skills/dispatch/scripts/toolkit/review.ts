@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { nodeLinkFs } from '../lib/node-fs-ext.ts';
+import { nodeLinkFs, renameRetrying } from '../lib/node-fs-ext.ts';
+import { atomic } from './fanout/state.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactHash, artifactKind } from './artifacts.ts';
@@ -38,15 +39,10 @@ const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktr
 
 type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; specSource?: string; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
-function atomic(file: string, value: unknown) {
-  const temp = file + '.' + crypto.randomUUID() + '.tmp';
-  try {fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600}); fs.renameSync(temp, file);}
-  finally {fs.rmSync(temp, {force: true});}
-}
 // NOTE: fix-check reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
 function writeSpecSnapshot(file: string, text: string): void {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
-  try {fs.writeFileSync(temp, text); fs.renameSync(temp, file);}
+  try {fs.writeFileSync(temp, text); renameRetrying(temp, file);}
   catch {/* advisory evidence only */}
   finally {try {fs.rmSync(temp, {force: true});} catch {/* advisory evidence only */}}
 }
@@ -893,7 +889,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const findingsFile = relativeDir + '/findings.md', rulingsFile = relativeDir + '/rulings.json';
     nodeLinkFs.writeAtomic(path.join(session, findingsFile), renderFindingsFile(pending.findings));
     atomic(path.join(session, rulingsFile), rulingsTemplate(review, n, pending.findings));
-    fs.renameSync(pendingFile, path.join(dir, 'findings.json'));
+    renameRetrying(pendingFile, path.join(dir, 'findings.json'));
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;
     const fixInduced = pending.findings.filter(finding => finding.origin === 'fix-induced').length;

@@ -1009,6 +1009,8 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   assert.match(toolkit.split('### edit')[1]!, /For each edited artifact per fix batch, run `lint run --edit`/);
   // The fix-check task text lives in its template; each input slot and rule appears once there.
   const fixCheckBrief = ref('templates/fix-check-brief.md');
+  assert.match(fixCheckBrief, /Unresolved citations\. You may read their listed matches:[\s\n]+{{unresolved}}/);
+  assert.match(fixCheckBrief, /Read only[^\n]*the listed citations and matches[^\n]*never read a withheld path/);
   for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixCheckBrief.split(text).length - 1, 1, text);
   // REQ-4 bounds reads to the diff, artifact, spec and consumer searches; codegraph returns source outside that bound.
   assert.doesNotMatch(fixCheckBrief, /codegraph explore/);

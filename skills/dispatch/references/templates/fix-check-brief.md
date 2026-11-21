@@ -18,13 +18,17 @@ Check the accepted fixes to the artifact below. Check that each citation's sourc
 
 {{citations}}
 
+- Unresolved citations. You may read their listed matches:
+
+{{unresolved}}
+
 - Withheld paths. Do not read them:
 
 {{withheld}}
 
 ## Reading bound
 
-Read only the diff, the artifact, the spec paths above, the citations listed above and consumer search hits. Read no other path, and never read a withheld path, even as a search hit.
+Read only the diff, the artifact, the spec paths above, the listed citations and matches, and consumer search hits. Read no other path, and never read a withheld path, even as a search hit.
 
 Run the consumer search from the repository root, replacing `<name>` with one argument quoted for your shell: `{{consumerSearch}}`. When the name starts and ends with a word character, add `-w` before `-e`.
 

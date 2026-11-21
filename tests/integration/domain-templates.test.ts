@@ -110,7 +110,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
       tasks: [{ id: 'T1', title: 'Add a file', outcome: 'The new file supports the feature.', behaviour: ['The report describes the feature.'] }],
       statuses: [{ criterion: 'SC1', state: 'manual', seq: 1, quote: 'approved', evidence: 'manual/proof.md' }],
       changes: [{ action: 'NEW', path: 'src/new.ts', owners: [{ id: 'T1', title: 'Add a file' }] }],
-      edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], userRecords: [],
+      edits: [], unplannedPaths: [], openEscalations: [], deferredRulings: [], deferredEscalations: [], userRecords: [],
       reviewRows: [], reviewRounds: [], reviewFixes: [],
     } as Parameters<typeof renderWalkthrough>[0]);
     assert.deepEqual(headings(skeleton), headings(rendered));

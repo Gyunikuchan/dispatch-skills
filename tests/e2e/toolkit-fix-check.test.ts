@@ -63,7 +63,7 @@ test('brief fix-check on a real repository lists, diffs and searches literal nam
 
     await reviewAndAccept(f, g);
     // Citations cover a listed untracked name, a listed tracked name with a glob class, and an ignored file.
-    fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1` and `skipped.txt:1`.\n');
+    fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1`, `skipped.txt:1` and `missing.ts:1`.\n');
 
     const brief = await g.run(['brief', 'fix-check', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
@@ -73,8 +73,11 @@ test('brief fix-check on a real repository lists, diffs and searches literal nam
     assert.equal(brief.value.citations, LISTED.length);
     for (const name of LISTED) assert.ok(text.includes(`\`${name}:1\``), name);
     assert.ok(text.includes('`skipped.txt`: not listed'));
+    assert.ok(text.includes('`missing.ts`: no match'));
+    assert.equal(brief.value.unresolved, 1);
     // Sensitive paths are search excludes; only the ignored file and the unsafe sensitive path are withheld.
     assert.equal(brief.value.withheld, 2);
+    assert.match(brief.output.summary, /3 citations, 1 unresolved, 2 withheld/);
 
     // The diff is the real git diff of the round input against the governed plan.
     const diff = fs.readFileSync(brief.value.diffPath, 'utf8');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
+import { atomic } from '../../../skills/dispatch/scripts/toolkit/fanout/state.ts';
 import { CLEAN, fixture, report } from '../../helpers/review-fixture.ts';
 
 const blockedReport = (reason: string) => JSON.stringify({status: 'BLOCKED', reason});
@@ -14,6 +15,65 @@ const configure = (f: Awaited<ReturnType<typeof fixture>>, config: Record<string
     ...config,
     phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: rounds}}, 'code-review': {targets: {low: 2}, rounds: {low: 2}}},
   }));
+
+function failFirstRoundRenames(dir: string) {
+  const rename = fs.renameSync;
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const attempts = new Map<string, number>();
+  Object.defineProperty(process, 'platform', {value: 'win32'});
+  fs.renameSync = (from, to) => {
+    const destination = String(to);
+    if (destination.startsWith(dir + path.sep)) {
+      const count = (attempts.get(destination) ?? 0) + 1;
+      attempts.set(destination, count);
+      if (count === 1) throw Object.assign(new Error('Transient rename lock'), {code: 'EPERM'});
+    }
+    rename(from, to);
+  };
+  return {
+    attempts,
+    restore() {
+      fs.renameSync = rename;
+      Object.defineProperty(process, 'platform', platform);
+    },
+  };
+}
+
+test('review rename retry: round completes and retains the reviewed spec', async () => {
+  const f = await fixture();
+  const dir = path.join(f.directory, 'round-1');
+  const findings = path.join(dir, 'findings.json');
+  const snapshot = path.join(dir, 'spec.snapshot.md');
+  const locks = failFirstRoundRenames(dir);
+  try {
+    const spec = fs.readFileSync(f.spec, 'utf8');
+    const result = await f.call();
+    assert.equal(result.exit, 0, JSON.stringify(result.output));
+    assert.equal(f.read(1, 'findings.json').round, 1);
+    assert.equal(locks.attempts.get(findings), 2);
+    assert.equal(locks.attempts.get(snapshot), 2);
+    assert.equal(fs.readFileSync(snapshot, 'utf8'), spec);
+  } finally {
+    locks.restore();
+    f.cleanup();
+  }
+});
+
+test('review rename retry: fan-out atomic write persists its value', async () => {
+  const f = await fixture();
+  const dir = path.join(f.directory, 'round-1');
+  fs.mkdirSync(dir, {recursive: true});
+  const file = path.join(dir, 'fanout.json');
+  const locks = failFirstRoundRenames(dir);
+  try {
+    atomic(file, {cliWaveDone: true});
+    assert.deepEqual(f.read(1, 'fanout.json'), {cliWaveDone: true});
+    assert.equal(locks.attempts.get(file), 2);
+  } finally {
+    locks.restore();
+    f.cleanup();
+  }
+});
 
 test('review run lists blocked slot reasons and orders them before findings in summary', async () => {
   const f = await fixture();
