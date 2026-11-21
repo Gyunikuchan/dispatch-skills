@@ -8,7 +8,7 @@ import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/conte
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { capSummary, clipBytes, ToolError } from './output.ts';
-import { stripBom } from '../lib/fs-ext.ts';
+import { readJsonPayload } from './input.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
 import { launchLine, summaryLaunch } from '../lib/platform.ts';
 import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
@@ -188,19 +188,13 @@ export function nextBriefPath(directory: string, base: string): string {
   return path.join(directory, `${base}-${index}.md`);
 }
 
-/** Reads a JSON values file; a missing, unreadable, unknown or blank value refuses before anything is written. */
-function readValues<const Req extends string, const Opt extends string = never>(
-  valuesPath: string,
+/** Validates a parsed brief values object; an unknown, missing or blank value refuses before anything is written. */
+function validateValues<const Req extends string, const Opt extends string = never>(
+  parsed: unknown,
   required: readonly Req[],
   optional: readonly Opt[] = []
 ): Record<Req, string> & Partial<Record<Opt, string>> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripBom(fs.readFileSync(path.resolve(valuesPath), 'utf8')));
-  } catch {
-    throw new ToolError(1, 'invalid-input', 'Cannot read values file ' + valuesPath);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError(1, 'invalid-input', 'Values file must hold a JSON object: ' + valuesPath);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError(1, 'invalid-input', 'Values payload must hold a JSON object');
   const record = parsed as Record<string, unknown>;
   const allowed = new Set<string>([...required, ...optional]);
   for (const key of Object.keys(record)) {
@@ -247,9 +241,9 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     if (!launch || launch.finished || launch.abandoned || launch.superseded) throw new ToolError(4, 'no-open-launch', 'No open launch for ' + task);
     await ctx.deps.hook?.('brief:after-gate');
     const level = (latest(tx.fold, 'level')?.data['level'] ?? 'medium') as Level;
-    return {bind, snapshot, launch, source, parsed, selected, level};
+    return {bind, snapshot, launch, source, parsed, selected, level, postFold: tx.fold};
   });
-  const {bind, snapshot, launch, source, parsed, selected, level} = gated;
+  const {bind, snapshot, launch, source, parsed, selected, level, postFold} = gated;
   const markdown = taskMarkdown(source, selected);
   const {section} = taskParts(source, selected);
   const criteria = markdown.slice(section.length).trim();
@@ -277,7 +271,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   fs.writeFileSync(file, text);
   const launchValues = writerLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform, level);
   const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary(task + ' launch ' + launch.launch, ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
+  return {ok: true, exit: 0, value, summary: briefSummary(task + ' launch ' + launch.launch, ctx.deps.orchestrator?.platform, launchValues, file, value.bytes), postFold};
 }
 
 function selectExplorerKind(text: string, kind: 'map' | 'research'): string {
@@ -292,8 +286,11 @@ const EXPLORER_OPTIONAL_VALUES = ['outputPath'] as const;
 const TEST_CLEANUP_VALUES = ['base', 'integrationPath'] as const;
 
 export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
-  const values = readValues(ctx.args[0]!, EXPLORER_REQUIRED_VALUES, EXPLORER_OPTIONAL_VALUES);
+  const values = validateValues(
+    readJsonPayload(ctx, {positional: 'values', inlineFlag: 'json', label: 'explorer values'}),
+    EXPLORER_REQUIRED_VALUES,
+    EXPLORER_OPTIONAL_VALUES,
+  );
   const kind = values.outputPath ? 'map' : 'research';
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
@@ -340,9 +337,17 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
 }
 
 export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
-  const values = readValues(ctx.args[0]!, TEST_CLEANUP_VALUES);
-  const bind = latest(foldLedger(ctx.session), 'bind');
+  const values = validateValues(
+    readJsonPayload(ctx, {
+      positional: 'values',
+      inlineFlag: 'json',
+      direct: [{flag: 'base', key: 'base'}, {flag: 'integration-path', key: 'integrationPath'}],
+      label: 'test-cleanup values',
+    }),
+    TEST_CLEANUP_VALUES,
+  );
+  const fold = foldLedger(ctx.session);
+  const bind = latest(fold, 'bind');
   if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim()) throw new ToolError(4, 'lint-errors', 'No bound plan');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
@@ -361,13 +366,15 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   fs.writeFileSync(file, text);
   const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary('test-cleanup brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
+  return {ok: true, exit: 0, value, summary: briefSummary('test-cleanup brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes), postFold: fold};
 }
 
 const VERIFIER_VALUES = ['checkoutPath', 'base', 'specPath', 'focus'] as const;
 export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One values file is required');
-  const values = readValues(ctx.args[0]!, VERIFIER_VALUES);
+  const values = validateValues(
+    readJsonPayload(ctx, {positional: 'values', inlineFlag: 'json', label: 'verifier values'}),
+    VERIFIER_VALUES,
+  );
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
   const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');

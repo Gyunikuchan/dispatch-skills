@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-10-25
-- **Updated**: 2026-11-12
+- **Updated**: 2026-11-21
 
 ## Context
 
@@ -28,11 +28,11 @@ Slot state for an unfinished CLI attempt is written beside the slot log when it 
 
 The user accepted writer-observed RED evidence on 2026-10-27: “Ok to forego red assurance, just let writers follow TDD.” Independent RED replay and immutable test-only checkpoints are not required; host inspection, scope checks and integrated verification remain. On the same date, “Rejected MUST: yes” restored explicit source-slot or configured fallback confirmation for rejected MUST findings. Pending confirmation permits post-cap review; repeated disagreement escalates. See the [review rules](../../skills/dispatch/references/review-rules.md).
 
-Writers own TDD: failing proof tests, implementation to GREEN and durable contract tests. The post-integration `test-cleanup` utility subagent owns aggressive test pruning, and reviewers apply the identical retention standard so cleanup and review converge instead of trading conflicting test expectations. Per-task worktrees stay uniform: local Git worktree creation costs under a second, while a second single-worktree execution path adds permanent state-machine and recovery branches. Batch ledger appends accept a JSON array from a file or stdin (`-`) rather than inline CLI JSON: these inputs avoid cross-platform shell-quoting errors, and in-band `batchEndSeq` framing commits the array under one lock without external marker files or multi-file snapshot races. Single-record appends keep their single-handle path.
+Writers own TDD: failing proof tests, implementation to GREEN and durable contract tests. The post-integration `test-cleanup` utility subagent owns aggressive test pruning, and reviewers apply the identical retention standard so cleanup and review converge instead of trading conflicting test expectations. Per-task worktrees stay uniform: local Git worktree creation costs under a second, while a second single-worktree execution path adds permanent state-machine and recovery branches. Batch ledger appends accept a JSON array from a file or stdin (`-`) rather than inline CLI JSON: these inputs avoid cross-platform shell-quoting errors, and in-band `batchEndSeq` framing commits the array under one lock without external marker files or multi-file snapshot races. Single-record appends keep their single-handle path. Shared [input reading](../../skills/dispatch/scripts/toolkit/input.ts) accepts file paths, stdin (`-` with BOM stripping), and explicit inline flags across all other payload-taking toolkit actions (`ask run`, `brief explorer`, `brief test-cleanup`, `brief verifier`, `lint run --edit`, `worktree commit`, `worktree deliver --commit`); Windows PowerShell 5.1 callers set `$OutputEncoding = [Text.Encoding]::UTF8` for non-ASCII stdin and prefer `-` or a file above 4,096 bytes.
 
-The [toolkit contract](../../skills/dispatch/references/toolkit.md) remains the canonical source for per-call detail. On-demand help serves its sections and refusals point to the governing section, avoiding repeated mandatory reads without maintaining a second contract.
+The [toolkit contract](../../skills/dispatch/references/toolkit.md) remains the canonical reference for detailed per-call behavior, while `contracts.ts` and `recordSchemas()` serve the enriched `help call table` once per run with compact action, session, and phased/flat record signatures. Detailed `help <heading>` sections load on demand when uncertain or when an `ok: false` refusal carries a `help` field, eliminating repeated mandatory pre-use `help` turns without weakening fail-closed validation.
 
-The [path workload measure](../../scripts/path-bytes.ts) counts deterministic representative reads for all six verbs against baseline commit `7677a380` as a proxy for token workload, not observed usage. `--check-baseline` reproduces the baseline; `--at <commit>` measures another commit. Workload growth above the baseline fails the gate. Its 25% reduction target is aspirational: a smaller measured reduction is reported rather than failing the work.
+The [path workload measure](../../scripts/path-bytes.ts) counts deterministic representative reads for all six verbs against baseline commit `88685174` (`preload` model) as a proxy for token workload, not observed usage. `--check-baseline` reproduces the baseline; `--at <commit>` measures another commit. Workload growth under the `after` model (`call table` read once per run) above the baseline fails the gate. Its 25% reduction target is aspirational: a smaller measured reduction is reported rather than failing the work.
 
 ## Consequences
 

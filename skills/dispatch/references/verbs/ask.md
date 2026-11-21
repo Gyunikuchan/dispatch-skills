@@ -4,7 +4,7 @@
 
 Use it for source cross-checks and differentiated model opinions or suggestions.
 
-Write the question to a UTF-8 file and use `ask run`. The [toolkit contract](../toolkit.md#ask-run) owns arguments and outputs. Ask needs no spec or bound plan.
+Pass the question to `ask run` via `--text`, stdin (`-`), or a UTF-8 file. The [toolkit contract](../toolkit.md#ask-run) owns arguments and outputs. Ask needs no spec or bound plan.
 
 When an ask needs many files read to understand its domain, ground first using [grounding guidance](../grounding.md).
 
@@ -16,6 +16,6 @@ Launch and consume native slots under [native slots](../providers.md#native-slot
 
 | Step | Reads |
 | --- | --- |
-| Write the question file and run the tool | [toolkit contract](../toolkit.md#ask-run) |
+| Pass the question (`--text`, `-`, or file) and run `ask run` | [toolkit contract](../toolkit.md#ask-run) |
 | Ground first when the domain needs many files read | [grounding guidance](../grounding.md) |
 | Launch voices and synthesize under native slots | [native slots](../providers.md#native-slots) |

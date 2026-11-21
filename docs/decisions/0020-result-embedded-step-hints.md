@@ -2,6 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-19
+- **Updated**: 2026-11-21
 - **Audience**: Maintainers
 
 ## Context
@@ -12,6 +13,8 @@ I07 compared one baseline and one replay for each of planning and implementation
 
 ## Decision
 
-Eligible for a separate plan. B2 remains deferred.
+B1 advisory step hints are implemented; B2 remains deferred.
 
-DEC-8 requires that any B1 hint be advisory only (exit 0, never blocks, overridable without a record). It occupies one line (step, help heading, command) and derives from the existing ledger fold with no new state. Return null when the orchestrator decides. Add no duplicate transition table and use unit tests over the fold only.
+Every `ok: true` toolkit envelope (excluding `native-pending`) may include an optional single-line advisory `hint` (`<= 240` UTF-8 bytes, `<step> — help <heading> — <command>`). `stepHint` derives the hint from post-write `Fold` (`HandlerResult.postFold` or fallback `foldLedger`) plus `currentHashes` via shared `gate`, `levelGate`, `confirmGate`, `latest`, `launches`, `pending`, `candidate`, and `integrationRecord` predicates with zero new persisted state and no duplicate transition table.
+
+Hint calculation in `cli.ts` runs inside a fail-open `try/catch`: hints are strictly advisory (`exit 0`, never block, overridable without a record) and are omitted on errors, `ok: false`, `native-pending`, or orchestrator-decision boundaries. Unit tests verify the 15-row first-match table directly over `foldLedger` states and router envelopes.

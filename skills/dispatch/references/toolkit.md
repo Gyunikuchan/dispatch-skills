@@ -4,56 +4,69 @@
 
 ### call table
 
-Dispatched agents run no toolkit commands, with one exception. A subagent assigned a map may run `lint run` on that map only, without `--edit`. Briefs and descriptors return `model`, `effort` and `launchAs` for native launches. Initialize the session before calling tools. Resolve artifact paths from the repository root unless stated otherwise. Resolve record and question files from the current directory.
+Dispatched agents run no toolkit commands, except a subagent assigned a map may run `lint run` on that map only, without `--edit`. Briefs and descriptors return `model`, `effort` and `launchAs` for native launches. Initialize the session before calling tools. Resolve artifact paths from the repository root; resolve record and question files from the current directory.
 
-Stdout is `{ok, summary, path, reason?}`: summary is at most 1024 UTF-8 bytes and path identifies a JSON result file under the session. A summary that lists items keeps counts first, then `first <k>:` and up to five items, then `+<n> more in result` when items are omitted. Read that file for full findings, logs, briefs or state. Usage or output-write failures may have path null. Exit 0 means the operation returned; inspect ok and reason even at exit 0. Exit 1 is usage or invalid input, 2 a fault, 3 a held lock, 4 a gate refusal or pending native work. Keep the supplied handle and wait for a live lock; inspect stale-lock evidence before recovery.
+Stdout is `{ok, summary, path, reason?}` (optional advisory `hint` <=240 B on `ok: true`): `summary` <=1024 B, `path` is a session JSON file (null on usage/write failure). Itemized summaries show counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 usage/invalid input, 2 fault, 3 held lock, 4 gate refusal or `native-pending`.
 
-`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` needs no session and prints one section of this file as raw text through the next heading, exit 0; it is the one command whose stdout is not JSON. An unknown or empty heading refuses with reason `usage` and lists the valid headings; an unreadable file refuses with reason `fault`, exit 2. A refusal may add `help`, the heading to read next; `native-pending` and `ok:true` results carry none.
+Use `node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` (no session, raw text, exit 0). Unknown/empty headings refuse `usage` with valid headings; unreadable `references/toolkit.md` refuses `fault`, exit 2. Refusals may add `help` (next heading); `native-pending` and `ok:true` omit it.
 
-In the table, `\|` separates alternative values. Append a record object or non-empty JSON array from a file or stdin with `ledger append <record.json|-> --session <session>`; `help <kind>` lists its data fields.
+In the table, `\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array; `help <kind>` gives field rules.
 
 | Type | Heading | Arguments |
 | --- | --- | --- |
-| action | ask run | `ask run <question-file> --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]` |
+| action | ask run | `ask run [<question-file\|->] [--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]` |
 | action | review run | `review run <target> --session <session> --host <platform> [--kind plan\|design\|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]` |
 | action | report render | `report render --session <session>` |
 | action | report complete | `report complete --session <session>` |
 | action | brief render | `brief render <task> --session <session> --host <platform>` |
-| action | brief explorer | `brief explorer <values.json> --session <session> --host <platform>` |
+| action | brief explorer | `brief explorer [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
 | action | brief fix-check | `brief fix-check <artifact> --session <session> --host <platform>` |
-| action | brief test-cleanup | `brief test-cleanup <values.json> --session <session> --host <platform>` |
+| action | brief test-cleanup | `brief test-cleanup [<values.json\|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>` |
 | action | worktree integrate | `worktree integrate <task> --session <session> [--ack-stale <rationale>]` |
 | action | worktree continue | `worktree continue <task> --session <session>` |
-| action | worktree commit | `worktree commit --session <session> --reason <reason> [--review-fix <json-file> \| --test-cleanup <json-file>]` |
+| action | worktree commit | `worktree commit --session <session> --reason <reason> [--review-fix <json-file\|-> \| --review-fix-json <json> \| --test-cleanup <json-file\|-> \| --test-cleanup-json <json>]` |
 | action | worktree abort | `worktree abort <task> --session <session> --reason <reason>` |
-| action | worktree deliver | `worktree deliver --session <session> [--commit <message-file>]` |
+| action | worktree deliver | `worktree deliver --session <session> [--commit <message-file\|-> \| --message <text>]` |
 | action | worktree close | `worktree close --session <session> --reason <reason>` |
 | action | worktree cleanup | `worktree cleanup --session <session>` |
 | action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
 | action | worktree submit | `worktree submit <task> --session <session>` |
 | action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
 | action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>]` |
-| action | brief verifier | `brief verifier <values.json> --session <session> --host <platform>` |
+| action | brief verifier | `brief verifier [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
 | action | ledger append | `ledger append <record.json\|-> --session <session>` |
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
 | action | doctor run | `doctor run --session <session> --host <platform> [--level <level>]` |
 | action | status show | `status show --session <session>` |
-| action | lint run | `lint run <artifact> --session <session> [--edit <fields.json>]` |
+| action | lint run | `lint run <artifact> --session <session> [--edit <fields.json\|-> \| --json <json>]` |
 | action | diagnostics render | `diagnostics render --session <session>` |
-| record | bind | - |
-| record | approval | - |
-| record | confirm | - |
-| record | level | - |
-| record | waiver | - |
-| record | manual-complete | - |
-| record | escalation | - |
-| record | ruling | - |
-| record | note | - |
-| record | focus | - |
-| record | edit | - |
-| record | evidence | - |
-| record | writer | - |
-| record | integrate | - |
+| record | bind | spec, plan?, design? |
+| record | approval | spec, plan, design? |
+| record | level | level |
+| record | waiver | criterion, reason |
+| record | manual-complete | criterion, evidence |
+| record | escalation | id, state, summary |
+| record | ruling | subject, ruling, rationale, impact?, trigger? |
+| record | note | text |
+| record | edit | artifact, before, after, class, affects, rationale, diffRef |
+| record | evidence | criterion, commandDigest, tree, clean, before, after, exit, path, artifacts? |
+| record | writer (launched) | task, path, base |
+| record | writer (finished) | task, launch, candidate |
+| record | writer (abandoned) | task, launch, reason |
+| record | integrate (opened) | path, branch, base, dest |
+| record | integrate (verification) | cycle, outcome, head, reason, open, report?, artifacts?, dirty? |
+| record | integrate (test-cleanup) | from, fromTree, to, removed, deleted, merged, trees |
+| record | integrate (started) | task, candidate |
+| record | integrate (conflict) | task, paths |
+| record | integrate (done) | task, commit |
+| record | integrate (abandoned) | task, candidate, reason |
+| record | integrate (fix) | commit, reason, reviewFix? |
+| record | integrate (deliver-started) | mode, dest, from, source |
+| record | integrate (delivered) | mode, dest, from, source, noop? |
+| record | integrate (committed) | commit, source, differing? |
+| record | integrate (closed) | reason |
+| record | focus | bullets, visual? |
+| record | confirm | spec |
 | session | session init | `session init --objective "<objective>" --host <platform> [--session-id <id>]` |
 | session | session reactivate | `session reactivate --session-dir <session> --host <platform>` |
 | session | session quota-reprobe | `session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]` |
@@ -62,7 +75,7 @@ In the table, `\|` separates alternative values. Append a record object or non-e
 
 ### ask run
 
-Arguments: `ask run <question-file> --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`. Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
+Arguments: `ask run [<question-file|->] [--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`. Pass the question via a UTF-8 file, stdin (`-`, BOM ignored), or inline `--text`; passing both fails closed (`invalid-input`). Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
 Result path: answers, failed slots and native slots; successful captures also persist answers.json. Each native descriptor carries `slot`, `provider`, `promptPath`, `replyPath`, `attempt`, `cwd`, `launchAs` and configured `model`/`effort`. While a native voice is unfinished the value carries `cliWave` (`pending`: launch every native slot and retain its handle, then rerun at once to run the CLI wave; `done`: the wave settled) and unmatched `--native-failed` values are listed in `ignoredFailureReports`.
 Refusals: unreadable question, invalid level, level-unapproved, no read delegate, missing or unknown `--host`, malformed `--pins` or unknown/excluded provider (`invalid-input`), malformed `--native-failed` (`invalid-input`), `host-sandboxed` (exit 4), native-pending or ask-failed. Other tools refuse `--pins` and `--native-failed`.
 
@@ -123,7 +136,7 @@ Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unkno
 
 ### brief explorer
 
-Arguments: `brief explorer <values.json> --session <session> --host <platform>`. `<values.json>` is a file path holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
+Arguments: `brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>`. Pass JSON via a file path, stdin (`-`), or `--json` (prefer `-` or a file above 4,096 bytes) holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
 Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
 
@@ -136,7 +149,7 @@ Refusals: code-review artifacts, no matching round or accepted finding, no chang
 
 ### brief test-cleanup
 
-Arguments: `brief test-cleanup <values.json> --session <session> --host <platform>`. `<values.json>` is a file path holding `base` and `integrationPath`; `planPath` derives from the bind record.
+Arguments: `brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>`. Pass JSON via file, stdin (`-`), or `--json` holding `base` and `integrationPath`, or pass both `--base` and `--integration-path` directly (combining modes or omitting one direct flag fails `invalid-input`); `planPath` derives from the bind record.
 Result path: test-cleanup brief path, UTF-8 bytes, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`, or no bound plan; writes nothing.
 
@@ -154,7 +167,7 @@ Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-in
 
 ### worktree commit
 
-Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file> | --test-cleanup <json-file>]`. The two options are mutually exclusive. Both JSON files accept a leading UTF-8 BOM.
+Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]`. The payload options are mutually exclusive. All payload inputs accept a leading UTF-8 BOM.
 Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
@@ -174,7 +187,7 @@ Refusals: blank reason, wrong-task, no-candidate or already-integrated. See [use
 
 ### worktree deliver
 
-Arguments: `worktree deliver --session <session> [--commit <message-file>]`. `--commit` is refused on every other action.
+Arguments: `worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`. `--commit` and `--message` are mutually exclusive and refused on every other action.
 Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
 Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required, `coverage-required` or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
 
@@ -192,7 +205,7 @@ Inspect with `git diff` and `git status`; restore retained source with `git rest
 
 A completed same-source retry returns the recorded outcome without checking or changing later caller work; a changed source needs a new run. Conflicting ref, changed pending source or unsupported pending mode refuses recovery-blocked. Preserve refs, records and worktrees for inspection; never reset caller work.
 
-Commit phase (`--commit <message-file>`): a second phase after delivered; the message file needs non-blank text. Under the ledger lock it takes one of two paths. Never pushes, skips hooks or rewrites the caller branch. The result value is `{commit, source, from, dest, committed, recordOnly, differing?, warning?}` and it appends `integrate` phase `committed`. `committed` is false on a retry that finds a committed record for this delivery; that retry appends nothing. `recordOnly` is true when the action made no commit.
+Commit phase (`--commit <message-file|->` or `--message <text>`): a second phase after delivered; the commit message requires non-blank text (BOM stripped). Under the ledger lock it takes one of two paths. Never pushes, skips hooks or rewrites the caller branch. The result value is `{commit, source, from, dest, committed, recordOnly, differing?, warning?}` and it appends `integrate` phase `committed`. `committed` is false on a retry that finds a committed record for this delivery; that retry appends nothing. `recordOnly` is true when the action made no commit.
 - Commit path (HEAD equals `from`): stages `source` with `git read-tree`, makes one commit with hooks, then compares `source` with the commit tree. `differing` lists every differing path plus each delivered path whose working-tree content differs after the commit. `warning` names a commit whose parent is not `from`, which only another process committing during `git commit` or its hooks causes.
 - Record-only path (HEAD descends from `from`): records the current HEAD without a commit. `differing` lists only differing paths that overlap the delivered paths.
 - Refusals (exit 4, no record): `not-delivered` (no delivered record); `caller-moved` (branch is not `dest.branch`, branch or HEAD changed at the last check, or the new commit is not an ancestor of the branch; names that commit); `staged-changes` (a staged path that is not a delivered path, a staged delivered path that differs from `source`, an index that changed at the last check, or `git write-tree` failing); `delivered-content-changed` (caller content at a delivered path differs from `source`); `commit-failed` (`git commit` failed, for example a hook; the prior index is restored); `head-not-descendant` (HEAD is not `from` and does not descend from it); `delivered-uncommitted` (record-only: a delivered path has staged, unstaged or untracked changes).
@@ -239,13 +252,13 @@ Refusals: unknown criterion or unknown task, which names each unknown ID and the
 
 ### brief verifier
 
-Arguments: `brief verifier <values.json> --session <session> --host <platform>`; values are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
+Arguments: `brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
 Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
 Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
 ### ledger append
 
-Arguments: `ledger append <record.json|-> --session <session>`. `<record.json>` is a file path, not inline JSON; `-` reads stdin. Both accept a single record object or a non-empty JSON array of record objects with the same validation. A leading UTF-8 BOM is ignored. Under Windows PowerShell 5.1, use a file for non-ASCII records.
+Arguments: `ledger append <record.json|-> --session <session>`. `<record.json>` is a file path, not inline JSON; `-` reads stdin. Both accept a single record object or a non-empty JSON array of record objects with the same validation. A leading UTF-8 BOM is ignored. Under Windows PowerShell 5.1, set `$OutputEncoding = [Text.Encoding]::UTF8` before piping stdin or use a file for non-ASCII records; for inline flags on other actions, prefer `-` or a file above 4,096 bytes.
 Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, or a bind of a plan/design that has saved review rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
 Refusals: unreadable JSON, invalid-record (including an empty array and an approval with no bind record), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
@@ -269,10 +282,10 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. Use this 
 
 ### lint run
 
-Arguments: `lint run <artifact> --session <session> [--edit <fields.json>]`. Pass the artifact path positionally.
+Arguments: `lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]`. Pass the artifact path positionally.
 Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read.
 Refusals: unreadable/unknown artifact or lint errors.
-With `--edit`, pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
+With `--edit` (file or stdin `-`) or `--json` (mutually exclusive), pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
 
 ### diagnostics render
 

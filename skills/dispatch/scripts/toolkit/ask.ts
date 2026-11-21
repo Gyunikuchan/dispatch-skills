@@ -6,16 +6,14 @@ import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
+import { readTextPayload } from './input.ts';
 import { withLockFile } from './lock.ts';
 import { summaryWithItems, ToolError } from './output.ts';
 import { LEVELS, type Level } from './types.ts';
 
-export async function askRun({session, manifest, args, values, deps}: HandlerContext): Promise<HandlerResult> {
-  let question: string;
-  try {
-    if (args.length !== 1) throw new Error();
-    question = fs.readFileSync(path.resolve(args[0]!), 'utf8');
-  } catch {throw new ToolError(1, 'invalid-input', 'ask requires one readable question file');}
+export async function askRun(ctx: HandlerContext): Promise<HandlerResult> {
+  const {session, manifest, values, deps} = ctx;
+  const question = readTextPayload(ctx, {positional: 'question', inlineFlag: 'text', label: 'ask question'});
   const fold = foldLedger(session);
   const selected = values['level'] ?? latest(fold, 'level')?.data['level'] ?? 'medium';
   if (typeof selected !== 'string' || !LEVELS.includes(selected as Level))

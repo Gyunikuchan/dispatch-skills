@@ -1,5 +1,5 @@
 import { cleanupBinding, latestCleanup, criterionStatuses, eligibility } from './evidence.ts';
-import { currentHashes, foldLedger, gate, latest } from './ledger.ts';
+import { currentHashes, foldLedger, gate, latest, type Fold } from './ledger.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {CliDeps} from './cli.ts';
@@ -14,8 +14,7 @@ import type {FindingsValue} from './findings.ts';
 import {applicableReviewIds} from './confirmations.ts';
 import {readManifest} from '../lib/session.ts';
 
-export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps) {
-  const fold = foldLedger(session);
+export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps, fold: Fold = foldLedger(session)) {
   const level = latest(fold, 'level')?.data['level'] ?? 'medium';
   const bound = latest(fold, 'bind')?.data ?? {};
   const current = currentHashes(repositoryRoot, bound);

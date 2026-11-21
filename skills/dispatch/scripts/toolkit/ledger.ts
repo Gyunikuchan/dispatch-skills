@@ -300,8 +300,10 @@ function writeRecords(session: string, fold: Fold, toWrite: readonly LedgerRecor
 }
 
 export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
-export async function appendRecord(session: string, input: unknown, deps: LockDeps): Promise<{ seq: number; deduped: boolean }> {
-  return withLedger(session, 'ledger append', deps, tx => tx.append(input));
+export async function appendRecord(session: string, input: unknown, deps: LockDeps, options?: AppendRecordsOptions): Promise<{ seq: number; deduped: boolean }> {
+  if (Array.isArray(input)) throw new ToolError(1, 'invalid-record', 'record must be a JSON object');
+  const { seq, deduped } = await appendRecords(session, input, deps, options);
+  return { seq, deduped };
 }
 export async function appendRecords(session: string, input: unknown, deps: LockDeps, options?: AppendRecordsOptions): Promise<AppendResult> {
   return withLedger(session, 'ledger append', deps, async ({ fold }) => {

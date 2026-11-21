@@ -13,7 +13,7 @@ export type Call = { action: string; kind?: string; count: number };
 /** Targets are `references/...` paths relative to skills/dispatch, with an optional `#anchor`. */
 export type PathManifest = { guide: string; links: Record<string, LinkEntry>; calls: Call[] };
 export type Figures = { distinct: number; workload: number; editableDistinct: number; editableWorkload: number };
-export type Model = 'before' | 'after';
+export type Model = 'before' | 'preload' | 'after';
 export type Read = (rel: string) => string;
 export type PathName = 'ask' | 'design' | 'plan' | 'implement' | 'review' | 'verify';
 
@@ -180,14 +180,14 @@ export const SKILL_LINKS: Record<string, Record<PathName, boolean>> = {
 };
 
 /** Figures at BASELINE_COMMIT; reproduce with --check-baseline. */
-export const BASELINE_COMMIT = '7677a380';
+export const BASELINE_COMMIT = '88685174';
 export const BASELINE: Record<PathName, Figures> = {
-  ask: { distinct: 30757, workload: 30757, editableDistinct: 29994, editableWorkload: 29994 },
-  design: { distinct: 89058, workload: 89058, editableDistinct: 76438, editableWorkload: 76438 },
-  review: { distinct: 60398, workload: 60398, editableDistinct: 42668, editableWorkload: 42668 },
-  verify: { distinct: 33701, workload: 33701, editableDistinct: 30133, editableWorkload: 30133 },
-  plan: { distinct: 85295, workload: 85295, editableDistinct: 69106, editableWorkload: 69106 },
-  implement: { distinct: 100876, workload: 100876, editableDistinct: 86170, editableWorkload: 86170 },
+  ask: { distinct: 30354, workload: 30354, editableDistinct: 29591, editableWorkload: 29591 },
+  design: { distinct: 89006, workload: 89006, editableDistinct: 76238, editableWorkload: 76238 },
+  review: { distinct: 59293, workload: 59293, editableDistinct: 41415, editableWorkload: 41415 },
+  verify: { distinct: 33124, workload: 33124, editableDistinct: 29556, editableWorkload: 29556 },
+  plan: { distinct: 85118, workload: 85118, editableDistinct: 68781, editableWorkload: 68781 },
+  implement: { distinct: 100102, workload: 100102, editableDistinct: 85248, editableWorkload: 85248 },
 };
 
 // SECTION: Sections and bytes
@@ -283,9 +283,9 @@ export function measure<K extends string = PathName>(read: Read, model: Model, m
         if (entry.kind) add(section(entry.kind), entry.count, false);
       }
     }
-    for (const heading of model === 'after' ? ['call table', ...headings] : headings) {
+    for (const heading of model === 'preload' ? ['call table', ...headings] : model === 'after' ? ['call table'] : headings) {
       addDistinct(section(heading), false);
-      if (model === 'after') add(section(heading), 1, false);
+      if (model !== 'before') add(section(heading), 1, false);
     }
     result[name as K] = figures;
   }
@@ -350,7 +350,7 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
   let missing = false;
   for (const [name, spec] of Object.entries(MANIFEST) as [PathName, PathManifest][]) {
     try {
-      result[name] = measure(read, 'after', { [name]: spec })[name]!;
+      result[name] = measure(read, args[0] === '--check-baseline' ? 'preload' : 'after', { [name]: spec })[name]!;
     } catch (error) {
       if (!commit) throw error;
       missing = true;

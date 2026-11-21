@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult, CliDeps } from './cli.ts';
-import { withLedger } from './ledger.ts';
 import { git, gitOk, gitRaw, gitPaths, splitPaths, changedPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration.ts';
 import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
-import { pending, reason, result, refuse } from './integrate.ts';
+import { pending, reason, result, refuse, withPostFold } from './integrate.ts';
+import { readTextPayload } from './input.ts';
 import { ToolError, capSummary } from './output.ts';
 
 const overlaps=(p:string,q:string)=>p===q||p.startsWith(q+'/')||q.startsWith(p+'/');
@@ -31,8 +31,8 @@ async function pathsEqualTo(deps: CliDeps, session: string, destPath: string, tr
 }
 export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','deliver takes no task');
-  if(ctx.values['commit']!==undefined)return commitDelivered(ctx);
-  return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
+  if(ctx.values['commit']!==undefined||ctx.values['message']!==undefined)return commitDelivered(ctx);
+  return withPostFold(ctx.session,'worktree deliver',ctx.deps,async tx=>{
     const active=pending(tx.fold);if(active)refuse('integration-pending',active.data['task']);
     const opened=integrationRecord(tx.fold);if(!opened)refuse('no-integration');
     const cwd=path.resolve(ctx.session,opened.data['path']),dest=opened.data['dest'] as {path:string;branch:string};
@@ -161,11 +161,8 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
 }
 // SECTION: commit phase; one caller commit for a delivered increment, or a record of the user's own commit
 async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
-  const file=ctx.values['commit'];
-  let message='';
-  try{if(typeof file==='string'&&file.trim())message=fs.readFileSync(path.resolve(file),'utf8');}catch{message='';}
-  if(!message.trim())throw new ToolError(1,'invalid-input','--commit requires a readable message file with non-blank text');
-  return withLedger(ctx.session,'worktree deliver',ctx.deps,async tx=>{
+  const message=readTextPayload(ctx,{fileFlag:'commit',inlineFlag:'message',label:'commit message'});
+  return withPostFold(ctx.session,'worktree deliver',ctx.deps,async tx=>{
     const delivered=tx.fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='delivered');
     if(!delivered)return refuse('not-delivered','No delivered record in this session');
     const {dest,from,source}=delivered.data as {dest:{path:string;branch:string};from:string;source:string};
@@ -228,7 +225,7 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
 }
 export async function close(ctx: HandlerContext): Promise<HandlerResult> {
   const why=reason(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','close takes no task');
-  return withLedger(ctx.session,'worktree close',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree close',ctx.deps,async tx=>{
     await tx.append({kind:'integrate',by:'tool',data:{phase:'closed',reason:why}}); return result({closed:true,reason:why});
   });
 }
@@ -303,7 +300,7 @@ function probeWorktreeMove(cwd: string): void {
 }
 export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','cleanup takes no task');
-  return withLedger(ctx.session,'worktree cleanup',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree cleanup',ctx.deps,async tx=>{
     const root=ctx.manifest.repositoryRoot, boundary=path.resolve(ctx.session,'.state/worktrees');
     const physicalBoundary=path.join(fs.realpathSync(ctx.session),'.state/worktrees');
     const listRegistered=async()=> (await gitOk(ctx.deps,root,['worktree','list','--porcelain'])).split(/\r?\n\r?\n/).map(block=>block.split(/\r?\n/).find(l=>l.startsWith('worktree '))?.slice(9)).filter((v): v is string=>!!v).map(p=>path.resolve(p));

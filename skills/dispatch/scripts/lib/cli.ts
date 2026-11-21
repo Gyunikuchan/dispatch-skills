@@ -1,11 +1,12 @@
 export class UsageError extends Error {}
+export const SESSION_ACTIONS = ['init', 'reactivate', 'quota-reprobe'] as const;
 const FLAGS = ['objective', 'session-dir', 'session-id', 'provider', 'model', 'mode', 'host'];
 
 export function parseCommand(argv: readonly string[]): { action: string; flags: Record<string, string> } {
   const args = [...argv], command = args.shift();
   if (command !== 'session') throw new UsageError('Expected session');
   const out = { action: args.shift() ?? '', flags: {} as Record<string, string> };
-  if (!['init', 'reactivate', 'quota-reprobe'].includes(out.action)) throw new UsageError('session requires init, reactivate, or quota-reprobe');
+  if (!(SESSION_ACTIONS as readonly string[]).includes(out.action)) throw new UsageError('session requires ' + SESSION_ACTIONS.slice(0, -1).join(', ') + ', or ' + SESSION_ACTIONS.at(-1));
   let positional = false;
   while (args.length) {
     const token = args.shift()!;

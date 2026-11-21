@@ -45,8 +45,8 @@ const treeMap: Rule = shaped('an object mapping criterion IDs to 40- or 64-hex G
   }
 });
 
-const describe = (fields: Record<string, Rule>, optional: string[] = []) => 'an object with ' + Object.keys(fields).map((key) => optional.includes(key) ? key + '?' : key).join(', ');
-function object(value: unknown, fields: Record<string, Rule>, optional: string[] = [], prefix = 'data'): void {
+const describe = (fields: Record<string, Rule>, optional: readonly string[] = []) => 'an object with ' + Object.keys(fields).map((key) => optional.includes(key) ? key + '?' : key).join(', ');
+function object(value: unknown, fields: Record<string, Rule>, optional: readonly string[] = [], prefix = 'data'): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(prefix, describe(fields, optional));
   const data = value as Record<string, unknown>;
   for (const key of Object.keys(data)) {
@@ -57,7 +57,7 @@ function object(value: unknown, fields: Record<string, Rule>, optional: string[]
     else if (!optional.includes(key)) invalid(prefix + '.' + key, 'required ' + shapeOf(rule));
   }
 }
-const nested = (fields: Record<string, Rule>, optional: string[] = []): Rule => shaped(describe(fields, optional), (value, field) => object(value, fields, optional, field));
+const nested = (fields: Record<string, Rule>, optional: readonly string[] = []): Rule => shaped(describe(fields, optional), (value, field) => object(value, fields, optional, field));
 
 const dest = nested({ branch: text, path: text });
 const artifacts = nested({ spec: hash, plan: hash, design: hash }, ['design']);
@@ -125,8 +125,63 @@ export function coverageDecision(summary: unknown): {accept: string[]} | {grant:
   return /^grant: \S/.test(text) ? {grant: text.slice(7)} : null;
 }
 
-const phaseOptional = (kind: string, phase: unknown): string[] =>
-  kind !== 'integrate' ? [] : phase === 'verification' ? ['report', 'artifacts', 'dirty'] : phase === 'delivered' ? ['noop'] : phase === 'committed' ? ['differing'] : phase === 'fix' ? ['reviewFix'] : [];
+const FLAT_OPTIONAL: Readonly<Record<string, readonly string[]>> = {
+  bind: ['plan', 'design'],
+  approval: ['design'],
+  evidence: ['artifacts'],
+  focus: ['visual'],
+  ruling: ['impact', 'trigger'],
+};
+
+const PHASE_OPTIONAL: Readonly<Record<'writer' | 'integrate', Readonly<Record<string, readonly string[]>>>> = {
+  writer: {},
+  integrate: {
+    verification: ['report', 'artifacts', 'dirty'],
+    delivered: ['noop'],
+    committed: ['differing'],
+    fix: ['reviewFix'],
+  },
+};
+
+const phaseOptional = (kind: string, phase: unknown): readonly string[] =>
+  (kind === 'writer' || kind === 'integrate') && typeof phase === 'string'
+    ? (PHASE_OPTIONAL[kind][phase] ?? [])
+    : [];
+
+export type FlatRecordSchema = { kind: string; phased: false; required: readonly string[]; optional: readonly string[] };
+export type PhaseRecordSchema = { phase: string; required: readonly string[]; optional: readonly string[] };
+export type PhasedRecordSchema = { kind: 'writer' | 'integrate'; phased: true; phases: readonly PhaseRecordSchema[] };
+export type RecordSchema = FlatRecordSchema | PhasedRecordSchema;
+
+const splitFields = (fields: Record<string, Rule>, optional: readonly string[]) => {
+  const keys = Object.keys(fields);
+  return {
+    required: keys.filter((key) => !optional.includes(key)),
+    optional: keys.filter((key) => optional.includes(key)),
+  };
+};
+
+/** Returns required and optional data fields for every ledger record kind and phase. */
+export function recordSchemas(): readonly RecordSchema[] {
+  return KINDS.map((kind): RecordSchema => {
+    if (kind === 'writer' || kind === 'integrate') {
+      const phasesMap = kind === 'writer' ? writers : integrations;
+      return {
+        kind,
+        phased: true,
+        phases: Object.entries(phasesMap).map(([phase, fields]) => ({
+          phase,
+          ...splitFields(fields, phaseOptional(kind, phase)),
+        })),
+      };
+    }
+    return {
+      kind,
+      phased: false,
+      ...splitFields(shapes[kind]!, FLAT_OPTIONAL[kind] ?? []),
+    };
+  });
+}
 
 export function validateRecord(input: unknown, stored = false): RecordInput | LedgerRecord {
   const envelope: Record<string, Rule> = {
@@ -158,7 +213,9 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     }
     fields = { phase: choice(...Object.keys(phases)), ...phases[value.data['phase']] };
   }
-  const optional = value.kind === 'bind' ? ['plan', 'design'] : value.kind === 'approval' ? ['design'] : value.kind==='evidence' ? ['artifacts'] : value.kind === 'focus' ? ['visual'] : value.kind === 'ruling' ? ['impact', 'trigger'] : phaseOptional(value.kind, value.data['phase']);
+  const optional = value.kind === 'writer' || value.kind === 'integrate'
+    ? phaseOptional(value.kind, value.data['phase'])
+    : (FLAT_OPTIONAL[value.kind] ?? []);
   const shape = describe(fields!, optional);
   try {
     object(value.data, fields!, optional);

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export type ToolResult = { ok: boolean; summary: string; path: string | null; reason?: string; exit: number };
+export type ToolResult = { ok: boolean; summary: string; path: string | null; reason?: string; hint?: string; exit: number };
 export class ToolError extends Error {
   readonly exit: number;
   readonly reason: string;

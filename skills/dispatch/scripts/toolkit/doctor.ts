@@ -5,17 +5,17 @@ import { checkIntegrity } from '../lib/integrity.ts';
 import { pricingProblems } from '../lib/pricing.ts';
 import { type ProviderKey } from '../lib/platform.ts';
 import { normalizeProvider, resolveLevel, resolveRoster, resolveSubagent, resolveUtility, type LevelMap, type ReadDelegate, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
-import { foldLedger, latest } from './ledger.ts';
+import { foldLedger, latest, type Fold } from './ledger.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
-export function doctorReport(session: string, skillRoot: string, requested?: unknown, host: ProviderKey | null = null, liveness?: Readonly<Record<string, boolean>>, sandboxSupported?: Readonly<Record<string, boolean>>) {
+export function doctorReport(session: string, skillRoot: string, requested?: unknown, host: ProviderKey | null = null, liveness?: Readonly<Record<string, boolean>>, sandboxSupported?: Readonly<Record<string, boolean>>, fold?: Fold) {
   if (requested !== undefined && !LEVELS.includes(requested as Level)) {
     throw new ToolError(1, 'invalid-input', 'level must be low, medium, high, xhigh or max');
   }
-  const level = (requested ?? latest(foldLedger(session), 'level')?.data['level'] ?? 'medium') as Level;
+  const level = (requested ?? latest(fold ?? foldLedger(session), 'level')?.data['level'] ?? 'medium') as Level;
   const integrity = checkIntegrity(skillRoot);
   let configPath = CONFIG_CANDIDATES.map(name => path.join(skillRoot, name)).find(file => fs.existsSync(file)) ?? null;
   let problems: string[] = [], warnings: string[] = [];

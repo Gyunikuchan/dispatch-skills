@@ -8,6 +8,7 @@ export const ALLOW_TIMING: readonly string[] = [
   'tests/helpers/e2e.ts: E2E-only real CLI deadlines and detached-worker polling.',
   'tests/helpers/stub-provider.ts: E2E-only provider delay keeps a real worker live for sender-kill recovery.',
   'tests/unit/toolkit/domain/report.test.ts: adversarial parser bounds need a measured elapsed time.',
+  'tests/unit/toolkit/hints.test.ts: measures and reports 500-record fold+hash latency.',
 ];
 
 // NOTE: tokens are assembled so this guard's own source never matches them.

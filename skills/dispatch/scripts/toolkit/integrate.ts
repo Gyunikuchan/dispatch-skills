@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { withLedger, gate, currentHashes, latest, type Fold, type LedgerTransaction } from './ledger.ts';
 import { validateReviewFix, type LedgerRecord, type ReviewFix } from './records.ts';
@@ -11,9 +9,18 @@ import { checks, loadPlan, taskSection } from './plan-view.ts';
 import { cleanupEvidence, matchesDeclared, strictEvidence } from './evidence.ts';
 import { ToolError } from './output.ts';
 import { stableValue } from './domain/stable-value.ts';
-import { stripBom } from '../lib/fs-ext.ts';
+import { readJsonPayload } from './input.ts';
 
-export const result=(value: unknown): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value)});
+export const result=(value: unknown, postFold?: Fold): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value),...(postFold?{postFold}:{})});
+export async function withPostFold(session: string, tool: string, deps: HandlerContext['deps'], fn: (tx: LedgerTransaction) => Promise<HandlerResult>): Promise<HandlerResult> {
+  let postFold: Fold | undefined;
+  const out = await withLedger(session, tool, deps, async tx => {
+    const res = await fn(tx);
+    postFold = tx.fold;
+    return res;
+  });
+  return { ...out, ...(postFold ? { postFold } : {}) };
+}
 export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
 export function reason(ctx: HandlerContext): string {
   const value=ctx.values['reason'];
@@ -49,30 +56,33 @@ export function reviewFixFromCommit(message: string): ReviewFix | undefined {
   }
 }
 function readReviewFix(ctx: HandlerContext): ReviewFix | undefined {
-  const file = ctx.values['review-fix'];
-  if (file === undefined) return undefined;
-  if (typeof file !== 'string' || !file.trim()) throw new ToolError(1, 'invalid-input', 'A JSON file is required for --review-fix');
-  try { return validateReviewFix(JSON.parse(stripBom(fs.readFileSync(path.resolve(file), 'utf8')))); }
-  catch (error) {
-    if (error instanceof ToolError) throw error;
-    throw new ToolError(1, 'invalid-input', 'input requires a readable review-fix JSON object');
-  }
+  const parsed = readJsonPayload(ctx, {
+    fileFlag: 'review-fix',
+    inlineFlag: 'review-fix-json',
+    optional: true,
+    label: 'review-fix',
+  });
+  if (parsed === undefined) return undefined;
+  return validateReviewFix(parsed);
 }
 type TestCleanup = { removed: string[]; deleted: number; merged: number };
 const TRAILER = 'Dispatch-Test-Cleanup-Data: ';
 function readTestCleanup(ctx: HandlerContext): TestCleanup | undefined {
-  const file = ctx.values['test-cleanup'];
-  if (file === undefined) return undefined;
+  const value = readJsonPayload(ctx, {
+    fileFlag: 'test-cleanup',
+    inlineFlag: 'test-cleanup-json',
+    optional: true,
+    label: 'test-cleanup',
+  });
+  if (value === undefined) return undefined;
   const invalid = () => new ToolError(1, 'invalid-input', 'input requires a readable test-cleanup JSON object: {"removed": ["SC<n>"], "deleted": <count>, "merged": <count>}');
-  if (typeof file !== 'string' || !file.trim()) throw invalid();
-  let value: any;
-  try { value = JSON.parse(stripBom(fs.readFileSync(path.resolve(file), 'utf8'))); } catch { throw invalid(); }
   const count = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join() !== 'deleted,merged,removed' ||
-      !Array.isArray(value.removed) || value.removed.some((id: unknown) => typeof id !== 'string' || !id.trim()) || new Set(value.removed).size !== value.removed.length ||
-      !count(value.deleted) || !count(value.merged)) throw invalid();
-  if (!value.removed.length && !value.deleted && !value.merged) refuse('test-cleanup-empty');
-  return { removed: value.removed, deleted: value.deleted, merged: value.merged };
+  const record = value as Record<string, unknown>;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(record).sort().join() !== 'deleted,merged,removed' ||
+      !Array.isArray(record['removed']) || record['removed'].some((id: unknown) => typeof id !== 'string' || !id.trim()) || new Set(record['removed']).size !== record['removed'].length ||
+      !count(record['deleted']) || !count(record['merged'])) throw invalid();
+  if (!record['removed'].length && !record['deleted'] && !record['merged']) refuse('test-cleanup-empty');
+  return { removed: record['removed'] as string[], deleted: record['deleted'] as number, merged: record['merged'] as number };
 }
 function task(ctx: HandlerContext): string {
   if(ctx.args.length!==1)throw new ToolError(1,'invalid-input','One task ID is required');
@@ -82,7 +92,7 @@ function task(ctx: HandlerContext): string {
 export function pending(fold: Fold): LedgerRecord | undefined {
   return fold.records.findLast(row=>row.kind==='integrate' && row.data['phase']==='started' && !fold.records.some(end=>end.kind==='integrate' && end.seq>row.seq && end.data['task']===row.data['task'] && (end.data['phase']==='done'||end.data['phase']==='abandoned')));
 }
-function candidate(fold: Fold,id: string) {
+export function candidate(fold: Fold,id: string) {
   const launch=launches(fold,id).at(-1);
   if(!launch?.finished)return undefined;
   if(fold.records.some(r=>r.kind==='integrate' && r.seq>launch.finished!.seq && r.data['task']===id && (r.data['phase']==='done'||r.data['phase']==='abandoned')))return undefined;
@@ -120,7 +130,7 @@ async function conflicts(ctx: HandlerContext,tx: LedgerTransaction,cwd: string,i
 }
 export async function integrate(ctx: HandlerContext): Promise<HandlerResult> {
   const id=task(ctx);
-  return withLedger(ctx.session,'worktree integrate',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree integrate',ctx.deps,async tx=>{
     checkGate(ctx,tx.fold);
     const active=pending(tx.fold);
     if(active && active.data['task']!==id)refuse('integration-pending',active.data['task']);
@@ -149,7 +159,7 @@ export async function integrate(ctx: HandlerContext): Promise<HandlerResult> {
 }
 export async function continueIntegration(ctx: HandlerContext): Promise<HandlerResult> {
   const id=task(ctx);
-  return withLedger(ctx.session,'worktree continue',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree continue',ctx.deps,async tx=>{
     checkGate(ctx,tx.fold);
     const active=pending(tx.fold);
     const integration=await ensureIntegration(tx,ctx), cwd=integration.path;
@@ -170,9 +180,13 @@ export async function continueIntegration(ctx: HandlerContext): Promise<HandlerR
   });
 }
 export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
-  const why=reason(ctx); let reviewFix=readReviewFix(ctx); const cleanup=readTestCleanup(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
-  if(cleanup && reviewFix)throw new ToolError(1,'invalid-input','--test-cleanup and --review-fix are mutually exclusive');
-  return withLedger(ctx.session,'worktree commit',ctx.deps,async tx=>{
+  if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
+  const why=reason(ctx);
+  const hasReviewFix=ctx.values['review-fix']!==undefined||ctx.values['review-fix-json']!==undefined;
+  const hasTestCleanup=ctx.values['test-cleanup']!==undefined||ctx.values['test-cleanup-json']!==undefined;
+  if(hasReviewFix && hasTestCleanup)throw new ToolError(1,'invalid-input','--test-cleanup and --review-fix are mutually exclusive');
+  let reviewFix=readReviewFix(ctx); const cleanup=readTestCleanup(ctx);
+  return withPostFold(ctx.session,'worktree commit',ctx.deps,async tx=>{
     const active=pending(tx.fold); if(active)refuse('integration-pending',active.data['task']);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     let hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
@@ -234,7 +248,7 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
 }
 export async function abort(ctx: HandlerContext): Promise<HandlerResult> {
   const id=task(ctx),why=reason(ctx);
-  return withLedger(ctx.session,'worktree abort',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree abort',ctx.deps,async tx=>{
     const active=pending(tx.fold),launch=candidate(tx.fold,id);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     const cherry=await cherryHead(ctx,cwd);

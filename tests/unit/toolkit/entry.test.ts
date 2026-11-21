@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { main as toolkitMain, TOOL_ACTIONS } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { CALL_TABLE_MAX_BYTES, renderCallTable } from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
 import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -191,7 +192,8 @@ test('help prints exactly one section for each action, record kind, session comm
       f.lines.length = 0;
       assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, heading);
       assert.equal(f.lines.length, 1);
-      assert.equal(f.lines[0], sectionOf(heading), heading);
+      assert.equal(f.lines[0], heading === 'call table' ? renderCallTable() : sectionOf(heading), heading);
+      if (heading === 'call table') assert.ok(Buffer.byteLength(f.lines[0]!, 'utf8') <= CALL_TABLE_MAX_BYTES);
     }
   } finally { f.cleanup(); }
 });
@@ -259,7 +261,7 @@ test('help refuses an unknown or empty heading with the valid headings inside th
 test('help refuses an unreadable toolkit contract as a fault', async () => {
   const f = sessionFixture();
   try {
-    assert.equal(await entry.main(['help', 'call', 'table'], { ...f.deps, skillRoot: path.join(f.root, 'missing') }), 2);
+    assert.equal(await entry.main(['help', 'doctor', 'run'], { ...f.deps, skillRoot: path.join(f.root, 'missing') }), 2);
     const out = f.output();
     assert.equal(out.reason, 'fault');
     assert.equal(out.path, null);

@@ -229,7 +229,7 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     return { ok: true, exit: 0, value, summary: briefSummary(summary, host, launch, briefFile, value.bytes, {
       tail: `; skeleton ${JSON.stringify(noteSkeleton)}`,
       shortPath: `.state/briefs/${path.basename(briefFile)}`,
-    }) };
+    }), postFold: fold };
   } catch (error) {
     for (const file of written) fs.rmSync(file, { force: true });
     throw error;

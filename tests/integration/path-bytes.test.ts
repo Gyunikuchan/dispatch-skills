@@ -191,8 +191,13 @@ test('measure counts each section per call before and once per run after', () =>
   assert.equal(before.editableDistinct, before.distinct - sectionSize('plan', 50));
   assert.equal(before.editableWorkload, before.workload - sectionSize('plan', 50));
 
+  const preload = measure(read, 'preload', manifest).p;
+  assert.equal(preload.distinct, reads + table + doIt + append + kind);
+  assert.equal(preload.workload, preload.distinct);
+  assert.equal(preload.editableWorkload, preload.workload - sectionSize('plan', 50));
+
   const after = measure(read, 'after', manifest).p;
-  assert.equal(after.distinct, reads + table + doIt + append + kind);
+  assert.equal(after.distinct, reads + table);
   assert.equal(after.workload, after.distinct);
   assert.equal(after.editableWorkload, after.workload - sectionSize('plan', 50));
 });
@@ -350,7 +355,7 @@ test('path bytes measures a commit through git show', () => {
 
 test('path bytes check baseline fails on any figure mismatch', () => {
   const git = (args: string[]) => args[0] === 'rev-parse' ? 'ok' : readFile(args[1]!.split(':skills/dispatch/')[1]!);
-  const current = measure(readFile, 'after');
+  const current = measure(readFile, 'preload');
   assert.equal(main(['--check-baseline'], git, current), 0);
   for (const [key, delta] of [['workload', -1], ['workload', 1], ['distinct', 1]] as const) {
     const changed = structuredClone(current);

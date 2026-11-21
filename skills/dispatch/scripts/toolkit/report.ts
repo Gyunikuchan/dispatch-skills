@@ -393,6 +393,7 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
     exit: 0,
     summary: `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}${facts.confirmationError?'; confirmation unavailable: '+facts.confirmationError:''}`,
     value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
+    postFold: facts.fold,
   };
 }
 
@@ -449,5 +450,6 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
     exit: 0,
     summary: `complete: walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}` + (warning ? `; ${warning}` : ''),
     value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}), ...(warning ? {warning} : {}) },
+    postFold: facts.fold,
   };
 }

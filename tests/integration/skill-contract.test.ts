@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {test} from 'node:test';
 import {TOOL_ACTIONS} from '../../skills/dispatch/scripts/toolkit/cli.ts';
-import {KINDS} from '../../skills/dispatch/scripts/toolkit/records.ts';
+import {renderCallTable} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
+import {KINDS, recordSchemas} from '../../skills/dispatch/scripts/toolkit/records.ts';
 import {OVERLAY_ROOT} from './scan.ts';
 const root = 'skills/dispatch/';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
@@ -306,7 +307,8 @@ test('human manuals retain portable links and current operational guidance', () 
 test('worktree deliver commit and uncommitted contracts', () => {
   const toolkit = read(root + 'references/toolkit.md');
   const deliver = section(toolkit, 'worktree deliver');
-  assert.ok(toolkit.includes('`worktree deliver --session <session> [--commit <message-file>]`'), 'call table');
+  assert.ok(toolkit.includes('`worktree deliver --session <session> [--commit <message-file\\|-> \\| --message <text>]`'), 'call table');
+  assert.ok(deliver.includes('`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`'), 'deliver arguments');
   for (const term of ['--commit', 'recordOnly', 'committed', 'differing', 'warning', 'not-delivered', 'staged-changes', 'delivered-content-changed', 'commit-failed', 'head-not-descendant', 'delivered-uncommitted', 'caller-moved'])
     assert.ok(deliver.includes(term), term);
   assert.ok(section(toolkit, 'lint run').includes('outside-increment'), 'lint run warning');
@@ -746,30 +748,65 @@ test('implement runs verification before test cleanup and verify states the appr
 });
 
 test('call table lists every tool action, record kind and session command with its section argument form', () => {
-  const toolkit = read(root + 'references/toolkit.md');
+  const toolkit = read(root + 'references/toolkit.md').replace(/\r\n/g, '\n');
+  const actualCallTable = '### call table\n' + section(toolkit, 'call table').trimEnd() + '\n';
+  assert.equal(actualCallTable, renderCallTable(), 'toolkit.md ### call table must match renderCallTable() verbatim');
+
   const lines = section(toolkit, 'call table').split('\n').filter(line => line.startsWith('| ')).slice(2);
   const parsed = lines.map(line => {
     const [type, heading, ...rest] = line.slice(2, -2).split(' | ');
     return {type: type!, heading: heading!, form: rest.join(' | ').split('\\|').join('|')};
   });
   const expected = [
-    ...TOOL_ACTIONS.map(h => ['action', h]), ...KINDS.map(h => ['record', h]),
+    ...TOOL_ACTIONS.map(h => ['action', h]),
+    ...recordSchemas().flatMap(schema => schema.phased
+      ? schema.phases.map(phase => ['record', `${schema.kind} (${phase.phase})`])
+      : [['record', schema.kind]]),
     ...['session init', 'session reactivate', 'session quota-reprobe'].map(h => ['session', h]),
   ];
   assert.deepEqual(parsed.map(r => [r.type, r.heading]).sort(), expected.sort());
   const firstSpan = (text: string) => /`([^`]+)`/.exec(text)?.[1] ?? '-';
   for (const row of parsed) {
-    const body = section(toolkit, row.heading);
-    const form = row.type === 'action' ? firstSpan(body.split('\n').find(line => line.startsWith('Arguments: ')) ?? '')
-      : row.type === 'session' ? firstSpan(body) : '-';
-    assert.equal(row.form.replace(/^`|`$/g, ''), form, row.heading);
+    const targetHeading = row.type === 'record' ? row.heading.replace(/ \([^)]+\)$/, '') : row.heading;
+    const body = section(toolkit, targetHeading);
+    assert.ok(body.length > 0, `missing toolkit.md section for ${row.heading}`);
+    if (row.type === 'action') {
+      const form = firstSpan(body.split('\n').find(line => line.startsWith('Arguments: ')) ?? '');
+      assert.equal(row.form.replace(/^`|`$/g, ''), form, row.heading);
+    } else if (row.type === 'session') {
+      assert.equal(row.form.replace(/^`|`$/g, ''), firstSpan(body), row.heading);
+    }
   }
+
+  // Documented envelope hint, stdin (-), inline flags, Windows PowerShell 5.1 UTF-8, and 4,096-byte inline guidance.
+  assert.match(toolkit, /\bhint\b[^\n]*ok:\s*true|ok:\s*true[^\n]*\bhint\b/i);
+  assert.match(toolkit, /\$OutputEncoding.*utf8|utf8.*\$OutputEncoding/i);
+  assert.match(toolkit, /Windows PowerShell 5\.1/);
+  assert.match(toolkit, /4,096/);
+  for (const [heading, pattern] of [
+    ['ask run', /<question-file\|->.*--text <text>/],
+    ['brief explorer', /<values\.json\|->.*--json <json>/],
+    ['brief test-cleanup', /<values\.json\|->.*--json <json>.*--base <ref> --integration-path <path>/],
+    ['brief verifier', /<values\.json\|->.*--json <json>/],
+    ['lint run', /--edit <fields\.json\|->.*--json <json>/],
+    ['worktree commit', /--review-fix <json-file\|->.*--review-fix-json <json>.*--test-cleanup <json-file\|->.*--test-cleanup-json <json>/],
+    ['worktree deliver', /--commit <message-file\|->.*--message <text>/],
+    ['ledger append', /<record\.json\|->/],
+  ] as const) {
+    assert.match(section(toolkit, heading), pattern, `${heading} documents stdin/inline flags`);
+  }
+
+  const askGuide = read(root + 'references/verbs/ask.md');
+  assert.match(askGuide, /--text/);
+  assert.match(askGuide, /stdin \(`-`\)|`?ask run`?/);
 });
 
-test('SKILL.md read rule loads the call table once and each tool section through help', () => {
+test('SKILL.md read rule loads the call table once and fetches help on demand or refusal', () => {
   const skill = read(root + 'SKILL.md');
-  assert.ok(skill.includes('dispatch.ts help call table` once per run. Run `help <heading>` before the first use in a run of each tool action, ledger record kind and session command except `session init`'));
+  assert.ok(skill.includes('dispatch.ts help call table` once per run'));
+  assert.match(skill, /help <heading>[^\n]*when uncertain/i);
   assert.ok(skill.includes('after each `ok:false` result that has a `help` field'));
+  assert.ok(!skill.includes('before the first use in a run of each tool action'));
   assert.ok(!skill.includes('For each call read its action section'));
   assert.ok(!skill.includes('for ledger calls also read the matching record-kind section'));
 });

@@ -24,7 +24,9 @@ import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { lintArtifact } from './lint.ts';
-import { appendLintEdit, appendRecords, foldLedger, queryLedger } from './ledger.ts';
+import { appendLintEdit, appendRecords, currentHashes, foldLedger, latest, queryLedger, type Fold } from './ledger.ts';
+import { readJsonPayload } from './input.ts';
+import { isHintExcludedAction, stepHint } from './hints.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport } from './doctor.ts';
 import { statusReport } from './status.ts';
@@ -37,7 +39,7 @@ import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 import { validateRecord } from './records.ts';
 import { reviewId } from './confirmations.ts';
 
-export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string };
+export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
   readStdin?: () => string;
@@ -123,13 +125,9 @@ export function nodeDeps(): CliDeps {
   };
 }
 
-function readLintEditFields(file: string) {
-  let source: string;
-  try { source = fs.readFileSync(path.resolve(file), 'utf8'); }
-  catch { throw new ToolError(1, 'invalid-input', 'Cannot read --edit fields file ' + file); }
-  let input: unknown;
-  try { input = JSON.parse(stripBom(source)); }
-  catch { throw new ToolError(1, 'invalid-input', '--edit fields file is not valid JSON: ' + file); }
+function readLintEditFields(ctx: HandlerContext) {
+  const input = readJsonPayload(ctx, { fileFlag: 'edit', inlineFlag: 'json', optional: true, label: '--edit fields' });
+  if (input === undefined) return undefined;
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ToolError(1, 'invalid-input', '--edit fields must be a JSON object');
   }
@@ -185,7 +183,9 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     catch (error) {throw new ToolError(1, 'invalid-input', (stdin ? 'Records from stdin are not valid JSON: ' : 'Record file ' + file + ' is not valid JSON: ') + (error as SyntaxError).message);}
     let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
     let findingsSectionReason: string | undefined;
-    const appended = await appendRecords(session, input, deps, { onCommit: () => {
+    let postFold: Fold | undefined;
+    const appended = await appendRecords(session, input, deps, { onCommit: (fold) => {
+      postFold = fold;
       const reviews = new Set<string>();
       for (const item of Array.isArray(input) ? input : [input]) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
@@ -219,28 +219,33 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const summary = Array.isArray(input)
       ? appended.count + ' records (last seq ' + appended.seq + (appended.deduped ? ', all deduped' : '') + ')'
       : 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended');
-    return { ok: true, value, summary, exit: 0 };
+    return { ok: true, value, summary, exit: 0, ...(postFold ? { postFold } : {}) };
   },
   'ledger query': async ({ session, values, args }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'query takes only filters');
-    const value = queryLedger(foldLedger(session), { kind: values['kind'], key: values['key'], since: values['since'] });
-    return { ok: true, value, summary: value.length + ' records; last ' + JSON.stringify(value.at(-1) ?? null), exit: 0 };
+    const fold = foldLedger(session);
+    const value = queryLedger(fold, { kind: values['kind'], key: values['key'], since: values['since'] });
+    return { ok: true, value, summary: value.length + ' records; last ' + JSON.stringify(value.at(-1) ?? null), exit: 0, postFold: fold };
   },
   'doctor run': async ({ session, manifest, values, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'doctor takes only options');
-    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null, deps.liveness, deps.sandboxSupported);
-    return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}) };
+    const fold = values['level'] === undefined ? foldLedger(session) : undefined;
+    const value = doctorReport(session, deps.skillRoot, values['level'], orchestratorFor(manifest.host, name => deps.env[name])?.platform ?? null, deps.liveness, deps.sandboxSupported, fold);
+    return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}), ...(fold ? { postFold: fold } : {}) };
   },
   'status show': async ({ session, manifest, args, deps }) => {
     if (args.length) throw new ToolError(1, 'invalid-input', 'status takes no arguments');
-    const value = await statusReport(session, manifest.repositoryRoot, deps);
-    return { ok: true, value, summary: JSON.stringify(value), exit: 0 };
+    const fold = foldLedger(session);
+    const value = await statusReport(session, manifest.repositoryRoot, deps, fold);
+    return { ok: true, value, summary: JSON.stringify(value), exit: 0, postFold: fold };
   },
-  'lint run': async ({ args, manifest, session, values, deps }) => {
+  'lint run': async (ctx) => {
+    const { args, manifest, session, deps } = ctx;
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'artifact requires one path');
+    const editFields = readLintEditFields(ctx);
     const artifactPath = path.resolve(args[0]!);
-    const checked = typeof values['edit'] === 'string'
-      ? await appendLintEdit(session, artifactPath, readLintEditFields(values['edit']), deps)
+    const checked = editFields
+      ? await appendLintEdit(session, artifactPath, editFields, deps)
       : { value: lintArtifact(artifactPath, { repositoryRoot: manifest.repositoryRoot }) };
     const { value } = checked;
     const ok = value.errors.length === 0;
@@ -275,10 +280,22 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
       'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, task: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
+      json: { type: 'string' }, text: { type: 'string' }, message: { type: 'string' }, base: { type: 'string' }, 'integration-path': { type: 'string' },
+      'review-fix-json': { type: 'string' }, 'test-cleanup-json': { type: 'string' },
     } });
     [tool = '', action = ''] = parsed.positionals;
-    if (!handlers[tool + ' ' + action]) throw new Error('Unknown tool or action');
-    if (parsed.values['edit'] !== undefined && (tool !== 'lint' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--edit is only for lint run');
+    const fullAction = tool + ' ' + action;
+    if (!handlers[fullAction]) throw new Error('Unknown tool or action');
+    if (parsed.values['edit'] !== undefined && fullAction !== 'lint run') throw new ToolError(1, 'invalid-input', '--edit is only for lint run');
+    if (parsed.values['json'] !== undefined && !['brief explorer', 'brief test-cleanup', 'brief verifier', 'lint run'].includes(fullAction)) {
+      throw new ToolError(1, 'invalid-input', '--json is only for brief explorer, brief test-cleanup, brief verifier and lint run');
+    }
+    if (parsed.values['text'] !== undefined && fullAction !== 'ask run') throw new ToolError(1, 'invalid-input', '--text is only for ask run');
+    if (parsed.values['message'] !== undefined && fullAction !== 'worktree deliver') throw new ToolError(1, 'invalid-input', '--message is only for worktree deliver');
+    if (parsed.values['base'] !== undefined && fullAction !== 'brief test-cleanup') throw new ToolError(1, 'invalid-input', '--base is only for brief test-cleanup');
+    if (parsed.values['integration-path'] !== undefined && fullAction !== 'brief test-cleanup') throw new ToolError(1, 'invalid-input', '--integration-path is only for brief test-cleanup');
+    if (parsed.values['review-fix-json'] !== undefined && fullAction !== 'worktree commit') throw new ToolError(1, 'invalid-input', '--review-fix-json is only for worktree commit');
+    if (parsed.values['test-cleanup-json'] !== undefined && fullAction !== 'worktree commit') throw new ToolError(1, 'invalid-input', '--test-cleanup-json is only for worktree commit');
     if (parsed.values['task'] !== undefined && (tool !== 'check' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--task is only for check run');
     if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
     if (parsed.values['commit'] !== undefined && (tool !== 'worktree' || action !== 'deliver')) throw new ToolError(1, 'invalid-input', '--commit is only for worktree deliver');
@@ -350,7 +367,18 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   try {
     const resultPath = (deps.writeResult ?? writeResult)(session, tool, action, outcome.value);
     const reason = outcome.reason ?? (outcome.ok && (tool === 'ask' || tool === 'review') ? 'complete' : undefined);
-    return print({ ok: outcome.ok, summary: outcome.summary, path: resultPath, exit: outcome.exit, ...(reason ? { reason } : {}) });
+    const fullAction = tool + ' ' + action;
+    let hint: string | undefined;
+    if (outcome.ok && reason !== 'native-pending' && !isHintExcludedAction(fullAction)) {
+      try {
+        const fold = outcome.postFold ?? foldLedger(session);
+        const current = currentHashes(manifest.repositoryRoot, latest(fold, 'bind'));
+        hint = stepHint({ fold, current, action: fullAction, result: { ok: outcome.ok, reason, value: outcome.value }, session, manifest });
+      } catch {
+        hint = undefined;
+      }
+    }
+    return print({ ok: outcome.ok, summary: outcome.summary, path: resultPath, exit: outcome.exit, ...(reason ? { reason } : {}), ...(hint ? { hint } : {}) });
   } catch (error) {
     return print({ ok: false, summary: error instanceof Error ? error.message : String(error), path: null, reason: 'fault', exit: 2 });
   }

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { appendRecord, withLedger, foldLedger } from './ledger.ts';
+import { appendRecord, withLedger, foldLedger, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { checks, loadPlan, taskCriteria } from './plan-view.ts';
 import { cleanupBinding } from './evidence.ts';
@@ -36,6 +36,7 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
   const records: Record<string,unknown>[]=[];
   const outcomes=new Map<string,{exit:number;log:string}>();
   let executed=0;
+  let postFold: Fold | undefined;
   for(const check of selected) {
     const before=await testedTree(deps,session,integration.path);
     const clean=before===await headTree(deps,integration.path);
@@ -64,12 +65,12 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
     fs.writeFileSync(temporary,JSON.stringify(data)); fs.renameSync(temporary,file);
     await deps.hook?.('check:after-evidence');
     const evidence={...data,path:path.relative(session,file).split(path.sep).join('/')};
-    await appendRecord(session,{kind:'evidence',by:'tool',key:'evidence:'+digest,data:evidence},deps);
+    await appendRecord(session,{kind:'evidence',by:'tool',key:'evidence:'+digest,data:evidence},deps,{onCommit:(fold)=>{postFold=fold;}});
     records.push({...evidence,logPath});
   }
   const failed=records.filter(r=>r['exit']!==0).map(r=>r['criterion']);
   const mutated=records.filter(r=>r['before']!==r['after']).map(r=>r['criterion']);
   const dirty=records.filter(r=>!r['clean']).map(r=>r['criterion']);
   const reason=failed.length ? 'checks-failed' : mutated.length ? 'mutated' : dirty.length ? 'dirty' : undefined;
-  return {ok:!reason,exit:0,...(reason ? {reason}:{}),summary:`${records.length} checks (${executed} commands); failed ${failed.join(',')}; mutated ${mutated.join(',')}; dirty ${dirty.join(',')}`,value:{checks:records,executed,failed,mutated,dirty}};
+  return {ok:!reason,exit:0,...(reason ? {reason}:{}),summary:`${records.length} checks (${executed} commands); failed ${failed.join(',')}; mutated ${mutated.join(',')}; dirty ${dirty.join(',')}`,value:{checks:records,executed,failed,mutated,dirty},...(postFold?{postFold}:{})};
 }
