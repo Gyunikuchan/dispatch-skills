@@ -12,7 +12,7 @@ flowchart TD
 ```
 
 - **Two layers:** Dispatch runs deterministic checks first (`check run` when a bound plan and session integration exist, or the repository's own test command as a baseline), then launches a verifier subagent for runtime verification.
-- **When it runs automatically:** `implement` runs verification after all tasks integrate and before test cleanup; after code review settles, it re-checks proved behavior changed by accepted review fixes.
+- **When it runs automatically:** `implement` runs verification after all tasks integrate and before test cleanup. After code review settles, it runs a targeted re-check if check-failure repairs or accepted review fixes changed proved behavior.
 - **Artifacts & limits:** Proof and logs live under the session's `verification/report.md` and `verification/`, linked from the walkthrough. If nothing runnable can be proved, Dispatch records a no-op explaining why. Missing tools are reported as limits—Dispatch does not install them.
 
 For approval rules on actions that change persistent or shared state, send messages, incur charges, or use non-local environments, see [the verify guide](../verbs/verify.md).

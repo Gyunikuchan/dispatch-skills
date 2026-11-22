@@ -43,7 +43,7 @@ const DEFAULT_FIX = ['references/providers.md', "Inspect the slot log for the de
 
 // The domain layer cannot import cli.ts, so this table mirrors its handler map.
 const TOOL_MODULES: Readonly<Record<string, string>> = {
-  'ask run': 'ask', 'review run': 'review', 'diagnostics render': 'diagnostics', 'brief render': 'brief', 'brief explorer': 'brief', 'brief test-cleanup': 'brief', 'brief verifier': 'brief', 'brief fix-check': 'fix-check', 'check run': 'check', 'doctor run': 'doctor', 'status show': 'status', 'lint run': 'lint',
+  'ask run': 'ask', 'review run': 'review', 'diagnostics render': 'diagnostics', 'brief render': 'brief', 'brief explorer': 'brief', 'brief test-cleanup': 'brief', 'brief verifier': 'brief', 'brief fix-review-lite': 'fix-review-lite', 'check run': 'check', 'doctor run': 'doctor', 'status show': 'status', 'lint run': 'lint',
   'report render': 'report', 'report complete': 'report', 'ledger append': 'ledger', 'ledger query': 'ledger',
   'worktree integrate': 'integrate', 'worktree continue': 'integrate', 'worktree commit': 'integrate', 'worktree abort': 'integrate',
   'worktree deliver': 'deliver', 'worktree close': 'deliver', 'worktree cleanup': 'deliver',

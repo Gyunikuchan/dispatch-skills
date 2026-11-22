@@ -49,7 +49,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
     'references/providers.md#child-orchestrators': conditional('On a verified host'),
     'references/grounding.md#design-increments': unconditional, 'references/decision-frame.md#user-gate-boundaries': conditional('user gate'),
     'references/spec-stage.md#approval': conditional('otherwise'), [`${TOOLKIT}#worktree-deliver`]: conditional('With the opt-in'),
-  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), call('brief fix-check', 1), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
+  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), call('brief fix-review-lite', 1), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
   // Normal review assumes a code target; plan/design edit records are conditional.
   review: { guide: 'references/verbs/review.md', links: {
     'references/spec-stage.md#readers-and-document-layers': unconditional, [`${TOOLKIT}#review-run`]: unconditional,
@@ -91,7 +91,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/verbs/implement.md': conditional('Notify affected writers'),
     },
     calls: [
-      call('doctor run', 1), call('brief explorer', 1), call('lint run', 3), call('review run', 2), call('brief fix-check', 1),
+      call('doctor run', 1), call('brief explorer', 1), call('lint run', 3), call('review run', 2), call('brief fix-review-lite', 1),
       record('bind', 1), record('level', 1), record('approval', 1), record('ruling', 8), record('edit', 2),
     ],
   },
@@ -198,7 +198,7 @@ export function slug(heading: string): string {
 }
 
 /** The heading line through the line before the next heading of the same or a higher level; null when absent. */
-export function sectionOf(text: string, anchor: string): string | null {
+export function sectionOf(text: string, anchor: string, headingLevel?: number): string | null {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   let fence = false;
   let start = -1;
@@ -209,7 +209,7 @@ export function sectionOf(text: string, anchor: string): string | null {
     const match = /^(#{1,6})\s+(.*?)\s*$/.exec(lines[index]!);
     if (!match) continue;
     if (start < 0) {
-      if (slug(match[2]!) === anchor) { start = index; level = match[1]!.length; }
+      if (slug(match[2]!) === anchor && (headingLevel === undefined || match[1]!.length === headingLevel)) { start = index; level = match[1]!.length; }
     } else if (match[1]!.length <= level) {
       return lines.slice(start, index).join('\n').trimEnd();
     }
@@ -306,11 +306,26 @@ function pathReads(spec: PathManifest, name: string): ReadItem[] {
 
 // SECTION: Measure
 
-export function measure<K extends string = PathName>(read: Read, model: Model, manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>): Record<K, Figures> {
+export function measure<K extends string = PathName>(read: Read, model: Model, manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>, archive = false): Record<K, Figures> {
   const toolkit = read(TOOLKIT);
   const help = stripGeneratedMarkers(toolkit);
   const section = (heading: string) => {
-    const text = sectionOf(help, slug(heading));
+    let text = sectionOf(help, slug(heading));
+    if (text === null && archive && heading === 'brief fix-review-lite') {
+      // The pinned baseline predates the rename.
+      const candidates: string[] = [];
+      let fence = false;
+      for (const line of help.split(/\r?\n/)) {
+        if (/^ {0,3}(```|~~~)/.test(line)) { fence = !fence; continue; }
+        if (fence) continue;
+        const match = /^###\s+(.*?)\s*$/.exec(line);
+        if (!match) continue;
+        const anchor = slug(match[1]!);
+        if (anchor.startsWith('brief-fix-')) candidates.push(anchor);
+      }
+      if (candidates.length !== 1) throw new Error(`toolkit.md has ${candidates.length} archived repair brief sections; expected one`);
+      text = sectionOf(help, candidates[0]!, 3);
+    }
     if (text === null) throw new Error(`toolkit.md has no section "${heading}"`);
     return bytes(text);
   };
@@ -390,7 +405,8 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
   if (!(args.length === 0 || (args.length === 1 && args[0] === '--check-baseline') || (args.length === 2 && args[0] === '--at' && args[1]))) {
     process.stderr.write('Usage: path-bytes [--at <commit> | --check-baseline]\n'); return 2;
   }
-  const commit = args[0] === '--check-baseline' ? BASELINE_COMMIT : args[1];
+  const archive = args[0] === '--check-baseline';
+  const commit = archive ? BASELINE_COMMIT : args[1];
   const skillDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/dispatch');
   let objectId: string | undefined;
   if (commit) {
@@ -409,7 +425,7 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
   let missing = false;
   for (const [name, spec] of Object.entries(MANIFEST) as [PathName, PathManifest][]) {
     try {
-      result[name] = measure(read, args[0] === '--check-baseline' ? 'preload' : 'after', { [name]: spec })[name]!;
+      result[name] = measure(read, archive ? 'preload' : 'after', { [name]: spec }, archive)[name]!;
     } catch (error) {
       if (!commit) throw error;
       missing = true;
@@ -417,7 +433,7 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
     }
   }
   process.stdout.write(formatReport(result, baseline));
-  if (args[0] === '--check-baseline') {
+  if (archive) {
     const unequal = missing || Object.entries(result).some(([name, figures]) => LABELS.some(([key]) => figures[key] !== baseline[name as PathName][key]));
     if (unequal) process.stderr.write('Baseline differs from commit measure\n');
     return unequal ? 1 : 0;

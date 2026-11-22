@@ -5,7 +5,7 @@ import { assertFilled, briefSummary, fillSlots, nextBriefPath, resolveHostUtilit
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { reviewId } from './confirmations.ts';
 import { DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
-import { addedCitations, consumerSearchText, safePathspec, type Citation } from './domain/fix-check.ts';
+import { addedCitations, consumerSearchText, safePathspec, type Citation } from './domain/fix-review-lite.ts';
 import { governedDesignText } from './domain/design.ts';
 import { governedPlanText } from './domain/plan.ts';
 import { qualityCriteria } from './domain/prompt.ts';
@@ -50,12 +50,12 @@ function completedRounds(reviewDir: string): Round[] {
   return rounds.sort((a, b) => b.number - a.number);
 }
 
-export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerResult> {
+export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One plan or design artifact path is required');
   const root = canonical(ctx.manifest.repositoryRoot);
   const artifact = path.resolve(ctx.manifest.repositoryRoot, ctx.args[0]!);
   const kind = artifactKind(artifact);
-  if (kind !== 'plan' && kind !== 'design') throw new ToolError(1, 'invalid-input', 'fix-check reviews a plan or design artifact only');
+  if (kind !== 'plan' && kind !== 'design') throw new ToolError(1, 'invalid-input', 'fix-review-lite reviews a plan or design artifact only');
 
   // NOTE: selection by recorded artifactPath, not the bind, so a same-basename artifact or an unbound session never picks the wrong round.
   const review = reviewId(kind, artifact);
@@ -110,7 +110,7 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
 
   const directory = path.join(ctx.session, '.state', 'briefs');
   fs.mkdirSync(directory, { recursive: true });
-  const briefFile = nextBriefPath(directory, 'fix-check');
+  const briefFile = nextBriefPath(directory, 'fix-review-lite');
   const base = briefFile.slice(0, -'.md'.length);
   const governedFile = base + '.governed.md';
   const diffFile = base + '.diff';
@@ -187,7 +187,7 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     }
     const consumerSearch = consumerSearchText(excludes);
 
-    const notePrefix = `fix-check:${review}:${round.number}:`;
+    const notePrefix = `fix-review-lite:${review}:${round.number}:`;
     const ordinal = Math.max(0, ...fold.records.filter(record => record.kind === 'note' && record.key.startsWith(notePrefix))
       .flatMap(record => /^[1-9]\d*$/.test(record.key.slice(notePrefix.length)) ? [Number(record.key.slice(notePrefix.length))] : [])) + 1;
     const noteKey = notePrefix + ordinal;
@@ -200,7 +200,7 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
     const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
     const evidence = qualityCriteria(bar, 'explorer', 0, specStage).split('\n').find(text => text.startsWith('- Evidence:'));
     if (evidence === undefined) throw new ToolError(2, 'fault', 'Quality bar has no Evidence line');
-    const template = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'templates', 'fix-check-brief.md'), 'utf8');
+    const template = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'templates', 'fix-review-lite-brief.md'), 'utf8');
     const slots: Record<string, string> = {
       questions: questions.join('\n'),
       repositoryRoot: safeText(root),
@@ -214,8 +214,8 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
       replyLimit: DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US'),
       evidence,
     };
-    const text = fillSlots('fix-check', template, slots);
-    assertFilled('fix-check', text);
+    const text = fillSlots('fix-review-lite', template, slots);
+    assertFilled('fix-review-lite', text);
     fs.writeFileSync(briefFile, text);
 
     const host = ctx.deps.orchestrator?.platform;
@@ -225,7 +225,7 @@ export async function renderFixCheckBrief(ctx: HandlerContext): Promise<HandlerR
       briefPath: briefFile, bytes: Buffer.byteLength(text), review, round: round.number, noteKey, noteSkeleton, diffPath: diffFile,
       citations: kept.size, unresolved: unresolved.length, withheld: withheld.length, contextLimit: entry ? entry.contextLimit : null, ...launch,
     };
-    const summary = `fix-check brief ${review} round ${round.number}: ${questions.length} accepted, ${kept.size} citations, ${unresolved.length} unresolved, ${withheld.length} withheld`;
+    const summary = `fix-review-lite brief ${review} round ${round.number}: ${questions.length} accepted, ${kept.size} citations, ${unresolved.length} unresolved, ${withheld.length} withheld`;
     return { ok: true, exit: 0, value, summary: briefSummary(summary, host, launch, briefFile, value.bytes, {
       tail: `; skeleton ${JSON.stringify(noteSkeleton)}`,
       shortPath: `.state/briefs/${path.basename(briefFile)}`,

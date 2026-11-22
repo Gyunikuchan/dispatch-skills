@@ -404,6 +404,25 @@ test('cli ledger append formats array summary and refreshes findings for new and
 });
 
 // SECTION: refusal pointer
+test('the retired brief action returns unknown action', async () => {
+  const f = sessionFixture({memory:true});
+  try {
+    let dispatched = false;
+    const exit = await main(['brief', ['fix', 'check'].join('-'), 'work.plan.md', '--session', f.session, '--host', 'claude'], {
+      ...f.deps,
+      handler: async () => {
+        dispatched = true;
+        return {ok: true, summary: 'dispatched', value: {}, exit: 0};
+      },
+    });
+    assert.equal(exit, 1);
+    assert.equal(f.output().reason, 'usage');
+    assert.equal(f.output().summary, 'Unknown tool or action');
+    assert.equal((f.output() as {help?: string}).help, 'call table');
+    assert.equal(dispatched, false);
+  } finally { f.cleanup(); }
+});
+
 test('refusal names the section for a resolved action and the call table otherwise', async () => {
   const f = sessionFixture({memory:true});
   const help = () => (f.output() as {help?: string}).help;

@@ -381,3 +381,28 @@ test('path bytes check baseline fails on any figure mismatch', () => {
     assert.equal(main(['--check-baseline'], git, changed), 1);
   }
 });
+
+test('path bytes resolves one archived repair brief only when the live section is absent', () => {
+  const liveHeading = '### brief fix-review-lite';
+  const archivedHeading = '### brief fix-archive-now';
+  // Equal heading lengths isolate selection from measurement.
+  const current = measure(readFile, 'preload');
+  const checkout = (heading: string) => (rel: string) => rel === 'references/toolkit.md' ? toolkit.replace(liveHeading, heading) : readFile(rel);
+  const stdout = process.stdout.write, stderr = process.stderr.write;
+  let output = '';
+  process.stdout.write = ((chunk: string | Uint8Array) => { output += String(chunk); return true; }) as typeof stdout;
+  process.stderr.write = (() => true) as typeof stderr;
+  const check = (heading: string) => {
+    output = '';
+    return main(['--check-baseline'], args => args[0] === 'rev-parse' ? 'ok' : checkout(heading)(args[1]!.split(':skills/dispatch/')[1]!), current);
+  };
+  try {
+    assert.equal(check(archivedHeading), 0);
+    assert.throws(() => measure(checkout(archivedHeading), 'preload'), /no section "brief fix-review-lite"/);
+    assert.equal(check('### archived other action'), 1);
+    assert.match(output, /0 archived repair brief sections/);
+    assert.equal(check(archivedHeading + '\n\n### brief fix-second'), 1);
+    assert.match(output, /2 archived repair brief sections/);
+    assert.equal(check(archivedHeading + '\n\n### brief fix-second\n\n' + liveHeading), 0);
+  } finally { process.stdout.write = stdout; process.stderr.write = stderr; }
+});

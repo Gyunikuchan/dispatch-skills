@@ -1066,7 +1066,7 @@ test('verifier brief states the ten proof standards and baseline rule with no UR
   }
 });
 
-test('each preserved rule has one canonical home; review fix procedure and fix check keep one home', () => {
+test('each preserved rule has one canonical home; review fix procedure and lightweight fix review keep one home', () => {
   const ref = (file: string) => read(root + 'references/' + file);
   const skill = read(root + 'SKILL.md');
 
@@ -1116,28 +1116,28 @@ test('each preserved rule has one canonical home; review fix procedure and fix c
   const fixRules = rules.split('The orchestrator runs steps 1–3')[1]!;
   const once = (needle: string) => assert.equal(fixRules.split(needle).length - 1, 1, needle);
   for (let n = 1; n <= 8; n++) assert.match(fixRules, new RegExp('^' + n + '\\. ', 'm'));
-  for (const text of ['mode `inline`', 'advisory', '`brief fix-check <artifact> --session <session> --host <platform>`']) once(text);
-  assert.match(fixRules, /Repeat the check once at most per batch and only when the batch fixed an accepted MUST finding/);
+  for (const text of ['mode `inline`', 'advisory', '`brief fix-review-lite <artifact> --session <session> --host <platform>`']) once(text);
+  assert.match(fixRules, /Repeat the review once at most per batch and only when the batch fixed an accepted MUST finding/);
   assert.match(fixRules, /For each edited artifact per batch, run `lint run --edit`/);
   assert.match(toolkit.split('### edit')[1]!, /For each edited artifact per fix batch, run `lint run --edit`/);
-  // The fix-check task text lives in its template; each input slot and rule appears once there.
-  const fixCheckBrief = ref('templates/fix-check-brief.md');
-  assert.match(fixCheckBrief, /Unresolved citations\. You may read their listed matches:[\s\n]+{{unresolved}}/);
-  assert.match(fixCheckBrief, /Read only[^\n]*the listed citations and matches[^\n]*never read a withheld path/);
-  for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixCheckBrief.split(text).length - 1, 1, text);
+  // The fix-review-lite task text lives in its template; each input slot and rule appears once there.
+  const fixReviewLiteBrief = ref('templates/fix-review-lite-brief.md');
+  assert.match(fixReviewLiteBrief, /Unresolved citations\. You may read their listed matches:[\s\n]+{{unresolved}}/);
+  assert.match(fixReviewLiteBrief, /Read only[^\n]*the listed citations and matches[^\n]*never read a withheld path/);
+  for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixReviewLiteBrief.split(text).length - 1, 1, text);
   // REQ-4 bounds reads to the diff, artifact, spec and consumer searches; codegraph returns source outside that bound.
-  assert.doesNotMatch(fixCheckBrief, /codegraph explore/);
-  assert.match(skill, /Pass `--host <platform>`[^\n]*`brief fix-check`/);
+  assert.doesNotMatch(fixReviewLiteBrief, /codegraph explore/);
+  assert.match(skill, /Pass `--host <platform>`[^\n]*`brief fix-review-lite`/);
   assert.match(fixRules, /code and integration fixes[\s\S]*whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/);
   assert.match(fixRules, /launches no subagent and changes no roster, cap or round rule/);
-  assert.match(fixRules, /mark the check inline in the verb report/);
+  assert.match(fixRules, /mark the review inline in the verb report/);
   assert.match(rules, /For the final completed review round[^\n]*plan and design batches[^\n]*step 8/);
   assert.match(fixRules, /verb report \(the plan or design handoff\)/);
   assert.match(fixRules, /Verify each claim at source and fix or rule it before the next round or report/);
   assert.match(reviewFixes, /steps 4–6 with the orchestrator’s stated step 3 root cause per group/);
   assert.match(rules, /After claims settle, record one `note` per batch, including any repeat[^\n]*stable, unique one-based batch ordinal within that review round/);
   assert.match(reviewFixes, /self-check for code fixes/);
-  assert.match(skill, /plan and design fix checks/);
+  assert.match(skill, /plan and design lightweight fix reviews/);
   assert.match(review, /fix procedure/);
 
   // Cleanup order: canonical home in worktree-cleanup.md; implement links it.

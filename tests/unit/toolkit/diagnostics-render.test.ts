@@ -521,7 +521,7 @@ test('round turns: renders observed turns and flags only plan and design rounds 
       '| subject cccccccccccccccc | 3 | 7 | — | 30 |',
     ]) assert.ok(text.includes(row), row);
     const budget = text.split('\n').find(line => line.startsWith('Advisory budget per round'));
-    assert.equal(budget, 'Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: subject aaaaaaaaaaaaaaaa round 1');
+    assert.equal(budget, 'Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: subject aaaaaaaaaaaaaaaa round 1');
   } finally { f.cleanup(); }
 });
 

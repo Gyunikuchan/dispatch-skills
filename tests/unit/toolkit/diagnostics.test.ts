@@ -947,13 +947,13 @@ test('round workload is absent without review rounds', () => {
   } finally { f.cleanup(); }
 });
 
-test('round turns: counts host responses through the fix-check note', () => {
+test('round turns: counts host responses through the fix-review-lite note', () => {
   const f = sessionFixture({memory: true});
   try {
     const review = 'plan-a';
     workloadRound(f.session, review, 1);
     workloadCapture(f.session, 'run', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 1))]);
-    workloadCapture(f.session, 'fix-check', {start: 1400, end: 1500}, 'brief-fix-check');
+    workloadCapture(f.session, 'fix-review-lite', {start: 1400, end: 1500}, 'brief-fix-review-lite');
     workloadCapture(f.session, 'after', {start: 1800, end: 1900}, 'report-render');
     const deps = claudeHostDeps(f, {
       clock: 2000,
@@ -961,7 +961,7 @@ test('round turns: counts host responses through the fix-check note', () => {
       subagent: [usageLine('sub', 1050, 20, 20)],
     });
     const manifest = {createdAt: new Date(100).toISOString()} as never;
-    const records = [{kind: 'note', key: 'fix-check:plan-a:1:1', at: new Date(1600).toISOString()}] as Fold['records'];
+    const records = [{kind: 'note', key: 'fix-review-lite:plan-a:1:1', at: new Date(1600).toISOString()}] as Fold['records'];
     const facts = sessionFacts(f.session, {records, lastSeq: 1, torn: null}, 'complete', {manifest, deps});
     const row = facts.roundWorkload?.[0];
     assert.deepEqual([row?.calls?.total, row?.hostTokens, row?.hostTurns], [2, 6, 2]);
@@ -978,13 +978,13 @@ test('round turns: in-window rulings and notes set the close without counting ga
     workloadCapture(f.session, 'r1', {start: 500, end: 800}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 1))]);
     workloadCapture(f.session, 'r2', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, review, 2))]);
     workloadCapture(f.session, 'ruling', {start: 1200, end: 1250}, 'ledger-append');
-    workloadCapture(f.session, 'check', {start: 1400, end: 1450}, 'brief-fix-check');
+    workloadCapture(f.session, 'check', {start: 1400, end: 1450}, 'brief-fix-review-lite');
     workloadCapture(f.session, 'gap', {start: 1700, end: 1750}, 'lint-run');
     const main = [usageLine('prior', 700, 1, 1), ...[1100, 1250, 1500, 1700, 2100, 2300].map(at => usageLine(String(at), at, 1, 1))];
     const manifest = {createdAt: new Date(100).toISOString()} as never;
     const at = (ms: number) => new Date(ms).toISOString();
     const ruling = {kind: 'ruling', data: {subject: 'review:plan-a:earlier-finding'}, at: at(1250)};
-    const note = {kind: 'note', key: 'fix-check:plan-a:2:1', at: at(1500)};
+    const note = {kind: 'note', key: 'fix-review-lite:plan-a:2:1', at: at(1500)};
     const unrelated = {kind: 'note', key: 'unrelated', at: at(1800)};
     const late = {...ruling, at: at(2300)};
     const read = (records: unknown[], host = main, subagent = ['malformed']) => {

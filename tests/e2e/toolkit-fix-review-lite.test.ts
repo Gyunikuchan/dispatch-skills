@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { setupTestSkill, toolkitRepo } from './helpers/toolkit-repo.ts';
 import { appendRecord } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { consumerSearchArgs } from '../../skills/dispatch/scripts/toolkit/domain/fix-check.ts';
+import { consumerSearchArgs } from '../../skills/dispatch/scripts/toolkit/domain/fix-review-lite.ts';
 
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
 type Second = Awaited<ReturnType<Repo['second']>>;
@@ -43,7 +43,7 @@ async function reviewAndAccept(f: Repo, g: Second): Promise<void> {
   await appendRecord(g.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-R1-F001', data: {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Serialize writes'}}, f.deps);
 }
 
-test('brief fix-check on a real repository lists, diffs and searches literal names', async () => {
+test('brief fix-review-lite on a real repository lists, diffs and searches literal names', async () => {
   const {f, g} = await startRepo();
   try {
     fs.writeFileSync(path.join(f.root, '-x'), 'untracked\n');
@@ -65,7 +65,7 @@ test('brief fix-check on a real repository lists, diffs and searches literal nam
     // Citations cover a listed untracked name, a listed tracked name with a glob class, and an ignored file.
     fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1`, `skipped.txt:1` and `missing.ts:1`.\n');
 
-    const brief = await g.run(['brief', 'fix-check', 'work.plan.md']);
+    const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
     const text = fs.readFileSync(brief.value.briefPath, 'utf8');
 
@@ -107,7 +107,7 @@ test('brief fix-check on a real repository lists, diffs and searches literal nam
   }
 });
 
-test('brief fix-check keeps a listed unrenderable citation out of the consumer search hits', async () => {
+test('brief fix-review-lite keeps a listed unrenderable citation out of the consumer search hits', async () => {
   const {f, g} = await startRepo();
   try {
     fs.mkdirSync(path.join(f.root, '{{x}}'), {recursive: true});
@@ -116,7 +116,7 @@ test('brief fix-check keeps a listed unrenderable citation out of the consumer s
     await reviewAndAccept(f, g);
     fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `{{x}}/a.md:1`.\n');
 
-    const brief = await g.run(['brief', 'fix-check', 'work.plan.md']);
+    const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
     const text = fs.readFileSync(brief.value.briefPath, 'utf8');
     const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map(match => match[1]!).sort();
@@ -132,8 +132,8 @@ test('brief fix-check keeps a listed unrenderable citation out of the consumer s
   }
 });
 
-test('brief fix-check withholds a symlink that resolves outside the repository', async t => {
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-check-outside-'));
+test('brief fix-review-lite withholds a symlink that resolves outside the repository', async t => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-review-lite-outside-'));
   const {f, g} = await startRepo();
   try {
     const target = path.join(outside, 'secret.ts');
@@ -150,7 +150,7 @@ test('brief fix-check withholds a symlink that resolves outside the repository',
     await reviewAndAccept(f, g);
     fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `linked.ts:1`.\n');
 
-    const brief = await g.run(['brief', 'fix-check', 'work.plan.md']);
+    const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
     const text = fs.readFileSync(brief.value.briefPath, 'utf8');
     assert.ok(text.includes('`linked.ts`: outside repository'));

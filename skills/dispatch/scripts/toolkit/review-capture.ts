@@ -21,7 +21,7 @@ export const CODE_TARGETS = 'code targets are integration, a bound-plan task ID,
 
 export type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; specSource?: string; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 
-// NOTE: fix-check reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
+// NOTE: fix-review-lite reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
 function writeSpecSnapshot(file: string, text: string): void {
   const temp = file + '.' + crypto.randomUUID() + '.tmp';
   try {fs.writeFileSync(temp, text); renameRetrying(temp, file);}

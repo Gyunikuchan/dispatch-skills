@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { addedCitations, consumerSearchArgs, consumerSearchText } from '../../../../skills/dispatch/scripts/toolkit/domain/fix-check.ts';
+import { addedCitations, consumerSearchArgs, consumerSearchText } from '../../../../skills/dispatch/scripts/toolkit/domain/fix-review-lite.ts';
 
 const added = (...lines: string[]) => ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,9 @@', ...lines.map(line => '+' + line)].join('\n');
 
-describe('fix-check citation grammar', () => {
+describe('fix-review-lite citation grammar', () => {
   const cases: [string, string, ReturnType<typeof addedCitations>][] = [
     ['single line', '`skills/a.ts:12`', [{path: 'skills/a.ts', start: 12, end: 12}]],
     ['line range', '`skills/a.ts:12-30`', [{path: 'skills/a.ts', start: 12, end: 30}]],
@@ -50,7 +50,7 @@ describe('fix-check citation grammar', () => {
   });
 });
 
-describe('fix-check consumer search', () => {
+describe('fix-review-lite consumer search', () => {
   test('consumerSearchArgs puts -e before a leading-dash name, adds no -w and no exclude when none is given', () => {
     const args = consumerSearchArgs([], '-x');
     assert.deepEqual(args, ['grep', '-n', '-I', '-F', '--untracked', '-e', '-x', '--', '.']);

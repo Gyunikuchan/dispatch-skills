@@ -23,7 +23,7 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
   'report complete': { arguments: 'report complete --session <session>' },
   'brief render': { arguments: 'brief render <task> --session <session> --host <platform>' },
   'brief explorer': { arguments: 'brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>' },
-  'brief fix-check': { arguments: 'brief fix-check <artifact> --session <session> --host <platform>' },
+  'brief fix-review-lite': { arguments: 'brief fix-review-lite <artifact> --session <session> --host <platform>' },
   'brief test-cleanup': { arguments: 'brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>' },
   'worktree integrate': { arguments: 'worktree integrate <task> --session <session> [--ack-stale <rationale>]' },
   'worktree continue': { arguments: 'worktree continue <task> --session <session>' },

@@ -345,7 +345,7 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
         round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH,
         round.hostTurns === undefined ? 'unavailable' : num(round.hostTurns)])),
       '', 'Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted.',
-      ...(eligible.length ? ['Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: ' + (over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') || 'none')] : []),
+      ...(eligible.length ? ['Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: ' + (over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') || 'none')] : []),
       ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : []));
   }
   lines.push('', '### Review yield by slot', '',

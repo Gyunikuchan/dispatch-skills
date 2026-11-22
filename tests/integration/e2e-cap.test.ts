@@ -4,7 +4,7 @@ import path from 'node:path';
 import { OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
 
 // Count the real Git/subprocess suites and their shared repository helper.
-// NOTE: 18 covers commit-phase refusals and hooks, which need real Git, the brief fix-check real-repository listing, diff and consumer search, and toolkit-input (Windows PowerShell 5.1 & POSIX shell quoting e2e matrix).
+// NOTE: 18 covers commit-phase refusals and hooks, which need real Git, toolkit-fix-review-lite (listing, diff and consumer search), and toolkit-input (Windows PowerShell 5.1 & POSIX shell quoting e2e matrix).
 export const E2E_CAP = 18;
 const e2eFiles = () => scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map(file => ({ ...file, path: 'tests/e2e/' + file.path }));
 

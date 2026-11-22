@@ -37,7 +37,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 
 | Work | Route |
 |---|---|
-| Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps, plan and design fix checks | Explorer subagent |
+| Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps, plan and design lightweight fix reviews | Explorer subagent |
 | Test cleanup, runtime verification, map corrections exceeding the context-guard threshold, implementation integration mechanical fixes that a deterministic check confirms | Utility subagent |
 | Plan tasks, remaining implementation integration fixes per [writer triggers](references/review-rules.md) | Writer at run level |
 | Design increment | Child orchestrator where verified; else chain |
@@ -62,7 +62,7 @@ At any step of any verb, including `ask`, launch a research explorer with `brief
 
 Request fresh context without parent history through the host's control; if unsupported or unverifiable, continue and report that once in the final handoff. Give a self-contained brief: objective, decisions, constraints, current state, next action and required evidence, with paths resolved for the recipient. Keep reply schemas and gates; these rules grant no write authority.
 
-Pass `--host <platform>` with your host on `doctor run`, `review run`, `ask run`, `brief render`, `brief explorer`, `brief test-cleanup`, `brief verifier` and `brief fix-check`; other actions refuse the flag. When invoked with `(pins)`, pass `--pins "<pins>"` on `ask run` and `review run` (every round).
+Pass `--host <platform>` with your host on `doctor run`, `review run`, `ask run`, `brief render`, `brief explorer`, `brief test-cleanup`, `brief verifier` and `brief fix-review-lite`; other actions refuse the flag. When invoked with `(pins)`, pass `--pins "<pins>"` on `ask run` and `review run` (every round).
 
 Except a [child orchestrator](references/providers.md#child-orchestrators) on documented inheritance, launch every native subagent, explorer, utility, writer and voice exactly as the result's `launchAs` line states: try configured models in order, never substitute or inherit otherwise. If the host cannot apply the launch, report a blocker with retained evidence; do not launch without it.
 

@@ -662,7 +662,7 @@ test('round workload renders observed calls, dashes for unavailable cells, and t
  assert.match(text,/\| subject 1234567890abcdef \| 3 \| — \| — \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 4 \| 1: review-run-plan 1 \| — \|/);
  assert.match(text,/Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted\./);
- assert.match(text,/Advisory budget per round with a fix check: at most 6 toolkit calls and 25 host turns; over: none/);
+ assert.match(text,/Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: none/);
  assert.doesNotMatch(text,/capture storage failure/);
 });
 

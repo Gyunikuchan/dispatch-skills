@@ -63,7 +63,7 @@ export async function toolkitRepo(source = planSource, files: Record<string,stri
   };
   const level = async (value='low') => appendRecord(session,{kind:'level',by:'orchestrator',key:'level:' + foldLedger(session).lastSeq,data:{level:value}},deps);
   const edit = async (data: object) => appendRecord(session,{kind:'edit',by:'orchestrator',key:'edit:' + foldLedger(session).lastSeq,data},deps);
-  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup', 'brief verifier', 'brief fix-check']);
+  const HOST_SENSITIVE = new Set(['doctor run', 'review run', 'ask run', 'brief render', 'brief explorer', 'brief test-cleanup', 'brief verifier', 'brief fix-review-lite']);
   const withHost = (args: string[]) => {
     if (args.includes('--host')) return args;
     if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;

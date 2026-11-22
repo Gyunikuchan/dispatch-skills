@@ -1,4 +1,4 @@
-// Pure fix-check helpers: citations from added diff lines and the consumer-search command.
+// Pure fix-review-lite helpers: citations from added diff lines and the consumer-search command.
 
 export type Citation = {path: string; start: number | null; end: number | null};
 

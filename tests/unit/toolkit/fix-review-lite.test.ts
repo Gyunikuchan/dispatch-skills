@@ -21,7 +21,7 @@ const put = (f: Fixture, rel: string, text = 'export const value = 1;\n') => {
   fs.writeFileSync(file, text);
 };
 
-// Scripts only the Git reads fix-check makes: the repository listing and the round diff.
+// Scripts only the Git reads fix-review-lite makes: the repository listing and the round diff.
 const gitStub = (f: Fixture, listing: string[], diff: (argv: string[]) => GitResult = () => ({exit: 1, stdout: DIFF, stderr: ''})) => {
   const calls: string[][] = [];
   f.deps.run = async argv => {
@@ -35,9 +35,9 @@ const gitStub = (f: Fixture, listing: string[], diff: (argv: string[]) => GitRes
 
 const brief = async (f: Fixture, artifact = f.plan) => {
   f.lines.length = 0;
-  // The fixture copies only the review templates; the fix-check template is read from the skill root.
-  fs.copyFileSync(path.resolve('skills/dispatch/references/templates/fix-check-brief.md'), path.join(f.deps.skillRoot, 'references', 'templates', 'fix-check-brief.md'));
-  const exit = await main(['brief', 'fix-check', artifact, '--session', f.session, '--host', 'claude'], f.deps);
+  // The fixture copies only the review templates; the fix-review-lite template is read from the skill root.
+  fs.copyFileSync(path.resolve('skills/dispatch/references/templates/fix-review-lite-brief.md'), path.join(f.deps.skillRoot, 'references', 'templates', 'fix-review-lite-brief.md'));
+  const exit = await main(['brief', 'fix-review-lite', artifact, '--session', f.session, '--host', 'claude'], f.deps);
   const output = f.output();
   const value = output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) as Record<string, any> : null;
   return {exit, output, value, text: typeof value?.['briefPath'] === 'string' ? fs.readFileSync(value['briefPath'], 'utf8') : ''};
@@ -52,10 +52,26 @@ const reviewed = async (f: Fixture) => {
 
 const briefFiles = (f: Fixture) => {
   const dir = path.join(f.session, '.state', 'briefs');
-  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(name => name.startsWith('fix-check-')) : [];
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(name => name.startsWith('fix-review-lite-')) : [];
 };
 
-test('fix-check brief: states the repository root, relative paths, readable paths, diff and reading bound', async () => {
+test('fix-review-lite renders an accepted design fix and returns the design round note key', async () => {
+  const f = await fixture();
+  try {
+    const design = f.artifact('work.design.md', '# Design\n## Boundaries\nSingle writer.\n');
+    assert.equal((await f.call('design', design)).exit, 0);
+    await f.add('ruling', {subject: 'review:design-work.design:R1-F001', ruling: 'accepted', rationale: 'Serialized writes fix it'});
+    fs.appendFileSync(design, '\n## Fix\nWrites are serialized.\n');
+    gitStub(f, []);
+
+    const {exit, text, value} = await brief(f, design);
+    assert.equal(exit, 0, text);
+    assert.match(text, /R1-F001.*Serialized writes fix it/);
+    assert.equal(value?.['noteKey'], 'fix-review-lite:design-work.design:1:1');
+  } finally { f.cleanup(); }
+});
+
+test('fix-review-lite brief: states the repository root, relative paths, readable paths, diff and reading bound', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -75,7 +91,7 @@ test('fix-check brief: states the repository root, relative paths, readable path
   } finally { f.cleanup(); }
 });
 
-test('fix-check brief: cites added-line references only and withholds nothing in the repository', async () => {
+test('fix-review-lite brief: cites added-line references only and withholds nothing in the repository', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -95,7 +111,7 @@ test('fix-check brief: cites added-line references only and withholds nothing in
   } finally { f.cleanup(); }
 });
 
-test('fix-check brief: carries the quality-bar evidence line once and no host rule text', async () => {
+test('fix-review-lite brief: carries the quality-bar evidence line once and no host rule text', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -108,7 +124,7 @@ test('fix-check brief: carries the quality-bar evidence line once and no host ru
   } finally { f.cleanup(); }
 });
 
-test('fix-check brief: launch values come from the utility entry of the host', async () => {
+test('fix-review-lite brief: launch values come from the utility entry of the host', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -127,7 +143,7 @@ test('fix-check brief: launch values come from the utility entry of the host', a
   } finally { f.cleanup(); }
 });
 
-test('fix-check selection: picks the latest round of this artifact when a same-basename artifact has a later round', async () => {
+test('fix-review-lite selection: picks the latest round of this artifact when a same-basename artifact has a later round', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -142,9 +158,9 @@ test('fix-check selection: picks the latest round of this artifact when a same-b
   } finally { f.cleanup(); }
 });
 
-test('fix-check selection: an artifact outside the repository renders and collides with no repository review', async () => {
+test('fix-review-lite selection: an artifact outside the repository renders and collides with no repository review', async () => {
   const f = await fixture();
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-check-outside-'));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-review-lite-outside-'));
   try {
     const outside = path.join(outsideDir, 'work.plan.md');
     fs.writeFileSync(outside, '# Outside\n## Work\nOutside body.\n');
@@ -162,7 +178,7 @@ test('fix-check selection: an artifact outside the repository renders and collid
   }
 });
 
-test('fix-check selection: works with no bind record', async () => {
+test('fix-review-lite selection: works with no bind record', async () => {
   const f = await fixture(false);
   try {
     assert.equal(await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode', '--spec', f.spec], f.deps), 0);
@@ -176,7 +192,7 @@ test('fix-check selection: works with no bind record', async () => {
   } finally { f.cleanup(); }
 });
 
-test('fix-check refusals: a round without artifactPath, an unreviewed artifact and a code-review artifact refuse without files', async () => {
+test('fix-review-lite refusals: a round without artifactPath, an unreviewed artifact and a code-review artifact refuse without files', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -202,7 +218,7 @@ test('fix-check refusals: a round without artifactPath, an unreviewed artifact a
   } finally { f.cleanup(); }
 });
 
-test('fix-check refusals: no accepted finding refuses', async () => {
+test('fix-review-lite refusals: no accepted finding refuses', async () => {
   const f = await fixture();
   try {
     assert.equal((await f.call()).exit, 0);
@@ -216,7 +232,7 @@ test('fix-check refusals: no accepted finding refuses', async () => {
   } finally { f.cleanup(); }
 });
 
-test('fix-check refusals: no change since the round input refuses and leaves no file', async () => {
+test('fix-review-lite refusals: no change since the round input refuses and leaves no file', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -229,7 +245,7 @@ test('fix-check refusals: no change since the round input refuses and leaves no 
   } finally { f.cleanup(); }
 });
 
-test('fix-check refusals: an unexpected diff exit is a fault and leaves no file', async () => {
+test('fix-review-lite refusals: an unexpected diff exit is a fault and leaves no file', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -242,7 +258,7 @@ test('fix-check refusals: an unexpected diff exit is a fault and leaves no file'
   } finally { f.cleanup(); }
 });
 
-test('fix-check refusals: an unreadable spec refuses', async () => {
+test('fix-review-lite refusals: an unreadable spec refuses', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -255,7 +271,7 @@ test('fix-check refusals: an unreadable spec refuses', async () => {
   } finally { f.cleanup(); }
 });
 
-test('fix-check spec: an unchanged spec names one governing path and no snapshot', async () => {
+test('fix-review-lite spec: an unchanged spec names one governing path and no snapshot', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -267,7 +283,7 @@ test('fix-check spec: an unchanged spec names one governing path and no snapshot
   } finally { f.cleanup(); }
 });
 
-test('fix-check spec: drift names the reviewed snapshot as the reviewed text', async () => {
+test('fix-review-lite spec: drift names the reviewed snapshot as the reviewed text', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -281,7 +297,7 @@ test('fix-check spec: drift names the reviewed snapshot as the reviewed text', a
   } finally { f.cleanup(); }
 });
 
-test('fix-check spec: drift without a snapshot states the reviewed spec text is unavailable', async () => {
+test('fix-review-lite spec: drift without a snapshot states the reviewed spec text is unavailable', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -295,7 +311,7 @@ test('fix-check spec: drift without a snapshot states the reviewed spec text is 
   } finally { f.cleanup(); }
 });
 
-test('fix-check withholding: sensitive, outside, session and unlisted citations are withheld with reasons', async () => {
+test('fix-review-lite withholding: sensitive, outside, session and unlisted citations are withheld with reasons', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -348,7 +364,7 @@ const citationCases = [
 ];
 
 for (const {name, cited, files, deleted, expected, counts} of citationCases) {
-  test(`fix-check citation resolution: ${name}`, async () => {
+  test(`fix-review-lite citation resolution: ${name}`, async () => {
     const f = await fixture();
     try {
       await reviewed(f);
@@ -365,7 +381,7 @@ for (const {name, cited, files, deleted, expected, counts} of citationCases) {
 }
 
 for (const aliases of [['writer.ts', 'lib/writer.ts'], ['lib/writer.ts', 'writer.ts']]) {
-  test(`fix-check citation resolution: keeps one span when ${aliases[0]} appears first`, async () => {
+  test(`fix-review-lite citation resolution: keeps one span when ${aliases[0]} appears first`, async () => {
     const f = await fixture();
     try {
       await reviewed(f);
@@ -380,7 +396,7 @@ for (const aliases of [['writer.ts', 'lib/writer.ts'], ['lib/writer.ts', 'writer
   });
 }
 
-test('fix-check consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs', async () => {
+test('fix-review-lite consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -402,7 +418,7 @@ test('fix-check consumer search: excludes the sessions root and each flagged lis
   } finally { f.cleanup(); }
 });
 
-test('fix-check citations: a leading ./ normalizes to the repository path, so one citation is kept once', async () => {
+test('fix-review-lite citations: a leading ./ normalizes to the repository path, so one citation is kept once', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -417,7 +433,7 @@ test('fix-check citations: a leading ./ normalizes to the repository path, so on
   } finally { f.cleanup(); }
 });
 
-test('fix-check spec: a rewritten snapshot that no longer matches the round hash is unavailable', async () => {
+test('fix-review-lite spec: a rewritten snapshot that no longer matches the round hash is unavailable', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -432,7 +448,7 @@ test('fix-check spec: a rewritten snapshot that no longer matches the round hash
   } finally { f.cleanup(); }
 });
 
-test('fix-check consumer search: a session outside the repository adds no sessions-root exclude', async () => {
+test('fix-review-lite consumer search: a session outside the repository adds no sessions-root exclude', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -450,7 +466,7 @@ test('fix-check consumer search: a session outside the repository adds no sessio
   } finally { f.cleanup(); }
 });
 
-test('fix-check withholding: a sensitive listed path with braces renders withheld and as a glob exclude', async () => {
+test('fix-review-lite withholding: a sensitive listed path with braces renders withheld and as a glob exclude', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -466,7 +482,7 @@ test('fix-check withholding: a sensitive listed path with braces renders withhel
   } finally { f.cleanup(); }
 });
 
-test('fix-check citations: a name with braces or a link opener is withheld as unrenderable and the brief renders', async () => {
+test('fix-review-lite citations: a name with braces or a link opener is withheld as unrenderable and the brief renders', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -482,7 +498,7 @@ test('fix-check citations: a name with braces or a link opener is withheld as un
   } finally { f.cleanup(); }
 });
 
-test('fix-check consumer search: a listed path cited as unrenderable gets one glob exclude, an unlisted one none', async () => {
+test('fix-review-lite consumer search: a listed path cited as unrenderable gets one glob exclude, an unlisted one none', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -502,7 +518,7 @@ test('fix-check consumer search: a listed path cited as unrenderable gets one gl
   } finally { f.cleanup(); }
 });
 
-test('fix-check questions: list only accepted findings and neutralize reviewer text on one line', async () => {
+test('fix-review-lite questions: list only accepted findings and neutralize reviewer text on one line', async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async () => ({outcome: {status: 'ok', text: JSON.stringify({status: 'FINDINGS', findings: [
@@ -527,7 +543,7 @@ test('fix-check questions: list only accepted findings and neutralize reviewer t
   } finally { f.cleanup(); }
 });
 
-test('fix-check repeat: a repeat after a further edit diffs from the same round input with the same note key', async () => {
+test('fix-review-lite repeat: a repeat after a further edit diffs from the same round input with the same note key', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
@@ -547,13 +563,13 @@ test('fix-check repeat: a repeat after a further edit diffs from the same round 
   } finally { f.cleanup(); }
 });
 
-test('fix-check advisory notes: the ordinal skips past existing keys, ignores other keys and a note under it appends', async () => {
+test('fix-review-lite advisory notes: the ordinal skips past existing keys, ignores other keys and a note under it appends', async () => {
   const f = await fixture();
   try {
     await reviewed(f);
     put(f, 'skills/writer.ts');
     gitStub(f, ['skills/writer.ts']);
-    const prefix = 'fix-check:plan-work.plan:1:';
+    const prefix = 'fix-review-lite:plan-work.plan:1:';
     for (const suffix of ['1', '3', 'x', '0']) {
       await appendRecord(f.session, {kind: 'note', by: 'orchestrator', key: prefix + suffix, data: {text: 'Checked <!-- odd --> text'}}, f.deps);
     }
@@ -628,14 +644,14 @@ for (const [label, basename, model, keepLaunch, sessionBytes] of [
       assert.ok(json, 'summary must include a note skeleton');
       assert.ok(Buffer.byteLength(output.summary) <= 1024);
       assert.deepEqual(JSON.parse(json), value!['noteSkeleton']);
-      assert.equal(JSON.parse(json).key, `fix-check:${review}:1:1`);
+      assert.equal(JSON.parse(json).key, `fix-review-lite:${review}:1:1`);
       const rel = /session-relative (\S+) \(\d+ bytes\)$/.exec(head!)?.[1];
       assert.ok(rel);
       assert.equal(path.resolve(session, rel), value!['briefPath']);
       assert.ok(fs.existsSync(value!['briefPath']));
       assert.equal(head!.includes(value!['launchAs']), keepLaunch);
       if (keepLaunch && basename.length === 250) {
-        assert.match(head!, /^fix-check brief .*…: launch: model /);
+        assert.match(head!, /^fix-review-lite brief .*…: launch: model /);
       }
       if (!keepLaunch) {
         assert.match(head!, /^launch: model 界+…; /);

@@ -243,7 +243,7 @@ export function stageMilestones(fold: Fold, captures: readonly RunFacts[], start
 const roundPhase = (review: string, round: number) => `round-${review.slice(7)}-${round}`;
 
 /**
- * Each window closes at its last run, ruling or fix-check note, before the next round starts.
+ * Each window closes at its last run, ruling or fix-review-lite note, before the next round starts.
  * A capture belongs to the window holding its start, so closed windows never change on a later render.
  */
 function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFacts[], reviewKeys: ReadonlyMap<string, string>, records: Fold['records']): {rows: RoundWorkload[]; window?: {startMs: number; endMs: number; milestones: PhaseMilestone[]}} {
@@ -275,7 +275,7 @@ function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFact
       const at = Date.parse(record.at);
       if (!(at >= round.start && at < nextStart)) continue;
       if ((record.kind === 'ruling' && record.data['subject']?.startsWith(`review:${round.review}:`))
-        || (record.kind === 'note' && record.key.startsWith(`fix-check:${round.review}:${round.round}:`))) close = Math.max(close, at);
+        || (record.kind === 'note' && record.key.startsWith(`fix-review-lite:${round.review}:${round.round}:`))) close = Math.max(close, at);
     }
     return Math.min(close, nextStart - 1);
   });

@@ -32,7 +32,7 @@ In `implement`, the stage order is:
 integrate task -> check run --task <task>
 all tasks integrated -> check run (all criteria + contract) -> runtime verification
 -> pre-cleanup check run (by changed-path class) -> test cleanup -> check run (all) + code review
--> review fixes -> check run (all) -> re-check -> deliver
+-> repairs and review fixes as needed -> check run (all) -> targeted re-check if required -> deliver
 ```
 
 1. **Task-scoped checks per integration; all checks before runtime verification:** Running only the integrated task's criteria avoids repeating slow gates on every integration while keeping immediate feedback on task scope. Running `check run` across all criteria and the contract row before launching the verifier ensures cross-task regressions surface before runtime proof and routes failures to repair.
@@ -40,7 +40,7 @@ all tasks integrated -> check run (all criteria + contract) -> runtime verificat
 3. **Runtime verification before test cleanup; pre-cleanup check run by changed-path class:** Any gap-filling tests added by the verifier are committed before test cleanup runs, so cleanup evaluates them alongside writer tests under the retention gates. Before test cleanup launches, the orchestrator classifies paths changed since the last all-criteria run: when no path changed, it runs no check; when every changed path matches a criterion's declared `Changes:` or `Tests:` paths (equal or under a declared directory), it runs `check run --criteria` for only those automated criteria (keeping review-only criteria on their user-evidence path); when any changed path matches no criterion's declared paths (such as a shared helper, fixture, or config), it runs all-criteria `check run`.
 4. **Cleanup evidence from unchanged earlier trees:** `worktree commit --test-cleanup` accepts a removed criterion's latest passing, clean evidence with a matching `commandDigest` from an earlier tree in the integration when neither its own declared `Changes:`/`Tests:` paths nor any undeclared path differs between that evidence tree and the pre-cleanup tree; otherwise it refuses `test-cleanup-evidence-required` and names the stale criteria. The `test-cleanup` record records `trees: {<criterion>: <tree>}` for each removed criterion, and status, report, and delivery read removed-criterion evidence from its recorded tree.
 5. **All-criteria checks and code review after test cleanup:** Test cleanup runs on the settled post-verification tree before the unconditional all-criteria `check run` and code review run together on the same HEAD, so reviewers inspect the final retained test suite and production code together and every non-removed criterion proves current-tree evidence.
-6. **Re-check after review fixes:** When accepted review fixes change proved behaviour, `check run` passes on the new HEAD before one targeted re-check runs after all review rounds settle.
+6. **Targeted re-check after repairs:** A check-failure repair committed after runtime verification or an accepted review fix triggers a re-check when it changes proved behaviour. After `check run` passes on the new HEAD and all review rounds settle, one targeted re-check covers those changes together before delivery. See the [implementation sequence](../../skills/dispatch/references/verbs/implement.md).
 
 ### Standalone `verify` gating and proof standards
 

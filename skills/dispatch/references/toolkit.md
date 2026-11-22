@@ -21,7 +21,7 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | action | report complete | `report complete --session <session>` |
 | action | brief render | `brief render <task> --session <session> --host <platform>` |
 | action | brief explorer | `brief explorer [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
-| action | brief fix-check | `brief fix-check <artifact> --session <session> --host <platform>` |
+| action | brief fix-review-lite | `brief fix-review-lite <artifact> --session <session> --host <platform>` |
 | action | brief test-cleanup | `brief test-cleanup [<values.json\|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>` |
 | action | worktree integrate | `worktree integrate <task> --session <session> [--ack-stale <rationale>]` |
 | action | worktree continue | `worktree continue <task> --session <session>` |
@@ -143,11 +143,11 @@ Arguments: <!-- GENERATED: action:brief-explorer -->`brief explorer [<values.jso
 Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
 
-### brief fix-check
+### brief fix-review-lite
 
-Arguments: <!-- GENERATED: action:brief-fix-check -->`brief fix-check <artifact> --session <session> --host <platform>`<!-- END GENERATED: action:brief-fix-check -->; `<artifact>` is the plan or design path that `review run` reviewed.
+Arguments: <!-- GENERATED: action:brief-fix-review-lite -->`brief fix-review-lite <artifact> --session <session> --host <platform>`<!-- END GENERATED: action:brief-fix-review-lite -->; `<artifact>` is the plan or design path that `review run` reviewed.
 Selects latest completed round for `<artifact>`. Writes current governed text, diff from `round-<n>.input.md` and brief under `<session>/.state/briefs/`. The brief includes accepted findings, added-line citations, the round spec and any reviewed snapshot, reading bounds and a consumer search. Unique listed suffix matches resolve short citations. The unresolved list shows up to five readable matches each. Withheld reasons: `sensitive`, `outside repository`, `session`, `unrenderable name`, `not listed`.
-Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, `noteSkeleton`, `citations`, `unresolved` and `withheld` counts, `contextLimit`, `launchAs`, launch `model`/`effort`. The summary counts unresolved citations and ends with `noteSkeleton`. To fit, it shortens the path to session-relative, then clips counts/review ID and the launch line as needed.
+Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey` (`fix-review-lite:<review>:<round>:<n>`), `diffPath`, `noteSkeleton`, `citations`, `unresolved` and `withheld` counts, `contextLimit`, `launchAs`, launch `model`/`effort`. The summary counts unresolved citations and ends with `noteSkeleton`. To fit, it shortens the path to session-relative, then clips counts/review ID and the launch line as needed.
 Refusals: code-review artifacts, no matching round or accepted finding, no change since round input, unreadable spec, or missing/unknown `--host`. Refusals write no file.
 
 ### brief test-cleanup
@@ -308,7 +308,7 @@ Result path: `diagnostics.md` in the session folder, rendered from the whole ses
 - Host and subagent stages are time-derived from session and capture milestones; delegate stages use recorded phases.
 - See [diagnostics coverage](readme/troubleshooting.md#understand-diagnostics-coverage) for limits and recovery.
 - `Review round timing` shows retry-inclusive wall time and marks the latest finisher only when every slot is measured; unknown slots show `—`.
-- `Review round workload` shows calls by phase, host tokens and Host turns (model responses or `unavailable`). A round opens at its first captured review generation. It closes at the latest review run end, ruling for that review or fix-check note for that round, bounded by the next round start of any review. Calls count by start time. Gaps, report/diagnostics calls and subagent usage are excluded. A storage-failure note follows failed capture writes. For plan or design rounds, the advisory budget line lists rounds exceeding 6 calls or 25 host turns, or `none`. Code-only tables omit it.
+- `Review round workload` shows calls by phase, host tokens and Host turns (model responses or `unavailable`). A round opens at its first captured review generation. It closes at the latest review run end, ruling for that review or fix-review-lite note for that round, bounded by the next round start of any review. Calls count by start time. Gaps, report/diagnostics calls and subagent usage are excluded. A storage-failure note follows failed capture writes. For plan or design rounds, the advisory budget line lists rounds exceeding 6 calls or 25 host turns, or `none`. Code-only tables omit it.
 - `Review yield by slot` adds `Cost`, `Cost / accepted` and `Cost notes` using the same units and reasons as the stage table; when `Accepted` is `0`, per-accepted cells show `0 accepted`.
 - A native row renders model `native`; the tool row renders provider `tool` and model `—`; `partial` marks a row whose launched attempts are not all measured.
 - When diagnostics are off, the summary is `diagnostics off` and no file is written.
