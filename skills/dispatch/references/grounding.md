@@ -24,7 +24,7 @@ Write the full scope map to the plan or design path defined under [Publish](#pub
 
 ## Design increments
 
-Before authoring each design increment plan, ground that increment with the same launch, using the increment's objective and questions. Earlier increments can change repository facts, and a broad design omits local seams that the plan needs. Save the increment map as `<session>/<increment-slug>.plan.context.md`. Before authoring, check local seams, consumers and invariants under [map checks](#check-and-recover).
+Before authoring each design increment plan, ground that increment with the same launch, using the increment's objective and questions. If the increment has `Grounding leads:`, add them as candidate questions for the explorer to verify. Earlier increments can change repository facts, and a broad design omits local seams that the plan needs. Save the increment map as `<session>/<increment-slug>.plan.context.md`. Before authoring, check local seams, consumers and invariants under [map checks](#check-and-recover).
 
 ## Check and recover
 

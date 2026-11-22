@@ -100,6 +100,20 @@ test('design increments parse behaviour bullets and warn on missing or file-coun
   assert.ok(!accepted.warnings.some((item) => item.code === 'increment-behaviour'));
 });
 
+test('design increments accept optional grounding leads and warn on filler', () => {
+  assert.deepEqual(designResult.warnings, []);
+  assert.equal(design.details['I01']?.['Grounding leads'], undefined);
+
+  const lead = 'Can the importer reuse the existing CSV reader?';
+  const withLead = DESIGN.replace('</details>', `- Grounding leads: ${lead}\n</details>`);
+  const result = parseDesign(withLead);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.design.details['I01']?.['Grounding leads'], lead);
+
+  assert.deepEqual(codes(withLead.replace(lead, 'n/a')), ['filler-note']);
+});
+
 test('design presentation findings are warnings', () => {
   const result = parseDesign(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3').replace('REQ-1 strategy', 'Importer strategy'));
   assert.ok(result.ok, JSON.stringify(result));

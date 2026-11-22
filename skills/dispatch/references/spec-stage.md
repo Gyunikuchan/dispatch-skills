@@ -18,7 +18,7 @@ When review or implementation finds more complexity, raise the level up to `high
 
 ## Readers and document layers
 
-Spec owns intent, REQ acceptance, constraints and user DEC decisions. Design owns strategy, architecture and AD choices. Plan owns tactics, task paths, criteria and commands. Walkthrough owns delivered behavior, evidence, deviations and findings. Cite upstream IDs instead of restating their layer.
+Spec owns intent, REQ acceptance, constraints and user DECs. Optional Design owns architectural strategy and ADs. Plan owns tactics, tasks, interfaces and verification. Implementation owns routine writer choices. Walkthrough owns delivered behavior, evidence, deviations and findings. Cite upstream IDs instead of restating their layer.
 
 Authors, reviewers and writers read the whole governing spec. Writers also read shared plan context, their task, criteria and verification commands. Host rules govern first; the quality bar supplements them.
 

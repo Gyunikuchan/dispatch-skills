@@ -193,6 +193,7 @@ test('review voices receive identical guidance in rotated axis order', () => {
   const sharedFixedLines = [
     'Precedence: Applicable host rule files govern first.',
     '- Exclude host-rule/brief conflicts from findings.',
+    '- Altitude: check document layers (',
   ];
   for (const kind of reviewKinds) {
     const base = reviewPrompt(kind, reviewContext(kind));
@@ -202,6 +203,7 @@ test('review voices receive identical guidance in rotated axis order', () => {
       ...sharedFixedLines,
       ...(kind === 'code' || kind === 'plan' ? ['- Tooling: skip issues that configured linters, formatters, or type checkers enforce.'] : []),
       ...(kind === 'plan' ? ['- Shared criteria: apply the shared section to proposed changes and touched interfaces at planning altitude; do not require written implementation.'] : []),
+      ...(kind === 'design' ? ['- Shared criteria:'] : []),
       ...(kind === 'plan' || kind === 'design' ? ['- Visuals, summaries, and callouts:'] : []),
     ];
     const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
@@ -226,6 +228,14 @@ test('review voices receive identical guidance in rotated axis order', () => {
       if (rotation === cycle) assert.equal(prompt, base, `${kind}: wraparound`);
     }
   }
+});
+
+test('design prompt calibrates altitude, severity, and advisory Grounding leads', () => {
+  const prompt = reviewPrompt('design', reviewContext('design'));
+  assert.match(prompt, /^- Shared criteria: .*design altitude.*feasibility.*file-by-file plans/m);
+  assert.match(prompt, /a verifiable acceptance strategy/);
+  assert.match(prompt, /Feasibility and architectural contract defects are `blocks`\.\nPlan-level mechanics safely decidable during increment planning are out of altitude\./);
+  assert.match(prompt, /Grounding leads:.*advisory.*binding .*REQ.*DEC.*invariant.*known dead ends/);
 });
 
 function gcd(left: number, right: number): number {

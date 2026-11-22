@@ -2,9 +2,11 @@
 
 Use `design` when a change crosses components, has migration or rollback concerns, or needs several ordered increments.
 
-Dispatch first settles the governing spec and asks you to confirm its exact contents before strategy authoring at every level. At `medium` and above, you also approve the design before implementation; at `low`, it is shown at handoff. The design maps spec requirements to components and increments and records architectural choices. Intent and your decisions stay in the spec. See [document layers](concepts.md#spec-design-and-plan).
+Dispatch first settles the governing spec and asks you to confirm its exact contents before strategy authoring at every level. At `medium` and above, you also approve the design before implementation; at `low`, it is shown at handoff. The spec owns intent and your decisions. The design owns architecture and delivery increments and maps spec requirements to both. Increment plans own tactics, and implementation writers choose routine code mechanics. See [document layers](concepts.md#spec-design-and-plan).
 
 If a review question changes intent, your host updates the spec and returns to design authoring or revision. Approve the revised design before its dependent increment plans resume; completed work and review history remain available.
+
+Optional, advisory `Grounding leads:` carry tentative hints for planners to verify during increment grounding.
 
 ## What happens
 

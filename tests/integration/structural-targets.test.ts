@@ -139,8 +139,8 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   // NOTE: Reviewer prompt ceilings reflect consolidated prompts.
   assert.ok(promptBytes('code') <= 14333, `code reviewer prompt exceeds 14333 budget`);
   assert.ok(promptBytes('plan') <= 16690, `plan reviewer prompt exceeds 16690 budget`);
-  // NOTE: 12552 covers the input-producer clause in the design reviewer prompt.
-  assert.ok(promptBytes('design') <= 12552, `design reviewer prompt exceeds 12552 budget`);
+  // NOTE: 12734 covers the design altitude, severity, and advisory grounding-lead rules after consolidation.
+  assert.ok(promptBytes('design') <= 12734, `design reviewer prompt exceeds 12734 budget`);
   const writer = templateBytes('writer-brief.md') + qualityBytes('writer');
   // NOTE: 10784 covers the writer contract and separate task and assigned-fix reply forms.
   assert.ok(writer <= 10784, `writer brief pack ${writer} exceeds 10784 budget`);

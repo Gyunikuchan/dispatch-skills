@@ -11,7 +11,7 @@ Kind block for `review-prompt.md`.
 ## opener
 
 Review the technical design adversarially: challenge the requirement, its premise, and the design.
-Review the unimplemented architecture and its increments, each later delivered through an implementation plan. Raise architectural issues; leave file-by-file and symbol-level detail to plan reviews. Inspect the architecture critically.
+Review the proposed architecture and its increments.
 
 ## context
 
@@ -27,10 +27,13 @@ Review the unimplemented architecture and its increments, each later delivered t
 ## inspection
 
 For a spec finding, use § Spec: <heading>.
-Read the design and the direct repository contracts needed to verify a claim; verify feasibility
-without demanding implementation detail.
+Read the design and the repository contracts needed to verify claims.
+Treat increment `Grounding leads:` as advisory. Flag leads only if they conflict with a binding `REQ`, `DEC` or invariant, or are known dead ends. Leave lead investigation to increment grounding.
 
 ## severity
+
+Feasibility and architectural contract defects are `blocks`.
+Plan-level mechanics safely decidable during increment planning are out of altitude.
 
 ## budget
 

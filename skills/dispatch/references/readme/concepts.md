@@ -4,14 +4,16 @@ Dispatch keeps independent review and implementation inside your current agent w
 
 ## Spec, design and plan
 
-Dispatch separates intent, strategy, tactics, and delivery across four canonical documents so later layers cite upstream decisions instead of repeating them:
+Dispatch follows **Spec → Design (optional) → Plan → Implementation**. Each layer cites upstream decisions to keep them in one place.
 
-| Document | Purpose |
+| Layer | Purpose |
 |---|---|
 | **Spec** (mission brief) | Why the work matters: problem, requirements, acceptance conditions, constraints, alternatives, and your decisions. |
-| **Design** (strategy) | Architecture, component boundaries, risks, and ordered delivery increments. |
+| **Design** (optional strategy) | Architecture, component boundaries, risks, and ordered delivery increments. Optional `Grounding leads:` carry tentative hints to increment planning. |
 | **Plan** (tactics) | Concrete tasks, file ownership, prerequisites, `[SC<n>]` criteria, and `Check:` commands. |
-| **Walkthrough** (debrief) | Delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions. |
+| **Implementation** | Code and routine mechanics chosen by the implementation writers. |
+
+The **Walkthrough** is the post-execution debrief. It records delivered behavior, file changes, verification evidence, deviations, follow-ups, and review resolutions.
 
 - **Clarifying intent:** For `plan` and `design`, [spec authoring](../spec-authoring.md) grounds your request on problem, approach, scope, and cost/risk. It lays out 2–3 approach options with a recommendation (including the simplest worth considering, each with its trade-off, limitation and risk), asks only decisions that change scope, behavior, or risk, and skips questions when nothing is open (for the other lenses it proposes an alternative only when materially better, otherwise stating in one line why the premise holds). After you confirm the spec, Dispatch grounds the confirmed scope before writing a standalone plan or design.
 - **One canonical spec:** Every work verb except `ask` uses one governing spec (reusing a supplied artifact's spec or authoring one in the session folder; standalone review also uses the diff and labels inferred requirements). A resolved supplied spec keeps its path, including across sessions, and any stray planning output is merged into it.

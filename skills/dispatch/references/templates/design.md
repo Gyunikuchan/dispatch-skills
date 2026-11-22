@@ -65,6 +65,7 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Validation: <completion proof>
 - Rollback boundary: <what reverting restores>
 - Parallel safety: <safe or unsafe beside which increments, and why>
+- Grounding leads: <unverified leads or questions to verify during increment grounding; omit when none>
 
 </details>
 
@@ -84,6 +85,7 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 - Risks and rollback: when material, explain reversibility, affected consumers and effects that persist after rollback.
 - Box: exact labels in order; `Increments` equals the graph row count; never live status.
 - Increment Details: one high-level H3 per graph ID. Put observable behaviour bullets before `<details>`; the `increment-behaviour` warning reports missing bullets and bullets that contain only a file count or placeholder. Keep required fields in the block and wrapper tags on separate lines with blank lines after the opening tag and before the closing tag.
+- Grounding leads are optional. Record user preferences in the spec as a REQ, DEC or Constraint and architectural choices as AD entries. Phrase tentative hints for future increments as questions or leads. Omit unverified `path:line` citations.
 - Execution Status and Review Findings & Resolutions: machine-managed under [review rules](../review-rules.md); excluded from governed content.
 - Execution Status: rows give each increment's state (completed, active, ready, blocked, invalidated) and next action. The single ledger-derived `Next Action` line below the table gives the overall operation.
 
