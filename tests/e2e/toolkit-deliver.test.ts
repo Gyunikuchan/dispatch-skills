@@ -12,7 +12,7 @@ async function change(r:Repo){const w=r.integration;
  fs.writeFileSync(path.join(w,'src/file.ts'),'final\n');fs.mkdirSync(path.join(w,'bin'));fs.writeFileSync(path.join(w,'bin/blob.bin'),binary);fs.rmSync(path.join(w,'del.txt'));
  fs.rmSync(path.join(w,'swap-a'));fs.mkdirSync(path.join(w,'swap-a'));fs.writeFileSync(path.join(w,'swap-a/child'),'child\n');
  fs.rmSync(path.join(w,'swap-b'),{recursive:true});fs.writeFileSync(path.join(w,'swap-b'),'now a file\n');
- r.git(['update-index','--chmod=+x','exec.sh'],w);
+ if(process.platform==='win32')r.git(['update-index','--chmod=+x','exec.sh'],w);else fs.chmodSync(path.join(w,'exec.sh'),0o755);
  assert.equal((await r.run(['worktree','commit','--reason','final'])).exit,0);return r.git(['rev-parse','HEAD'],r.integration);}
 const caller=(r:Repo)=>({head:r.git(['rev-parse','HEAD']),branch:r.git(['symbolic-ref','--short','HEAD']),index:r.git(['ls-files','--stage','-z']),keep:fs.existsSync(path.join(r.root,'keep.txt'))?fs.readFileSync(path.join(r.root,'keep.txt')):null});
 const cat=(r:Repo,spec:string)=>{const t=spawnSync('git',['cat-file','-t',spec],{cwd:r.root,encoding:'utf8'});if(t.status)return null;const type=t.stdout.trim();return type==='blob'?spawnSync('git',['cat-file','blob',spec],{cwd:r.root}).stdout:type;};
@@ -111,6 +111,7 @@ describe('toolkit delivery and cleanup',()=>{
  it('uncommitted recovery resumes every durable boundary to the same caller state',async()=>{
  await each(['after-preserve','before-apply','after-delivered'],async boundary=>{const {r}=await prepared();try{
  const from=r.git(['rev-parse','HEAD']);const source=await change(r);let fired=0;
+ fs.writeFileSync(path.join(r.root,'keep.txt'),'caller edit');fs.writeFileSync(path.join(r.root,'extra-untracked'),'caller file');const beforeRetry=caller(r);
  const crash=await r.run(['worktree','deliver'],p=>{
    if(p==='deliver:'+boundary){
      fired++;
@@ -128,7 +129,7 @@ describe('toolkit delivery and cleanup',()=>{
    fs.writeFileSync(path.join(r.root,'src/file.ts'),'final\n');
  }
  const retry=await r.run(['worktree','deliver']);assert.equal(retry.exit,0,boundary+JSON.stringify(retry));assert.equal(retry.value.delivered,boundary!=='after-delivered');
- assertMatchesSource(r,from,source);assert.equal(r.git(['rev-parse','HEAD']),from);assert.equal(r.git(['rev-parse',ref]),source);assert.equal(rows(r,'deliver-started').length,1);assert.equal(rows(r,'delivered').length,1);
+ assertMatchesSource(r,from,source);assert.deepEqual(caller(r),beforeRetry);assert.equal(fs.readFileSync(path.join(r.root,'extra-untracked'),'utf8'),'caller file');assert.equal(r.git(['rev-parse',ref]),source);assert.equal(rows(r,'deliver-started').length,1);assert.equal(rows(r,'delivered').length,1);
  assert.equal((await r.run(['worktree','deliver'])).value.delivered,false);assert.equal(rows(r,'delivered').length,1);
  }finally{r.cleanup();}});
  });

@@ -9,7 +9,6 @@ import { readTextPayload } from './input.ts';
 import { ToolError, capSummary } from './output.ts';
 
 const overlaps=(p:string,q:string)=>p===q||p.startsWith(q+'/')||q.startsWith(p+'/');
-const chunks=<T>(items:T[],size=100)=>Array.from({length:Math.ceil(items.length/size)},(_,i)=>items.slice(i*size,(i+1)*size));
 
 import { loadRejections, applicableReviewIds } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
@@ -50,8 +49,8 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     // Recursive raw diff: every delivered path is a leaf entry (blob, symlink or gitlink) or absent.
     const entriesOf=async(root=cwd,target=source!)=>{
       const tokens=splitPaths(await rawOut(root,['diff','--raw','-z','--no-renames','--no-abbrev',from,target,'--']));
-      const rows:{path:string;modes:string[]}[]=[];
-      for(let i=0;i+1<tokens.length;i+=2){const meta=tokens[i]!.slice(1).split(' ');rows.push({path:tokens[i+1]!,modes:[meta[0]!,meta[1]!]});}
+      const rows:{path:string;modes:[string,string];sourceOid:string}[]=[];
+      for(let i=0;i+1<tokens.length;i+=2){const meta=tokens[i]!.slice(1).split(' ');rows.push({path:tokens[i+1]!,modes:[meta[0]!,meta[1]!],sourceOid:meta[3]!});}
       return rows;
     };
     if(last){
@@ -122,18 +121,19 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
       const index=tempIndex('deliver-index'),env={GIT_INDEX_FILE:index};
       try{
         await rawOut(dest.path,['read-tree',from],env);
+        let mergeBase=from;
         // Paths a crashed attempt already wrote must enter the merge as `source`, or Git sees them as locally modified.
-        const atSource=[...await equalTo(source,paths)];
-        if(atSource.length){
-          const wanted=new Set(atSource),found=new Map<string,string>();
-          for(const part of chunks(atSource))for(const row of splitPaths(await rawOut(cwd,['ls-tree','-z','-r','--full-tree',source,'--',...part]))){
-            const tab=row.indexOf('\t'),[mode,type,oid]=row.slice(0,tab).split(' '),name=row.slice(tab+1);
-            if(wanted.has(name)&&type!=='tree')found.set(name,mode+' '+oid);
-          }
-          await rawOut(dest.path,['update-index','-z','--index-info'],env,atSource.map(p=>(found.get(p)??'0 '+zero)+'\t'+p+'\0').join(''));
+        const atSource=await equalTo(source,paths);
+        if(atSource.size){
+          const applied=entries.filter(entry=>atSource.has(entry.path));
+          const removed=applied.filter(entry=>entry.sourceOid===zero).map(entry=>`0 ${zero}\t${entry.path}\0`);
+          const added=applied.filter(entry=>entry.sourceOid!==zero).map(entry=>`${entry.modes[1]} ${entry.sourceOid}\t${entry.path}\0`);
+          await rawOut(dest.path,['update-index','-z','--index-info'],env,[...removed,...added].join(''));
+          // Git checks directory/file conflicts against the merge base as well as the index.
+          mergeBase=(await rawOut(dest.path,['write-tree'],env)).trim();
         }
         await rawOut(dest.path,['update-index','-q','--refresh'],env);
-        const merged=await git(ctx.deps,dest.path,['read-tree','-m','-u',from,source],{GIT_OPTIONAL_LOCKS:'0',...env});
+        const merged=await git(ctx.deps,dest.path,['read-tree','-m','-u',mergeBase,source],{GIT_OPTIONAL_LOCKS:'0',...env});
         if(merged.exit){if(/overwritten|not uptodate|untracked|Entry '/i.test(merged.stderr))refuse('caller-dirty');throw new ToolError(2,'fault',merged.stderr||merged.stdout||'Git read-tree failed');}
       }finally{for(const f of [index,index+'.lock'])fs.rmSync(f,{force:true});}
     };

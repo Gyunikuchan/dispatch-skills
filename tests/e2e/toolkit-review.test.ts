@@ -4,7 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {spawnSync} from 'node:child_process';
-import {toolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';
+import {toolkitRepo as createToolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';
 import {appendRecord,foldLedger} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import {checkoutReportsFor} from '../../skills/dispatch/scripts/toolkit/findings.ts';
 import { CLEAN } from '../helpers/e2e.ts';
@@ -13,11 +13,21 @@ import crypto from 'node:crypto';
 const source=planSource.replace('  - Changes: src/file.ts','  - Changes: src/file.ts, tests/file.test.ts').replace('  - Evidence: check','  - Tests: tests/file.test.ts\n  - RED: `node --test tests/file.test.ts`\n  - Evidence: red');
 const PROVIDERS = ['claude', 'codex', 'opencode'];
 const MUST_FINDING = {status: 'FINDINGS', findings: [{impact: 'blocks', trigger: 'realistic', tag: 'correctness', locus: 'src/file.ts:L1', defect: 'The file returns an invalid result', requiredChange: 'Return the expected result'}]};
+
+async function toolkitRepo(...args: Parameters<typeof createToolkitRepo>) {
+  const fixture = await createToolkitRepo(...args);
+  const {deps} = fixture;
+  // Mock review providers expose one CLI mode when the test marks them live.
+  deps.liveness = {};
+  deps.modes = provider => deps.liveness[provider] ? ['cli'] : [];
+  return fixture;
+}
+
 async function coverageRepo(rounds: number) {
   const f = await toolkitRepo();
   f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'skill', {'read-delegates': Object.fromEntries(PROVIDERS.map(provider => [provider, {targets: [{low: {model: 'fake'}}]}])),
     phases: {'code-review': {targets: {low: 3}, rounds: {low: rounds}}}});
-  f.deps.liveness = Object.fromEntries(PROVIDERS.map(provider => [provider, true])); f.deps.orchestrator = null; f.deps.modes = () => ['cli'] as never;
+  f.deps.liveness = Object.fromEntries(PROVIDERS.map(provider => [provider, true])); f.deps.orchestrator = null;
   const failing = new Set<string>(), replies = new Map<string, object>(), calls: {provider: string; prompt: string}[] = [];
   f.deps.delegate = async (provider, request) => {
     calls.push({provider, prompt: fs.readFileSync(request.promptPath, 'utf8')});
@@ -1784,7 +1794,9 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
     // plain cli wave with no native voice.
     f.deps.orchestrator = {platform: 'opencode', model: null} as typeof f.deps.orchestrator;
     f.deps.liveness = {agy: true, codex: true, copilot: true};
+    const launches: string[] = [];
     f.deps.delegate = async (provider) => {
+      launches.push(provider);
       if (provider === 'copilot') return {outcome: {status: 'fail', cls: 'config', detail: 'unsupported'}, invocations: []};
       return {outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []};
     };
@@ -1795,6 +1807,8 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
     const run = () => f.run(['review','run','T1','--kind','code','--spec','work.spec.md','--level','low']);
     const first = await run();
     assert.equal(first.exit, 0, 'the plain cli wave finalizes: ' + JSON.stringify(first.output));
+    assert.deepEqual(launches.sort(), ['agy', 'codex', 'copilot']);
+    launches.length = 0;
     // The round is interrupted after only agy settles; codex and copilot never
     // saved an outcome. The session resumes on the agy host, which is one of
     // the completed targets.
@@ -1808,8 +1822,9 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
     const resumed = await run();
     assert.equal(resumed.exit, 0, 'the resumed round finalizes instead of dropping voices: ' + JSON.stringify(resumed.output));
     const finalized = JSON.parse(fs.readFileSync(resumed.value.path,'utf8'));
-    assert.deepEqual((finalized.failed as {slot: string}[]).map(entry => entry.slot), ['copilot[0]'],
-      'the unsaved voices run instead of being dropped: ' + JSON.stringify(finalized.failed));
+    assert.deepEqual(launches.sort(), ['codex', 'copilot'], 'only the unsaved voices run again');
+    assert.deepEqual(finalized.failed.map(({slot, cls}: {slot: string; cls: string}) => ({slot, cls})),
+      [{slot: 'copilot[0]', cls: 'config'}], 'the mocked Copilot refusal reaches finalization');
   } finally {f.cleanup();}
 });
 
