@@ -588,29 +588,37 @@ test('resolved ceiling escalation grants two rounds', async () => {
   } finally { f.cleanup(); }
 });
 
-test('deferred ceiling resolution grants no rounds and enforces round-cap', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await deferCeiling(f);
-    const launches = f.launches.length;
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'round-cap');
-    assert.equal(f.launches.length, launches);
-    assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
-    assert.equal(openCeilingRows(f).length, 0);
+test('deferred and closed ceiling resolutions grant no rounds and enforce round-cap', async () => {
+  for (const resolution of ['defer', 'close'] as const) {
+    const f = await fixture();
+    try {
+      await seedAcceptedCeiling(f);
+      if (resolution === 'defer') await deferCeiling(f);
+      else {
+        await openCeiling(f, PLAN_REVIEW, 4);
+        await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
+      }
+      const launches = f.launches.length;
+      const result = await f.call();
+      assert.equal(result.exit, 4, resolution);
+      assert.equal(result.output.reason, 'round-cap', resolution);
+      assert.equal(f.launches.length, launches, resolution);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false, resolution);
+      assert.equal(openCeilingRows(f).length, 0, resolution);
 
-    // Explicit deferred ruling on the finding also ends at round-cap
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'deferred', rationale: 'Follow-up' });
-    const second = await f.call();
-    assert.equal(second.exit, 4);
-    assert.equal(second.output.reason, 'round-cap');
-    assert.equal(openCeilingRows(f).length, 0);
-  } finally { f.cleanup(); }
+      if (resolution === 'defer') {
+        // Explicit deferred ruling on the finding also ends at round-cap
+        await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'deferred', rationale: 'Follow-up' });
+        const second = await f.call();
+        assert.equal(second.exit, 4);
+        assert.equal(second.output.reason, 'round-cap');
+        assert.equal(openCeilingRows(f).length, 0);
+      }
+    } finally { f.cleanup(); }
+  }
 });
 
-test('deferred ceiling resolution runs confirmation round for pending rejections regardless of ruling order', async () => {
+test('zero-round ceiling resolutions run required review for pending rejections', async () => {
   // Case 1: Rejection ruled before defer
   {
     const f = await fixture();
@@ -621,6 +629,7 @@ test('deferred ceiling resolution runs confirmation round for pending rejections
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(confirmation-only\)/);
       assert.equal(f.read(5, 'round.json').requests.length, 1);
       assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
     } finally { f.cleanup(); }
@@ -635,6 +644,7 @@ test('deferred ceiling resolution runs confirmation round for pending rejections
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(confirmation-only\)/);
       assert.equal(f.read(5, 'round.json').requests.length, 1);
       assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
     } finally { f.cleanup(); }
@@ -651,10 +661,52 @@ test('deferred ceiling resolution runs confirmation round for pending rejections
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
+      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(full\)/);
       assert.equal(f.read(5, 'round.json').requests.length, 1);
       assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
     } finally { f.cleanup(); }
   }
+  // Case 4: Close with a pending rejection uses the confirmation-only prompt
+  {
+    const f = await fixture();
+    try {
+      singlePlanTarget(f);
+      const rejected = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
+      const findings = [seededFinding('R4-F001', 'MUST')];
+      const rulings = [['R4-F001', rejected.seq]];
+      seedCompletedRound(f, 4, findings, JSON.stringify(rulings));
+      await openCeiling(f, PLAN_REVIEW, 4);
+      await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
+      confirmDelegate(f);
+      const result = await f.call();
+      assert.equal(result.exit, 0, JSON.stringify(result));
+      const round = f.read(5, 'round.json');
+      assert.match(round.scope, /^Re-review round 5 \(confirmation-only\)/);
+      assert.equal(round.requests.length, 1);
+      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('closed ceiling runs full review for mixed accepted and rejected MUSTs', async () => {
+  const f = await fixture();
+  try {
+    singlePlanTarget(f);
+    const rejected = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
+    const accepted = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F002', ruling: 'accepted', rationale: 'Fixed' });
+    const findings = [seededFinding('R4-F001', 'MUST'), seededFinding('R4-F002', 'MUST')];
+    const rulings = [['R4-F001', rejected.seq], ['R4-F002', accepted.seq]];
+    seedCompletedRound(f, 4, findings, JSON.stringify(rulings));
+    await openCeiling(f, PLAN_REVIEW, 4);
+    await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
+    confirmDelegate(f);
+    const result = await f.call();
+    assert.equal(result.exit, 0, JSON.stringify(result));
+    const round = f.read(5, 'round.json');
+    assert.match(round.scope, /^Re-review round 5 \(full\)/);
+    assert.equal(round.requests.length, 1);
+    assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+  } finally { f.cleanup(); }
 });
 
 test('accepted must after granted ceiling opens escalation', async () => {

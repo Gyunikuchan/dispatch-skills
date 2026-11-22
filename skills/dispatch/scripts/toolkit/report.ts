@@ -256,7 +256,8 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   }));
   const deferredEscalations = [...escalations.values()].flatMap((record) => {
     const summary = String(record.data['summary']);
-    return record.data['state'] === 'resolved' && summary.startsWith('defer:') ? [{ id: String(record.data['id']), summary }] : [];
+    const id = String(record.data['id']);
+    return record.data['state'] === 'resolved' && id.startsWith('ceiling:') && summary.startsWith('defer:') ? [{ id, summary }] : [];
   });
   const rulings = new Map<string, LedgerRecord>();
   for (const record of snapshot.fold.records) if (record.kind === 'ruling') rulings.set(String(record.data['subject']), record);

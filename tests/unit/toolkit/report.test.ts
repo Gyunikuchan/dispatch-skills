@@ -124,6 +124,7 @@ test('report deferral: renders only the latest deferred escalations as follow-up
       [deferId, 'final', 'defer: revisit next release'],
       [settledId, 'initial', 'defer: revisit the split'],
       [settledId, 'final', 're-author: split the change'],
+      ['ceiling:plan-report.plan:3', 'final', 'close: proceed with fixes'],
     ]) {
       await appendRecord(f.session, {
         kind: 'escalation', by: 'user', quote: summary, key: `${id}:${step}`,
@@ -137,6 +138,21 @@ test('report deferral: renders only the latest deferred escalations as follow-up
     assert.deepEqual(walkthrough.match(/^- Follow-up: deferred escalation .*$/gm), [
       `- Follow-up: deferred escalation ${deferId}: defer: revisit next release`,
     ]);
+  } finally { f.cleanup(); }
+});
+
+test('report deferral: excludes non-ceiling defer escalations', async () => {
+  const f = await fixture();
+  try {
+    const id = 'review-readiness';
+    await appendRecord(f.session, {
+      kind: 'escalation', by: 'user', quote: 'Revisit later', key: id + ':resolved',
+      data: { id, state: 'resolved', summary: 'defer: revisit later' },
+    }, f.deps);
+    const result = await invoke(f, 'report', 'render');
+    assert.equal(result.exit, 0, result.output.summary);
+    const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
+    assert.doesNotMatch(walkthrough, /^- Follow-up: deferred escalation /m);
   } finally { f.cleanup(); }
 });
 

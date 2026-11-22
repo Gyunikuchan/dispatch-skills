@@ -158,7 +158,7 @@ export function read<T>(file: string): T | null {
 const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
 /**
  * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
- * Defer grants nothing and applies only to the current ceiling id.
+ * Close and defer grant nothing and apply only to the current ceiling id.
  */
 function ceilingState(records: readonly LedgerRecord[], review: string, cap1: number) {
   const prefix = 'ceiling:' + review + ':';
@@ -172,7 +172,7 @@ function ceilingState(records: readonly LedgerRecord[], review: string, cap1: nu
     if (row.by !== 'user' || row.data['state'] !== 'resolved' || !row.quote?.trim() || row.seq <= (opened.get(id) ?? Infinity)) continue;
     const summary = String(row.data['summary'] ?? '');
     if (CEILING_GRANT.test(summary)) grants.add(id);
-    else if (summary.startsWith('defer:')) defers.add(id);
+    else if (summary.startsWith('close:') || summary.startsWith('defer:')) defers.add(id);
   }
   const ceiling = cap1 + 2 + 2 * grants.size;
   return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
@@ -340,7 +340,7 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
     return effectiveSeverity(finding, history) === 'MUST' && ruling?.data['ruling'] === 'accepted' && (number === n - 1 || ruling.seq > startSeq);
   }));
   const past = completed && n > ceiling.ceiling;
-  // Defer grants no rounds; a pending MUST rejection keeps its confirmation round.
+  // Close and defer grant no rounds; a pending MUST rejection keeps its confirmation round.
   let state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
     : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending)) ? 'requires-continuation'
     : past && !ceiling.deferred ? 'requires-ceiling-resolution' : 'allowed';

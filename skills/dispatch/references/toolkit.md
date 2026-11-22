@@ -351,7 +351,7 @@ data: `criterion`, `evidence`. Allowed by: user only with a nonblank quote.
 
 ### escalation
 
-data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. A resolved review ceiling id `ceiling:<review>:<ceiling>` requires by user with a nonblank quote and a summary starting `re-author:`, `model-effort:`, `relax-split:` or `defer:`; a `defer:` summary applies only to a `plan-` or `design-` review. `review run` opens the ceiling id with by tool. A refused resolution leaves the escalation open. A resolved `coverage:<review>:<key>` id requires by user with a nonblank quote and a summary `accept: <slot>[, <slot>]*` (unique `name[index]` slots) or `grant: <reason>`; the ledger refuses other authors and summaries. See [failed-slot coverage](review-coverage.md#failed-slot-coverage). Resolve recorded escalations with retained evidence.
+data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. A resolved review ceiling id `ceiling:<review>:<ceiling>` requires by user with a nonblank quote and a summary starting `re-author:`, `model-effort:`, `relax-split:`, `close:`, or `defer:`. The `close:` and `defer:` prefixes apply only to `plan-` and `design-` reviews. See the [review escalation options](decision-frame.md#review-escalation). `review run` opens the ceiling id with by tool. A refused resolution leaves the escalation open. A resolved `coverage:<review>:<key>` id requires by user with a nonblank quote and a summary `accept: <slot>[, <slot>]*` (unique `name[index]` slots) or `grant: <reason>`; the ledger refuses other authors and summaries. See [failed-slot coverage](review-coverage.md#failed-slot-coverage). Resolve recorded escalations with retained evidence.
 
 ### ruling
 

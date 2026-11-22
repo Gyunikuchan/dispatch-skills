@@ -96,6 +96,9 @@ A `review-ceiling` refusal is the ceiling branch of the [continuation rule](revi
 - Re-author the artifact from current knowledge under a different approach.
 - Raise the level, or use a higher model or effort, for one more round.
 - Relax or split the failing requirement.
-- Defer remaining accepted MUST findings as follow-ups. Offer this only for plan and design reviews, and only when no MUST rejection is pending.
+- `close:` Close the review at the current round. Apply all remaining accepted MUST fixes and proceed with fixes outside the reviewed baseline recorded as un-re-reviewed. Offer this only for plan and design reviews.
+- `defer:` Defer remaining accepted MUST findings as follow-ups. Offer this only for plan and design reviews.
 
-Record the user decision as a resolved ceiling escalation: `{kind: "escalation", by: "user", quote, key: "ceiling:<review>:<ceiling>:resolved", data: {id: "ceiling:<review>:<ceiling>", state: "resolved", summary: "<re-author|model-effort|relax-split|defer>: <evidence>"}}`. See the [escalation record](toolkit.md#escalation).
+Both options grant zero additional quality rounds. A pending MUST rejection still triggers a round. Use confirmation-only when the [confirmation-only predicate](review-rules.md#review-provenance-and-applicability) holds. Use standard review for a moved target, rerun, or decisive ruling such as an accepted MUST alongside the rejection.
+
+Record the user decision as a resolved ceiling escalation: `{kind: "escalation", by: "user", quote, key: "ceiling:<review>:<ceiling>:resolved", data: {id: "ceiling:<review>:<ceiling>", state: "resolved", summary: "<re-author|model-effort|relax-split|close|defer>: <evidence>"}}`. See the [escalation record](toolkit.md#escalation).

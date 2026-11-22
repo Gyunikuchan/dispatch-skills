@@ -250,11 +250,11 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
     if (value.kind === 'escalation' && value.data['state'] === 'resolved' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('ceiling:')) {
       const id = value.data['id'];
       if (value.by !== 'user' || !value.quote?.trim()) throw new ToolError(1, 'user-only', 'ceiling resolution requires by user and non-blank quote');
-      const option = /^(re-author|model-effort|relax-split|defer):/.exec(value.data['summary']);
-      if (!option) invalid('data.summary', 'one of re-author:, model-effort:, relax-split:, defer:');
-      if (option[1] === 'defer') {
+      const option = /^(re-author|model-effort|relax-split|close|defer):/.exec(value.data['summary']);
+      if (!option) invalid('data.summary', 'one of re-author:, model-effort:, relax-split:, close:, defer:');
+      if (option[1] === 'close' || option[1] === 'defer') {
         const review = id.slice('ceiling:'.length, id.lastIndexOf(':'));
-        if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a defer resolution');
+        if (!/^(plan|design)-/.test(review)) invalid('data.id', 'a plan or design review id for a close or defer resolution');
       }
     }
     if (value.kind === 'escalation' && typeof value.data['id'] === 'string' && value.data['id'].startsWith('coverage:')) {

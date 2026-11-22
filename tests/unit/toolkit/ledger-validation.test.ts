@@ -165,19 +165,21 @@ test('ceiling resolution requires user quote', () => {
       assert.match(failure.message, /data\.summary/);
       return true;
     }, summary);
-  for (const summary of ['re-author: rewrite', 'model-effort: raise effort', 'relax-split: narrow scope', 'defer: rule remaining MUST deferred'])
+  for (const summary of ['re-author: rewrite', 'model-effort: raise effort', 'relax-split: narrow scope', 'close: proceed with fixes', 'defer: rule remaining MUST deferred'])
     assert.doesNotThrow(() => validateRecord(recordWithSummary(summary)));
 
   const recordWithTarget = (targetId: string, summary: string) => ({kind: 'escalation', by: 'user', quote: 'User decision', key: targetId + ':resolved', data: {id: targetId, state: 'resolved', summary}});
   const code = 'ceiling:code-integration:4';
-  assert.throws(() => validateRecord(recordWithTarget(code, 'defer: accept as follow-up')), (error) => {
-    const failure = error as Error & {reason: string};
-    assert.equal(failure.reason, 'invalid-record');
-    assert.match(failure.message, /data\.id/);
-    return true;
-  });
+  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes'])
+    assert.throws(() => validateRecord(recordWithTarget(code, summary)), (error) => {
+      const failure = error as Error & {reason: string};
+      assert.equal(failure.reason, 'invalid-record');
+      assert.match(failure.message, /data\.id/);
+      return true;
+    }, summary);
   assert.doesNotThrow(() => validateRecord(recordWithTarget(code, 're-author: rewrite the fix')));
-  assert.doesNotThrow(() => validateRecord(recordWithTarget('ceiling:design-strategy.design:6', 'defer: accept as follow-up')));
+  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes'])
+    assert.doesNotThrow(() => validateRecord(recordWithTarget('ceiling:design-strategy.design:6', summary)));
 });
 
 test('coverage override records require a quoted user decision in the exact summary grammar', () => {
