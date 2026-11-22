@@ -3,6 +3,7 @@
 ## Index
 
 ### call table
+<!-- GENERATED: call-table -->
 
 Dispatched agents run no toolkit commands, except a subagent assigned a map may run `lint run` on that map only, without `--edit`. Briefs and descriptors return `model`, `effort` and `launchAs` for native launches. Initialize the session before calling tools. Resolve artifact paths from the repository root; resolve record and question files from the current directory.
 
@@ -70,18 +71,19 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | session | session init | `session init --objective "<objective>" --host <platform> [--session-id <id>]` |
 | session | session reactivate | `session reactivate --session-dir <session> --host <platform>` |
 | session | session quota-reprobe | `session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]` |
+<!-- END GENERATED: call-table -->
 
 ## Tool actions
 
 ### ask run
 
-Arguments: `ask run [<question-file|->] [--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`. Pass the question via a UTF-8 file, stdin (`-`, BOM ignored), or inline `--text`; passing both fails closed (`invalid-input`). Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
+Arguments: <!-- GENERATED: action:ask-run -->`ask run [<question-file|->] [--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`<!-- END GENERATED: action:ask-run -->. Pass the question via a UTF-8 file, stdin (`-`, BOM ignored), or inline `--text`; passing both fails closed (`invalid-input`). Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
 Result path: answers, failed slots and native slots; successful captures also persist answers.json. Each native descriptor carries `slot`, `provider`, `promptPath`, `replyPath`, `attempt`, `cwd`, `launchAs` and configured `model`/`effort`. While a native voice is unfinished the value carries `cliWave` (`pending`: launch every native slot and retain its handle, then rerun at once to run the CLI wave; `done`: the wave settled) and unmatched `--native-failed` values are listed in `ignoredFailureReports`.
 Refusals: unreadable question, invalid level, level-unapproved, no read delegate, missing or unknown `--host`, malformed `--pins` or unknown/excluded provider (`invalid-input`), malformed `--native-failed` (`invalid-input`), `host-sandboxed` (exit 4), native-pending or ask-failed. Other tools refuse `--pins` and `--native-failed`.
 
 ### review run
 
-Arguments: `review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`. Pass `--spec` until a spec is bound. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
+Arguments: <!-- GENERATED: action:review-run -->`review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`<!-- END GENERATED: action:review-run -->. Pass `--spec` until a spec is bound. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
 Result path: `findings.json` holds the full round. Completed-round summaries name `findings.md` and `rulings.json`. The session-relative `value.findingsFile` and `value.rulingsFile` survive summary clipping. Use them to [rule the round](review-rules.md#rulings-and-fix-scope).
 - `findings.json` carries `units` (`{unit, findings, hot, hotStreak, bytes?, delta?, growthStreak?}`), one entry per unit with findings in the round; the summary head lists hot units after the counts as `<unit> ×<hotStreak>` plus ` ±<delta> B` when sized, within 1,024 bytes (items drop first; else `+<k> more in findings.json units`).
 - A round that ran a host-platform voice as a native subagent also reports `repositoryChanges` (`[{cwd, paths}]`) and persists it to `gen-<n>/checkout-report.json` and `findings.json`; a failed capture or compare keeps all replies and reports `repositoryCheck: {state: "unavailable", reason}` instead.
@@ -118,57 +120,57 @@ Plan/design target paths select artifacts. Code targets resolve in order: integr
 
 ### report render
 
-Arguments: `report render --session <session>`.
+Arguments: <!-- GENERATED: action:report-render -->`report render --session <session>`<!-- END GENERATED: action:report-render -->.
 Result path: walkthrough path, criterion statuses, Review Focus, visuals, deviations, user records, findings, rejection confirmation states, coverage state and evidence references. Review Focus combines derived departures with authored `focus` bullets. Renders a recorded replacement; otherwise links plan visuals, then parent design visuals, or shows `None.`. Renders the current snapshot without claiming completion.
 Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 
 ### report complete
 
-Arguments: `report complete --session <session>`.
+Arguments: <!-- GENERATED: action:report-complete -->`report complete --session <session>`<!-- END GENERATED: action:report-complete -->.
 Result path: completed walkthrough path with Review Focus and visuals, criterion statuses, deviations, optional diagnostics path and optional non-blocking `warning` when diagnostics are enabled and `<session>/.state/retro.json` is missing. The walkthrough labels each review fix `re-reviewed`, `verified but not re-reviewed` or `not verified`. The result carries `reviewedCodeBaseline` for qualifying cap-ending SHOULD corrections. For plan/design corrections, record the baseline, correction and verification in a `focus` bullet with evidence; the renderer includes it under Review Focus.
 Completion checks accepted SHOULD correction scope against the saved final full review, permits a contiguous recorded correction chain only with no later review and current verification, and refuses unrelated or unverified changes under [review provenance](review-rules.md#review-provenance-and-applicability). A removed criterion counts as verified from evidence on the current tree or its recorded `trees[<criterion>]` tree, with reason `verified at <tree>; tests removed in cleanup`. Every other criterion needs evidence on the current tree. `status` lists removed criteria as verified at their recorded evidence tree; `report` and the walkthrough render them with the deleted and merged counts. Without a `test-cleanup` record, every criterion needs current-tree evidence.
 Refusals: review-confirmation-required, no-integration, criteria-unmet, focus-required or undelivered. `focus-required` (exit 4) means a plan with Risk `med` or `high` lacks a latest `focus` record with at least three bullets. Inspect reason and statuses; only a successful result is completion.
 
 ### brief render
 
-Arguments: `brief render <task> --session <session> --host <platform>`.
+Arguments: <!-- GENERATED: action:brief-render -->`brief render <task> --session <session> --host <platform>`<!-- END GENERATED: action:brief-render -->.
 Result path: writer brief filename, task, launch, UTF-8 bytes, `launchAs` and launch `model`/`effort` values.
 Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unknown task, no-open-launch or missing/unknown `--host`. Create the task worktree before rendering.
 
 ### brief explorer
 
-Arguments: `brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>`. Pass JSON via a file path, stdin (`-`), or `--json` (prefer `-` or a file above 4,096 bytes) holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
+Arguments: <!-- GENERATED: action:brief-explorer -->`brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-explorer -->. Pass JSON via a file path, stdin (`-`), or `--json` (prefer `-` or a file above 4,096 bytes) holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
 Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
 
 ### brief fix-check
 
-Arguments: `brief fix-check <artifact> --session <session> --host <platform>`; `<artifact>` is the plan or design path that `review run` reviewed.
+Arguments: <!-- GENERATED: action:brief-fix-check -->`brief fix-check <artifact> --session <session> --host <platform>`<!-- END GENERATED: action:brief-fix-check -->; `<artifact>` is the plan or design path that `review run` reviewed.
 Selects latest completed round for `<artifact>`. Writes current governed text, diff from `round-<n>.input.md` and brief under `<session>/.state/briefs/`. The brief includes accepted findings, added-line citations, the round spec and any reviewed snapshot, reading bounds and a consumer search. Unique listed suffix matches resolve short citations. The unresolved list shows up to five readable matches each. Withheld reasons: `sensitive`, `outside repository`, `session`, `unrenderable name`, `not listed`.
 Result path: brief path, UTF-8 bytes, `review`, `round`, `noteKey`, `diffPath`, `noteSkeleton`, `citations`, `unresolved` and `withheld` counts, `contextLimit`, `launchAs`, launch `model`/`effort`. The summary counts unresolved citations and ends with `noteSkeleton`. To fit, it shortens the path to session-relative, then clips counts/review ID and the launch line as needed.
 Refusals: code-review artifacts, no matching round or accepted finding, no change since round input, unreadable spec, or missing/unknown `--host`. Refusals write no file.
 
 ### brief test-cleanup
 
-Arguments: `brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>`. Pass JSON via file, stdin (`-`), or `--json` holding `base` and `integrationPath`, or pass both `--base` and `--integration-path` directly (combining modes or omitting one direct flag fails `invalid-input`); `planPath` derives from the bind record.
+Arguments: <!-- GENERATED: action:brief-test-cleanup -->`brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-test-cleanup -->. Pass JSON via file, stdin (`-`), or `--json` holding `base` and `integrationPath`, or pass both `--base` and `--integration-path` directly (combining modes or omitting one direct flag fails `invalid-input`); `planPath` derives from the bind record.
 Result path: test-cleanup brief path, UTF-8 bytes, `launchAs` and launch `model`/`effort` values.
 Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`, or no bound plan; writes nothing.
 
 ### worktree integrate
 
-Arguments: `worktree integrate <task> --session <session> [--ack-stale <rationale>]`.
+Arguments: <!-- GENERATED: action:worktree-integrate -->`worktree integrate <task> --session <session> [--ack-stale <rationale>]`<!-- END GENERATED: action:worktree-integrate -->.
 Result path: integration commit and task, or retained conflict paths. Integration `fix` and `test-cleanup` records retain correction provenance; see [commit](#worktree-commit).
 Refusals: approval-chain or missing-confirmation gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
 
 ### worktree continue
 
-Arguments: `worktree continue <task> --session <session>`.
+Arguments: <!-- GENERATED: action:worktree-continue -->`worktree continue <task> --session <session>`<!-- END GENERATED: action:worktree-continue -->.
 Result path: completed integration commit after a retained conflict.
 Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-integration or unresolved-conflict.
 
 ### worktree commit
 
-Arguments: `worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]`. The payload options are mutually exclusive. All payload inputs accept a leading UTF-8 BOM.
+Arguments: <!-- GENERATED: action:worktree-commit -->`worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]`<!-- END GENERATED: action:worktree-commit -->. The payload options are mutually exclusive. All payload inputs accept a leading UTF-8 BOM.
 Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
 Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
@@ -182,13 +184,13 @@ Refusals: test-cleanup-evidence-required (a `removed` ID is not a plan criterion
 
 ### worktree abort
 
-Arguments: `worktree abort <task> --session <session> --reason <reason>`.
+Arguments: <!-- GENERATED: action:worktree-abort -->`worktree abort <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abort -->.
 Result path: preserved candidate and abandoned state.
 Refusals: blank reason, wrong-task, no-candidate or already-integrated. See [user gates](decision-frame.md#user-gate-boundaries) before discarding work.
 
 ### worktree deliver
 
-Arguments: `worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`. `--commit` and `--message` are mutually exclusive and refused on every other action.
+Arguments: <!-- GENERATED: action:worktree-deliver -->`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`<!-- END GENERATED: action:worktree-deliver -->. `--commit` and `--message` are mutually exclusive and refused on every other action.
 Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
 Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required, `coverage-required` or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
 
@@ -215,38 +217,38 @@ Commit phase (`--commit <message-file|->` or `--message <text>`): a second phase
 
 ### worktree close
 
-Arguments: `worktree close --session <session> --reason <reason>`.
+Arguments: <!-- GENERATED: action:worktree-close -->`worktree close --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-close -->.
 Result path: closed state and reason, ending an integration retained for recovery.
 Refusals: blank reason or unexpected task argument. Closing records state; it does not establish verification or satisfy the [user gate](decision-frame.md#user-gate-boundaries).
 
 ### worktree cleanup
 
-Arguments: `worktree cleanup --session <session>`.
+Arguments: <!-- GENERATED: action:worktree-cleanup -->`worktree cleanup --session <session>`<!-- END GENERATED: action:worktree-cleanup -->.
 Result path: the result file contains `value.removed` paths and `value.kept` rows with `path` and `reason`. Failure rows may also include `code`, a bounded `message` and a session-relative `recoveryPath` for a stranded recovery sibling; unpreserved rows may list changed `paths`. If a per-path removal or later registration/ref operation fails, the result is `ok: false`, exit 2, reason `cleanup-incomplete`; its value retains all known progress. A path may appear in both arrays when the directory was removed but Git registration, pruning or ref release failed. Read the result file even at exit 2.
 Kept unowned, non-terminal or unpreserved paths do not always make the operation incomplete, but require inspection and a recovery or retention decision before handoff.
 Refusals: unexpected task argument, ledger lock or pre-removal Git/filesystem fault. A refusal before per-path cleanup returns its own reason and message rather than a partial cleanup value. See [cleanup](worktree-cleanup.md) for retained refs, external locks and retry limits.
 
 ### worktree create
 
-Arguments: `worktree create <task> --session <session> [--relaunch]`.
+Arguments: <!-- GENERATED: action:worktree-create -->`worktree create <task> --session <session> [--relaunch]`<!-- END GENERATED: action:worktree-create -->.
 Result path: task, launch and worktree path, plus restored/relaunch markers when applicable.
 Refusals: unknown task, `prerequisite-pending`, `stale-worktree` (an unlaunched crash worktree lacks an integrated prerequisite; the tool keeps it), writer-open, candidate-pending, no-open-launch, missing-worktree or submit-pending. `prerequisite-pending` names each prerequisite task without an `integrate` `done` record, creates no worktree and appends no record; a relaunch or restored launch skips this gate. Relaunch requires the orchestrator to establish that the old writer has stopped.
 
 ### worktree submit
 
-Arguments: `worktree submit <task> --session <session>`.
+Arguments: <!-- GENERATED: action:worktree-submit -->`worktree submit <task> --session <session>`<!-- END GENERATED: action:worktree-submit -->.
 Result path: task, launch, candidate commit and any uncommitted paths.
 Refusals: no-open-launch, out-of-scope, submit-pending or no-changes. The orchestrator invokes this Git-writing tool after the writer stops.
 
 ### worktree abandon
 
-Arguments: `worktree abandon <task> --session <session> --reason <reason>`.
+Arguments: <!-- GENERATED: action:worktree-abandon -->`worktree abandon <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abandon -->.
 Result path: preserved writer snapshot, task/launch and abandoned marker.
 Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and follow the [user gate](decision-frame.md#user-gate-boundaries) when discarding work.
 
 ### check run
 
-Arguments: `check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]`. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
+Arguments: <!-- GENERATED: action:check-run -->`check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]`<!-- END GENERATED: action:check-run -->. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
 Result path: checks with command digests, tree identity, clean/before/after state, exit, and evidence/log paths; `executed`, `reused`, `failed`, `mutated`, and `dirty` (`; reused <n>` in summary when `reused > 0`).
 - Within one run (unless `--fresh`), passing clean Git-non-mutating commands deduplicate per `(command, tree)` (`mode: 'dedup'`, preserving provenance without incrementing `executed` or `reused`).
 - `--reuse` (mutually exclusive with `--fresh`) reuses a prior clean passing execution in `.state/evidence/commands/index/<cacheHex>.json` (`<execId>.json`/`.log`) on the exact same clean Git tree (`testedTree === headTree === cached.tree`) after live hash and invariant validation, falling back to fresh execution on any mismatch; without `--reuse`, cross-call cache entries are never reused.
@@ -257,45 +259,45 @@ Refusals: unknown criterion or unknown task, which names each unknown ID and the
 
 ### brief verifier
 
-Arguments: `brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed + reused > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
+Arguments: <!-- GENERATED: action:brief-verifier -->`brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-verifier -->; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed + reused > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
 Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
 Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
 ### ledger append
 
-Arguments: `ledger append <record.json|-> --session <session>`. `<record.json>` is a file path, not inline JSON; `-` reads stdin. Both accept a single record object or a non-empty JSON array of record objects with the same validation. A leading UTF-8 BOM is ignored. Under Windows PowerShell 5.1, set `$OutputEncoding = [Text.Encoding]::UTF8` before piping stdin or use a file for non-ASCII records; for inline flags on other actions, prefer `-` or a file above 4,096 bytes.
+Arguments: <!-- GENERATED: action:ledger-append -->`ledger append <record.json|-> --session <session>`<!-- END GENERATED: action:ledger-append -->. `<record.json>` is a file path, not inline JSON; `-` reads stdin. Both accept a single record object or a non-empty JSON array of record objects with the same validation. A leading UTF-8 BOM is ignored. Under Windows PowerShell 5.1, set `$OutputEncoding = [Text.Encoding]::UTF8` before piping stdin or use a file for non-ASCII records; for inline flags on other actions, prefer `-` or a file above 4,096 bytes.
 Result path: appended seq and deduped boolean; an array call also returns `count` and `results` (`{seq, deduped}[]`), with `seq` the last appended or matched sequence and `deduped` true only when every record deduplicated. An array validates each record sequentially against the fold and commits under one `withLedger` lock with an in-transaction findings refresh. For a ruling of a bound plan/design review, or a bind of a plan/design that has saved review rounds, the result value also includes `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason`. Other records omit these fields.
 Refusals: unreadable JSON, invalid-record (including an empty array and an approval with no bind record), missing-key, user-only, key conflict or invalid edit chain. Fields and authorship are below.
 
 ### ledger query
 
-Arguments: `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`.
+Arguments: <!-- GENERATED: action:ledger-query -->`ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`<!-- END GENERATED: action:ledger-query -->.
 Result path: matching full records.
 Refusals: positional arguments or invalid filters. Invalid `kind` names the allowed record kinds; invalid `since` gives the nonnegative safe-integer shape.
 
 ### doctor run
 
-Arguments: `doctor run --session <session> --host <platform> [--level <level>] [--probe]`.
+Arguments: <!-- GENERATED: action:doctor-run -->`doctor run --session <session> --host <platform> [--level <level>] [--probe]`<!-- END GENERATED: action:doctor-run -->.
 Result path: integrity, configuration path, `problems` (including a problem when the host has no `utility-subagents` or `write-subagents` entry) and `warnings` (one message per malformed `pricing` entry, which Dispatch ignores; warnings never set `ok` false or block a launch; see [price overrides](readme/configuration.md#override-rates-for-cost-estimates)), selected level, configured writer models/efforts, `writeConcurrency` (the configured `write-concurrency`, or 1 when omitted or invalid), `host` (`{platform, source}`: the declared session host and `declared`, or `null` and `none` when absent or invalid) and `utility` (per canonical platform `claude`, `agy`, `copilot`, `opencode` or `codex`: its `utility-subagents` entry with `contextLimit`; independent of level). `sandboxRemoved` lists each live non-host read delegate that an unpinned roster drops because its requested sandbox cannot run on the host platform, derived from the provider table. `--level` selects writer models.
 With `--probe` and valid config, check configured `read-delegates` live. `probes` exposes only `provider`, `binaryFound`, `version`, `readiness`, `sandbox`, `failureCategory` and `remediation`. `probeSummary` counts `ok`, `failed`, `unprobeable` and `unverified`. Dispatch keeps subprocess output in memory and writes no probe files.
 Refusals: positional arguments, invalid configuration or missing/unknown `--host`. A failed live probe sets `ok: false` and `reason: probe-failed` and keeps the probe results. Inspect `ok` and `reason` for failed integrity or unavailable capabilities.
 
 ### status show
 
-Arguments: `status show --session <session>`.
+Arguments: <!-- GENERATED: action:status-show -->`status show --session <session>`<!-- END GENERATED: action:status-show -->.
 Result path: ledger summary, artifact hashes, worktrees, writers, integration state, `reviews` (the `review run` `budget` per review with a round, recomputed from the latest ledger after rulings and ceiling resolutions), `openRepositoryChanges` (`[{review, round, reportSeq, repositoryChanges?, repositoryCheck?, rerunPending?}]`: every persisted change report the rules below leave open, with the `reportSeq` that a closing or rerun decision names) and `testCleanup` (`{from, trees, removed, deleted, merged}` of the latest test-cleanup record, `null` when none; an empty `removed` still reports).
 Refusals: positional arguments, invalid state or Git/filesystem fault. Use this after interruption before deciding what to resume. A report stays open with `rerunPending: true` until round `<round>+1` finalizes or a `repository-changes` note exists. Close a report with a `note` record keyed `repository-changes:<review>:<round>:<reportSeq>`; record a user rerun decision with key `repository-rerun:<review>:<round>:<reportSeq>`, then run `review run`. The [repository-change rule](review-coverage.md#repository-changes-from-native-voices) decides when each key applies and who may record it.
 
 ### lint run
 
-Arguments: `lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]`. Pass the artifact path positionally.
+Arguments: <!-- GENERATED: action:lint-run -->`lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]`<!-- END GENERATED: action:lint-run -->. Pass the artifact path positionally.
 Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read. Plan and design artifacts also fail closed with `broken-citation` on invalid backticked repo-relative `path:line` and `path:start-end` refs in governed sections (excluding fenced blocks and HTML comments, and ignoring bare paths without line numbers).
 Refusals: unreadable/unknown artifact or lint errors.
 With `--edit` (file or stdin `-`) or `--json` (mutually exclusive), pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
 
 ### diagnostics render
 
-Arguments: `diagnostics render --session <session>`. Takes no positional arguments.
+Arguments: <!-- GENERATED: action:diagnostics-render -->`diagnostics render --session <session>`<!-- END GENERATED: action:diagnostics-render -->. Takes no positional arguments.
 Result path: `diagnostics.md` in the session folder, rendered from the whole session as `report complete` renders it; the summary gives its path.
 - Legend: `—` (unavailable), `~` (cost estimate in USD), and a unit (one host row, one `model#effort` entry of a launched delegate, or one launched delegate without usage; priced vs unpriced, with reason in `Cost notes`).
 - Summary lists every capture `Host` and, when more than one host appears, names which host's thread the host rows measure (and that other hosts' threads are unmeasured, or that no host thread is measured).
@@ -398,12 +400,15 @@ These commands use --session-dir rather than --session and run before tool calls
 
 ### session init
 
-`session init --objective "<objective>" --host <platform> [--session-id <id>]` creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>, reused:<boolean>}; `reused` is true when an existing folder is returned and false when init creates one. Summary is at most 1024 UTF-8 bytes. `--host` is required: pass your current platform (`claude`, `agy`, `copilot`, `opencode`, `codex` or an alias); a missing or unknown value fails with reason `usage` and leaves the manifest unchanged. Init records it as `host` in manifest.json; the toolkit takes the orchestrator only from that record. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault', help?} with exit 1 or 2; `help` names the section to read.
+<!-- GENERATED: session:init -->
+`session init --objective "<objective>" --host <platform> [--session-id <id>]`<!-- END GENERATED: session:init --> creates/reuses retained workspace session state in the current Git repository. It uses the platform session identity when available and a generated fallback otherwise. Stdout: {ok:true, summary, path:<sessionDir>, reused:<boolean>}; `reused` is true when an existing folder is returned and false when init creates one. Summary is at most 1024 UTF-8 bytes. `--host` is required: pass your current platform (`claude`, `agy`, `copilot`, `opencode`, `codex` or an alias); a missing or unknown value fails with reason `usage` and leaves the manifest unchanged. Init records it as `host` in manifest.json; the toolkit takes the orchestrator only from that record. Read manifest.json for session identity. Follow optional `instructions` returned by init or reactivate. Failures return {ok:false, summary, path:null, reason:'usage'|'fault', help?} with exit 1 or 2; `help` names the section to read.
 
 ### session reactivate
 
-`session reactivate --session-dir <session> --host <platform>` reactivates the same session idempotently and records the host as `init` does. Use it to declare a host on a session without one. Stdout: {ok:true, summary, path:<sessionDir>, reused:true} with the same byte cap.
+<!-- GENERATED: session:reactivate -->
+`session reactivate --session-dir <session> --host <platform>`<!-- END GENERATED: session:reactivate --> reactivates the same session idempotently and records the host as `init` does. Use it to declare a host on a session without one. Stdout: {ok:true, summary, path:<sessionDir>, reused:true} with the same byte cap.
 
 ### session quota-reprobe
 
-`session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]` clears one quota key. Stdout: {v:1, action:'quota-reprobe', key:{provider,model,mode}, appliesTo:'future-waves'}. Omit model for the provider default (null). Provider and mode must match a known provider implementation. Changes affect future provider selection.
+<!-- GENERATED: session:quota-reprobe -->
+`session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]`<!-- END GENERATED: session:quota-reprobe --> clears one quota key. Stdout: {v:1, action:'quota-reprobe', key:{provider,model,mode}, appliesTo:'future-waves'}. Omit model for the provider default (null). Provider and mode must match a known provider implementation. Changes affect future provider selection.

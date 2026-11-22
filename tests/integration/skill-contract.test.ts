@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
 import {TOOL_ACTIONS} from '../../skills/dispatch/scripts/toolkit/cli.ts';
-import {renderCallTable} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
+import {maintain, renderContractRegions} from '../../scripts/maintain.ts';
+import {ACTION_CONTRACTS, SESSION_CONTRACTS, renderCallTable, stripGeneratedMarkers} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
 import {KINDS, recordSchemas} from '../../skills/dispatch/scripts/toolkit/records.ts';
 import {OVERLAY_ROOT} from './scan.ts';
 const root = 'skills/dispatch/';
@@ -14,6 +16,79 @@ const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map
 const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
 const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
 const backgroundStart = (command: string) => 'Always start `' + command + '` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).';
+
+test('maintain detects contract block drift without writing', () => {
+  const source = path.join(OVERLAY_ROOT, root);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maintain-'));
+  try {
+    fs.cpSync(path.join(source, 'references'), path.join(dir, 'references'), {recursive: true});
+    fs.copyFileSync(path.join(source, 'SKILL.md'), path.join(dir, 'SKILL.md'));
+    const toolkitFile = path.join(dir, 'references/toolkit.md');
+    const original = fs.readFileSync(toolkitFile, 'utf8').replace(/\r?\n/g, '\r\n');
+    const current = original.replace('<!-- GENERATED: action:ask-run -->`ask run', '<!-- GENERATED: action:ask-run -->`stale run');
+    const skillFile = path.join(dir, 'SKILL.md');
+    const skill = fs.readFileSync(skillFile, 'utf8');
+
+    fs.writeFileSync(toolkitFile, current);
+    fs.utimesSync(toolkitFile, new Date(0), new Date(0));
+    const driftedMtime = fs.statSync(toolkitFile).mtimeMs;
+    assert.deepEqual(maintain(dir, true), ['references/toolkit.md: ### ask run: generated content differs']);
+    assert.equal(fs.statSync(toolkitFile).mtimeMs, driftedMtime);
+    assert.equal(fs.readFileSync(toolkitFile, 'utf8'), current);
+
+    const brokenSkill = skill + '\n[Missing](references/absent.md)\n';
+    fs.writeFileSync(skillFile, brokenSkill);
+    for (const check of [true, false]) {
+      const errors = maintain(dir, check);
+      assert.ok(errors.includes('SKILL.md: undeclared link references/absent.md'));
+      assert.ok(errors.includes('SKILL.md: missing link file references/absent.md'));
+      assert.equal(fs.readFileSync(skillFile, 'utf8'), brokenSkill);
+      assert.equal(fs.readFileSync(toolkitFile, 'utf8'), current);
+    }
+
+    fs.writeFileSync(skillFile, skill);
+    assert.deepEqual(maintain(dir, false), []);
+    assert.equal(fs.readFileSync(toolkitFile, 'utf8'), original);
+    const past = new Date(0);
+    fs.utimesSync(toolkitFile, past, past);
+    const mtime = fs.statSync(toolkitFile).mtimeMs;
+    assert.deepEqual(maintain(dir, false), []);
+    assert.deepEqual(maintain(dir, true), []);
+    assert.equal(fs.statSync(toolkitFile).mtimeMs, mtime);
+  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('contract regeneration preserves surrounding prose and fails closed on misplaced or invalid delimiters', () => {
+  const original = read(root + 'references/toolkit.md').replace(/\r\n/g, '\n');
+  assert.equal(stripGeneratedMarkers('A\r\n\r\n<!-- GENERATED: call-table -->\r\n\r\n'
+    + 'before<!-- END GENERATED: call-table -->after\n<!-- authored -->\n<!-- GENERATED:keep -->'),
+  'A\r\n\r\n\r\nbeforeafter\n<!-- authored -->\n<!-- GENERATED:keep -->');
+  const opening = '<!-- GENERATED: action:ask-run -->';
+  const closing = '<!-- END GENERATED: action:ask-run -->';
+  const customized = original.replace(closing + '. Pass the question', closing + ' and keep this authored note. Pass the question');
+  const stale = customized.replace(opening + '`ask run', opening + '`old run')
+    .replace('| Type | Heading | Arguments |', '| Type | Obsolete | Arguments |');
+  assert.deepEqual(renderContractRegions(stale), {
+    text: customized, errors: [], drift: [
+      'references/toolkit.md: ### call table: generated content differs',
+      'references/toolkit.md: ### ask run: generated content differs',
+    ],
+  });
+
+  for (const [broken, error] of [
+    [original.replace(opening, ''), /missing opening marker/],
+    [original.replace(closing, ''), /opening marker before closing marker/],
+    [original.replace(opening, opening + opening), /duplicate opening marker/],
+    [original.replace(closing, closing + closing), /unmatched closing marker/],
+    [original + '\n<!-- GENERATED: extra -->\n<!-- END GENERATED: extra -->\n', /unknown generated marker/],
+    [original.replace('Arguments: ' + opening, opening + 'Arguments: '), /wrong boundary/],
+    [original.replace('<!-- GENERATED: session:init -->\n', '<!-- GENERATED: session:init -->'), /wrong boundary/],
+  ] as const) {
+    const result = renderContractRegions(broken);
+    assert.equal(result.text, broken);
+    assert.match(result.errors.join('\n'), error);
+  }
+});
 
 test('decision records resolve local links and headings', () => {
   for (const file of markdown('docs/decisions')) for (const target of links(read(file))) {
@@ -59,29 +134,30 @@ test('skill contract keeps router entries and resolving reference links', () => 
     if (file === 'SKILL.md') { assert.deepEqual(matches, []); assert.ok(text.includes('<tool> <action>')); }
   }
 
-  // Ledger records schema documentation
+  // Ledger help retains authored field meanings and authority for every kind.
   const ledger = toolkit.split('## Ledger records\n')[1]?.split('\n## ')[0] ?? '';
-  for (const kind of KINDS) { const body = section(ledger, kind); assert.match(body, /data/); assert.match(body, /by/); }
-  for (const field of ['spec', 'plan', 'design', 'criterion', 'reason', 'evidence', 'subject', 'ruling', 'rationale', 'before', 'after', 'class', 'diffRef', 'affects', 'commandDigest', 'tree', 'clean', 'exit', 'phase', 'task', 'launch', 'candidate', 'dest']) assert.ok(ledger.includes('`' + field + '`'), field);
+  assert.deepEqual([...ledger.matchAll(/^### (.+)$/gm)].map(m => m[1]).sort(), [...KINDS].sort());
+  const quoted = new Set(['approval', 'confirm', 'waiver', 'manual-complete']);
+  for (const schema of recordSchemas()) {
+    const body = section(ledger, schema.kind);
+    const fields = schema.phased
+      ? ['phase', ...schema.phases.flatMap(phase => [phase.phase, ...phase.required, ...phase.optional])]
+      : [...schema.required, ...schema.optional];
+    for (const field of new Set(fields)) assert.ok(body.includes(field), schema.kind + ' ' + field);
+    assert.match(body, /data/i);
+    assert.match(body, /Allowed by: user/);
+    if (quoted.has(schema.kind)) assert.match(body, /user only with a nonblank quote/);
+    else {
+      assert.match(body, /orchestrator/);
+      if (schema.kind !== 'focus') assert.match(body, /tool/);
+    }
+  }
+  assert.match(section(ledger, 'ruling'), /verification:<cycle>:V<n>/);
+  assert.match(section(ledger, 'writer'), /commit, taskSection, seq/);
   for (const term of ['native-pending', 'promptPath', 'replyPath', 'rerun']) assert.ok(toolkit.includes(term), term);
   const sessions = toolkit.split('## Session commands\n')[1] ?? '';
-  for (const term of ['session init', 'session reactivate', 'session quota-reprobe', 'ok', 'summary', 'path', 'appliesTo', "action:'quota-reprobe'", "v:1"]) assert.ok(sessions.includes(term), term);
-  const fields: Record<string, string[]> = {
-    bind: ['spec', 'plan', 'design'], approval: ['spec', 'plan', 'design'],
-    level: ['level'], waiver: ['criterion', 'reason'], 'manual-complete': ['criterion', 'evidence'],
-    escalation: ['id', 'state', 'summary'], ruling: ['subject', 'ruling', 'rationale', 'verification:<cycle>:V<n>'], note: ['text'],
-    edit: ['artifact', 'before', 'after', 'class', 'affects', 'rationale', 'diffRef'],
-    evidence: ['criterion', 'commandDigest', 'tree', 'clean', 'before', 'after', 'exit', 'path'],
-    writer: ['phase', 'task', 'launched', 'path', 'base', 'commit', 'taskSection', 'seq', 'finished', 'launch', 'candidate', 'abandoned', 'reason'],
-    integrate: ['verification', 'cycle', 'outcome', 'head', 'open', 'report', 'artifacts', 'dirty', 'phase', 'opened', 'path', 'branch', 'base', 'dest', 'started', 'task', 'candidate', 'conflict', 'paths', 'done', 'commit', 'abandoned', 'reason', 'fix', 'deliver-started', 'mode', 'from', 'source', 'delivered', 'committed', 'differing', 'closed'],
-  };
-  for (const [kind, names] of Object.entries(fields)) {
-    const body = section(ledger, kind);
-    for (const name of names) assert.ok(body.includes(name), kind + ' ' + name);
-    assert.ok(body.includes('Allowed by: user'), kind);
-    if (['approval', 'waiver', 'manual-complete'].includes(kind)) assert.ok(body.includes('user only with a nonblank quote'), kind);
-    else for (const author of ['orchestrator', 'tool']) assert.ok(body.includes(author), kind + ' ' + author);
-  }
+  assert.deepEqual([...sessions.matchAll(/^### session (.+)$/gm)].map(m => m[1]).sort(), Object.keys(SESSION_CONTRACTS).sort());
+  for (const term of ['ok', 'summary', 'path', 'appliesTo', "action:'quota-reprobe'", "v:1"]) assert.ok(sessions.includes(term), term);
 });
 
 test('audit catalog points to existing toolkit and reference entry points', () => {
@@ -748,7 +824,7 @@ test('implement runs verification before test cleanup and verify states the appr
 });
 
 test('call table lists every tool action, record kind and session command with its section argument form', () => {
-  const toolkit = read(root + 'references/toolkit.md').replace(/\r\n/g, '\n');
+  const toolkit = stripGeneratedMarkers(read(root + 'references/toolkit.md')).replace(/\r\n/g, '\n');
   const actualCallTable = '### call table\n' + section(toolkit, 'call table').trimEnd() + '\n';
   assert.equal(actualCallTable, renderCallTable(), 'toolkit.md ### call table must match renderCallTable() verbatim');
 
@@ -758,11 +834,11 @@ test('call table lists every tool action, record kind and session command with i
     return {type: type!, heading: heading!, form: rest.join(' | ').split('\\|').join('|')};
   });
   const expected = [
-    ...TOOL_ACTIONS.map(h => ['action', h]),
+    ...Object.keys(ACTION_CONTRACTS).map(h => ['action', h]),
     ...recordSchemas().flatMap(schema => schema.phased
       ? schema.phases.map(phase => ['record', `${schema.kind} (${phase.phase})`])
       : [['record', schema.kind]]),
-    ...['session init', 'session reactivate', 'session quota-reprobe'].map(h => ['session', h]),
+    ...Object.keys(SESSION_CONTRACTS).map(action => ['session', 'session ' + action]),
   ];
   assert.deepEqual(parsed.map(r => [r.type, r.heading]).sort(), expected.sort());
   const firstSpan = (text: string) => /`([^`]+)`/.exec(text)?.[1] ?? '-';

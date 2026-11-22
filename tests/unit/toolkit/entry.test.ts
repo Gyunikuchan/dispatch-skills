@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { main as toolkitMain, TOOL_ACTIONS } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { CALL_TABLE_MAX_BYTES, renderCallTable } from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
+import { CALL_TABLE_MAX_BYTES, SESSION_CONTRACTS, renderCallTable, stripGeneratedMarkers } from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
 import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -172,7 +172,7 @@ test('disabled diagnostics add neither lifecycle collection requests nor capture
 });
 
 // SECTION: help command and session refusal pointer
-const toolkitText = fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8').replace(/\r\n/g, '\n');
+const toolkitText = stripGeneratedMarkers(fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8')).replace(/\r\n/g, '\n');
 const sectionOf = (heading: string) => {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(`^(#{2,3}) ${escaped}$`, 'm').exec(toolkitText);
@@ -188,10 +188,11 @@ test('help prints exactly one section for each action, record kind, session comm
   try {
     const headings = [...toolkitText.matchAll(/^### (.+)$/gm)].map((m) => m[1]!);
     assert.ok(headings.length >= 43);
-    for (const heading of [...TOOL_ACTIONS, ...KINDS, 'session init', 'session reactivate', 'session quota-reprobe', 'call table']) {
+    for (const heading of [...TOOL_ACTIONS, ...KINDS, ...Object.keys(SESSION_CONTRACTS).map(action => 'session ' + action), 'call table']) {
       f.lines.length = 0;
       assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, heading);
       assert.equal(f.lines.length, 1);
+      assert.doesNotMatch(f.lines[0]!, /<!-- (?:END )?GENERATED:/);
       assert.equal(f.lines[0], heading === 'call table' ? renderCallTable() : sectionOf(heading), heading);
       if (heading === 'call table') assert.ok(Buffer.byteLength(f.lines[0]!, 'utf8') <= CALL_TABLE_MAX_BYTES);
     }
@@ -216,7 +217,7 @@ test('help prints each toolkit section linked from skill prose and nested subsec
       assert.equal(f.lines.length, 1);
       assert.equal(f.lines[0], sectionOf(heading), anchor);
       if (anchor === 'session-commands') {
-        for (const sub of ['### session init', '### session reactivate', '### session quota-reprobe']) {
+        for (const sub of Object.keys(SESSION_CONTRACTS).map(action => '### session ' + action)) {
           assert.ok(f.lines[0]!.includes(sub), sub);
         }
       }

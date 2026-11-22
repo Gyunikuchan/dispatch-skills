@@ -5,23 +5,23 @@ import { nodeLinkFs, renameRetrying } from '../lib/node-fs-ext.ts';
 import { atomic } from './fanout/state.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { artifactHash, artifactKind } from './artifacts.ts';
-import { confirmGate, foldLedger, latest, levelGate, withLedger, currentHashes, type Fold, type Hashes } from './ledger.ts';
+import { artifactKind } from './artifacts.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, type Fold, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
-import { parsePlan, selectTaskBrief, structuralLines, governedPlanText } from './domain/plan.ts';
-import { parseIncrementGraph, governedDesignText } from './domain/design.ts';
+import { parsePlan, structuralLines } from './domain/plan.ts';
+import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
-import { taskMarkdown } from './brief.ts';
-import type { InterRound, UserDecision } from './domain/prompt.ts';
-import { artifactSections, changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
-import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type RepositoryChange, type RepositoryCheckState, type ReviewTarget } from './findings.ts';
-import { git, gitOk, gitPaths } from './git.ts';
-import { captureCheckouts, compareCheckouts, type CheckoutBaselineFile } from './review-checkout.ts';
-import { launches } from './writers.ts';
+import type { InterRound } from './domain/prompt.ts';
+import { changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
+import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
+import { git, gitPaths } from './git.ts';
+import { CODE_TARGETS, captureReviewTarget, reviewerInputPath, specHashFor, writeReviewerInput, writeRoundSnapshots, type Capture } from './review-capture.ts';
+import { carryCheckoutBaseline, compareForRound, comparedDirsFor, writeBaselineIfMissing, writeCheckoutReport } from './review-checkout.ts';
+import { blockedNotice, blockedStateFor, hotUnitsNotice, userDecisions, type BlockedState } from './review-notices.ts';
 import { integrationRecord } from './integration.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
@@ -33,241 +33,18 @@ import { coverageState } from './coverage.ts';
 import { sanitizeText } from './domain/sanitize.ts';
 import { lintCitations } from './domain/citations.ts';
 import { repositoryReader } from './lint.ts';
-import type { BlockedAttempt } from './fanout.ts';
+
 import type { LedgerRecord } from './records.ts';
+import { launches } from './writers.ts';
 
-// NOTE: shared by every target rejection so the host can correct its target in one turn.
-const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
+export { generationLaunchedNative } from './review-checkout.ts';
 
-type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; specSource?: string; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
 type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
-// NOTE: fix-check reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
-function writeSpecSnapshot(file: string, text: string): void {
-  const temp = file + '.' + crypto.randomUUID() + '.tmp';
-  try {fs.writeFileSync(temp, text); renameRetrying(temp, file);}
-  catch {/* advisory evidence only */}
-  finally {try {fs.rmSync(temp, {force: true});} catch {/* advisory evidence only */}}
-}
 const same =(round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
 const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
 
-// Reviewer input holds governed plan/design text; code reviews read the working tree directly.
-const reviewerInputPath = (reviewDir: string, roundNumber: number): string => path.join(reviewDir, 'round-' + roundNumber + '.input.md');
-const governedInputFor = (reviewKind: ReviewKind, source: string): string => reviewKind === 'plan' ? governedPlanText(source) : governedDesignText(source);
-function writeReviewerInput(reviewDir: string, roundNumber: number, reviewKind: ReviewKind, source: string): void {
-  // A write failure refuses the round before any launch.
-  const file = reviewerInputPath(reviewDir, roundNumber);
-  try { fs.writeFileSync(file, governedInputFor(reviewKind, source)); }
-  catch (error) { throw new ToolError(2, 'review-failed', 'Cannot write reviewer input ' + file + ': ' + (error instanceof Error ? error.message : String(error))); }
-}
-
-// Compared directories are the round cwd, the repository root and, for a task
-// review, the launch worktree path resolved against the session, without duplicates.
-function comparedDirs(session: string, repositoryRoot: string, cwd: string, taskWorktree?: string): string[] {
-  const dirs = [path.resolve(cwd), path.resolve(repositoryRoot)];
-  if (taskWorktree) dirs.push(path.resolve(session, taskWorktree));
-  return [...new Set(dirs)];
-}
-
-function baselineFileFor(dir: string, generation: number): string {
-  return path.join(dir, 'gen-' + generation, 'checkout-baseline.json');
-}
-
-function checkoutReportFileFor(dir: string, generation: number): string {
-  return path.join(dir, 'gen-' + generation, 'checkout-report.json');
-}
-
-// Retries never overwrite an unacknowledged report: the first write of a
-// generation lands in checkout-report.json and every later write in the next
-// free checkout-report-<k>.json, so a restored path or a clean comparison
-// cannot erase an earlier report before a closing note exists.
-function checkoutReportAttemptFor(dir: string, generation: number): string {
-  const canonical = checkoutReportFileFor(dir, generation);
-  if (!fs.existsSync(canonical)) return canonical;
-  let attempt = 2;
-  while (fs.existsSync(path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json'))) attempt++;
-  return path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json');
-}
-
-function writeCheckoutReport(dir: string, generation: number, checkout: {repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState; asOfSeq?: number}): void {
-  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
-  atomic(checkoutReportAttemptFor(dir, generation), checkout);
-}
-
-// Durable per-generation evidence that a native voice launched, covering
-// every native descriptor (native-first, native-only, reserve substitutes).
-// fanout.json carries it; only nativeFirst selects the wave path.
-export function generationLaunchedNative(dir: string, generation: number): boolean {
-  try {
-    const fanout = JSON.parse(fs.readFileSync(path.join(dir, 'gen-' + generation, 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
-    return fanout.nativeFirst === true || fanout.nativeLaunched === true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
-  }
-}
-
-function taskWorktreeOf(session: string, task: string): string | undefined {
-  try {
-    const fold = foldLedger(session);
-    const launch = launches(fold, task).findLast(launch => launch.finished);
-    return launch?.finished ? launch.record.data['path'] as string : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function comparedDirsFor(
-  session: string,
-  repositoryRoot: string,
-  cwd: string,
-  taskTarget: boolean,
-  requested: string,
-): { dirs: string[]; absentWorktree: boolean } {
-  const worktree = taskTarget ? taskWorktreeOf(session, requested) : undefined;
-  const dirs = comparedDirs(session, repositoryRoot, cwd, worktree);
-  const absentWorktree = !!worktree && !fs.existsSync(path.resolve(session, worktree));
-  return { dirs, absentWorktree };
-}
-
-async function writeBaselineIfMissing(
-  dir: string,
-  generation: number,
-  dirs: readonly string[],
-  sessionDir: string,
-  deps: import('./cli.ts').CliDeps,
-): Promise<void> {
-  const file = baselineFileFor(dir, generation);
-  if (fs.existsSync(file)) return;
-  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
-  try {
-    const baseline = await captureCheckouts(deps, dirs, sessionDir);
-    atomic(file, baseline);
-  } catch (error) {
-    atomic(file, {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)});
-  }
-}
-
-async function compareForRound(
-  dir: string,
-  generation: number,
-  dirs: readonly string[],
-  sessionDir: string,
-  absentWorktree: boolean,
-  deps: import('./cli.ts').CliDeps,
-): Promise<{ repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState }> {
-  // A round with no native voice runs no check: no baseline file means no Git
-  // commands without a launch flag. A missing baseline after a native launch
-  // means the capture was lost; an unreadable or malformed one cannot be
-  // trusted. Both report unavailable instead of silently skipping or failing
-  // recovery, so the round keeps its replies.
-  const file = baselineFileFor(dir, generation);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline unreadable: ' + (error instanceof Error ? error.message : String(error))}};
-    }
-    if (!generationLaunchedNative(dir, generation)) return {};
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline missing after native launch'}};
-  }
-  let baseline: CheckoutBaselineFile;
-  try {
-    baseline = JSON.parse(raw) as CheckoutBaselineFile;
-  } catch (error) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: ' + (error instanceof Error ? error.message : String(error))}};
-  }
-  // A corrupted baseline (JSON null or another non-object, or an object
-  // without checkouts) cannot be compared; report unavailable instead of
-  // throwing past the recovery contract.
-  if (baseline === null || typeof baseline !== 'object' || Array.isArray(baseline)) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkout baseline object'}};
-  }
-  if ((baseline as {state?: string}).state === 'unavailable') {
-    return {repositoryCheck: {state: 'unavailable', reason: (baseline as {reason?: string}).reason ?? 'checkout capture failed'}};
-  }
-  if (!Array.isArray((baseline as {checkouts?: unknown}).checkouts)) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkouts array'}};
-  }
-  if (absentWorktree) return {repositoryCheck: {state: 'unavailable', reason: 'Absent task worktree'}};
-  try {
-    return await compareCheckouts(deps, baseline, dirs, sessionDir);
-  } catch (error) {
-    return {repositoryCheck: {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)}};
-  }
-}
-
-// SECTION: Blocked attempts
-type BlockedEntry = {slot: string} & BlockedAttempt;
-type BlockerEntry = {slot: string; reason: string; rounds: [number, number]};
-type BlockedState = {blocked: BlockedEntry[]; blockers: BlockerEntry[]};
-const BLOCKED_NOTICE_BYTES = 400; // Leaves the summary room for counts and at least one finding.
-
-/** Blocked attempts of one round, read from its current generation so a resumed pending run keeps them. */
-function blockedEntries(directory: string, number: number): BlockedEntry[] {
-  const root = path.join(directory, 'round-' + number), metadata = read<Round>(path.join(root, 'round.json'));
-  if (!metadata) return [];
-  const slots = path.join(root, 'gen-' + metadata.generation, 'slots');
-  return metadata.roster.flatMap(slot => (read<SlotOutcome>(path.join(slots, slot.slot + '.json'))?.blocked ?? []).map(entry => ({slot: slot.slot, ...entry})));
-}
-
-/** Same slot and reason identity in the nearest earlier round that has findings; a narrowed slot has no partner. */
-function blockersFor(directory: string, number: number, blocked: readonly BlockedEntry[]): BlockerEntry[] {
-  const previous = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).filter(candidate => candidate < number && fs.existsSync(path.join(directory, 'round-' + candidate, 'findings.json'))).sort((left, right) => right - left)[0];
-  if (previous === undefined) return [];
-  const prior = new Set(blockedEntries(directory, previous).map(entry => entry.slot + '\0' + entry.reasonHash)), seen = new Set<string>(), blockers: BlockerEntry[] = [];
-  for (const entry of blocked) {
-    const key = entry.slot + '\0' + entry.reasonHash;
-    if (!prior.has(key) || seen.has(key)) continue;
-    seen.add(key);
-    blockers.push({slot: entry.slot, reason: entry.reason, rounds: [previous, number]});
-  }
-  return blockers;
-}
-
-/** Blockers first, then blocked attempts, within the summary budget; the result keeps every entry. */
-function blockedNotice(blocked: readonly BlockedEntry[], blockers: readonly BlockerEntry[]): string {
-  const items = [...blockers.map(entry => `orchestrator blocker ${entry.slot}: ${entry.reason} (rounds ${entry.rounds[0]}-${entry.rounds[1]})`), ...blocked.map(entry => `blocked ${entry.slot}: ${entry.reason}`)];
-  const reserve = Buffer.byteLength(`; +${items.length} more blocked`, 'utf8'), shown: string[] = [];
-  let bytes = 0;
-  for (const item of items) {
-    const text = clipBytes(item, 160), size = Buffer.byteLength(text, 'utf8') + 2;
-    if (shown.length && bytes + size + reserve > BLOCKED_NOTICE_BYTES) break;
-    shown.push(text); bytes += size;
-  }
-  const omitted = items.length - shown.length;
-  return shown.join('; ') + (omitted ? `; +${omitted} more blocked` : '');
-}
-// NOTE: names take only the bytes the rest of the head leaves; the count and pointer stay even when the suffixes overflow, so the CLI cap cuts the suffixes first.
-function hotUnitsNotice(units: readonly {unit: string; hot: boolean; hotStreak: number; delta?: number}[], restBytes: number): string {
-  const hot = units.filter(unit => unit.hot);
-  if (!hot.length) return '';
-  const names = hot.map(unit => clipBytes(unit.unit, 40) + ' ×' + unit.hotStreak + (unit.delta === undefined ? '' : ' ' + (unit.delta < 0 ? '-' : '+') + Math.abs(unit.delta) + ' B'));
-  const text = (shown: number) => `; ${hot.length} hot unit${hot.length === 1 ? '' : 's'}: ` + names.slice(0, shown).join(', ') + (shown === names.length ? '' : `${shown ? ', ' : ''}+${names.length - shown} more in findings.json units`);
-  let shown = names.length;
-  while (shown > 0 && Buffer.byteLength(text(shown), 'utf8') > 1024 - restBytes) shown--;
-  return text(shown);
-}
-// Ids are `<kind>:<review>:<tail>`; only a later open record of the same id reopens a decision, so tool resolutions neither list nor remove one.
-function userDecisions(records: readonly LedgerRecord[], review: string, startSeq: number): UserDecision[] {
-  const ofReview = records.filter(row => row.kind === 'escalation' && row.seq <= startSeq && String(row.data['id']).split(':')[1] === review);
-  return [...new Set(ofReview.map(row => String(row.data['id'])))].flatMap(id => {
-    const rows = ofReview.filter(row => String(row.data['id']) === id);
-    const decision = rows.findLast(row => row.by === 'user' && row.data['state'] === 'resolved' && !!row.quote?.trim());
-    if (!decision || rows.some(row => row.seq > decision.seq && row.data['state'] === 'open')) return [];
-    return [{id, summary: String(decision.data['summary']), quote: decision.quote!}];
-  });
-}
-// NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
-function specHashFor(root: string, input: string): string {
-  const specPath = path.resolve(root, input);
-  let text: string;
-  try {text = fs.readFileSync(fs.realpathSync.native(specPath), 'utf8');}
-  catch {throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);}
-  return artifactHash('spec', text);
-}
 // SECTION: Turn targets
 // NOTE: a plan that fails lint has no parsed file entries, so its target counts zero paths; the review still reports its defects.
 const planPaths = (source: string) => {const parsed = parsePlan(source); return parsed.ok ? parsed.plan.changes.map(change => change.path) : [];};
@@ -357,83 +134,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const directory = path.join(session, '.state/reviews', review);
   fs.mkdirSync(directory, {recursive: true});
 
-  async function capture(): Promise<Capture> {
-    const current = foldLedger(session), bind = latest(current, 'bind');
-    const specInput = ctx.values['spec'] ?? bind?.data['spec'];
-    if (typeof specInput !== 'string') throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
-    let specPath = path.resolve(manifest.repositoryRoot, specInput);
-    let specText: string;
-    try {specPath = fs.realpathSync.native(specPath); specText = fs.readFileSync(specPath, 'utf8');}
-    catch {throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);}
-    const spec = {path: specPath, hash: artifactHash('spec', specText)};
-    const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
-    if (kind !== 'code') {
-      const source = fs.readFileSync(artifact, 'utf8');
-      return {artifactPath:fs.realpathSync.native(artifact),spec, specSource: specText, target: artifactHash(kind, source), source, taskSummary: intent, cwd: manifest.repositoryRoot, changed: []};
-    }
-    let base: string, head: string, cwd = manifest.repositoryRoot, summary: string;
-    const revision = async (ref: string) => {
-      const result = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
-      if (result.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref + '; ' + CODE_TARGETS);
-      return result.stdout.trim();
-    };
-    if (requested === 'integration') {
-      if (!bind?.data['plan']) throw new ToolError(4, 'lint-errors', 'Review of integration needs a bound plan');
-      const integration = integrationRecord(current);
-      if (!integration || !current.records.some(row=>row.kind==='integrate'&&row.data['phase']==='done')) throw new ToolError(4, 'nothing-to-review', 'No task has been integrated');
-      cwd = path.resolve(session, integration.data['path']);
-      base = integration.data['base']; head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
-      const tasks = [...new Set(current.records.filter(row => row.kind === 'integrate' && row.data['phase'] === 'done').map(row => row.data['task']))];
-      summary = 'Integrated tasks: ' + tasks.join(', ');
-    } else if (taskTarget) {
-      if (!bind?.data['plan']) throw new ToolError(4, 'lint-errors', 'Review of a task needs a bound plan');
-      const launch = launches(current, requested).findLast(launch => launch.finished);
-      if (!launch?.finished) throw new ToolError(1, 'invalid-input', 'No finished launch for ' + requested);
-      base = launch.record.data['base'].commit; head = launch.finished.data['candidate'];
-      const planText = fs.readFileSync(path.resolve(manifest.repositoryRoot, bind!.data['plan']), 'utf8');
-      const plan = parsePlan(planText);
-      if (!plan.ok) throw new ToolError(4, 'lint-errors', JSON.stringify(plan.defects));
-      const brief = selectTaskBrief(plan.plan, requested);
-      if (!brief) throw new ToolError(1, 'invalid-input', 'Unknown task ' + requested);
-      summary = taskMarkdown(planText, brief);
-    } else {
-      if (requested === 'worktree') {
-        base = await revision('HEAD');
-        const relative = path.relative(fs.realpathSync(cwd), fs.realpathSync(session)).split(path.sep).join('/');
-        const inside = relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative);
-        const directory = path.join(session, '.state/tmp');
-        fs.mkdirSync(directory, {recursive: true});
-        const index = path.join(directory, crypto.randomUUID() + '.index');
-        const env = {GIT_INDEX_FILE: index};
-        try {
-          await gitOk(deps, cwd, ['read-tree', base], env);
-          if (!inside || relative) await gitOk(deps, cwd, ['add', '-A', '--', '.'], env);
-          // NOTE: an exclude pathspec makes git add exit 1 when it names an ignored path, so reset the session to HEAD after add.
-          if (inside && relative) await gitOk(deps, cwd, ['reset', '-q', base, '--', ':(top,literal)' + relative], env);
-          const tree = await gitOk(deps, cwd, ['write-tree'], env);
-          head = await gitOk(deps, cwd, ['commit-tree', tree, '-p', base, '-m', 'dispatch review snapshot'], {
-            GIT_AUTHOR_NAME: 'Dispatch Review', GIT_COMMITTER_NAME: 'Dispatch Review',
-            GIT_AUTHOR_EMAIL: 'dispatch-review@localhost', GIT_COMMITTER_EMAIL: 'dispatch-review@localhost',
-            GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z',
-          });
-        } finally {fs.rmSync(index, {force: true}); fs.rmSync(index + '.lock', {force: true});}
-      } else if (requested.includes('..')) {
-        if (requested.includes('...')) throw new ToolError(1, 'invalid-input', 'Three-dot revision ranges are not supported; use a..b');
-        const parts = requested.split('..');
-        if (parts.length !== 2 || !parts[0] || !parts[1]) throw new ToolError(1, 'invalid-input', 'Expected a..b revision range');
-        base = await revision(parts[0]); head = await revision(parts[1]);
-      } else {
-        const ref = await revision(requested); head = await revision('HEAD');
-        const result = await git(deps, cwd, ['merge-base', ref, head]);
-        if (result.exit) throw new ToolError(1, 'invalid-input', 'Revision ' + requested + ' has no common ancestor with HEAD');
-        base = result.stdout.trim();
-      }
-      summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
-    }
-    const changed = await gitPaths(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]);
-    if (!changed.length) throw new ToolError(4, 'nothing-to-review', `No changes between ${base.slice(0, 12)}..${head.slice(0, 12)}`);
-    return {...(!gitTarget && bind ? {artifacts:{...currentHashes(manifest.repositoryRoot,bind),spec:spec.hash}} : {}),spec, target: {base, head}, taskSummary: intent + '\n\n' + summary, cwd, changed};
-  }
+  const capture = () => captureReviewTarget(ctx, kind, artifact, requested, taskTarget, gitTarget);
 
   // Coverage applies to the integration review alone; every admission caller passes the same predicate.
   const applies = review === 'code-integration' ? applicableReviewIds(manifest, fold).get(review) : undefined;
@@ -441,10 +142,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const {budget: admitted, rounds} = admission(session, foldLedger(session), review, cap, applies), n = admitted.nextRound, cap1 = admitted.cap;
     // Computed once after the slots exist: every return path reports the same blocked state.
     let blockedState: BlockedState | undefined;
-    const blockedStateOf = (): BlockedState => blockedState ??= (() => {
-      const blocked = blockedEntries(directory, n);
-      return {blocked, blockers: blockersFor(directory, n, blocked)};
-    })();
+    const blockedStateOf = (): BlockedState => blockedState ??= blockedStateFor(directory, n);
     const publicBlocked = () => blockedStateOf().blocked.map(({slot, provider, model, reason}) => ({slot, provider, model, reason}));
     // The corrected severity of a finding, from every ruling recorded for it.
     const effective = (finding: Finding, rows: readonly LedgerRecord[]) => effectiveSeverity(finding, rows.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id));
@@ -629,8 +327,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) writeReviewerInput(directory, n, kind, captured.source);
       if (n > 1) value.interRound = {diff: await interRoundDiff(captured, confirmationOnlyRound), accepted: acceptedSinceReview()};
       fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
-      if (captured.source !== undefined) fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
-      if ((kind === 'plan' || kind === 'design') && captured.specSource !== undefined) writeSpecSnapshot(path.join(dir, 'spec.snapshot.md'), captured.specSource);
+      writeRoundSnapshots(dir, kind, captured);
       atomic(roundFile, value);
       return value;
     }
@@ -658,60 +355,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         });
         fs.rmSync(pendingFile, {force: true});
       }
-      // Carry the baseline before publishing the new generation, so a crash
-      // cannot lose a change made before target movement. The copy publishes
-      // atomically (temp + rename, never the final path directly), and an
-      // existing destination is only kept when it parses. A predecessor that
-      // wrote no baseline and launched no native voice leaves the next
-      // generation without one, so a CLI-only superseded round runs no check;
-      // only a source that exists but cannot be read or copied becomes a
-      // durable unavailable marker. A launched predecessor with a missing
-      // baseline lost its required capture and carries unavailable instead.
-      const previousBaseline = baselineFileFor(dir, previousGeneration);
-      const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
-      try {
-        fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
-        const nextValid = (() => {
-          try {
-            JSON.parse(fs.readFileSync(nextBaseline, 'utf8'));
-            return true;
-          } catch {
-            return false;
-          }
-        })();
-        if (!nextValid) {
-          let previousRaw: string | undefined;
-          try {
-            previousRaw = fs.readFileSync(previousBaseline, 'utf8');
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-              // Absent predecessor baseline with no launched native voice:
-              // no native voice ran there. A launched predecessor lost its
-              // required capture, so the next generation carries an
-              // unavailable marker instead of a fresh capture.
-              if (generationLaunchedNative(dir, previousGeneration)) {
-                atomic(nextBaseline, {state: 'unavailable', reason: 'checkout baseline missing after native launch in generation ' + previousGeneration});
-              }
-            } else {
-              atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
-            }
-          }
-          if (previousRaw !== undefined) {
-            try {
-              atomic(nextBaseline, JSON.parse(previousRaw) as CheckoutBaselineFile);
-            } catch (error) {
-              atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
-            }
-          }
-        }
-      } catch (error) {
-        try {
-          fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
-          if (!fs.existsSync(nextBaseline)) atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
-        } catch {
-          // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.
-        }
-      }
+      carryCheckoutBaseline(dir, previousGeneration);
       round = await start(previousGeneration + 1, captured);
       // A change made before target movement reaches a later compare: a carried
       // baseline also lists the target's own change, which the orchestrator explains.

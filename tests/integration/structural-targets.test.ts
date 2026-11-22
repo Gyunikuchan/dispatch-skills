@@ -16,8 +16,8 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 20088 covers bounded live probes, including OpenCode stdout overflow detection, and human-first walkthrough rendering.
-  const driverLocBudget = 20088;
+  // NOTE: 20213 measures the driver after splitting diagnostics, plan parsing and review and sharing contract rendering.
+  const driverLocBudget = 20213;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
@@ -32,6 +32,44 @@ test('toolkit stays within the structural size budgets', () => {
     bytes <= 10100,
     `SKILL.md bytes ${bytes} exceeds 10100 budget. Move branch-specific detail to references first; a genuine rule that every branch needs may raise the budget with the reason recorded beside it and reported in the handoff, per AGENTS.md Documentation Standards; duplicates never justify a raise.`
   );
+});
+
+test('toolkit split modules own declarations behind bounded entry files', () => {
+  const readModule = (file: string) => fs.readFileSync(path.join(root, 'skills/dispatch/scripts/toolkit', file), 'utf8');
+  const declaration = /^(?:export\s+)?(?:async\s+)?(?:function|const|let|var|type|interface|class|enum)\s+\w+/m;
+  for (const file of [
+    'domain/diagnostics-types.ts', 'domain/diagnostics-gates.ts', 'domain/diagnostics-heuristics.ts', 'domain/diagnostics-render.ts',
+    'domain/plan-lint.ts', 'domain/plan-parse.ts', 'domain/plan-graph.ts',
+    'review-capture.ts', 'review-notices.ts',
+  ]) {
+    assert.match(readModule(file), declaration, `${file} owns an implementation or declaration`);
+  }
+
+  // These entry files expose named re-exports from their siblings.
+  const reExports = /^\s*(?:export\s+(?:type\s+)?\{[^{}]+\}\s+from\s+['"]\.\/[^/'"]+\.ts['"];\s*)+$/;
+  const lineCount = (source: string) => source.split('\n').length - Number(source.endsWith('\n'));
+  for (const file of ['domain/plan.ts', 'domain/diagnostics.ts']) {
+    const source = readModule(file);
+    assert.ok(lineCount(source) <= 60, `${file} exceeds 60 lines`);
+    assert.match(source.replace(/^\s*\/\/[^\r\n]*/gm, ''), reExports, `${file} contains only sibling re-exports`);
+  }
+
+  const review = readModule('review.ts');
+  // NOTE: 590 lines retain the ordered admission, generation, fan-out and finalization lifecycle.
+  assert.ok(lineCount(review) <= 590, 'review.ts exceeds 590 lines');
+  const reviewOwners = {
+    'review-capture.ts': ['writeSpecSnapshot', 'writeReviewerInput'],
+    'review-notices.ts': ['blockedEntries', 'blockersFor', 'blockedNotice', 'hotUnitsNotice'],
+    'review-checkout.ts': ['comparedDirs', 'baselineFileFor', 'writeCheckoutReport', 'writeBaselineIfMissing', 'compareForRound'],
+  };
+  for (const [file, names] of Object.entries(reviewOwners)) {
+    const owner = readModule(file);
+    for (const name of names) {
+      const declares = new RegExp(`^[ \\t]*(?:export\\s+)?(?:async\\s+)?(?:function|const|let|var)\\s+${name}\\b`, 'm');
+      assert.match(owner, declares, `${file} declares ${name}`);
+      assert.doesNotMatch(review, declares, `review.ts delegates ${name} to ${file}`);
+    }
+  }
 });
 
 const STEP_BUDGET = 37067;

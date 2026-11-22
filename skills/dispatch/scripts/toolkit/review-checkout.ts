@@ -2,17 +2,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CliDeps } from './cli.ts';
+import type { RepositoryChange, RepositoryCheckState } from './findings.ts';
+import { atomic } from './fanout/state.ts';
 import { git, splitPaths } from './git.ts';
+import { foldLedger } from './ledger.ts';
+import { launches } from './writers.ts';
 
-export type RepositoryChange = { cwd: string; paths: string[] };
-type RepositoryCheck = { state: 'unavailable'; reason: string };
 type CheckoutEntryMap = Record<string, string>;
 type CheckoutState = { cwd: string; head: string; entries: CheckoutEntryMap };
 type CheckoutBaseline = { checkouts: CheckoutState[] };
 export type CheckoutBaselineFile = CheckoutBaseline | { state: 'unavailable'; reason: string };
-type CheckoutReport = { repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheck; asOfSeq?: number };
+type CheckoutReport = { repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState; asOfSeq?: number };
 
-const UNAVAILABLE = (reason: string): RepositoryCheck => ({ state: 'unavailable', reason });
+const UNAVAILABLE = (reason: string): RepositoryCheckState => ({ state: 'unavailable', reason });
 
 // Fingerprints stream file contents in bounded chunks: the plan requires an
 // uncapped content hash, but the read itself stays proportional to the chunk,
@@ -246,4 +248,197 @@ export async function compareCheckouts(
   if (!repositoryChanges.length) return {};
   repositoryChanges.sort((left, right) => (left.cwd < right.cwd ? -1 : left.cwd > right.cwd ? 1 : 0));
   return { repositoryChanges };
+}
+
+// Compared directories are the round cwd, the repository root and, for a task
+// review, the launch worktree path resolved against the session, without duplicates.
+function comparedDirs(session: string, repositoryRoot: string, cwd: string, taskWorktree?: string): string[] {
+  const dirs = [path.resolve(cwd), path.resolve(repositoryRoot)];
+  if (taskWorktree) dirs.push(path.resolve(session, taskWorktree));
+  return [...new Set(dirs)];
+}
+
+function baselineFileFor(dir: string, generation: number): string {
+  return path.join(dir, 'gen-' + generation, 'checkout-baseline.json');
+}
+
+function checkoutReportFileFor(dir: string, generation: number): string {
+  return path.join(dir, 'gen-' + generation, 'checkout-report.json');
+}
+
+// Retries never overwrite an unacknowledged report: the first write of a
+// generation lands in checkout-report.json and every later write in the next
+// free checkout-report-<k>.json, so a restored path or a clean comparison
+// cannot erase an earlier report before a closing note exists.
+function checkoutReportAttemptFor(dir: string, generation: number): string {
+  const canonical = checkoutReportFileFor(dir, generation);
+  if (!fs.existsSync(canonical)) return canonical;
+  let attempt = 2;
+  while (fs.existsSync(path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json'))) attempt++;
+  return path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json');
+}
+
+export function writeCheckoutReport(dir: string, generation: number, checkout: CheckoutReport): void {
+  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  atomic(checkoutReportAttemptFor(dir, generation), checkout);
+}
+
+// Durable per-generation evidence that a native voice launched, covering
+// every native descriptor (native-first, native-only, reserve substitutes).
+// fanout.json carries it; only nativeFirst selects the wave path.
+export function generationLaunchedNative(dir: string, generation: number): boolean {
+  try {
+    const fanout = JSON.parse(fs.readFileSync(path.join(dir, 'gen-' + generation, 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
+    return fanout.nativeFirst === true || fanout.nativeLaunched === true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
+function taskWorktreeOf(session: string, task: string): string | undefined {
+  try {
+    const fold = foldLedger(session);
+    const launch = launches(fold, task).findLast(launch => launch.finished);
+    return launch?.finished ? launch.record.data['path'] as string : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function comparedDirsFor(
+  session: string,
+  repositoryRoot: string,
+  cwd: string,
+  taskTarget: boolean,
+  requested: string,
+): { dirs: string[]; absentWorktree: boolean } {
+  const worktree = taskTarget ? taskWorktreeOf(session, requested) : undefined;
+  const dirs = comparedDirs(session, repositoryRoot, cwd, worktree);
+  const absentWorktree = !!worktree && !fs.existsSync(path.resolve(session, worktree));
+  return { dirs, absentWorktree };
+}
+
+export async function writeBaselineIfMissing(
+  dir: string,
+  generation: number,
+  dirs: readonly string[],
+  sessionDir: string,
+  deps: CliDeps,
+): Promise<void> {
+  const file = baselineFileFor(dir, generation);
+  if (fs.existsSync(file)) return;
+  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  try {
+    const baseline = await captureCheckouts(deps, dirs, sessionDir);
+    atomic(file, baseline);
+  } catch (error) {
+    atomic(file, {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)});
+  }
+}
+
+export async function compareForRound(
+  dir: string,
+  generation: number,
+  dirs: readonly string[],
+  sessionDir: string,
+  absentWorktree: boolean,
+  deps: CliDeps,
+): Promise<CheckoutReport> {
+  // A round with no native voice runs no check: no baseline file means no Git
+  // commands without a launch flag. A missing baseline after a native launch
+  // means the capture was lost; an unreadable or malformed one cannot be
+  // trusted. Both report unavailable instead of silently skipping or failing
+  // recovery, so the round keeps its replies.
+  const file = baselineFileFor(dir, generation);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline unreadable: ' + (error instanceof Error ? error.message : String(error))}};
+    }
+    if (!generationLaunchedNative(dir, generation)) return {};
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline missing after native launch'}};
+  }
+  let baseline: CheckoutBaselineFile;
+  try {
+    baseline = JSON.parse(raw) as CheckoutBaselineFile;
+  } catch (error) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: ' + (error instanceof Error ? error.message : String(error))}};
+  }
+  // A corrupted baseline (JSON null or another non-object, or an object
+  // without checkouts) cannot be compared; report unavailable instead of
+  // throwing past the recovery contract.
+  if (baseline === null || typeof baseline !== 'object' || Array.isArray(baseline)) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkout baseline object'}};
+  }
+  if ((baseline as {state?: string}).state === 'unavailable') {
+    return {repositoryCheck: {state: 'unavailable', reason: (baseline as {reason?: string}).reason ?? 'checkout capture failed'}};
+  }
+  if (!Array.isArray((baseline as {checkouts?: unknown}).checkouts)) {
+    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkouts array'}};
+  }
+  if (absentWorktree) return {repositoryCheck: {state: 'unavailable', reason: 'Absent task worktree'}};
+  try {
+    return await compareCheckouts(deps, baseline, dirs, sessionDir);
+  } catch (error) {
+    return {repositoryCheck: {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)}};
+  }
+}
+
+export function carryCheckoutBaseline(dir: string, previousGeneration: number): void {
+  // Carry the baseline before publishing the new generation, so a crash
+  // cannot lose a change made before target movement. The copy publishes
+  // atomically (temp + rename, never the final path directly), and an
+  // existing destination is only kept when it parses. A predecessor that
+  // wrote no baseline and launched no native voice leaves the next
+  // generation without one, so a CLI-only superseded round runs no check;
+  // only a source that exists but cannot be read or copied becomes a
+  // durable unavailable marker. A launched predecessor with a missing
+  // baseline lost its required capture and carries unavailable instead.
+  const previousBaseline = baselineFileFor(dir, previousGeneration);
+  const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
+  try {
+    fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+    const nextValid = (() => {
+      try {
+        JSON.parse(fs.readFileSync(nextBaseline, 'utf8'));
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (!nextValid) {
+      let previousRaw: string | undefined;
+      try {
+        previousRaw = fs.readFileSync(previousBaseline, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          // Absent predecessor baseline with no launched native voice:
+          // no native voice ran there. A launched predecessor lost its
+          // required capture, so the next generation carries an
+          // unavailable marker instead of a fresh capture.
+          if (generationLaunchedNative(dir, previousGeneration)) {
+            atomic(nextBaseline, {state: 'unavailable', reason: 'checkout baseline missing after native launch in generation ' + previousGeneration});
+          }
+        } else {
+          atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+        }
+      }
+      if (previousRaw !== undefined) {
+        try {
+          atomic(nextBaseline, JSON.parse(previousRaw) as CheckoutBaselineFile);
+        } catch (error) {
+          atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+        }
+      }
+    }
+  } catch (error) {
+    try {
+      fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+      if (!fs.existsSync(nextBaseline)) atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+    } catch {
+      // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.
+    }
+  }
 }

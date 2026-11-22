@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { KINDS } from '../../skills/dispatch/scripts/toolkit/records.ts';
 import {
-  BASELINE, MANIFEST, SKILL_LINKS, checkGrowth, formatReport, main, measure, slug,
+  BASELINE, MANIFEST, SKILL_LINKS, checkGrowth, formatReport, main, measure, normalizeSkillLink, slug, validatePathLinks,
   type Figures, type PathManifest, type PathName,
 } from '../../scripts/path-bytes.ts';
 
@@ -14,7 +14,7 @@ const skillDir = path.join(root, 'skills/dispatch');
 const readFile = (rel: string) => fs.readFileSync(path.join(skillDir, rel), 'utf8');
 const toolkit = readFile('references/toolkit.md');
 
-// SECTION: Guide link extraction (test-local; the production measure takes classes from the manifest)
+// SECTION: Guide link placement (the production measure takes classes from the manifest)
 
 type Occurrence = { target: string; stepText: string | null; sentence: string; clause: string; line: string };
 
@@ -31,13 +31,11 @@ function guideOccurrences(name: string, text = readFile(`references/verbs/${name
     for (const match of line.matchAll(/\.\s+/g)) { pieces.push({ start: from, end: match.index! + 1 }); from = match.index! + match[0].length; }
     pieces.push({ start: from, end: line.length });
     for (const match of line.matchAll(/\]\(([^)\s]+)\)/g)) {
-      const raw = match[1]!;
-      if (/^(https?:|mailto:|<)/.test(raw)) continue;
-      const [file, anchor] = raw.split('#');
-      const resolved = path.posix.normalize(path.posix.join('references/verbs', file!));
+      const target = normalizeSkillLink(`references/verbs/${name}.md`, match[1]!);
+      if (target === null) continue;
       const piece = pieces.find(candidate => match.index! >= candidate.start && match.index! < candidate.end)!;
       found.push({
-        target: resolved + (anchor ? `#${anchor}` : ''),
+        target,
         stepText,
         sentence: line.slice(piece.start, piece.end),
         clause: line.slice(Math.max(piece.start, line.lastIndexOf(';', match.index!) + 1), (() => { const end = line.indexOf(';', match.index!); return end < 0 ? piece.end : Math.min(end, piece.end); })()),
@@ -68,12 +66,30 @@ const GUIDES = ['ask', 'design', 'plan', 'implement', 'review', 'verify'] as con
 
 // SECTION: Manifest completeness and classes
 
-test('path manifests classify exactly the links of their guides', () => {
-  for (const name of GUIDES) {
-    const links = MANIFEST[name].links;
-    const found = new Set(guideOccurrences(name).map(item => item.target));
-    assert.deepEqual([...found].filter(target => !(target in links)).sort(), [], `${name} guide links missing from the manifest`);
-    assert.deepEqual(Object.keys(links).filter(target => !found.has(target)).sort(), [], `${name} manifest lists links the guide no longer has`);
+
+test('path link validation reports missing, stale and bad-anchor destinations for both declaration sources', () => {
+  assert.deepEqual(validatePathLinks(readFile), []);
+  const guide = MANIFEST.ask.guide;
+  const skill = 'SKILL.md';
+  const badAnchorSource = 'references/providers.md';
+  const originalAnchor = '## Native slots';
+  assert.ok(readFile(badAnchorSource).includes(originalAnchor));
+  const guideText = readFile(guide);
+  const skillText = readFile(skill);
+  const missing = 'references/absent.md';
+  const staleGuide = 'references/decision-frame.md';
+  const staleSkill = 'references/decision-frame.md';
+  const edited = new Map([
+    [guide, guideText.replaceAll('](../decision-frame.md)', '](../absent.md)')],
+    [skill, skillText.replaceAll('](' + staleSkill + ')', '](<references/./absent.md>)')],
+    [badAnchorSource, readFile(badAnchorSource).replace(originalAnchor, '## Renamed slots')],
+  ]);
+  const errors = validatePathLinks(file => edited.get(file) ?? readFile(file));
+  for (const [source, stale] of [[guide, staleGuide], [skill, staleSkill]] as const) {
+    assert.ok(errors.includes(`${source}: undeclared link ${missing}`), errors.join('\n'));
+    assert.ok(errors.includes(`${source}: stale declaration ${stale}`), errors.join('\n'));
+    assert.ok(errors.includes(`${source}: missing link file ${missing}`), errors.join('\n'));
+    assert.ok(errors.includes(`${source}: invalid link anchor references/providers.md#native-slots`), errors.join('\n'));
   }
 });
 
@@ -185,6 +201,8 @@ test('measure counts each section per call before and once per run after', () =>
   const doIt = sectionSize('do it', 20), append = sectionSize('ledger append', 30), kind = sectionSize('k', 40), table = sectionSize('call table', 10);
   const read = (rel: string) => files[rel] ?? assert.fail(`unexpected read ${rel}`);
 
+  files['references/toolkit.md'] = files['references/toolkit.md']!.replace('### do it\n' + 'x'.repeat(20),
+    '### do it\n<!-- GENERATED: action:do-it -->' + 'x'.repeat(20) + '<!-- END GENERATED: action:do-it -->');
   const before = measure(read, 'before', manifest).p;
   assert.equal(before.distinct, reads + doIt + append + kind);
   assert.equal(before.workload, reads + 3 * doIt + 2 * append + 2 * kind);
@@ -256,11 +274,7 @@ test('the report prints distinct, workload and editable bytes with reductions fo
   ].join('\n'));
 });
 
-test('SKILL_LINKS classifies exactly the relative links of SKILL.md', () => {
-  const found = new Set([...readFile('SKILL.md').matchAll(/\]\((references\/[^)]+)\)/g)].map(match => match[1]!));
-  assert.deepEqual([...found].filter(target => !(target in SKILL_LINKS)).sort(), []);
-  assert.deepEqual(Object.keys(SKILL_LINKS).filter(target => !found.has(target)).sort(), []);
-
+test('SKILL_LINKS flags count only normal-path reads', () => {
   const original = structuredClone(SKILL_LINKS);
   const fakeManifest = Object.fromEntries(GUIDES.map(name => [name, {
     guide: `fake/${name}`, links: {}, calls: [],
@@ -296,6 +310,10 @@ test('a read that SKILL.md mandates counts once on each path that makes it', () 
   const native = measure(grow('references/toolkit.md', '## Native-slot replies\n'), 'after');
   assert.equal(native.plan.workload - base.plan.workload, 10);
   assert.equal(native.implement.workload - base.implement.workload, 10);
+  const onDiskMarker = '<!-- GENERATED: direct-read -->\n';
+  const direct = measure(rel => rel === 'references/toolkit.md'
+    ? readFile(rel).replace('## Native-slot replies\n', '## Native-slot replies\n' + onDiskMarker) : readFile(rel), 'after');
+  assert.equal(direct.plan.workload - base.plan.workload, Buffer.byteLength(onDiskMarker));
   const cleanup = measure(grow('references/worktree-cleanup.md', '# '), 'after');
   assert.equal(cleanup.plan.workload - base.plan.workload, 0);
   assert.equal(cleanup.implement.workload - base.implement.workload, 10);

@@ -9,7 +9,7 @@ import { H } from './policy/quota.ts';
 import { normalizeProvider } from './policy/roster.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
 import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
-import { renderCallTable } from './toolkit/contracts.ts';
+import { renderCallTable, stripGeneratedMarkers } from './toolkit/contracts.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics.ts';
 
@@ -27,7 +27,7 @@ function printHelp(heading: string, deps: EntryDeps): number {
     return 0;
   }
   let lines: string[];
-  try { lines = fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8').split(/\r?\n/); }
+  try { lines = stripGeneratedMarkers(fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8')).split(/\r?\n/); }
   catch (error) { return fail(error instanceof Error ? error.message : String(error), 'fault', 2); }
   const start = key ? lines.findIndex((line) => line.toLowerCase() === '## ' + key || line.toLowerCase() === '### ' + key) : -1;
   if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => /^#{2,3} /.test(line)).map((line) => line.replace(/^#{2,3} /, '')).join(', '), 'usage', 1);

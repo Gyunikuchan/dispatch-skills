@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripGeneratedMarkers } from '../skills/dispatch/scripts/toolkit/contracts.ts';
 
 // SECTION: Types
 
@@ -216,6 +217,63 @@ export function sectionOf(text: string, anchor: string): string | null {
   return start < 0 ? null : lines.slice(start).join('\n').trimEnd();
 }
 
+
+/** Resolves a Markdown destination in the skill root, retaining its authored fragment. */
+export function normalizeSkillLink(source: string, target: string): string | null {
+  if (target.startsWith('<') && target.endsWith('>')) target = target.slice(1, -1);
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) return null;
+  const fragment = target.indexOf('#');
+  const file = fragment < 0 ? target : target.slice(0, fragment);
+  const resolved = file && !path.posix.isAbsolute(file) ? path.posix.join(path.posix.dirname(source), file) : file || source;
+  return resolved + (fragment < 0 ? '' : target.slice(fragment));
+}
+
+/** Compares authored relative destinations with the editorial declarations and verifies their targets. */
+export function validatePathLinks(read: Read): string[] {
+  const errors: string[] = [];
+  const contents = new Map<string, string | null>();
+  const readOnce = (file: string): string | null => {
+    if (!contents.has(file)) {
+      try { contents.set(file, read(file)); }
+      catch (error) {
+        if (!['ENOENT', 'ENOTDIR', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        contents.set(file, null);
+      }
+    }
+    return contents.get(file)!;
+  };
+  const sources: [string, string[]][] = [
+    ...Object.values(MANIFEST).map(({guide, links}): [string, string[]] => [guide, Object.keys(links)]),
+    ['SKILL.md', Object.keys(SKILL_LINKS)],
+  ];
+  for (const [source, declarations] of sources) {
+    const text = readOnce(source);
+    if (text === null) {
+      errors.push(`${source}: missing link source`);
+      continue;
+    }
+    const declared = new Set(declarations);
+    const found = new Set<string>();
+    for (const [, target] of text.matchAll(/\]\([ \t]*(<[^>\r\n]+>|[^)\s]+)(?:[ \t]+[^)\r\n]*)?\)/g)) {
+      const normalized = normalizeSkillLink(source, target!);
+      if (normalized !== null) found.add(normalized);
+    }
+    for (const target of found) if (!declared.has(target)) errors.push(`${source}: undeclared link ${target}`);
+    for (const target of declared) if (!found.has(target)) errors.push(`${source}: stale declaration ${target}`);
+    for (const target of new Set([...found, ...declared])) {
+      const [file, anchor] = target.split(/#(.*)/s) as [string, string | undefined];
+      if (file === '..' || file.startsWith('../') || file.includes('\\') || path.posix.isAbsolute(file)) {
+        errors.push(`${source}: link outside the skill ${target}`);
+        continue;
+      }
+      const body = readOnce(file);
+      if (body === null) errors.push(`${source}: missing link file ${target}`);
+      else if (anchor !== undefined && sectionOf(body, anchor) === null) errors.push(`${source}: invalid link anchor ${target}`);
+    }
+  }
+  return errors;
+}
+
 // NOTE: CRLF is normalized so Windows checkouts and Git blobs give the same figures.
 const bytes = (text: string) => Buffer.byteLength(text.replace(/\r\n/g, '\n'), 'utf8');
 const isFrozen = (file: string) => /(^|\/)(quality-bar|spec-stage)\.md$/.test(file);
@@ -250,8 +308,9 @@ function pathReads(spec: PathManifest, name: string): ReadItem[] {
 
 export function measure<K extends string = PathName>(read: Read, model: Model, manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>): Record<K, Figures> {
   const toolkit = read(TOOLKIT);
+  const help = stripGeneratedMarkers(toolkit);
   const section = (heading: string) => {
-    const text = sectionOf(toolkit, slug(heading));
+    const text = sectionOf(help, slug(heading));
     if (text === null) throw new Error(`toolkit.md has no section "${heading}"`);
     return bytes(text);
   };

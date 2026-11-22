@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {describe,test} from 'node:test';
+import {stripGeneratedMarkers} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
 import {toolkitRepo,planSource} from './helpers/toolkit-repo.ts';
 
 describe('summary byte cap',()=>{
@@ -43,9 +44,10 @@ describe('help command',()=>{
     const env={...process.env}; for(const key of ['NODE_OPTIONS','NODE_TEST_CONTEXT']) delete env[key];
     try {
       const ok=spawnSync(process.execPath,[entry,'help','lint','run'],{cwd:dir,env,encoding:'utf8'});
-      const text=fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'),'utf8');
+      const text=stripGeneratedMarkers(fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'),'utf8')).replace(/\r\n/g,'\n');
       const expected=('### lint run\n'+text.split('\n### lint run\n')[1]!.split(/\n#{1,3} /)[0]!).trimEnd()+'\n';
       assert.equal(ok.status,0,ok.stderr); assert.equal(ok.stdout,expected);
+      assert.doesNotMatch(ok.stdout,/<!-- (?:END )?GENERATED:/);
       assert.deepEqual(fs.readdirSync(dir),[]);
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   });

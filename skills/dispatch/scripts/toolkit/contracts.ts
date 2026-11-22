@@ -76,3 +76,11 @@ export function renderCallTable(): string {
   }
   return ['### call table', '', ...CALL_TABLE_INTRO.flatMap((line) => [line, '']), ...rows].join('\n').trimEnd() + '\n';
 }
+
+export const GENERATED_MARKER = /<!-- (END )?GENERATED: ([^\s<>]+) -->/g;
+const HELP_MARKER = new RegExp(`^${GENERATED_MARKER.source}(?:\\r?\\n|$)|${GENERATED_MARKER.source}`, 'gm');
+
+/** Removes generated delimiters from help while preserving surrounding bytes. */
+export function stripGeneratedMarkers(markdown: string): string {
+  return markdown.replace(HELP_MARKER, '');
+}
