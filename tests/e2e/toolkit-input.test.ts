@@ -358,8 +358,8 @@ describe('CLI payload matrix and shell quoting', () => {
 
       const shQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const planPath = path.join(r.root, 'work.plan.md');
-      fs.writeFileSync(planPath, fs.readFileSync(planPath, 'utf8').replace('implements behavior.', 'implements sh inline.'));
       const beforeHash = currentHashes(r.root, latest(foldLedger(r.session), 'bind')).plan!;
+      fs.writeFileSync(planPath, fs.readFileSync(planPath, 'utf8').replace('implements behavior.', 'implements sh inline.'));
       const editJson = JSON.stringify({ class: 'non-intent', affects: ['T1'], rationale: "POSIX 'quoted' & spaced", diffRef: 'sh-diff', before: beforeHash });
       const shLintCmd = `${shQuote(process.execPath)} ${shQuote(CLI_ENTRY)} lint run ${shQuote(planPath)} --json ${shQuote(editJson)} --session ${shQuote(r.session)}`;
       const shLint = spawnSync('sh', ['-c', shLintCmd], { cwd: r.root, encoding: 'utf8', windowsHide: true });
