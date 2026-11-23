@@ -41,17 +41,17 @@ test('review identity keeps unexpected read errors',async()=>{
   await assert.rejects(identity,{reason:'review-required'});
  }finally{f.cleanup();}
 });
-test('cap-ending SHOULD fixes require a verified bounded commit chain',async()=>{
+test('cap-ending SHOULD fixes bound their verified commit chain by ruling paths',async()=>{
  const f=sessionFixture({memory:true});try{
   f.artifact('work.spec.md','# Work\n');f.artifact('work.plan.md',source);
   const baseline='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),commitReason='repair accepted SHOULD';
   const bind={kind:'bind',seq:1,key:'bind',at:'',by:'tool',data:{spec:'work.spec.md',plan:'work.plan.md'}};
   const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline};
-  const ruling={kind:'ruling',seq:2,key:'ruling',at:'',by:'orchestrator',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'Accept the bounded correction'}};
+  const ruling={kind:'ruling',seq:2,key:'ruling',at:'',by:'orchestrator',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'Accept the bounded correction',paths:['src/file.ts','src/helper.ts']}};
   const fix={kind:'integrate',seq:3,key:'fix',at:'',by:'tool',data:{phase:'fix',commit:head,reason:commitReason,reviewFix}};
   const artifacts=currentHashes(f.root,bind);
   const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');fs.mkdirSync(path.join(reviewDir,'gen-1/slots'),{recursive:true});
-  const finding={id:'R3-F001',severity:'SHOULD',fix:{paths:['src/file.ts','src/helper.ts'],dependencies:[],verification:[]},locus:'src/file.ts:L1',defect:'The source is incorrect',requiredChange:'Correct the source'};
+  const finding={id:'R3-F001',severity:'SHOULD',locus:'src/file.ts:L1',defect:'The source is incorrect',requiredChange:'Correct the source'};
   fs.writeFileSync(path.join(reviewDir,'round.json'),JSON.stringify({round:3,cap:3,generation:1,startSeq:1,target:{base,head:baseline},scope:'Full review',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]}));
   fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[finding],failed:[]}));
   fs.writeFileSync(path.join(reviewDir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));
@@ -66,7 +66,13 @@ test('cap-ending SHOULD fixes require a verified bounded commit chain',async()=>
    throw new Error('Unexpected Git argv: '+JSON.stringify(argv));
   };
   const ctx={session:f.session,manifest,deps:f.deps} as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
-  const valid=await reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base);
+  const correction={...ruling,seq:3,key:'correction',data:{subject:ruling.data.subject,ruling:'accepted',rationale:'Correct the severity inputs',impact:'degrades',trigger:'realistic'}};
+  const checkedFix={...fix,seq:4};
+  const valid=await reviewIdentity(ctx,{records:[bind,ruling,correction,checkedFix],lastSeq:4,torn:null},f.root,head,base);
+  const revised={...ruling,seq:3,key:'revised',data:{...ruling.data,paths:['src/file.ts','src/replacement.ts']}};
+  await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,revised,checkedFix],lastSeq:4,torn:null},f.root,head,base),{reason:'review-required'});
+  changed=['src/file.ts','src/replacement.ts'];
+  assert.equal((await reviewIdentity(ctx,{records:[bind,ruling,revised,checkedFix],lastSeq:4,torn:null},f.root,head,base)).baseline,baseline);
   assert.equal(valid.baseline,baseline);assert.deepEqual(valid.corrections.map(row=>row.commit),[head]);
   changed=['src/file.ts','src/other.ts'];await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
   changed=[' src/file.ts','src/helper.ts'];await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
@@ -75,8 +81,11 @@ test('cap-ending SHOULD fixes require a verified bounded commit chain',async()=>
   commits=[[head,baseline]];
   fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[{...finding,severity:'MUST'}],failed:[]}));
   await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
-  fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[{...finding,fix:{paths:[]}}],failed:[]}));
-  await assert.rejects(reviewIdentity(ctx,{records:[bind,ruling,fix] as any,lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
+  fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[finding],failed:[]}));
+  const fallback={...ruling,data:{subject:ruling.data.subject,ruling:'accepted',rationale:'Accept the locus correction'}};
+  assert.equal((await reviewIdentity(ctx,{records:[bind,fallback,fix],lastSeq:3,torn:null},f.root,head,base)).baseline,baseline);
+  changed=['src/file.ts','src/helper.ts'];
+  await assert.rejects(reviewIdentity(ctx,{records:[bind,fallback,fix],lastSeq:3,torn:null},f.root,head,base),{reason:'review-required'});
  }finally{f.cleanup();}
 });
 
@@ -109,7 +118,7 @@ async function correctedGate(stored: {severity: string; impact: string; trigger:
   const fix={kind:'integrate',seq:3,key:'fix',at:'',by:'tool',data:{phase:'fix',commit:head,reason:commitReason,reviewFix}};
   const artifacts=currentHashes(f.root,bind);
   const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');fs.mkdirSync(path.join(reviewDir,'gen-1/slots'),{recursive:true});
-  const finding={id:'R3-F001',...stored,fix:{paths:['src/file.ts'],dependencies:[],verification:[]},locus:'src/file.ts:L1',defect:'The source is incorrect',requiredChange:'Correct the source'};
+  const finding={id:'R3-F001',...stored,locus:'src/file.ts:L1',defect:'The source is incorrect',requiredChange:'Correct the source'};
   fs.writeFileSync(path.join(reviewDir,'round.json'),JSON.stringify({round:3,cap:3,generation:1,startSeq:1,target:{base,head:baseline},scope:'Full review',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]}));
   fs.writeFileSync(path.join(reviewDir,'findings.json'),JSON.stringify({review:'code-integration',round:3,findings:[finding],failed:[]}));
   fs.writeFileSync(path.join(reviewDir,'gen-1/slots/reviewer.json'),JSON.stringify({slot:'reviewer',state:'done',text:'{"status":"CLEAN","findings":[]}'}));

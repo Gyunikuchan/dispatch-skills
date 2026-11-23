@@ -232,6 +232,17 @@ test('severity correction refused: a lone dimension, an invalid value or a sever
   assert.throws(() => validateRecord(correction({impact: 'blocks', trigger: 'realistic', subject: 'plan:T1'})), {reason: 'invalid-record'});
 });
 
+test('severity correction names the allowed finding when the target is absent', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const file = f.artifact('correction.json', JSON.stringify(correction({impact: 'degrades', trigger: 'realistic'})));
+    assert.equal(await main(['ledger', 'append', '--session', f.session, file], f.deps), 1);
+    const output = f.output();
+    assert.equal(output.reason, 'invalid-record');
+    assert.match(output.summary, /R1-F001 is absent or unreadable.*Use a finding listed in that round's findings\.json/);
+  } finally { f.cleanup(); }
+});
+
 test('checkout rerun notes require a quoted user decision while keep notes accept any author', () => {
   const rerun = (overrides: object = {}) => ({kind: 'note', by: 'user', quote: 'Rerun the affected voices', key: 'repository-rerun:code-worktree-abc:1:12', data: {text: 'rerun'}, ...overrides});
   assert.doesNotThrow(() => validateRecord(rerun()));
@@ -364,4 +375,35 @@ test('test-cleanup records require trees', () => {
       },
     );
   }
+});
+
+test('only accepted review rulings can declare unique normalized correction paths', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const input = f.artifact('ruling.json', '');
+    const ruling = {subject: 'review:code-integration:R3-F001', ruling: 'accepted', rationale: 'Correct source and test'};
+    const paths = ['src/file.ts', 'tests/file with spaces.test.ts'];
+    const append = async (data: object) => {
+      f.lines.length = 0;
+      fs.writeFileSync(input, JSON.stringify({kind: 'ruling', by: 'orchestrator', key: 'correction', data}));
+      const exit = await main(['ledger', 'append', '--session', f.session, input], f.deps);
+      return {exit, output: f.output()};
+    };
+    for (const invalid of [null, 'src/file.ts', [], [1], [''], ['/src/file.ts'], ['C:/src/file.ts'], ['C:file.ts'],
+      ['src/../file.ts'], ['src/./file.ts'], ['src//file.ts'], ['src/file.ts/'], ['src\\file.ts'], ['src/file.ts', 'src/file.ts']]) {
+      const {exit, output} = await append({...ruling, paths: invalid});
+      assert.equal(exit, 1, JSON.stringify(invalid));
+      assert.equal(output.reason, 'invalid-record');
+      assert.match(output.summary, /data\.paths.*non-empty array of unique, normalized repository-relative file paths with forward slashes/);
+    }
+    for (const data of [{...ruling, ruling: 'rejected'}, {...ruling, subject: 'verification:cycle:V1'}]) {
+      const {exit, output} = await append({...data, paths});
+      assert.equal(exit, 1);
+      assert.equal(output.reason, 'invalid-record');
+      assert.match(output.summary, /data\.paths.*accepted ruling names a review finding/);
+    }
+    const accepted = await append({...ruling, paths});
+    assert.equal(accepted.exit, 0, accepted.output.summary);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')).data.paths, paths);
+  } finally { f.cleanup(); }
 });

@@ -174,7 +174,7 @@ function checkCorrection(session: string, fold: Fold, data: Record<string, any>)
   if (path.relative(reviews, file).startsWith('..')) refuse('data.subject resolves outside the session reviews');
   let finding: Record<string, any> | undefined;
   try { finding = JSON.parse(fs.readFileSync(file, 'utf8')).findings.find((row: any) => row?.id === match![2]); } catch { /* Absent and unreadable findings refuse alike. */ }
-  if (!finding) refuse('stored finding ' + match![2] + ' is absent or unreadable');
+  if (!finding) refuse('stored finding ' + match![2] + " is absent or unreadable. Use a finding listed in that round's findings.json.");
   if (!IMPACTS.includes(finding!['impact']) || !TRIGGERS.includes(finding!['trigger'])) refuse('finding ' + match![2] + ' has no stored impact and trigger to correct');
   const current: Record<string, any> = currentRating(finding as never, fold.records.filter(row => row.kind === 'ruling' && row.data['subject'] === data['subject']));
   const currentSummary = `; current: impact=${current['impact']}, trigger=${current['trigger']}`;

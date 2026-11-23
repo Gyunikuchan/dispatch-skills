@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { IMPACTS, TRIGGERS } from './domain/severity.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { ToolError, clipBytes } from './output.ts';
@@ -37,6 +38,12 @@ const reviewFindings: Rule = shaped('a non-empty array of unique finding IDs', (
   (value as unknown[]).forEach((item, index) => text(item, field + '.' + index));
   if (new Set(value as string[]).size !== (value as unknown[]).length) invalid(field, shapeOf(reviewFindings));
 });
+const correctionPaths = check('a non-empty array of unique, normalized repository-relative file paths with forward slashes', (value) =>
+  Array.isArray(value) && value.length > 0 && new Set(value).size === value.length &&
+  Array.from(value).every(item => typeof item === 'string' && !!item.trim() &&
+    !/^[a-z]:/i.test(item) && !/[\\\0]/.test(item) &&
+    !item.split('/').some(segment => !segment || segment === '.' || segment === '..') &&
+    path.posix.normalize(item) === item));
 const treeMap: Rule = shaped('an object mapping criterion IDs to 40- or 64-hex Git object ids', (value, field) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(field, shapeOf(treeMap));
   for (const [criterion, id] of Object.entries(value as Record<string, unknown>)) {
@@ -84,7 +91,7 @@ const shapes: Record<string, Record<string, Rule>> = {
   waiver: { criterion: text, reason: text },
   'manual-complete': { criterion: text, evidence: text },
   escalation: { id: text, state: choice('open', 'resolved'), summary: text },
-  ruling: { subject: text, ruling: text, rationale: text, impact: choice(...IMPACTS), trigger: choice(...TRIGGERS) },
+  ruling: { subject: text, ruling: text, rationale: text, impact: choice(...IMPACTS), trigger: choice(...TRIGGERS), paths: correctionPaths },
   note: { text },
   edit: {
     artifact: choice('spec', 'plan', 'design'), before: hash, after: hash,
@@ -130,7 +137,7 @@ const FLAT_OPTIONAL: Readonly<Record<string, readonly string[]>> = {
   approval: ['design'],
   evidence: ['artifacts'],
   focus: ['visual'],
-  ruling: ['impact', 'trigger'],
+  ruling: ['impact', 'trigger', 'paths'],
 };
 
 const PHASE_OPTIONAL: Readonly<Record<'writer' | 'integrate', Readonly<Record<string, readonly string[]>>>> = {
@@ -241,6 +248,9 @@ export function validateRecord(input: unknown, stored = false): RecordInput | Le
       for (const dimension of ['impact', 'trigger']) if (!(dimension in value.data)) invalid('data.' + dimension, 'required with the other corrected dimension');
       if (!value.data['subject'].startsWith('review:') || value.data['ruling'] !== 'accepted') invalid('data.impact', 'absent unless an accepted ruling names a review finding');
     }
+    if (value.kind === 'ruling' && 'paths' in value.data &&
+      (value.data['ruling'] !== 'accepted' || !value.data['subject'].startsWith('review:')))
+      invalid('data.paths', 'absent unless an accepted ruling names a review finding');
     if (value.kind === 'focus') choice('user', 'orchestrator')(value.by, 'record.by');
     const userOnly = ['approval', 'confirm', 'waiver', 'manual-complete'].includes(value.kind) ||
       (value.kind === 'level' && ['xhigh', 'max'].includes(value.data['level']));

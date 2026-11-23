@@ -11,7 +11,6 @@ export type ReviewKind = 'code' | 'plan' | 'design';
 type FindingScope = 'in' | 'adjacent';
 export type FindingOrigin = 'original' | 'fix-induced' | 'unknown';
 
-type FindingFix = { paths: readonly string[]; dependencies: readonly FindingId[]; verification: readonly string[] };
 
 /** Spec §7.7; `dupOf` names the first finding a duplicate repeats. */
 export type Finding = {
@@ -26,7 +25,6 @@ export type Finding = {
   requiredChange: string;
   sources: readonly SlotId[];
   scope: FindingScope;
-  fix?: FindingFix;
   dupOf?: FindingId;
   /** Sanitized reviewer tag kept when the category is `uncategorized`. */
   originalTag?: string;

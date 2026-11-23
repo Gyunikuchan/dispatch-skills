@@ -41,6 +41,23 @@ async function lint(name: string, source: string) {
     return { exit, output, result };
   } finally { f.cleanup(); }
 }
+test('lint run arity refusal names usage', async () => {
+  scoped.lines.length = 0;
+  assert.equal(await main(['lint', 'run', '--session', scoped.session], scoped.deps), 1);
+  const output = scoped.output();
+  assert.equal(output.reason, 'invalid-input');
+  assert.match(output.summary, /lint run <artifact> --session <session> \[--edit <fields\.json\|-> \| --json <json>\]/);
+});
+
+test('lint run unknown edit field names allowed fields', async () => {
+  scoped.lines.length = 0;
+  const file = scoped.artifact('unknown-edit.json', '{"after":"not allowed"}');
+  assert.equal(await main(['lint', 'run', 'a.plan.md', '--session', scoped.session, '--edit', file], scoped.deps), 1);
+  const output = scoped.output();
+  assert.equal(output.reason, 'invalid-input');
+  assert.match(output.summary, /Unknown --edit field: after.*class, affects, rationale, diffRef.*before/);
+});
+
 describe('lint severity', () => {
   test('lint results carry only kind hash errors and warnings', async () => {
     const a = await lint('a.plan.md', PLAN + '\n## Review Findings & Resolutions\nold\n');

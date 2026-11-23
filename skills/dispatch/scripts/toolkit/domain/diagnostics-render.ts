@@ -633,7 +633,7 @@ function overview(runs: readonly RunFacts[], efficiency: ReturnType<typeof effic
       ...(eligible.length ? ['Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: ' + ((fold.workload === undefined ? over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') : (over.length ? plural(over.length, 'round') : '')) || 'none')] : []),
       ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : [])]);
   }
-  lines.push('', '### Review yield by slot', '',
+  lines.push('', '### Review yield by kind, provider and model', '',
     'Rows group slots by responder kind, provider and model. Usage and cost cover current-generation launched CLI attempts. Ratios use current-generation accepted finding credits per responder group. A shared finding can credit each responder.', '',
     row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted', 'Cost', 'Cost / accepted', 'Cost notes']),
     '| --- | --- | ---: | ---: | ---: |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');

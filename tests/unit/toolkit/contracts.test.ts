@@ -30,6 +30,7 @@ function sampleField(kind: string, phase: string | undefined, field: string): un
   if (field === 'bullets') return [{ text: 'Check boundary', evidence: 'src/index.ts' }];
   if (field === 'trees') return { SC1: COMMIT };
   if (field === 'removed') return ['SC1'];
+  if (kind === 'ruling' && field === 'paths') return ['src/file.ts', 'tests/file.test.ts'];
   if (field === 'affects' || field === 'paths' || field === 'differing') return ['T1'];
   if (field === 'open') return [];
   if (field === 'clean' || field === 'dirty' || field === 'noop') return field === 'clean';
@@ -78,6 +79,7 @@ describe('contracts and help call table', () => {
         }
         for (const field of schema.optional) {
           const withOptional = { ...data, [field]: sampleField(schema.kind, undefined, field) };
+          if (schema.kind === 'ruling' && field === 'paths') withOptional['subject'] = 'review:code-integration:R1-F001';
           if (schema.kind === 'ruling' && (field === 'impact' || field === 'trigger')) {
             withOptional['subject'] = 'review:plan-1:R1-F001';
             withOptional['impact'] = sampleField(schema.kind, undefined, 'impact');

@@ -23,6 +23,7 @@ import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
+import { ACTION_CONTRACTS } from './contracts.ts';
 import { lintArtifact } from './lint.ts';
 import { appendLintEdit, appendRecords, currentHashes, foldLedger, latest, queryLedger, type Fold } from './ledger.ts';
 import { readJsonPayload } from './input.ts';
@@ -136,8 +137,11 @@ function readLintEditFields(ctx: HandlerContext) {
     throw new ToolError(1, 'invalid-input', '--edit fields must be a JSON object');
   }
   const fields = input as Record<string, unknown>;
-  const unknownKey = Object.keys(fields).find(key => !['class', 'affects', 'rationale', 'diffRef', 'before'].includes(key));
-  if (unknownKey !== undefined) throw new ToolError(1, 'invalid-input', 'Unknown --edit field: ' + unknownKey);
+  const allowed = ['class', 'affects', 'rationale', 'diffRef', 'before'];
+  const unknownKey = Object.keys(fields).find(key => !allowed.includes(key));
+  if (unknownKey !== undefined) {
+    throw new ToolError(1, 'invalid-input', `Unknown --edit field: ${unknownKey}. Allowed fields: ${allowed.join(', ')}.`);
+  }
 
   // The ledger supplies these fields under the lock. Use valid placeholders to check caller fields now.
   const placeholder = 'sha256:' + '0'.repeat(64);
@@ -247,7 +251,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   },
   'lint run': async (ctx) => {
     const { args, manifest, session, deps } = ctx;
-    if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'artifact requires one path');
+    if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'lint run takes one artifact path. Usage: ' + ACTION_CONTRACTS['lint run']!.arguments);
     const editFields = readLintEditFields(ctx);
     const artifactPath = path.resolve(args[0]!);
     const checked = editFields

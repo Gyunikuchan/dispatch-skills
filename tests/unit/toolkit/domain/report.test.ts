@@ -683,7 +683,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
     assert.doesNotMatch(continued.evidence, /cap reached/);
     assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
     assert.equal(continued.impact, 'Each extra round adds voice launches and a host ruling turn.');
-    assert.equal(continued.proposedFix, 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
+    assert.equal(continued.proposedFix, 'Reject re-raised findings that cite no new code or requirement evidence by citing the earlier ruling.');
 
     const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
     assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);

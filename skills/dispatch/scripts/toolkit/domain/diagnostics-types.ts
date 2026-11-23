@@ -113,8 +113,8 @@ export type RetroObservation = { id: string; component: string; category: Catego
 /** `source` is a heuristic id (`H1`…) or `retro`. */
 export type Finding = { source: string; run?: number; id?: string; category: Category; component: string; evidence: string; impact: string; proposedFix: string };
 
-// NOTE: 1600 leaves room for the grounding Overview rule in references/diagnostics.md.
-export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1600 } as const;
+// NOTE: 1640 leaves room for the grounding token-source rule in references/diagnostics.md.
+export const DIAGNOSTIC_LIMITS = { observations: 20, fieldBytes: 512, reportBytes: 131_072, instructionBytes: 1640 } as const;
 
 const files = (dir: string, names: string, ext: string) => names.split(' ').map((name) => `${dir}/${name}${ext}`);
 

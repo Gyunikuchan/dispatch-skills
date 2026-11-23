@@ -390,11 +390,11 @@ test('review fix status: completed re-review retains earlier fixes and their pat
   const fold=foldLedger(f.session),artifacts=currentHashes(f.root,latest(fold,'bind'));
   const reviewFix={review:'code-integration',round:3,generation:1,findings:['R3-F001'],from:baseline};
   const reviewDir=path.join(f.session,'.state/reviews/code-integration/round-3');
-  const finding={id:'R3-F001',severity:'SHOULD',category:'correctness',locus:'src/task-1.ts:L1',defect:'The assertion is wrong',requiredChange:'Correct the assertion',sources:['reviewer'],scope:'in',fix:{paths:['src/task-1.ts','src/shared.ts'],dependencies:[],verification:[]}};
+  const finding={id:'R3-F001',severity:'SHOULD',category:'correctness',locus:'src/task-1.ts:L1',defect:'The assertion is wrong',requiredChange:'Correct the assertion',sources:['reviewer'],scope:'in'};
   writeJson(path.join(reviewDir,'round.json'),{round:3,generation:1,cap:3,startSeq:fold.lastSeq,target:{base:'c'.repeat(40),head:baseline},scope:'Full review',artifacts,spec:{path:'/work.spec.md',hash:artifacts.spec},roster:[{slot:'reviewer',reserve:false}]});
   writeJson(path.join(reviewDir,'findings.json'),{review:'code-integration',round:3,findings:[finding],failed:[]});
   writeJson(path.join(reviewDir,'gen-1/slots/reviewer.json'),{slot:'reviewer',state:'done',text:JSON.stringify({status:'FINDINGS',findings:[{impact:'degrades',trigger:'realistic',locus:'src/task-1.ts:L1',tag:'correctness',defect:finding.defect,requiredChange:finding.requiredChange}]})});
-  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-bounded-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed'}},f.deps);
+  await appendRecord(f.session,{kind:'ruling',by:'orchestrator',key:'accept-bounded-should',data:{subject:'review:code-integration:R3-F001',ruling:'accepted',rationale:'The bounded correction is needed',paths:['src/task-1.ts','src/shared.ts']}},f.deps);
   await appendRecord(f.session,{kind:'integrate',by:'tool',data:{phase:'fix',commit,reason,reviewFix}},f.deps);
   for(const check of checks(loadPlan(f.session,readManifest(f.session))))await appendRecord(f.session,{kind:'evidence',by:'tool',data:{criterion:check.criterion,commandDigest:check.commandDigest,tree,clean:true,before:tree,after:tree,exit:0,path:'.state/evidence/'+check.criterion+'.json'}},f.deps);
   const metadata=reviewFixIdentity(reviewFix),message=[`fix(dispatch): ${reason}`,'',`Dispatch-Fix: ${readManifest(f.session).safeSessionId}`,`Dispatch-Review-Fix: ${metadata.digest}`,`Dispatch-Review-Fix-Data: ${metadata.data}`,''].join('\n');

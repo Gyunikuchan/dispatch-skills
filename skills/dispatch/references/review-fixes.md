@@ -8,7 +8,7 @@ Start each new fix set in a clean integration worktree with recorded HEAD; keep 
 
 For a cross-ownership fix, assign all approved paths to the task owning the defective behaviour; resolve unclear ownership from the plan and integration evidence before writes.
 
-For the final-round SHOULD exception, before launch check assigned paths against the union of accepted findings' validated correction paths; use the single-file locus fallback only when a finding has no `fix` field. If scope is unresolved or exceeded, review the new HEAD under current rules and escalate if review cannot run.
+For the final-round SHOULD exception, declare the full correction set in the accepted ruling’s `paths` field as a non-empty array of unique, normalized repository-relative file paths with forward slashes. For each finding, use the latest accepted ruling that declares `paths` or fall back to the single-file locus when none does. Before launch, check assigned paths against the union of those sets. If scope is unresolved or exceeded, review the new HEAD under current rules and escalate if review cannot run.
 
 ## Handle recovery
 

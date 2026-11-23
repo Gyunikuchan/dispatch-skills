@@ -8,7 +8,7 @@ import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
 import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
 import type { ProviderKey } from '../lib/platform.ts';
-import { addYield, billedTokens, normalizeUsage, renderDiagnostics, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
+import { addYield, billedTokens, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
@@ -326,6 +326,17 @@ function hostUsageRead(deps: CliDeps, platform: ProviderKey | null, input: {star
   return readHostUsage(platform, {...input, home, env: name => deps.env[name]}, deps.hostUsageFs ?? nodeHostUsageFs);
 }
 
+function readRetro(file: string): {retroState: NonNullable<RunFacts['retroState']>; observations?: unknown} {
+  try {
+    const observations: unknown = JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
+    const retroState = Array.isArray(observations) ? (observations.length ? 'collected' : 'empty') : 'invalid';
+    return {retroState, observations};
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {retroState: 'missing'};
+    return {retroState: error instanceof SyntaxError ? 'malformed' : 'unreadable'};
+  }
+}
+
 /** Builds optional facts independently of the strict walkthrough reader. */
 export function sessionFacts(session: string, fold: Fold, outcome: string, hostContext?: {manifest: HandlerContext['manifest']; deps: CliDeps}): RunFacts {
   const collection = {completed:0, partial:0, corrupt:0, unreadable:0, incomplete:0, storageFailed:0};
@@ -438,11 +449,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     add({...row,phase:reviewKeys.get(round.review)!,subject,attempt:prior?.attempt??0,nativeState:slot['state']==='done'?'completed':slot['state']==='native'?'pending':slot['state']==='failed'?'failed':'invalid'});
   }
   invocations.push(...native.values());
-  let observations:unknown,retroState:RunFacts['retroState'];
-  try {
-    observations=JSON.parse(stripBom(fs.readFileSync(path.join(session,'.state','retro.json'),'utf8')));
-    retroState=Array.isArray(observations)?observations.length?'collected':'empty':'invalid';
-  }catch(error){retroState=(error as NodeJS.ErrnoException).code==='ENOENT'?'missing':error instanceof SyntaxError?'malformed':'unreadable';}
+  const retro = readRetro(path.join(session, '.state', 'retro.json'));
   const provenance=new Map<string,NonNullable<RunFacts['provenance']>[number]>();
   for(const row of measured) {
     const snapshot={...(row.version?{version:row.version}:{}),...(row.build?{build:row.build}:{}),...(row.config?{config:row.config}:{})};
@@ -512,7 +519,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     phases:[...phases.values()].sort((a,b)=>a.key.localeCompare(b.key)),invocations,
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
     ...(slotYield.length?{slotYield}:{}),...(roundTiming.length?{roundTiming}:{}),...(roundWorkload.length?{roundWorkload}:{}),...(hostUsage?{hostUsage}:{}),
-    retroState,...(observations===undefined?{}:{observations}),collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
+    ...retro,collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };
 }
@@ -682,7 +689,26 @@ export function optionalDiagnostics(session: string, fold: Fold, outcome: string
 
 export function retroWarning(session: string): string | undefined {
   const file = path.join(session, '.state', 'retro.json');
-  return fs.existsSync(file) ? undefined : `Host retro missing: merge retro notes into ${file} (write [] when none), then run diagnostics render.`;
+  const {retroState, observations} = readRetro(file);
+  if (retroState === 'missing') return `Host retro missing: merge retro notes into ${file} (write [] when none), then run diagnostics render.`;
+  if (!Array.isArray(observations)) {
+    return 'Host retro uncollected. Write a JSON array [{id,component,category,evidence,impact,proposedFix}] to .state/retro.json, then run diagnostics render.';
+  }
+  if (retroObservations(observations).values.some(item => item.id.startsWith('grounding-'))) return;
+
+  const results = path.join(session, '.state', 'results');
+  let entries: fs.Dirent[];
+  try { entries = entriesOrEmpty(results); }
+  catch { return; }
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^brief-explorer-.*\.json$/.test(entry.name)) continue;
+    let result: {kind?: unknown} | null;
+    try { result = readJson<{kind?: unknown}>(path.join(results, entry.name)); }
+    catch { continue; }
+    if (result?.kind === 'map') {
+      return 'Map explorer brief recorded. Add a valid grounding-<phase> item to .state/retro.json, then run diagnostics render.';
+    }
+  }
 }
 
 // NOTE: Render is not captured as a tool observation, so it cannot describe its own run.

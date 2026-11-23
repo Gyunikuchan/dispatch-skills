@@ -692,7 +692,7 @@ test('round workload notes storage failures once and is omitted without review r
  assert.doesNotMatch(render([facts({roundWorkload:[]})]),/### Review round workload/);
 });
 
-test('round workload follows review round timing and precedes review yield by slot', () => {
+test('round workload follows review round timing and precedes review yield by kind, provider and model', () => {
  const review='review-1234567890abcdef';
  const text=render([facts({
   roundTiming:[{review,round:1,slots:[{slot:'claude[0]',attempts:[{startMs:0,endMs:100}]}]}],
@@ -701,7 +701,7 @@ test('round workload follows review round timing and precedes review yield by sl
  const at=(heading:string)=>text.indexOf(heading);
  assert.ok(at('### Review round timing')>=0);
  assert.ok(at('### Review round timing')<at('### Review round workload'));
- assert.ok(at('### Review round workload')<at('### Review yield by slot'));
+ assert.ok(at('### Review round workload')<at('### Review yield by kind, provider and model'));
 });
 
 test('round workload survives sanitizing and drops malformed rows, keys, and fields', () => {

@@ -11,7 +11,7 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.ok(Buffer.byteLength(instruction.replace(/\r?\n/g, '\r\n')) <= DIAGNOSTIC_LIMITS.instructionBytes);
   assert.match(instruction, /merge your terse notes into the JSON array at `<session>\/\.state\/retro\.json` yourself/);
   assert.match(instruction, /Without notes, add nothing; if no file, write `\[\]`/);
-  assert.match(instruction, /Then you run `diagnostics render`/);
+  assert.match(instruction, /Then run `diagnostics render`/);
   assert.match(instruction, /Collection or a failed merge is never a workflow gate/);
   assert.ok(instruction.includes('JSON array'));
   assert.ok(instruction.includes('<session>/.state/retro.json'));
@@ -39,6 +39,8 @@ test('diagnostics retain privacy and measurement guidance', () => {
   for (const label of ['Observed billed tokens', 'Priced cost', 'Rate basis', 'Responses by agent', 'Input / matched response']) {
     assert.ok(toolkit.includes('`' + label + '`'), label);
   }
+  assert.ok(toolkit.includes('Review yield by kind, provider and model'));
+  assert.ok(!toolkit.includes('Review yield by slot'));
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
   assert.ok(concepts.includes('Native timing and usage'));
   for (const term of ['marks an unavailable value', 'cost estimate in USD', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection', 'zero unpriced units', 'matched input and event columns']) assert.ok(human.includes(term), term);
@@ -49,7 +51,7 @@ test('diagnostics instructions specify grounding retro items and yield format', 
   assert.ok(instruction.includes('id: grounding-<phase>'));
   assert.ok(instruction.includes('component: references/grounding.md'));
   assert.ok(instruction.includes('category: information-access'));
-  assert.ok(instruction.includes('evidence: map <n>, nested <n>, research <n>, not-covered <n>, yield <changed>/<launched>, tokens <per explorer|unavailable>'));
+  assert.ok(instruction.includes('evidence: map <n>, nested <n>, research <n>, not-covered <n>, yield <changed>/<launched>, tokens <per explorer from launch notice, else unavailable>'));
   assert.match(instruction, /`yield` counts nested and research explorers whose reply changed a REQ, DEC, scope or blast radius/);
   assert.doesNotMatch(instruction, /\b(?:gap|scout)\b/i);
   assert.doesNotMatch(read('SKILL.md'), /grounding-<phase>/);

@@ -17,7 +17,8 @@ test('toolkit stays within the structural size budgets', () => {
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
   // NOTE: 20874 allows bounded response capture, rate provenance, and shared coverage and efficiency reporting.
-  const driverLocBudget = 20874;
+  // The additional 42 lines cover part-aware reports, ruling paths, and host retro warnings.
+  const driverLocBudget = 20916;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`

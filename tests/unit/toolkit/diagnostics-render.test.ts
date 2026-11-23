@@ -438,6 +438,53 @@ test('diagnostics render warns on missing host retro only when enabled', async (
   }
 });
 
+const groundingItem = {
+  id: 'grounding-spec',
+  component: 'references/grounding.md',
+  category: 'information-access',
+  evidence: 'map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable',
+  impact: 'Keep the map scope.',
+  proposedFix: 'Keep the current discovery bounds.',
+};
+
+const retroWarningCases = [
+  {name: 'non-array retro', setup: (file: string) => writeJson(file, {}), warning: 'array'},
+  {name: 'malformed retro', setup: (file: string) => fs.writeFileSync(file, '{'), warning: 'array'},
+  {name: 'unreadable retro', setup: (file: string) => fs.mkdirSync(file), warning: 'array'},
+  {name: 'map without grounding', setup: (file: string) => writeJson(file, []), kind: 'map', warning: 'grounding'},
+  {name: 'map with rejected grounding', setup: (file: string) => writeJson(file, [{id: groundingItem.id}]), kind: 'map', warning: 'grounding'},
+  {name: 'map with accepted grounding', setup: (file: string) => writeJson(file, [groundingItem]), kind: 'map'},
+  {name: 'research only', setup: (file: string) => writeJson(file, []), kind: 'research'},
+];
+
+for (const {name, setup, kind, warning} of retroWarningCases) {
+  test('retro warning handles ' + name, async () => {
+    const f = sessionFixture({ memory: true });
+    try {
+      f.deps.skillRoot = path.join(f.root, 'skill');
+      writeJson(path.join(f.deps.skillRoot, 'config.local.jsonc'), {diagnostics: true});
+      const state = path.join(f.session, '.state');
+      fs.mkdirSync(state, {recursive: true});
+      setup(path.join(state, 'retro.json'));
+      if (kind) writeJson(path.join(state, 'results', 'brief-explorer-0001.json'), {kind});
+
+      assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+      const output = f.output();
+      assert.equal(output.ok, true);
+      const value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as {warning?: string};
+      if (!warning) {
+        assert.equal(value.warning, undefined);
+      } else {
+        assert.ok(value.warning, 'expected a non-blocking retro warning');
+        assert.ok(value.warning.includes('.state/retro.json'));
+        assert.ok(value.warning.includes(warning === 'array' ? '[{id,component,category,evidence,impact,proposedFix}]' : 'grounding-<phase>'));
+        assert.ok(Buffer.byteLength(value.warning) <= 240);
+        assert.ok(output.summary.includes(value.warning));
+      }
+    } finally { f.cleanup(); }
+  });
+}
+
 test('Overview labels tool-action phases, folds empty rows and omits empty timing columns', () => {
   const f = sessionFixture({ memory: true });
   try {

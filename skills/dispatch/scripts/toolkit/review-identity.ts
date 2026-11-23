@@ -38,12 +38,10 @@ function safeCorrectionPath(value:unknown):string|null {
   if(normalized.startsWith('/')||/^[a-z]:/i.test(normalized)||normalized.split('/').some(part=>!part||part==='.'||part==='..')||path.posix.normalize(normalized)!==normalized)return null;
   return normalized;
 }
-function correctionScope(finding:any):string[]|null {
-  if(Object.hasOwn(finding,'fix')) {
-    const fix=finding.fix;
-    if(!fix||typeof fix!=='object'||Array.isArray(fix)||!Array.isArray(fix.paths)||!fix.paths.length)return null;
+function correctionScope(finding:any,declared:readonly string[]|undefined):string[]|null {
+  if(declared) {
     const paths:string[]=[];
-    for(const value of fix.paths) {
+    for(const value of declared) {
       const normalized=safeCorrectionPath(value);
       if(!normalized)return null;
       paths.push(normalized);
@@ -170,7 +168,10 @@ export async function reviewIdentity(ctx:HandlerContext,fold:Fold,cwd:string,hea
       }
       const allowed=new Set<string>();
       for(const id of metadata.findings) {
-        const paths=correctionScope(finalFindings.get(id));
+        const declaration=fold.records.findLast(candidate=>candidate.kind==='ruling' &&
+          candidate.data['subject']==='review:code-integration:'+id && candidate.data['ruling']==='accepted' &&
+          Object.hasOwn(candidate.data,'paths'));
+        const paths=correctionScope(finalFindings.get(id),declaration?.data['paths']);
         if(!paths?.length)refuse('review-required');
         for(const file of paths)allowed.add(file);
       }

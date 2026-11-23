@@ -49,7 +49,7 @@ function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): Runn
 }
 const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({ exit, signal: null, stdout, stdoutPath: '/log', stderrTail, durationMs: 1, timedOut: false, truncated: false });
 const event = (type: string, part: Record<string, unknown>) => JSON.stringify({ type, timestamp: 0, sessionID: 'ses', part });
-const jsonText = (text: string) => event('text', { id: 'text-0', sessionID: 'ses', messageID: 'msg', type: 'text', text });
+const jsonText = (text: string, id = 'text-0') => event('text', { id, sessionID: 'ses', messageID: 'msg', type: 'text', text });
 const jsonStep = (tokens: Record<string, unknown> = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }) =>
   event('step_finish', { id: 'step-finish-0', sessionID: 'ses', messageID: 'msg', type: 'step-finish', reason: 'stop', cost: 0, tokens });
 const jsonError = (message: string) => JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error: { name: 'ProviderError', message } });
@@ -202,6 +202,14 @@ test('opencode narration parses when the report starts its own line', () => {
   const splitParsed = parseReport({kind: 'plan', source: 'claude[0]', text: splitOutcome.status === 'ok' ? splitOutcome.text : ''});
   assert.equal(splitParsed.ok, true);
   assert.equal(splitParsed.ok && splitParsed.status, 'CLEAN');
+});
+
+test('opencode distinct text parts start new lines', () => {
+  const stream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}', 'text-1')].join('\n');
+  const outcome = opencode.parse(result(stream), launchReq());
+  assert.equal(outcome.status, 'ok');
+  const parsed = parseReport({ kind: 'plan', source: 'opencode[0]', text: outcome.text });
+  assert.deepEqual(parsed, { ok: true, status: 'CLEAN', findings: [] });
 });
 
 test('opencode nonzero exit keeps stderr class', () => {

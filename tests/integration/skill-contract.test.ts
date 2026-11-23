@@ -143,6 +143,7 @@ test('skill contract keeps router entries and resolving reference links', () => 
     const fields = schema.phased
       ? ['phase', ...schema.phases.flatMap(phase => [phase.phase, ...phase.required, ...phase.optional])]
       : [...schema.required, ...schema.optional];
+    if (schema.kind === 'ruling') assert.ok(body.includes('optional `impact`, `trigger` and `paths`'));
     for (const field of new Set(fields)) assert.ok(body.includes(field), schema.kind + ' ' + field);
     assert.match(body, /data/i);
     assert.match(body, /Allowed by: user/);
@@ -887,6 +888,11 @@ test('SKILL.md read rule loads the call table once and fetches help on demand or
   assert.ok(!skill.includes('for ledger calls also read the matching record-kind section'));
 });
 
+test('review rules require governing evidence for a reversal', () => {
+  const rules = read(root + 'references/review-rules.md');
+  assert.ok(rules.includes('Before accepting a finding that reverses an earlier accepted ruling or an approved plan criterion, cite the governing spec or plan in the ruling and resolve the conflict there.'), 'review rules must require governing evidence and conflict resolution before a reversal');
+});
+
 test('merged rules keep one home', () => {
   const ref = (file: string) => read(root + 'references/' + file);
   const homes: Array<[string, string, string, string]> = [
@@ -966,7 +972,10 @@ test('writer review fix handoff preserves the integration boundary', () => {
   const skill = read(root + 'SKILL.md');
   const brief = read(root + 'references/templates/writer-brief.md');
   assert.ok(links(guide).includes('../review-fixes.md'));
-  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /validated correction paths/i, /single-file locus/i, /worktree commit --review-fix/i]) assert.match(fixes, pattern);
+  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /worktree commit --review-fix/i]) assert.match(fixes, pattern);
+  assert.match(fixes, /full correction set in the accepted ruling’s `paths` field/);
+  assert.match(fixes, /latest accepted ruling that declares `paths` or fall back to the single-file locus when none does/);
+  assert.doesNotMatch(fixes, /`?fix`? field/i);
   assert.match(fixes, /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i);
   assert.ok(links(fixes).includes('templates/quality-bar.md#shared'));
   assert.match(fixes, /reserve toolkit actions for the orchestrator/i);

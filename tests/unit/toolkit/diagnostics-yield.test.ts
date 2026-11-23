@@ -332,7 +332,7 @@ test('review yield renders per slot outcomes', async () => {
       accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 0,
     });
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /### Review yield by slot/);
+    assert.match(report, /### Review yield by kind, provider and model/);
     assert.match(report, /^\| claude \| model-a \| 2 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 1 \| 1,000 \| 500 \| — \| — \| — \|$/m);
     assert.match(report, /^\| codex \| model-b \| 1 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 500 \| 500 \| — \| — \| — \|$/m);
     assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| 0 accepted \| — \| 0 accepted \| — \|$/m);
@@ -575,7 +575,7 @@ test('review yield prices an observed route and keeps redacted mixed usage in th
     }, {[observed]: {rates: {input: 3, output: 3}}})!;
     const text = renderDiagnostics([facts], pricer).text;
     assert.match(text, /^\| CLI delegates \| 2,000,025 \| ~\$3\.00 \| 2 session, 1 stdout fallback, transcript unavailable, 1 observed unit unpriced \|$/m);
-    const yieldRows = text.split('### Review yield by slot')[1]!;
+    const yieldRows = text.split('### Review yield by kind, provider and model')[1]!;
     assert.match(yieldRows, /\| 2,000,025 partial \| 2,000,025 partial \| ~\$3\.00 partial \| ~\$3\.00 partial \| unpriced model, override qualified rate .*session, stdout fallback, reported: actual\/alpha \|/);
   } finally { f.cleanup(); }
 });

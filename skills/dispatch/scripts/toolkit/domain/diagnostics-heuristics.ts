@@ -130,7 +130,7 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
       ...(escalation && !capReached ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
     ];
-    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round adds voice launches and a host ruling turn.', capReached ? 'Raise the round cap or narrow scope.' : 'Require reviewers to cite new code or requirement evidence before re-raising a settled finding; otherwise the earlier ruling stays closed.');
+    add('H2', 'review-convergence', 'references/review-rules.md', `${phaseName(run, key)}: ${detail.join('; ')}.`, 'Each extra round adds voice launches and a host ruling turn.', capReached ? 'Raise the round cap or narrow scope.' : 'Reject re-raised findings that cite no new code or requirement evidence by citing the earlier ruling.');
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;

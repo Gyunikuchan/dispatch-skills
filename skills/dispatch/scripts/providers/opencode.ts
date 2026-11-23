@@ -21,6 +21,7 @@ const row = (v: unknown): EventRow | null => v && typeof v === 'object' && !Arra
 /** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
 function parseEvents(raw: string): { text: string; errors: string[]; sessionId: string | null; capacity: boolean; retryAfterMs?: number } {
   const texts: string[] = [], errors: string[] = [];
+  let previousTextPartId: string | undefined;
   let sessionId: string | null = null;
   let capacity = false;
   let retryAfterMs: number | undefined;
@@ -29,8 +30,15 @@ function parseEvents(raw: string): { text: string; errors: string[]; sessionId: 
     try { event = row(JSON.parse(line)); } catch { continue; }
     if (typeof event?.['sessionID'] === 'string') sessionId = event['sessionID'] as string;
     if (event?.['type'] === 'text') {
-      const text = row(event['part'])?.['text'];
-      if (typeof text === 'string') texts.push(text);
+      const part = row(event['part']);
+      const text = part?.['text'];
+      if (typeof text === 'string') {
+        const id = part?.['id'];
+        const partId = typeof id === 'string' ? id : undefined;
+        if (texts.length && partId !== previousTextPartId) texts.push('\n');
+        texts.push(text);
+        previousTextPartId = partId;
+      }
     }
     if (event?.['type'] === 'error') {
       const error = row(event['error']);
