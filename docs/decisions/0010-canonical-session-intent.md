@@ -1,43 +1,38 @@
-# ADR 0010: Canonical session intent
+# ADR 0010: Session artifacts, canonical intent, and layered governing documents
 
-- **Status**: Accepted; execution updated for [ADR 0013](0013-toolkit-and-ledger.md)
+- **Status**: Accepted
 - **Date**: 2026-10-16
+- **Updated**: 2026-11-23
 - **Audience**: Maintainers
 
 ## Context
 
-Intent scattered across chat and repeated design/plan sections lets participants work from different assumptions. One durable governing spec preserves requirements, decisions and rationale for authors, reviewers and writers.
+Scattering temporary files across the repository or moving sessions to OS temp complicates recovery and creates competing authorities. Similarly, repeating intent and decisions across chat, designs, and plans causes layers to drift, while a single shared decision log would churn upstream spec hashes during tactical planning.
 
 ## Decision
 
-### Format and identity
+### Session artifact governance
 
-The spec owns intent, requirement acceptance, constraints, user decisions, discussion and open questions. REQ and DEC IDs remain distinct from tasks, plan criteria and design decisions. The [spec template](../../skills/dispatch/references/templates/spec.md) owns the exact headings.
+Keep human deliverables (`.spec.md`, `.design.md`, `.plan.md`, `.walkthrough.md`, context maps) and machine evidence (`ledger.jsonl`, `.state/`) together in one authoritative workspace session folder (`.scratch/dispatch-skills/<session>/`), identified in the handoff and retained until deliberate cleanup. An existing resolved spec keeps its path rather than copying into the session.
 
-Artifact identity uses the formatting-tolerant canonical hash reported by toolkit lint. Incidental formatting and report history do not define a new approval identity. The [toolkit contract](../../skills/dispatch/references/toolkit.md#lint-run) owns hashing behavior.
+### Layered governing documents
 
-### Settlement and approval
+Governing documents follow a strict hierarchy where each downstream layer cites upstream IDs (`REQ-<n>`, `DEC-<n>`, `AD-<n>`) instead of copying their content:
 
-Settle governing intent before design, plan, implement or review work; ask needs no spec. Confirm new-spec intent before planning. At medium and above, implementation uses one approval tuple for the spec, plan and optional design hashes, backed by actual user words. Design approval precedes increment planning and is recorded with the first plan's tuple. Low-level work shows governing artifacts at handoff; standalone review settlement adds no approval gate.
+| Layer | Owns | Upstream relationship |
+| --- | --- | --- |
+| **Spec** | Why/what, `REQ` acceptance, non-goals, constraints, user-made `DEC`s, discussion, and open questions | Canonical intent owner ([spec template](../../skills/dispatch/references/templates/spec.md)) |
+| **Design** (optional) | Strategy, `REQ`-to-component mapping, architecture/boundaries, architectural decisions (`AD`), risk/operations, increment graph, and optional advisory `Grounding leads:` | Pins direct spec path and `sha256` `Parent:` |
+| **Plan** | Code background, tactical decisions, Task Map, scoped file changes, criteria (`SC<n>` tracing to `REQ-<n>`), verification, and rollback ([ADR 0008](0008-task-based-plans-and-bounded-parallel-writers.md)) | Pins direct spec (or design increment `Parent:` with transitive spec resolution) |
+| **Implementation & Walkthrough** | Code, routine writer choices, and post-execution record of delivered behavior, criterion evidence, deviations, and review resolutions | Follows plan scope and criteria |
 
-### Resolution and canonical ownership
+### Identity, approval, and readers
 
-Follow plan/design Parent pins to the governing spec; an increment plan follows its design. Otherwise reuse the single session spec. Investigate ambiguity before selection. A missing spec is authored from chat and inspected artifacts, with inferred requirements identified and user decisions supported by evidence.
-
-New specs use the session root. Preserve an existing resolved spec's path. Other planning skills direct their output into this canonical owner. Merge stray material before removal; tracked deletion follows the user gate. [ADR 0003](0003-chat-session-artifact-lifecycle.md) records session artifact ownership; [ADR 0011](0011-layered-governing-documents.md) separates document layers.
-
-### Readers and review
-
-Authors, reviewers and writers read the whole governing spec. Writers also read shared plan context, their task, criteria and verification commands. This reading cost preserves material decisions that a short summary can omit.
-
-Reviewers check unmet requirements, contradicted decisions and flawed premises. The orchestrator resolves settled intent claims with cited spec evidence and escalates unsettled intent. [Review rules](../../skills/dispatch/references/review-rules.md#intent-and-findings) own adjudication; [ADR 0007](0007-review-context-and-intent.md) records the distinction between intent and implementation evidence.
-
-### Revision and recovery
-
-Edit canonical artifacts in place. Record before/after hashes, classification, affected tasks, rationale and diff reference in a ledger edit record. Non-intent edits can extend an approved chain; intent changes require a recorded user quote and a new approval tuple where applicable.
-
-Update dependent references and verification obligations before their next use. Continue unaffected writers and notify affected writers; preserve handles, candidates, evidence and review history. [Spec operation](../../skills/dispatch/references/spec-stage.md#revision-protocol) owns the revision procedure. The former engine events and quiescent revision gates have been removed.
+- **Canonical hashing:** Artifact identity uses the formatting-tolerant canonical SHA-256 hash from [`lint run`](../../skills/dispatch/references/toolkit.md#lint-run) (excluding generated `Review Findings & Resolutions` sections).
+- **Settlement and approval:** Settle governing intent before `design`, `plan`, `implement`, or `review` (`ask` needs no spec). Confirm new-spec intent at every level before planning. At `medium` and above, implementation requires a user-quoted approval tuple binding spec, plan, and optional design hashes ([spec operation](../../skills/dispatch/references/spec-stage.md)).
+- **Readers and review:** Authors, reviewers, and writers read the full governing spec so material decisions are never lost to summarization; writers also read shared plan context and their assigned task ([review rules](../../skills/dispatch/references/review-rules.md#intent-and-findings), [ADR 0005](0005-review-rounds-policy.md)).
+- **In-place revision:** Edit canonical artifacts in place and append a ledger `edit` record ([toolkit](../../skills/dispatch/references/toolkit.md#edit)). Non-intent edits extend an approved chain; intent edits require a recorded user quote, a new spec `confirm`, and a new approval tuple where applicable ([revision protocol](../../skills/dispatch/references/spec-stage.md#revision-protocol)).
 
 ## Consequences
 
-Intent becomes durable and hash-bound, at the cost of full-spec reading and explicit updates after changed intent. Operational rules stay in shipped references; this record explains why a canonical owner is required.
+Deliverables and evidence stay recoverable in one workspace session, and intent remains durable and hash-bound across layers withoutupstream hash churn during tactical edits. Full-spec reads and explicit ID tracing trade reading tokens for shared authority.

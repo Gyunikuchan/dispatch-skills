@@ -1,80 +1,28 @@
 # ADR 0001: Strict dispatch config format
 
-- **Status**: Accepted; implemented in v0.5.0
+- **Status**: Accepted
 - **Date**: 2026-09-24
+- **Audience**: Maintainers
 
 ## Context
 
-The previous config allowed flat `model`/`effort` fields, bare read-provider candidates, and
-sandbox flags at different depths. An array could mean either independent review voices or model
-fallbacks within one voice, making selection and consensus counts shape-dependent. It also required
-`effort`, although some models reject an effort option.
+Permissive configuration shapes (flat `model`/`effort` fields, bare provider arrays, and nested sandbox flags) made it ambiguous whether an array meant independent review voices or model fallbacks within one voice, and forced `effort` onto models that reject it.
 
-## Decision and reasons
+## Decision
 
-Adopt one strict, intentionally breaking contract with three root tables: `read-delegates`,
-`write-subagents`, and `phases`. Other shapes fail exhaustive schema validation with a pointer to
-`config.sample.jsonc`; there is no automatic migration or special migration diagnostic. The active
-config used only a small subset of the permissive shapes, so compatibility would preserve ambiguity
-without serving current use. Later optional root tables (`diagnostics`, `write-concurrency`,
-`utility-subagents` (renamed from `explore-subagents`, with a required `context-limit`), `read-commands`) follow the same strict validation.
+Use one strict schema validated by `doctor run` (with `--probe` for live readiness and sandbox capability), pointing invalid shapes to `config.sample.jsonc`:
 
-Static `doctor run` validates configuration. Opt in to `doctor run --probe` to check live
-readiness and sandbox capability for configured read delegates and catch setup failures
-before launch.
-
-### Read delegates and models
-
-- Each provider is `{ sandbox?, targets: [...] }`. The non-empty `targets` array contains level
-  maps, one per independent voice. Voices have positional identity `<provider>[<index>]`; provider
-  declaration order, then target order, determines counts, `all`, reserves, completion, and
-  review affinity ([review rules](../../skills/dispatch/references/review-rules.md#rulings-and-fix-scope)). `only` selects providers, not individual targets. Names would add schema without
-  changing selection; structurally identical targets are rejected.
-- Level maps are non-empty and sparse, with keys drawn from `low`, `medium`, `high`, `xhigh`, and
-  `max`. Resolution uses the exact level, otherwise the nearest lower, otherwise the lowest higher.
-  Each selected entry allows only `{ model, effort? }` and stands alone: inheriting a field could
-  reintroduce an effort option to a model that rejects it. Sparse maps mark only transition points.
-- `model` is a nonblank string or an ordered, non-empty array of distinct nonblank aliases. An array
-  is a cascade *within one voice*, not extra votes: try aliases in order on every failure,
-  including authentication and quota failures (aliases may use different credentials, endpoints, or independent model quotas). Duplicate
-  aliases and structurally identical targets would repeat indistinguishable calls; target comparison
-  ignores object-key order but respects alias order.
-- Optional `effort` is a nonblank, provider-defined string. Omission passes no effort flag and uses
-  the CLI/model default; `null` or blank is rejected so omission has one unambiguous form. CLI
-  `--model`/`--effort` overrides still work, even for a level without configured effort: strict
-  persisted config should not remove one-run control.
-
-### Sandbox and writers
-
-`sandbox` lives on the provider wrapper, defaults to `true`, and can be set to `false`; it is
-accepted for Claude, Copilot, OpenCode, and Codex, but not `agy`. With `sandbox: true`, a provider
-that rejects or cannot activate its sandbox on the host fails the slot as `sandbox-unsupported`,
-and the cascade moves to reserves, then `failed`; a delegate never reruns unsandboxed
-(`runDelegate` in the [delegate runner](../../skills/dispatch/scripts/providers/runner.ts)). Running without isolation requires an explicit `sandbox: false`. This favors least
-privilege over availability and makes every unsandboxed run a deliberate configuration choice.
-OpenCode's Bubblewrap follows the effective sandbox value.
-
-Write subagents instead use a bare level map—no `targets` or `sandbox`—because native implementation
-subagents need workspace writes and do not have independent review voices.
-
-### Review policy
-
-Technical design reviews retain distinct `design-review` flow and candidate identities while using
-the same `plan-review` target count, rounds, and provider allowlist, under the review rounds policy
-(ADR 0005) that governs every review kind. The `phases` table
-accepts `plan-review` and `code-review` only. Both artifacts need the same configurable review
-policy without collapsing their review records.
+- **Root tables:** `read-delegates`, `write-subagents`, `utility-subagents` (renamed from `explore-subagents`, with a required `context-limit`), `phases`, and optional `diagnostics`, `write-concurrency`, `read-commands`, and `pricing`.
+- **Read delegates and models (`read-delegates`):**
+  - Each provider is `{ sandbox?, targets: [...] }`. `targets` is a non-empty array of sparse level maps, one per independent voice with positional identity `<provider>[<index>]`. Provider declaration order, then target order, determines counts, `all`, reserves, completion, and review affinity ([review rules](../../skills/dispatch/references/review-rules.md#rulings-and-fix-scope)). `only` selects providers, not individual targets; structurally identical targets are rejected.
+  - Sparse level maps draw keys from `low`, `medium`, `high`, `xhigh`, and `max`, resolving to the exact level, else nearest lower, else lowest higher. Each entry allows only `{ model, effort? }` and stands alone so an inherited `effort` cannot leak into a model that rejects it.
+  - `model` is a nonblank string or ordered non-empty array of distinct aliases that cascade *within one voice* across failures (including auth and quota). Optional `effort` is a nonblank provider-defined string; omitting it passes no effort flag (`null` or blank is rejected). CLI `--model`/`--effort` overrides still apply per run.
+- **Sandbox and writers:**
+  - `sandbox` lives on the provider wrapper, defaults to `true`, and is accepted for Claude, Copilot, OpenCode (Bubblewrap), and Codex, not `agy`. With `sandbox: true`, a provider that cannot activate its sandbox fails the slot as `sandbox-unsupported` and cascades to reserves rather than running unsandboxed ([delegate runner](../../skills/dispatch/scripts/providers/runner.ts)); running unsandboxed requires explicit `sandbox: false`.
+  - `write-subagents` uses a bare level map without `targets` or `sandbox` because native writers need workspace writes and do not represent multiple review voices.
+- **Review policy (`phases`):**
+  - Accepts `plan-review` and `code-review` only. Design reviews keep distinct `design-review` records and identities while sharing `plan-review` target counts, rounds, and provider allowlists under [ADR 0005](0005-review-rounds-policy.md).
 
 ## Consequences
 
-- Existing configs require manual conversion: wrap read providers, place sandbox on the wrapper,
-  convert candidates to level maps, move flat model/effort fields into levels, and keep model alias
-  arrays inside a level.
-- `phases.design-review` is rejected; move its settings to `phases.plan-review`. The shared policy
-  then also applies to plan reviews, including any provider filter.
-- Runners omit the effort flag when the selected level omits `effort`. Validation, selection,
-  retries, sandbox reporting, `doctor` output, docs, and tests reflect the strict shape.
-- Providers that cannot sandbox on a given host (Claude on native Windows; OpenCode without Linux
-  Bubblewrap) need `sandbox: false` there; `doctor` reports the predicted failure and the fix.
-- Out of scope: per-target names, indexed `only` selectors, per-target/per-level sandbox,
-  provider-specific effort enums, and automatic detection of which models accept effort.
+Validation, selection, retries, sandbox reporting, and `doctor` output enforce one unambiguous shape. Hosts where a provider cannot sandbox (e.g., Claude on native Windows or OpenCode without Linux Bubblewrap) require explicit `sandbox: false`.
