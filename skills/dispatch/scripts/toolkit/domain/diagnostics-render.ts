@@ -1,9 +1,9 @@
-import { formatCost, sumCost, type Cost, type CostReason, type Pricer } from '../../lib/pricing.ts';
-import { addCounters, HOST_ROLES, STAGE_ORDER, tokenTotal, type Counters } from '../../lib/usage/rows.ts';
+import { formatCost, sumCost, type AppliedRateBasis, type Cost, type CostReason, type Pricer } from '../../lib/pricing.ts';
+import { addCounters, HOST_ROLES, MAX_RESPONSE_AGENTS, STAGE_ORDER, tokenTotal, type Counters, type ResponseCoverage } from '../../lib/usage/rows.ts';
 import type { CoverageReason } from '../types.ts';
 import { measured, opt, retroObservations, sanitizeFacts } from './diagnostics-gates.ts';
 import { bySeverity, num, pct, phaseName, plural, selectFindings, sum } from './diagnostics-heuristics.ts';
-import { addYield, CATEGORIES, DASH, DIAGNOSTIC_LIMITS, type Finding, type InvocationFacts, type ModelUsage, type PhaseFacts, type RetroObservation, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
+import { addYield, CATEGORIES, DASH, DIAGNOSTIC_LIMITS, type DelegateResponseFacts, type Finding, type InvocationFacts, type ModelUsage, type PhaseFacts, type RetroObservation, type RunFacts, type SlotYieldAttempt, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
 
 
 const APART = new Set(['opencode', 'agy']);
@@ -65,14 +65,16 @@ function usageSummary(items: readonly InvocationFacts[]): string {
 }
 
 // Cost units: one host row, one `model#effort` entry of a launched CLI invocation, or one invocation without usage. Rollups sum unit costs.
-type Unit = { platform: string; phase?: string; stage: string; role: string; model: string; effort: string; configured: boolean; usage?: ModelUsage; reasoningInOutput?: boolean; coverage?: readonly CoverageReason[]; cost: Cost | undefined; row: boolean };
+type Unit = { platform: string; phase?: string; stage: string; role: string; model: string; effort: string; configured: boolean; usage?: ModelUsage; reasoningInOutput?: boolean; coverage?: readonly CoverageReason[]; usageSource?: InvocationFacts['usageSource']; cost: Cost | undefined; row: boolean };
 
 function priceUnit(pricer: Pricer | undefined, platform: string, model: string, usage: ModelUsage | undefined, inOutput: boolean | undefined, onDate: string | undefined): Cost | undefined {
-  return !pricer ? undefined : usage ? pricer.price(model, usage, !reasoningApart(platform, inOutput), onDate) : { low: 0, high: 0, priced: false, reasons: new Set<CostReason>(['no usage']) };
+  if (!pricer) return undefined;
+  if (usage && model !== DASH) return pricer.price(model, usage, !reasoningApart(platform, inOutput), onDate);
+  return { low: 0, high: 0, priced: false, reasons: new Set<CostReason>([usage ? 'unpriced model' : 'no usage']) };
 }
 
 function invocationUnits(
-  i: { provider: string; model: string; effort?: string | null | undefined; usage?: Usage | undefined; reportedModels?: readonly string[] | undefined; coverage?: readonly CoverageReason[] | undefined },
+  i: Omit<SlotYieldAttempt, 'effort' | 'usage'> & { effort?: string | null | undefined; usage?: Usage | undefined },
   stage: string,
   phase: string | undefined,
   pricer: Pricer | undefined,
@@ -83,8 +85,8 @@ function invocationUnits(
   const unit = (model: string, effortName: string, part: ModelUsage | undefined, configured = false): Unit => ({
     platform: i.provider, ...opt('phase', phase), stage, role: 'delegate', model, effort: effortName, configured,
     ...(part ? { usage: part } : {}), ...(usage?.reasoningInOutput === undefined ? {} : { reasoningInOutput: usage.reasoningInOutput }),
-    ...opt('coverage', i.coverage), row: true,
-    cost: priceUnit(pricer, i.provider, model, part, usage?.reasoningInOutput, onDate),
+    ...opt('coverage', i.coverage), ...opt('usageSource', i.usageSource), row: true,
+    cost: priceUnit(pricer, i.provider, configured ? model.slice(model.lastIndexOf('/') + 1) : model, part, usage?.reasoningInOutput, onDate),
   });
   if (usage?.models) {
     for (const [key, part] of Object.entries(usage.models)) {
@@ -93,8 +95,10 @@ function invocationUnits(
       out.push(unit(at < 0 ? key : key.slice(0, at) || DASH, at < 0 ? effort : key.slice(at + 1) || DASH, part));
     }
   } else {
-    const reported = i.reportedModels?.length ?? 0;
-    out.push(unit(reported > 1 ? DASH : i.model, effort, usage, reported <= 1));
+    const reported = i.reportedModels ?? [];
+    const ambiguous = i.reportedModelAmbiguous || reported.length > 1;
+    const observed = reported[0];
+    out.push(unit(ambiguous ? DASH : observed ?? i.model, effort, usage, !ambiguous && observed === undefined));
   }
   return out;
 }
@@ -117,7 +121,109 @@ export function unitsOf(run: RunFacts, pricer: Pricer | undefined): Unit[] {
   return out;
 }
 
-const costText = (units: readonly Unit[]) => formatCost(sumCost(units.flatMap(u => u.cost ?? [])));
+const costsOf = (units: readonly Unit[]) => units.flatMap(u => u.cost ?? []);
+const costText = (units: readonly Unit[]) => formatCost(sumCost(costsOf(units)));
+const ROLE_LABELS = { host: 'Host', subagent: 'Subagents', delegate: 'CLI delegates' };
+const USAGE_SOURCES = ['session', 'stdout', 'stdout fallback', 'legacy source unknown', 'unmeasured'] as const;
+type UsageEvidence = {
+  usage?: ModelUsage | undefined;
+  usageSource?: InvocationFacts['usageSource'];
+  coverage?: readonly CoverageReason[];
+};
+
+function sourceOfUsage(item: UsageEvidence): typeof USAGE_SOURCES[number] {
+  if (!item.usage) return 'unmeasured';
+  if (item.usageSource === 'stdout' && item.coverage?.includes('transcript unavailable')) return 'stdout fallback';
+  return item.usageSource ?? 'legacy source unknown';
+}
+
+function sourcesOf(items: readonly UsageEvidence[]) {
+  const counts = { session: 0, stdout: 0, 'stdout fallback': 0, 'legacy source unknown': 0, unmeasured: 0 };
+  for (const item of items) counts[sourceOfUsage(item)]++;
+  return counts;
+}
+
+function sourceCountsText(counts: ReturnType<typeof sourcesOf>) {
+  return USAGE_SOURCES.flatMap(source => counts[source] ? [`${num(counts[source])} ${source}`] : []);
+}
+
+function basesOf(units: readonly Unit[]): AppliedRateBasis[] {
+  return units.flatMap(u => u.cost?.rateBasis ?? []);
+}
+
+// Inputs are sanitized by the report or by sessionFacts before comparison.
+export function costCoverage(runs: readonly RunFacts[], pricer: Pricer | undefined, units = runs.flatMap(run => unitsOf(run, pricer))) {
+  const costs = costsOf(units), total = sumCost(costs);
+  const delegates = runs.flatMap(run => run.invocations.filter(i => i.surface === 'cli' && i.launched));
+  const sources = sourcesOf(delegates);
+  const delegateReasons = [...new Set(delegates.flatMap(i => i.coverage ?? []))].sort();
+  const otherHostThreads = runs.some(run => (run.hosts?.length ? run.hosts : run.host ? [run.host] : [])
+    .some(host => host !== run.hostUsage?.platform));
+  const priced = costs.filter(c => c.priced).length;
+  const reasons = new Set<string>(total.reasons);
+  let partial = !pricer || priced < costs.length;
+  if (!pricer) reasons.add('rate table unavailable');
+  if (total.low < total.high) reasons.add('bounded cost range');
+  if (runs.some(run => (run.collection?.partial ?? 0) > 0)) { partial = true; reasons.add('captures partial'); }
+  const roles = (Object.keys(ROLE_LABELS) as (keyof typeof ROLE_LABELS)[]).map(role => {
+    const own = units.filter(u => u.role === role);
+    const observed = own.filter(u => u.usage);
+    const cost = sumCost(costsOf(own));
+    const tokens = observed.length ? observed.reduce((n, u) => n + billedTokens(u.usage!, u.platform, u.reasoningInOutput), 0) : null;
+    const gaps = new Set<string>();
+    if (role === 'delegate') {
+      if (sources.unmeasured) gaps.add('delegate usage unavailable');
+      if (sources['legacy source unknown']) gaps.add('delegate legacy source unknown');
+      if (sources['stdout fallback']) gaps.add('delegate stdout fallback');
+      for (const reason of delegateReasons) gaps.add(`delegate coverage: ${reason}`);
+    } else {
+      if (runs.some(run => (role === 'host' && run.hostUsage?.unavailable) || !run.hostUsage?.rows.some(row => row.role === role))) {
+        gaps.add(role === 'host' ? 'host usage unavailable' : 'subagent usage unavailable');
+      }
+      if (role === 'host' && otherHostThreads) gaps.add('other host threads unmeasured');
+      if (role === 'subagent' && observed.length) gaps.add('total subagent coverage unknown');
+      for (const run of runs) for (const note of Object.keys(run.hostUsage?.notes?.[role] ?? {})) gaps.add(note);
+    }
+    if (gaps.size) partial = true;
+    for (const gap of gaps) reasons.add(gap);
+    const coverage = role === 'delegate' ? [...sourceCountsText(sources), ...delegateReasons] : [...gaps];
+    const unpriced = own.filter(u => u.usage && u.cost && !u.cost.priced).length;
+    if (unpriced) coverage.push(`${plural(unpriced, 'observed unit')} unpriced`);
+    if (role !== 'delegate' && observed.length) coverage.unshift(`${num(observed.length)} observed rows`);
+    if (role === 'host') {
+      const unavailable = [...new Set(runs.flatMap(run => run.hostUsage?.unavailable ?? []))].sort();
+      coverage.push(...unavailable);
+    }
+    return { role, tokens, cost, coverage };
+  });
+  const bases = basesOf(units);
+  const days = [...new Set(bases.map(b => b.effectiveDay))].sort();
+  const origins = [...new Set(bases.map(b => b.origin))].sort();
+  const matches = [...new Set(bases.map(b => b.match))].sort();
+  const periods = [...new Set(bases.map(b => b.periodFrom))].sort();
+  const originCounts = { shipped: 0, override: 0 };
+  const matchCounts = { qualified: 0, wildcard: 0, generic: 0 };
+  for (const basis of bases) { originCounts[basis.origin]++; matchCounts[basis.match]++; }
+  const rateBasis = { tableAsOf: pricer?.meta.asOf ?? null, effectiveDay: days.length === 1 ? days[0]! : null,
+    effectiveDays: days, origins, matches, periods, originCounts, matchCounts };
+  return { total, priced, unpriced: costs.length - priced, coverage: { partial, reasons: [...reasons].sort(), sources }, rateBasis, roles };
+}
+
+function rateNotes(units: readonly Unit[]): string[] {
+  const notes = new Set<string>();
+  for (const { cost, model, configured } of units) {
+    const basis = cost?.rateBasis;
+    if (basis && (basis.origin === 'override' || basis.match !== 'generic' || (!configured && model.includes('/')))) {
+      notes.add(`${basis.origin} ${basis.match} rate (${basis.effectiveDay ?? 'base fallback'})`);
+    }
+  }
+  const labels = [...notes].sort();
+  return labels.length > 8 ? [...labels.slice(0, 8), `${labels.length - 8} more rate bases`] : labels;
+}
+
+function knownSourceNotes(units: readonly Unit[]) {
+  return [...new Set(units.flatMap(u => u.usageSource ? [sourceOfUsage(u)] : []))].sort();
+}
 
 function largestRemainder(exact: readonly number[]): number[] {
   // Largest remainder: floor each part, then give the residual points to the largest fractions.
@@ -157,7 +263,7 @@ function costDrivers(units: readonly Unit[]): string[] {
   const map = new Map<string, DriverGroup>();
   for (const u of units) {
     if (!u.row) continue;
-    const key = [u.stage, u.platform, u.role, u.model, u.effort].join('\0');
+    const key = [u.stage, u.platform, u.role, u.model, u.effort, String(u.configured)].join('\0');
     const g = map.get(key) ?? { key, stage: u.stage, platform: u.platform, role: u.role, model: u.model, effort: u.effort, configured: u.configured, units: [], tokens: 0, input: 0, cacheRead: 0, cacheWrite: 0 };
     g.configured ||= u.configured; g.units.push(u);
     if (u.usage) {
@@ -170,7 +276,7 @@ function costDrivers(units: readonly Unit[]): string[] {
   const pricedTotal = all.filter(g => g.cost.priced).reduce((n, g) => n + g.mid, 0);
   const totalTokens = all.reduce((n, g) => n + g.tokens, 0);
   const hasPriced = all.some(g => g.cost.priced);
-  if (pricedTotal === 0 && totalTokens === 0) return ['## Cost drivers', '', 'No priced cost or billed tokens.', ''];
+  if (!hasPriced && totalTokens === 0) return ['## Cost drivers', '', 'No priced cost or billed tokens.', ''];
   const byTokens = (a: (typeof all)[number], b: (typeof all)[number]) => b.tokens - a.tokens || a.key.localeCompare(b.key);
   const ordered = hasPriced
     ? [...all.filter(g => g.cost.priced).sort((a, b) => b.mid - a.mid || byTokens(a, b)), ...all.filter(g => !g.cost.priced).sort(byTokens)]
@@ -183,24 +289,178 @@ function costDrivers(units: readonly Unit[]): string[] {
   ]) : [];
   let idx = 0;
   const cacheHit = (g: { input: number; cacheRead: number; cacheWrite: number }) => { const d = g.input + g.cacheRead + g.cacheWrite; return d === 0 ? DASH : pct(g.cacheRead / d); };
-  const rows = listed.map(g => row([g.stage, g.platform, g.role, g.model === DASH ? DASH : g.configured ? `${g.model} (configured)` : g.model, g.effort, formatCost(g.cost), hasPriced && !g.cost.priced ? 'unpriced' : hasPriced && pricedTotal === 0 ? DASH : `${parts[idx++]}%`, num(g.tokens), cacheHit(g)]));
+  const evidence = (own: readonly Unit[]) => [...knownSourceNotes(own), ...rateNotes(own)].join(', ') || DASH;
+  const rows = listed.map(g => row([g.stage, g.platform, g.role, g.model === DASH ? DASH : g.configured ? `${g.model} (configured)` : g.model, g.effort, formatCost(g.cost), hasPriced && !g.cost.priced ? 'unpriced' : hasPriced && pricedTotal === 0 ? DASH : `${parts[idx++]}%`, g.units.some(u => u.usage) ? num(g.tokens) : DASH, cacheHit(g), evidence(g.units)]));
   if (rest.length > 0) {
     const restUnpriced = hasPriced ? rest.length - restShareable.length : 0;
     const label = restUnpriced ? `${rest.length} more (${restUnpriced} unpriced)` : `${rest.length} more`;
     const restTotals = { input: rest.reduce((n, g) => n + g.input, 0), cacheRead: rest.reduce((n, g) => n + g.cacheRead, 0), cacheWrite: rest.reduce((n, g) => n + g.cacheWrite, 0) };
     const restShare = restShareable.length > 0 ? (hasPriced && pricedTotal === 0 ? DASH : `${parts[idx]}%`) : 'unpriced';
-    rows.push(row([label, DASH, DASH, DASH, DASH, formatCost(sumCost(rest.flatMap(g => g.units.flatMap(u => u.cost ?? [])))), restShare, num(rest.reduce((n, g) => n + g.tokens, 0)), cacheHit(restTotals)]));
+    rows.push(row([label, DASH, DASH, DASH, DASH, formatCost(sumCost(rest.flatMap(g => g.units.flatMap(u => u.cost ?? [])))), restShare, rest.some(g => g.units.some(u => u.usage)) ? num(rest.reduce((n, g) => n + g.tokens, 0)) : DASH, cacheHit(restTotals), evidence(rest.flatMap(g => g.units))]));
   }
-  const intro = pricedTotal > 0 ? [] : [hasPriced ? 'Priced cost is zero; cost shares unavailable.' : 'Ranked by billed tokens: no unit is priced.', ''];
-  return ['## Cost drivers', '', ...intro, row(['Stage', 'Platform', 'Role', 'Model', 'Effort', 'Cost', 'Share', 'Billed tokens', 'Cache hit']), '| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |', ...rows, ''];
+  const intro = [pricedTotal > 0 ? 'Share uses the priced midpoint as its denominator.' : hasPriced ? 'Priced cost is zero. Cost shares are unavailable.' : 'Share uses observed billed tokens. No unit is priced.', ''];
+  return ['## Cost drivers', '', ...intro, row(['Stage', 'Platform', 'Role', 'Model', 'Effort', 'Cost', 'Share', 'Billed tokens', 'Cache hit', 'Evidence']), '| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |', ...rows, ''];
 }
 
 // SECTION: Folding
 
 /** Row counts kept per table once a report exceeds its byte cap; an absent entry leaves that table whole. */
-type Fold = { timing?: number; stage?: number; phase?: number; platform?: number };
+type ResponseEvidence = Omit<DelegateResponseFacts, 'role'> & { role: 'host' | 'subagent' | 'delegate' };
+
+function responseEvidence(runs: readonly RunFacts[]): ResponseEvidence[] {
+  const rows: ResponseEvidence[] = [];
+  const unknownScopes = new Set<string>();
+  const unknown = (role: ResponseEvidence['role'], stage: ResponseEvidence['stage'] = 'unattributed') => {
+    const scope = role + '|' + stage;
+    if (unknownScopes.has(scope)) return;
+    unknownScopes.add(scope);
+    rows.push({ role, stage, basis: 'unavailable', coverage: 'unknown' });
+  };
+  for (const [index, run] of runs.entries()) {
+    const aliases = new Map<string, string>();
+    const register = ({ agent, ...entry }: ResponseEvidence): ResponseEvidence => {
+      if (!agent) return entry;
+      let label = aliases.get(agent);
+      if (!label && aliases.size < MAX_RESPONSE_AGENTS) {
+        label = (agent.startsWith('delegate-child-') ? 'delegate-child' : entry.role) + '-' + (aliases.size + 1);
+        aliases.set(agent, label);
+      }
+      return label ? { ...entry, agent: runs.length > 1 ? `run ${index + 1} ${label}` : label }
+        : { ...entry, coverage: entry.coverage === 'complete' ? 'partial' : entry.coverage };
+    };
+    const host = run.hostUsage?.responses ?? [];
+    rows.push(...host.map(register));
+    if (!host.some(entry => entry.role === 'host') || Object.keys(run.hostUsage?.notes?.host ?? {}).length) unknown('host');
+    if (!host.some(entry => entry.role === 'subagent') || Object.keys(run.hostUsage?.notes?.subagent ?? {}).length) unknown('subagent');
+    const phaseNames = new Map(run.phases.map(phase => [phase.key, phase.name]));
+    for (const invocation of run.invocations) {
+      if (invocation.surface !== 'cli' || !invocation.launched) continue;
+      const phase = phaseNames.get(invocation.phase);
+      const stage = phase === 'integration review' ? 'code review' : STAGE_ORDER.find(stage => stage === phase) ?? 'unattributed';
+      if (invocation.responses?.length) rows.push(...invocation.responses.map(register));
+      else unknown('delegate', stage);
+    }
+    if ((run.collection?.partial ?? 0) > 0) unknown('delegate');
+  }
+  return rows;
+}
+
+function responseTotals(rows: readonly ResponseEvidence[]) {
+  const observed = sum(rows.map(entry => entry.observed)) ?? null;
+  const matched = rows.filter(entry => entry.observed !== undefined && entry.uncachedInput !== undefined && (entry.observed > 0 || entry.uncachedInput === 0));
+  const matchedObserved = sum(matched.map(entry => entry.observed)) ?? null;
+  const matchedUncachedInput = sum(matched.map(entry => entry.uncachedInput)) ?? null;
+  const coverage: ResponseCoverage = observed === null ? 'unknown'
+    : rows.every(entry => entry.coverage === 'complete' && entry.observed !== undefined) ? 'complete' : 'partial';
+  return {
+    observed, matchedObserved, matchedUncachedInput, coverage,
+    uncachedInputPerResponse: matchedObserved && matchedUncachedInput !== null ? matchedUncachedInput / matchedObserved : null,
+  };
+}
+
+function groupResponses(rows: readonly ResponseEvidence[], agentDetail: boolean) {
+  const groups = new Map<string, ResponseEvidence[]>();
+  for (const entry of rows) {
+    const key = [entry.stage, entry.role, entry.basis, agentDetail ? entry.agent ?? 'Unnamed or folded' : ''].join('|');
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+  return [...groups.entries()].map(([key, entries]) => {
+    const [stage, role, basis, agent] = key.split('|') as [string, string, string, string];
+    return { stage, role, basis, ...(agent ? { agent } : {}), ...responseTotals(entries) };
+  });
+}
+
+const failureCauses = new Set([
+  'quota', 'context-overflow', 'auth', 'model-not-found', 'cli-outdated', 'model-not-loaded', 'sandbox-unsupported',
+  'not-found', 'timeout', 'buffer', 'empty-output', 'capacity', 'refusal', 'no-report', 'blocked',
+  'truncated', 'integrity', 'config',
+]);
+
+function recoveryOf(runs: readonly RunFacts[], pricer?: Pricer) {
+  const groups = new Map<string, { units: Unit[]; count: number }>();
+  let extraLaunches = 0, reworkLaunches = 0;
+  const writerRelaunches = sum(runs.map(run => run.relaunches)) ?? null;
+  for (const run of runs) {
+    const previous = new Map<string, InvocationFacts>();
+    for (const attempt of run.invocations) {
+      if (attempt.surface !== 'cli') continue;
+      const slot = attempt.targetSlot ?? attempt.slot;
+      const key = slot ? (attempt.subject ?? attempt.phase) + '|' + slot : undefined;
+      const prior = key ? previous.get(key) : undefined;
+      if (key) previous.set(key, attempt);
+      if (!attempt.launched) continue;
+      let cause: string;
+      if (attempt.superseded) {
+        reworkLaunches++;
+        cause = 'superseded generation';
+      } else if (prior || attempt.targetSlot) {
+        extraLaunches++;
+        const outcome = prior?.outcome === 'ok' ? prior.validationOutcome : prior?.outcome;
+        cause = outcome && failureCauses.has(outcome) ? outcome
+          : prior?.validationOutcome && prior.validationOutcome !== 'ok' ? 'validation'
+          : attempt.targetSlot ? 'reserve or fallback' : 'unknown cause';
+      } else continue;
+      const group = groups.get(cause) ?? { units: [], count: 0 };
+      group.count++;
+      group.units.push(...invocationUnits({ ...attempt, usage: measured(attempt) }, 'unattributed', attempt.phase, pricer, run.startedAt));
+      groups.set(cause, group);
+    }
+  }
+  const byCause = Object.fromEntries([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([cause, group]) => {
+    const costs = costsOf(group.units), cost = sumCost(costs);
+    const partial = group.units.some(unit => unit.coverage?.length || !unit.cost?.priced);
+    return [cause, { count: group.count, cost: cost.priced ? { low: cost.low, high: cost.high, partial } : null }];
+  }));
+  const coverage = runs.some(run => (run.collection?.partial ?? 0) > 0) ? 'partial'
+    : runs.some(run => run.invocations.some(attempt => attempt.surface === 'cli' && attempt.launched)) ? 'observed' : 'unknown';
+  return { extraLaunches: coverage === 'unknown' ? null : extraLaunches, reworkLaunches: coverage === 'unknown' ? null : reworkLaunches, writerRelaunches, coverage, byCause };
+}
+
+function criticalPathOf(runs: readonly RunFacts[]) {
+  return runs.flatMap(run => (run.roundTiming ?? []).map(({ review, round, slots }) => {
+    let first = Infinity, last = -Infinity, finishingSlot: string | null = null;
+    for (const { slot, attempts } of slots) {
+      if (slot === DASH) return { review, round, elapsedMs: null, finishingSlot: null };
+      for (const { surface, startMs, endMs } of attempts) {
+        if (surface === 'native') continue;
+        if (surface !== 'cli' || startMs === undefined || endMs === undefined || endMs < startMs) {
+          return { review, round, elapsedMs: null, finishingSlot: null };
+        }
+        first = Math.min(first, startMs);
+        if (endMs > last) {
+          last = endMs;
+          finishingSlot = slot;
+        }
+      }
+    }
+    return { review, round, elapsedMs: finishingSlot === null ? null : last - first, finishingSlot };
+  }));
+}
+
+/** Efficiency from sanitized observations. Ratios use only events with paired input. */
+export function efficiencyOf(runs: readonly RunFacts[], pricer?: Pricer) {
+  const responses = responseEvidence(runs);
+  const { observed, matchedObserved, coverage, matchedUncachedInput, uncachedInputPerResponse } = responseTotals(responses);
+  const rounds = runs.flatMap(run => run.reviews);
+  const recurring = rounds.length && rounds.every(round => round.recurring !== undefined)
+    ? sum(rounds.map(round => round.recurring)) ?? null : null;
+  return {
+    responseEvents: { observed, matchedObserved, coverage, byStageRole: groupResponses(responses, false) },
+    matchedUncachedInput, uncachedInputPerResponse,
+    responses,
+    recovery: recoveryOf(runs, pricer),
+    criticalPath: criticalPathOf(runs),
+    reviewOutcomes: rounds.length ? {
+      rounds: rounds.length, accepted: sum(rounds.map(round => round.accepted)), rejected: sum(rounds.map(round => round.rejected)), recurring,
+    } : null,
+  };
+}
+
+type Fold = { responses?: number; timing?: number; workload?: number; yield?: number; stage?: number; phase?: number; platform?: number };
 type Foldable = { units: readonly Unit[]; tokens: number; key: string };
-const FOLD_ORDER = ['timing', 'stage', 'phase', 'platform'] as const;
+const FOLD_ORDER = ['timing', 'workload', 'yield', 'stage', 'phase', 'platform', 'responses'] as const;
 
 /** Keeps the `keep` best-ranked rows (high cost, low cost, tokens, key; unpriced counts 0) in normal order and merges the rest into one trailing row. */
 function foldTable<R extends Foldable>(rows: readonly R[], keep: number | undefined, merge: (rest: R[]) => R, pinned: (row: R) => boolean = () => false): R[] {
@@ -217,7 +477,14 @@ const smaller = (rest: readonly unknown[]) => `${rest.length} smaller rows`;
 type PhaseRow = Foldable & { label: string; phase: string; outcome?: string; timing: readonly (number | undefined)[]; items: readonly InvocationFacts[]; pinned: boolean };
 
 /** Folding re-renders the tables only: the table functions in `lines` run per `render(fold)`, so the data builds once. */
-function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservation & {run: number})[], runUnits: readonly (readonly Unit[])[], pricer?: Pricer): { render: (fold: Fold) => string[]; counts: Record<(typeof FOLD_ORDER)[number], number> } {
+const observedNumber = (n: number | null) => n === null ? DASH : num(n);
+const responseCells = (entry: ReturnType<typeof responseTotals>) => [
+  observedNumber(entry.observed), entry.coverage === 'unknown' ? 'unavailable' : entry.coverage,
+  observedNumber(entry.matchedObserved), observedNumber(entry.matchedUncachedInput),
+  entry.uncachedInputPerResponse === null ? DASH : entry.uncachedInputPerResponse.toFixed(2),
+];
+
+function overview(runs: readonly RunFacts[], efficiency: ReturnType<typeof efficiencyOf>, grounding: readonly (RetroObservation & {run: number})[], runUnits: readonly (readonly Unit[])[], pricer?: Pricer): { render: (fold: Fold) => string[]; counts: Record<(typeof FOLD_ORDER)[number], number> } {
   const overviewPhase = (p: PhaseFacts) => {
     if (/^review-[a-f0-9]{16}$/.test(p.key)) return `${p.name} · subject ${p.key.slice(7)}`;
     return p.key === p.name || p.key === p.name.replace(/ /g, '-') ? p.name : `${p.name} · ${p.key}`;
@@ -241,7 +508,7 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
     }
     const known = (phase: string | undefined) => run.phases.some((p) => p.key === phase);
     const unmatched = run.invocations.filter((i) => !known(i.phase)), before = units.filter(u => !known(u.phase));
-    if (before.length) phaseRows.push(mkRow('before first phase', undefined, [undefined, undefined, undefined, undefined], unmatched, before));
+    if (before.length) phaseRows.push(mkRow('unattributed phase', undefined, [undefined, undefined, undefined, undefined], unmatched, before));
     if (run.phases.length !== 1 || unmatched.length || before.length) phaseRows.push(mkRow('all phases', run.outcome, (['wallMs', 'driverMs', 'hostMs', 'userMs'] as const).map((k) => sum(run.phases.map((p) => p[k]))), run.invocations, units));
     if (run.fault) notes.push(`- Run ${index + 1} fault: \`${run.fault.cls}\`${run.fault.effectId ? ` in \`${run.fault.effectId}\`` : ''}; ${run.fault.waitBy === 'user' ? 'user' : 'host'} wait ${formatDuration(run.fault.hostWaitMs)}; driver ${formatDuration(run.fault.driverMs)}.`);
   });
@@ -252,33 +519,36 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
     row(['Run', 'Phase', 'Outcome', ...TIMING_COLS.filter((_, idx) => showTiming[idx]), 'Invocations', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage', 'Cost', 'Top models']),
     row(['---', '---', '---', ...showTiming.filter(Boolean).map(() => '---:'), '---:', '---:', '---:', '---:', '---:', '---:', '---:', '---']),
   ];
-  // Summed timings, items and units keep the folded row's cells equal to its parts; `all phases` and `before first phase` stay pinned.
+  // Summed timings, items and units keep the folded row's cells equal to its parts; `all phases` and `unattributed phase` stay pinned.
   const mergePhases = (rest: PhaseRow[]): PhaseRow => ({ label: DASH, phase: smaller(rest), timing: [0, 1, 2, 3].map((k) => sum(rest.map((r) => r.timing[k]))), items: rest.flatMap((r) => r.items), units: rest.flatMap((r) => r.units), tokens: 0, key: '', pinned: false });
   lines.push((fold) => foldTable(phaseRows, fold.phase, mergePhases, (r) => r.pinned).map((r) => row([r.label, r.phase, r.outcome ?? DASH, ...r.timing.filter((_, idx) => showTiming[idx]).map(formatDuration), String(r.items.length), ...tokenCells(totals(usageSamples(r.items))), coverage(r.items), costText(r.units), r.units.some(u => u.cost) ? topModels(r.units) : DASH])));
   if (notes.length) lines.push('', ...notes);
-  lines.push('', 'Overview token columns count CLI delegates only; Cost also counts host and subagent usage attributed by time.', '');
+  lines.push('', 'Overview token columns count CLI delegates. Cost includes delegate usage in its recorded phase and host and subagent usage in time-estimated phases. Top model cost shares use the priced midpoint.', '');
   if (grounding.length) {
     lines.push('### Grounding', '', row(['Run', 'Phase', 'Evidence', 'Assessment', 'Proposed change']), '| --- | --- | --- | --- | --- |');
     for (const g of grounding) lines.push(row([String(g.run), g.id.slice('grounding-'.length), g.evidence, g.impact, g.proposedFix]));
     lines.push('');
   }
-  type TokenRow = {stage:string; platform:string; role:string; model:string; effort:string; configured:boolean; samples:UsageSample[]; measured:number; launched:number; coverageReasons:Set<CoverageReason>; costReasons:Set<CostReason>; units:Unit[]; tokens:number; key:string; coverage?:string; costNotes?:string};
+  type TokenRow = {stage:string; platform:string; role:string; model:string; effort:string; configured:boolean; samples:UsageSample[]; measured:number; launched:number; coverageReasons:Set<CoverageReason>; costNotes:Set<string>; units:Unit[]; tokens:number; key:string; coverage?:string};
   const rows = new Map<string,TokenRow>();
   const allUnits = runUnits.flat();
   for(const u of allUnits) {
     if(!u.row) continue;
-    const key=[u.stage,u.platform,u.role,u.model,u.effort].join('\0');
-    const entry=rows.get(key) ?? {stage:u.stage,platform:u.platform,role:u.role,model:u.model,effort:u.effort,configured:u.configured,samples:[],measured:0,launched:0,coverageReasons:new Set<CoverageReason>(),costReasons:new Set<CostReason>(),units:[],tokens:0,key};
+    const key=[u.stage,u.platform,u.role,u.model,u.effort,String(u.configured)].join('\0');
+    const entry=rows.get(key) ?? {stage:u.stage,platform:u.platform,role:u.role,model:u.model,effort:u.effort,configured:u.configured,samples:[],measured:0,launched:0,coverageReasons:new Set<CoverageReason>(),costNotes:new Set<string>(),units:[],tokens:0,key};
     entry.configured ||= u.configured; entry.launched++; entry.units.push(u); if(u.usage){entry.measured++;entry.samples.push({usage:u.usage,platform:u.platform,reasoningInOutput:u.reasoningInOutput});entry.tokens+=billedTokens(u.usage,u.platform,u.reasoningInOutput);}
     for(const reason of u.coverage ?? []) entry.coverageReasons.add(reason);
-    for(const reason of u.cost?.reasons ?? []) entry.costReasons.add(reason);
+    for(const reason of u.cost?.reasons ?? []) entry.costNotes.add(reason);
     rows.set(key,entry);
   }
   const sorted=[...rows.values()].sort((a,b)=>(STAGE_ORDER.indexOf(a.stage as never) < 0 ? 99 : STAGE_ORDER.indexOf(a.stage as never))-(STAGE_ORDER.indexOf(b.stage as never) < 0 ? 99 : STAGE_ORDER.indexOf(b.stage as never)) || a.platform.localeCompare(b.platform) || ['host','subagent','delegate'].indexOf(a.role)-['host','subagent','delegate'].indexOf(b.role) || a.model.localeCompare(b.model) || a.effort.localeCompare(b.effort));
   const platforms=new Set([...sorted.map(r=>r.platform),...runs.flatMap(r=>r.hostUsage?[r.hostUsage.platform??DASH]:[]),...allUnits.map(u=>u.platform)]);
   const cells=(samples:UsageSample[])=>{const t=totals(samples);return [...tokenCells(t),t?.reasoning===undefined?DASH:num(t.reasoning)];};
-  const coverageRow=(r:TokenRow)=>r.coverage ?? (r.role==='delegate'?`${r.measured}/${r.launched}${r.coverageReasons.size?' '+[...r.coverageReasons].join(', '):''}`:[...r.coverageReasons].join(', ')||DASH);
-  const costNotesRow=(r:TokenRow)=>r.costNotes ?? ([...r.costReasons].join(', ')||DASH);
+  const coverageRow = (r: TokenRow) => {
+    const base = r.coverage ?? (r.role === 'delegate' ? `${r.measured}/${r.launched}${r.coverageReasons.size ? ' ' + [...r.coverageReasons].join(', ') : ''}` : DASH);
+    return [base, ...knownSourceNotes(r.units)].join(' · ');
+  };
+  const costNotesRow = (r: TokenRow) => [...r.costNotes, ...rateNotes(r.units)].join(', ') || DASH;
   type PlatformRow = Foldable & {platform:string; samples:UsageSample[]; segments:string[]; costNotes:string[]};
   const platformRows:PlatformRow[]=[];
   lines.push('### Tokens by platform','',row(['Platform','Uncached input','Cache read','Cache write','Output','Reasoning','Coverage','Cost notes','Cost']),'| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |');
@@ -298,12 +568,12 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
     platformRows.push({platform,samples,segments,costNotes,units:mine,tokens:samples.reduce((n,s)=>n+billedTokens(s.usage,s.platform,s.reasoningInOutput),0),key:platform});
   }
   const mergePlatforms=(rest:PlatformRow[]):PlatformRow=>({platform:smaller(rest),samples:rest.flatMap(r=>r.samples),segments:[...new Set(rest.flatMap(r=>r.segments))],costNotes:[...new Set(rest.flatMap(r=>r.costNotes))],units:rest.flatMap(r=>r.units),tokens:0,key:''});
-  lines.push(fold=>foldTable(platformRows,fold.platform,mergePlatforms).map(r=>row([r.platform,...cells(r.samples),r.segments.join(' · ')||DASH,r.costNotes.join(', ')||DASH,costText(r.units)])));
+  lines.push(fold=>foldTable(platformRows,fold.platform,mergePlatforms).map(r=>row([r.platform,...cells(r.samples),[...r.segments, ...knownSourceNotes(r.units)].join(' · ')||DASH,[...r.costNotes, ...rateNotes(r.units)].join(', ')||DASH,costText(r.units)])));
   if(!platforms.size) lines.push(row(Array<string>(9).fill(DASH)));
   lines.push('','### Tokens by stage','','Host and subagent stages are time-derived; delegate stages are recorded.','',row(['Stage','Platform','Role','Model','Effort','Uncached input','Cache read','Cache write','Output','Reasoning','Coverage','Cost notes','Cost']),'| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |');
   const mergeStages=(rest:TokenRow[]):TokenRow=>{
     const delegates=rest.filter(r=>r.role==='delegate'), covReasons=[...new Set(rest.flatMap(r=>[...r.coverageReasons]))].join(', ');
-    return {stage:smaller(rest),platform:DASH,role:DASH,model:DASH,effort:DASH,configured:false,samples:rest.flatMap(r=>r.samples),measured:0,launched:0,coverageReasons:new Set(),costReasons:new Set(),units:rest.flatMap(r=>r.units),tokens:0,key:'',coverage:delegates.length?`${delegates.reduce((n,r)=>n+r.measured,0)}/${delegates.reduce((n,r)=>n+r.launched,0)}${covReasons?' '+covReasons:''}`:covReasons||DASH,costNotes:[...new Set(rest.flatMap(r=>[...r.costReasons]))].join(', ')||DASH};
+    return {stage:smaller(rest),platform:DASH,role:DASH,model:DASH,effort:DASH,configured:false,samples:rest.flatMap(r=>r.samples),measured:0,launched:0,coverageReasons:new Set(),costNotes:new Set(rest.flatMap(r=>[...r.costNotes])),units:rest.flatMap(r=>r.units),tokens:0,key:'',coverage:delegates.length?`${delegates.reduce((n,r)=>n+r.measured,0)}/${delegates.reduce((n,r)=>n+r.launched,0)}${covReasons?' '+covReasons:''}`:covReasons||DASH};
   };
   lines.push(fold=>foldTable(sorted,fold.stage,mergeStages).map(entry=>row([entry.stage,entry.platform,entry.role,entry.model===DASH?DASH:entry.configured?`${entry.model} (configured)`:entry.model,entry.effort,...cells(entry.samples),coverageRow(entry),costNotesRow(entry),costText(entry.units)])));
   if(!sorted.length) lines.push(row(Array<string>(13).fill(DASH)));
@@ -319,6 +589,14 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
   }
   const yieldRows = [...yields.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.provider.localeCompare(b.provider) || (a.model ?? '').localeCompare(b.model ?? ''));
   const showFixInduced = yieldRows.some((entry) => (entry.fixInduced ?? 0) > 0);
+  const responseRows = groupResponses(efficiency.responses, true);
+  lines.push(fold => {
+    const kept = responseRows.slice(0, fold.responses);
+    return ['', '### Responses by agent', '', row(['Stage', 'Role', 'Agent', 'Event basis', 'Events', 'Coverage', 'Matched events', 'Matched input', 'Input / matched response']),
+      '| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: |',
+      ...kept.map(entry => row([entry.stage, entry.role, entry.agent ?? DASH, entry.basis, ...responseCells(entry)])),
+      ...(kept.length < responseRows.length ? ['', `${responseRows.length - kept.length} response detail rows omitted. Stage totals include them.`] : [])];
+  });
   const timing=runs.flatMap(run=>run.roundTiming??[]);
   if(timing.length) lines.push((fold) => {
     const kept=timing.slice(0,fold.timing??timing.length);
@@ -331,6 +609,12 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
       const latest=spans.every(Boolean)?spans.findIndex(s=>s!.end===Math.max(...spans.map(x=>x!.end))):-1;
       round.slots.forEach((slot,i)=>result.push(row(['subject '+round.review.slice(7),String(round.round),slot.slot,formatDuration(spans[i] && spans[i]!.end-spans[i]!.start),i===latest?'✓':DASH])));
     }
+    result.push('', '### Review CLI attempt spans', '',
+      'Observed wall span between the first launch and last completion in the current generation. Native completion timing is unavailable.', '',
+      row(['Review', 'Round', 'CLI span', 'Finishing logical slot']), '| --- | ---: | ---: | --- |');
+    for (const span of efficiency.criticalPath.slice(0, kept.length)) {
+      result.push(row(['subject ' + span.review.slice(7), String(span.round), formatDuration(span.elapsedMs ?? undefined), span.finishingSlot ?? DASH]));
+    }
     if(kept.length<timing.length)result.push('',`${timing.length-kept.length} review timing rounds omitted`);
     return result;
   });
@@ -339,34 +623,44 @@ function overview(runs: readonly RunFacts[], grounding: readonly (RetroObservati
     const storageFailed = sum(runs.map((run) => run.collection?.storageFailed)) ?? 0;
     const eligible = workload.filter(round => round.kind === 'plan' || round.kind === 'design');
     const over = eligible.filter(round => (round.calls?.total ?? 0) > 6 || (round.hostTurns ?? 0) > 25);
-    lines.push('', '### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens', 'Host turns']), '| --- | ---: | --- | ---: | ---: |',
-      ...workload.map((round) => row(['subject ' + round.review.slice(7), String(round.round),
+    lines.push(fold => ['', '### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens', 'Host turns']), '| --- | ---: | --- | ---: | ---: |',
+      ...workload.slice(0, fold.workload).map((round) => row(['subject ' + round.review.slice(7), String(round.round),
         round.calls ? `${num(round.calls.total)}${round.calls.phases.length ? ': ' + round.calls.phases.map((p) => `${p.key} ${num(p.count)}`).join(' · ') : ''}` : DASH,
         round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH,
         round.hostTurns === undefined ? 'unavailable' : num(round.hostTurns)])),
       '', 'Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted.',
-      ...(eligible.length ? ['Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: ' + (over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') || 'none')] : []),
-      ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : []));
+      ...(fold.workload !== undefined && fold.workload < workload.length ? [`${workload.length - fold.workload} workload rows omitted.`] : []),
+      ...(eligible.length ? ['Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: ' + ((fold.workload === undefined ? over.map(round => 'subject ' + round.review.slice(7) + ' round ' + round.round).join(', ') : (over.length ? plural(over.length, 'round') : '')) || 'none')] : []),
+      ...(storageFailed ? [`${plural(storageFailed, 'capture storage failure')}: calls from failed updates may be missing from the counts above.`] : [])]);
   }
   lines.push('', '### Review yield by slot', '',
+    'Rows group slots by responder kind, provider and model. Usage and cost cover current-generation launched CLI attempts. Ratios use current-generation accepted finding credits per responder group. A shared finding can credit each responder.', '',
     row(['Provider', 'Model', 'MUST', 'SHOULD', 'CONSIDER', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Deferred', 'Duplicate', 'Unruled', 'Tokens', 'Tokens / accepted', 'Cost', 'Cost / accepted', 'Cost notes']),
     '| --- | --- | ---: | ---: | ---: |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |');
+  const yieldLines: string[] = [];
   for (const entry of yieldRows) {
     const key = [entry.kind, entry.provider, entry.model ?? ''].join('\0');
     const units = yieldUnits.get(key) ?? [];
     const totalCost = sumCost(units.flatMap((u) => u.cost ?? []));
-    const partial = entry.measured < entry.launched ? ' partial' : '';
+    const partial = entry.measured < entry.launched || units.some(u => u.coverage?.length) ? ' partial' : '';
+    const costPartial = partial || (units.some(u => u.cost && !u.cost.priced) ? ' partial' : '');
     const tokensCell = `${entry.tokens === undefined ? DASH : num(entry.tokens)}${partial}`;
     const tokensPerAccepted = entry.accepted === 0 ? '0 accepted' : entry.tokens === undefined ? DASH : `${num(entry.tokens / entry.accepted)}${partial}`;
-    const costCell = `${formatCost(totalCost)}${totalCost.priced ? partial : ''}`;
-    const costPerAccepted = entry.accepted === 0 ? '0 accepted' : !totalCost.priced ? DASH : `${formatCost({ ...totalCost, low: totalCost.low / entry.accepted, high: totalCost.high / entry.accepted })}${partial}`;
-    const costNotes = [...totalCost.reasons].join(', ') || DASH;
+    const costCell = `${formatCost(totalCost)}${totalCost.priced ? costPartial : ''}`;
+    const costPerAccepted = entry.accepted === 0 ? '0 accepted' : !totalCost.priced ? DASH : `${formatCost({ ...totalCost, low: totalCost.low / entry.accepted, high: totalCost.high / entry.accepted })}${costPartial}`;
+    const models = [...new Set(units.filter(u => u.usage && u.model !== DASH && !u.configured).map(u => u.model))];
+    const costNotes = [...totalCost.reasons, ...rateNotes(units),
+      ...knownSourceNotes(units),
+      ...(models.length && models.some(model => model !== entry.model) ? [`reported: ${models.join(', ')}`] : []),
+      ...(entry.priorLaunches ? [`${entry.priorLaunches} prior-generation launches excluded`] : []),
+    ].join(', ') || DASH;
     const model = entry.kind === 'native' ? 'native' : entry.kind === 'tool' ? DASH : entry.model ?? DASH;
-    lines.push(row([entry.provider, model, String(entry.raised.MUST), String(entry.raised.SHOULD), String(entry.raised.CONSIDER), ...(showFixInduced ? [String(entry.fixInduced ?? 0)] : []),
+    yieldLines.push(row([entry.provider, model, String(entry.raised.MUST), String(entry.raised.SHOULD), String(entry.raised.CONSIDER), ...(showFixInduced ? [String(entry.fixInduced ?? 0)] : []),
       String(entry.accepted), String(entry.rejected), String(entry.deferred), String(entry.duplicate), String(entry.unruled), tokensCell, tokensPerAccepted, costCell, costPerAccepted, costNotes]));
   }
+  lines.push(fold => [...yieldLines.slice(0, fold.yield), ...(fold.yield !== undefined && fold.yield < yieldLines.length ? [`${yieldLines.length - fold.yield} yield rows omitted.`] : [])]);
   if (!yieldRows.length) lines.push(row(Array<string>(showFixInduced ? 16 : 15).fill(DASH)));
-  return { render: (fold) => [...lines.flatMap((line) => typeof line === 'function' ? line(fold) : [line]), ''], counts: { timing: timing.length, stage: sorted.length, phase: phaseRows.filter((r) => !r.pinned).length, platform: platformRows.length } };
+  return { render: (fold) => [...lines.flatMap((line) => typeof line === 'function' ? line(fold) : [line]), ''], counts: { responses: responseRows.length, timing: timing.length, workload: workload.length, yield: yieldRows.length, stage: sorted.length, phase: phaseRows.filter((r) => !r.pinned).length, platform: platformRows.length } };
 }
 
 function appendix(runs: readonly RunFacts[]): string[] {
@@ -410,13 +704,19 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     ...(retro[index]?.values ?? []).filter((o) => !isGrounding(o)).map((o) => ({ source: 'retro', run: index + 1, id: o.id, category: o.category, component: o.component, evidence: o.evidence, impact: o.impact, proposedFix: o.proposedFix })),
   ]));
   const invocations = runs.flatMap((run) => run.invocations);
-  const runUnits = runs.map((run) => unitsOf(run, pricer)), costs = runUnits.flat().flatMap((u) => u.cost ?? []);
+  const runUnits = runs.map(run => unitsOf(run, pricer));
+  const { total, priced, unpriced, coverage: scope, rateBasis, roles } = costCoverage(runs, pricer, runUnits.flat());
   const collected = retro.filter((r) => r !== undefined);
   const hosts = [...new Set(runs.flatMap((run) => run.hosts?.length ? run.hosts : run.host ? [run.host] : []))];
-  const measuredPlatforms = [...new Set(runs.map((run) => run.hostUsage?.platform).filter((p): p is string => typeof p === 'string' && p.length > 0))];
+  const measuredPlatforms = [...new Set(runs.flatMap(run => {
+    const host = run.hostUsage;
+    return host?.platform && host.rows.some(r => r.role === 'host') ? [host.platform] : [];
+  }))];
   const hostScope = hosts.length > 1
     ? ` · ${measuredPlatforms.length ? `host rows measure the ${measuredPlatforms.join(', ')} thread; other hosts' threads are unmeasured` : 'no host thread is measured'}`
     : '';
+  const days = rateBasis.effectiveDays;
+  const dayText = days.length > 8 ? `${days.length} rate days or base-rate fallbacks` : days.map(day => day ?? 'base-rate fallback').join(', ') || DASH;
   const lead = [
     '# Dispatch diagnostics', '',
     'Review before sharing. This report holds dispatch-owned data only: no user source, objective, repository paths, or identities. Proposed fixes are unverified.', '',
@@ -426,16 +726,41 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     `- Host: ${hosts.join(', ') || DASH}${hostScope} · OS: ${unique(runs.map((run) => run.os ?? DASH))}`,
     `- Runs: ${runs.length} · measured duration: ${formatDuration(sum(runs.flatMap((run) => run.phases.map((p) => p.wallMs))))}`,
     `- Provider CLI measured tokens: ${usageSummary(invocations)} · launch coverage ${coverage(invocations)}`,
-    pricer ? `- Estimated cost (host, subagents and CLI delegates): ${formatCost(sumCost(costs))} · rates as of ${pricer.meta.asOf} · priced ${costs.filter((c) => c.priced).length} · unpriced ${costs.filter((c) => !c.priced).length}` : '- Estimated cost: not estimated (rate table unavailable)',
+    pricer ? `- Estimated cost (host, subagents and CLI delegates): ${formatCost(total)} · rates as of ${pricer.meta.asOf} · priced ${priced} · unpriced ${unpriced}` : '- Estimated cost: not estimated (rate table unavailable)',
+    ...(pricer ? [`- Rate basis: shipped table date ${rateBasis.tableAsOf} · UTC effective day ${dayText} · origins: ${rateBasis.originCounts.shipped} shipped, ${rateBasis.originCounts.override} override · matches: ${rateBasis.matchCounts.qualified} qualified, ${rateBasis.matchCounts.wildcard} wildcard, ${rateBasis.matchCounts.generic} generic`] : []),
+    `- Cost coverage: ${scope.partial ? 'partial' : 'complete for observed scope'}${scope.reasons.length ? ' · ' + scope.reasons.join(', ') : ''}`,
+    '',
+    row(['Role', 'Observed billed tokens', 'Priced cost', 'Coverage']),
+    '| --- | ---: | ---: | --- |',
+    ...roles.map(r => row([ROLE_LABELS[r.role], r.tokens === null ? DASH : num(r.tokens), formatCost(r.cost), r.coverage.join(', ') || 'no recorded launches'])),
+    '',
     ...(runs.some(run => run.timingScope === 'tool-calls') ? [`- Timing scope: summed measured tool-call durations; concurrent calls can overlap. Host reasoning, user wait, ${runs.some(run => run.hostUsage?.rows.length) ? 'native/writer timing' : 'native/writer usage'} and work before enablement are unavailable.`] : []),
     runs.some(run => run.hostUsage?.rows.length) ? '- Full conversation totals: Host and subagent tokens cover the current host thread within the session window; other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.' : '- Full conversation totals are unavailable: provider measurements cover reported CLI launches only. Full collection coverage is unavailable. Total storage loss can be unobservable.',
     `- Host retro: ${unique(runs.map((run,index)=>run.retroState??retro[index]?.state??'missing'))} · ${sum(collected.map(r=>r.values.length))??0} accepted · ${sum(collected.map(r=>r.rejected))??0} rejected`,
     `- Collection health: ${runs.some(r=>Object.entries(r.collection??{}).some(([key,n])=>key!=='completed'&&n>0))?'partial':runs.some(r=>(r.collection?.completed??0)>0)?'complete for observed captures':'unknown'} · corrupt ${num(sum(runs.map(r=>r.collection?.corrupt)))} · unreadable ${num(sum(runs.map(r=>r.collection?.unreadable)))} · incomplete ${num(sum(runs.map(r=>r.collection?.incomplete)))} · storage-failed ${num(sum(runs.map(r=>r.collection?.storageFailed)))}`,
     '',
     ...(findings.length ? ['Top findings:', '', ...findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`), ''] : []),
-    ...costDrivers(runUnits.flat()),
   ];
-  const whole = overview(runs, grounding, runUnits, pricer);
+  const efficiency = efficiencyOf(runs, pricer);
+  const { responseEvents, recovery, reviewOutcomes } = efficiency;
+  lead.push('## Efficiency', '');
+  if (reviewOutcomes) lead.push(`- Review finding occurrences in observed rounds: ${reviewOutcomes.accepted} accepted · ${reviewOutcomes.rejected} rejected · ${reviewOutcomes.recurring ?? 'unavailable'} recurring`);
+  lead.push(
+    `- Response events: ${observedNumber(responseEvents.observed)} observed · ${responseEvents.coverage === 'unknown' ? 'unavailable' : responseEvents.coverage} coverage · ${observedNumber(responseEvents.matchedObserved)} with matched input`,
+    `- CLI recovery (${recovery.coverage}): extra launches ${recovery.extraLaunches ?? DASH} · superseded-generation launches ${recovery.reworkLaunches ?? DASH}`,
+    `- Writer relaunches observed: ${recovery.writerRelaunches ?? DASH}`,
+    ...(Object.keys(recovery.byCause).length ? ['  - Costs cover those launches at the reported token rates.'] : []),
+    ...Object.entries(recovery.byCause).map(([cause, { count, cost }]) =>
+      `  - ${cause} · ${count} launches · ${cost ? formatCost({ ...cost, priced: true, reasons: new Set() }) + (cost.partial ? ' (partial)' : '') : DASH}`),
+    '', '### Response events by stage and role', '',
+    'Inputs and matched event counts cover the same observed subset. Event bases differ by provider.', '',
+    row(['Stage', 'Role', 'Event basis', 'Events', 'Coverage', 'Matched events', 'Matched input', 'Input / matched response']),
+    '| --- | --- | --- | ---: | --- | ---: | ---: | ---: |',
+    ...responseEvents.byStageRole.map(entry => row([entry.stage, entry.role, entry.basis, ...responseCells(entry)])),
+    '',
+  );
+  lead.push(...costDrivers(runUnits.flat()));
+  const whole = overview(runs, efficiency, grounding, runUnits, pricer);
   const head = (fold: Fold) => [...lead, ...whole.render(fold)];
   const findingLines = (keep: number) => {
     if (!findings.length) return ['## Findings', '', 'No findings.', ''];

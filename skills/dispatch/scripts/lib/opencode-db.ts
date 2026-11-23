@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-export type OpencodeMessage = { depth: number; createdMs: number; model: string | null; effort: string | null;
+export type OpencodeMessage = { depth: number; sessionId?: string; createdMs: number; model: string | null; effort: string | null;
   input: number; output: number; reasoning?: number; cacheRead?: number; cacheWrite?: number };
 export type OpencodeRead = { messages: OpencodeMessage[]; skipped: number; truncated: 'sessions' | 'rows' | null };
-export type OpencodeReadOptions = { fromMs: number; toMs: number; maxSessions?: number; maxRows?: number };
+export type OpencodeReadOptions = { fromMs: number; toMs: number; maxSessions?: number; maxRows?: number; includeSessionIdentity?: true };
 
 const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_ROWS = 100000;
@@ -87,10 +87,11 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
     let skipped = 0;
     for (const row of rows.slice(0, maxRows)) {
       const sessionId = row['session_id'];
+      if (typeof sessionId !== 'string') { skipped++; continue; }
       const createdMs = row['time_created'];
       const input = row['input'];
       const output = row['output'];
-      const messageDepth = typeof sessionId === 'string' ? depths.get(sessionId) : undefined;
+      const messageDepth = depths.get(sessionId);
       if (messageDepth === undefined || !token(createdMs) || !token(input) || !token(output)) { skipped++; continue; }
       const reasoning = optionalToken(row['reasoning']);
       const cacheRead = optionalToken(row['cache_read']);
@@ -101,6 +102,7 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
       const variant = row['variant'];
       messages.push({
         depth: messageDepth,
+        ...(options.includeSessionIdentity ? { sessionId } : {}),
         createdMs,
         model: typeof providerId === 'string' && typeof modelId === 'string' ? `${providerId}/${modelId}` : null,
         effort: typeof variant === 'string' ? variant : null,

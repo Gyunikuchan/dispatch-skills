@@ -330,6 +330,7 @@ test('resumed launch subtracts usage already recorded for its session', async ()
   const rows = [prior, usage!].map(value => ({ phase: 'ask-run', provider: 'agy', model: 'm', surface: 'cli' as const, launched: true, outcome: 'ok', usage: normalizeUsage(value, value.inputSemantics)! }));
   const report = renderDiagnostics([{ phases: [], reviews: [], invocations: rows }]).text;
   assert.match(report, /Provider CLI measured tokens: 22 \(input 14 .* output 8\)/);
+  assert.match(report, /^\| CLI delegates \| 22 \| .*2 legacy source unknown/m);
 });
 
 test('session usage sums optional counters once and preserves model keys safely', async () => {
@@ -693,6 +694,7 @@ test('session window: incomplete read falls back to stdout with transcript unava
     const done = await pending;
     assert.equal(fsReadCalled, false);
     assert.equal(done.invocations[0]?.coverage, undefined);
+    assert.equal(done.invocations[0]?.responses, undefined);
   }
 });
 
@@ -775,7 +777,7 @@ test('usage baseline: Claude result.usage fallback chain on resume stays per-lau
   assert.equal(done.invocations[1]?.usage?.input, 25);
 });
 
-test('session window: boundary millisecond counted once and resumed launch waits until clock passes previousEndMs', async () => {
+test('Delegate response counts exclude resumed overlap at the launch boundary', async () => {
   const h = harness(posix);
   const sessionPath = '/h/.claude/projects/-repo/sess-wait.jsonl';
   const files: Record<string, string> = {};
@@ -794,12 +796,15 @@ test('session window: boundary millisecond counted once and resumed launch waits
   files[sessionPath] = claudeEntry(1000, 100, 10);
   h.finish(ok({ exit: 1, stdout: JSON.stringify({ type: 'result', result: '', session_id: 'sess-wait', modelUsage: { m: { inputTokens: 100, outputTokens: 10 } } }) }));
   await flush(); await flush();
-  files[sessionPath] += '\n' + claudeEntry(1001, 200, 20);
+  // The last streaming update for the first message arrives during the resume.
+  const replay = claudeEntry(1001, 100, 10).replace('m_1001', 'm_1000');
+  files[sessionPath] += '\n' + [replay, claudeEntry(1002, 200, 20)].join('\n');
   clockTime = 1005;
   h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', session_id: 'sess-wait', modelUsage: { m: { inputTokens: 300, outputTokens: 30 } } }) }));
   const done = await pending;
   assert.equal(done.invocations[0]?.usage?.input, 100);
-  assert.equal(done.invocations[1]?.usage?.input, 200);
+  assert.deepEqual(done.invocations.map(i => i.responses?.map(r => [r.observed, r.uncachedInput])), [[[1, 100]], [[1, 200]]]);
+  assert.equal(done.invocations[1]?.usage?.input, 300);
   assert.equal(done.invocations[1]?.usage?.provenance, 'session');
 
   // Saved usageWindowEndMs across a new runner call
@@ -848,8 +853,8 @@ test('session window: second-resolution row counts on fresh launch and makes res
   h.ports.usageFs = memUsageFs(files);
   const wholeSecSpec = {
     ...claude,
-    sessionUsage: (raw: string, ctx: ProviderUsageContext, stdoutHasUsage: boolean) => {
-      const base = claude.sessionUsage!(raw, ctx, stdoutHasUsage);
+    sessionUsage: (raw: string, ctx: ProviderUsageContext) => {
+      const base = claude.sessionUsage!(raw, ctx);
       if (ctx.resumed && base?.complete) return { complete: false };
       return base;
     },
@@ -883,9 +888,9 @@ test('session window: agy stdout usage shares per-launch ReadBudget with session
         readSqliteGenMetadata: () => { sqliteCalls++; return [new Uint8Array(64)]; },
       });
     },
-    sessionUsage(raw: string, context: ProviderUsageContext, stdoutHasUsage: boolean) {
+    sessionUsage(raw: string, context: ProviderUsageContext) {
       sessionBudget = context.transcripts?.budget;
-      return agy.sessionUsage!(raw, context, stdoutHasUsage);
+      return agy.sessionUsage!(raw, context);
     },
   };
   const stdout = JSON.stringify({
@@ -919,4 +924,73 @@ test('session window: agy stdout usage shares per-launch ReadBudget with session
   await flush(); h2.finish(ok({ stdout }));
   await p2;
   assert.equal(sqliteCallsSpent, 0);
+});
+
+test('Valid fallback survives an invalid transcript', async () => {
+  const h = harness(posix);
+  const spec = {
+    ...claude,
+    sessionUsage: () => ({
+      complete: true,
+      usage: { input: 1.5, output: 3, scope: 'invocation', provenance: 'session', inputSemantics: 'uncached' } as const,
+    }),
+  };
+  const pending = runDelegate(spec, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ stdout: JSON.stringify({ type: 'result', result: 'FINAL', usage: { input_tokens: 40, output_tokens: 4 } }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage?.provenance, 'stdout');
+  assert.equal(done.invocations[0]?.usage?.input, 40);
+  assert.deepEqual(done.invocations[0]?.coverage, ['transcript unavailable', 'invalid counters']);
+  assert.deepEqual(done.invocations[0]?.responses, [{ role: 'delegate', basis: 'unavailable', coverage: 'unknown' }]);
+});
+
+for (const fixture of [
+  { name: 'failed zero without a response stays unavailable', exit: 1, input: 0, answer: 'rate limit exceeded', measured: undefined },
+  { name: 'failed nonzero stays measured', exit: 1, input: 7, answer: 'rate limit exceeded', measured: 7 },
+  { name: 'a successful per-launch zero stays measured', exit: 0, input: 0, answer: 'FINAL', measured: 0 },
+]) {
+  test(fixture.name, async () => {
+    const h = harness(posix);
+    h.ports.usageFs = memUsageFs();
+    const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+    await flush();
+    h.finish(ok({ exit: fixture.exit, stdout: JSON.stringify({
+      type: 'result', result: fixture.answer, usage: { input_tokens: fixture.input, output_tokens: 0 },
+    }) }));
+    const done = await pending;
+    assert.equal(done.invocations[0]?.outcome, fixture.exit === 1 ? 'quota' : 'ok');
+    assert.equal(done.invocations[0]?.usage?.input, fixture.measured);
+    assert.deepEqual(done.invocations[0]?.coverage, fixture.measured === undefined ? ['transcript unavailable', 'unverified zero'] : ['transcript unavailable']);
+  });
+}
+
+test('a valid launch-window response measures zero even on failure', async () => {
+  const h = harness(posix);
+  h.ports.usageFs = memUsageFs({ '/h/.claude/projects/-repo/sess-zero.jsonl': claudeEntry(5, 0, 0) });
+  const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
+  await flush();
+  h.clock.advance(10);
+  h.finish(ok({ exit: 1, stdout: JSON.stringify({
+    type: 'result', session_id: 'sess-zero', result: 'rate limit exceeded',
+  }) }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.outcome, 'quota');
+  assert.equal(done.invocations[0]?.usage?.provenance, 'session');
+  assert.equal(done.invocations[0]?.usage?.input, 0);
+  assert.equal(done.invocations[0]?.usage?.output, 0);
+  assert.equal(done.invocations[0]?.coverage, undefined);
+});
+
+test('an unchanged cumulative report retains its resume baseline without proving zero usage', async () => {
+  const h = harness(posix);
+  const usage = { input: 9, output: 3, scope: 'invocation', provenance: 'fixture', inputSemantics: 'uncached' } as const;
+  const spec = { ...makeNudgeSpec('sess1'), resumeUsage: 'cumulative' as const, usage: () => usage };
+  const pending = runDelegate(spec, { ...req, collectUsage: true, resume: 'sess1', priorUsage: usage }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ stdout: 'FINAL' }));
+  const done = await pending;
+  assert.equal(done.invocations[0]?.usage, undefined);
+  assert.equal(done.invocations[0]?.usageBaseline, 'cumulative');
+  assert.deepEqual(done.invocations[0]?.coverage, ['transcript unavailable', 'unverified zero']);
 });

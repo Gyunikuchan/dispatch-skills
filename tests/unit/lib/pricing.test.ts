@@ -68,6 +68,41 @@ test('model id matching lets a provider wildcard override win and a longer overr
   assert.equal(pricer.price('other/qwen', usage).priced, false);
 });
 
+test('Qualified pricing identifies the applied basis for exact routes and fallback', () => {
+  const pricer = resolvePricing({
+    asOf: '2026-11-19', source: [], models: {
+      model: { rates: { input: 4, output: 1 } },
+      'shared/*': ZERO,
+      'shared/model': { rates: { input: 1, output: 1 } },
+      'paid/model': { rates: { input: 2, output: 1 } },
+    },
+  }, {
+    'PAID/MODEL': { rates: { input: 3, output: 1 }, periods: [{ from: '2026-12-01', rates: { input: 6, output: 1 } }] },
+  });
+  assert.ok(pricer);
+  const usage = { input: 1_000_000, output: 0 };
+  const cases = [
+    ['SHARED/Model#high', undefined, 1, 'shipped', 'qualified', null, null],
+    ['shared/model@20261201', undefined, 0, 'shipped', 'wildcard', null, null],
+    ['other/region.model', undefined, 4, 'shipped', 'generic', null, null],
+    ['other/paid/model', undefined, 4, 'shipped', 'generic', null, null],
+    ['model', '2026-12-01', 4, 'shipped', 'generic', '2026-12-01', null],
+    ['paid/model', '2026-11-30', 3, 'override', 'qualified', '2026-11-30', null],
+    ['paid/model', '2026-12-01', 6, 'override', 'qualified', '2026-12-01', '2026-12-01'],
+    ['paid/model', '2026-13-01', 3, 'override', 'qualified', null, null],
+  ] as const;
+  for (const [id, day, usd, origin, match, effectiveDay, periodFrom] of cases) {
+    const cost = pricer.price(id, usage, undefined, day);
+    assert.deepEqual([cost.priced, cost.low, cost.high, cost.rateBasis], [true, usd, usd, { origin, match, effectiveDay, periodFrom }], `${id} on ${day}`);
+  }
+
+  const missing = pricer.price('paid/model', { ...usage, cacheRead: 100 });
+  assert.equal(missing.priced, false);
+  assert.equal(missing.rateBasis, undefined);
+  const partial = sumCost([pricer.price('shared/model', usage), missing]);
+  assert.deepEqual([partial.priced, partial.low, partial.high, reasonsOf(partial)], [true, 1, 1, ['unpriced model']]);
+});
+
 // SECTION: Cost pricing
 
 const haiku = 'claude-haiku-5-5';

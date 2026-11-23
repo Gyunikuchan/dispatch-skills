@@ -63,13 +63,17 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 
 ## Understand diagnostics coverage
 
-In `diagnostics.md`, `—` marks an unavailable value, not zero, and `~` marks a cost estimate in USD; measured token totals include billed reasoning where reported apart from output. [The toolkit reference](../toolkit.md#diagnostics-render) defines `Cost notes`, `Coverage`, and the cost columns. After fixing a missing rate, render again to reprice stored usage without a new run.
+In `diagnostics.md`, `—` marks an unavailable value and `~` marks a cost estimate in USD. Measured token totals include billed reasoning where reported apart from output.
+
+- In the Summary, compare observed tokens and priced cost per role. A partial subtotal can show zero unpriced units when a host thread or subagent has no usable record. Use `Cost coverage` and delegate source counts to locate these gaps. Use `Rate basis` and `Cost notes` to check how the observed usage was priced.
+- In `Efficiency`, read response events alongside their stage, role, event basis and coverage. Partial coverage keeps observed counts. Unavailable evidence has no count. A measured zero has a count of zero. Compare input per response using the matched input and event columns, then use `Responses by agent` to locate the observed agent within the run.
+- After adding a missing rate, render again to reprice stored usage. After a collection gap, inspect the host thread or delegate session before drawing conclusions from the subtotal. See the [toolkit reference](../toolkit.md#diagnostics-render) for field definitions.
 
 | Reason | Meaning | What to do |
 |---|---|---|
 | `unpriced model` | No rate matched the model id, usage held more than 32 model/effort keys (`other`), or a counter rate is missing. | Add a [`pricing` entry](configuration.md#override-rates-for-cost-estimates) with every counter rate the route reports, then render again. |
 | `no usage` | A launched delegate reported no usage, or the provider reports none (such as Copilot). | Check delegate session logs if unexpected; Copilot reports no usage. |
-| `tier unknown` | Usage lacked per-request data across a tier threshold; cost is shown as a range. | Read the range as bounds; session-data launches price exactly. |
+| `tier unknown` | An aggregate or a stored band crosses a tier threshold. | Read the range as bounds. |
 | `cache TTL unknown` | A cache write lacks a 5m/1h split and the two rates differ; cost is shown as a range. | Read as bounds, or set both lifetime rates in `pricing` if your rate is flat. |
 
 <details>
@@ -79,7 +83,7 @@ In `diagnostics.md`, `—` marks an unavailable value, not zero, and `~` marks a
 - **OpenCode lifecycle appendix:** Lists `debug-config`, `debug-agents`, `prepare`, `response`, and `teardown` (in record order, not time) with elapsed/budget ms. `timeout` means the step hit its deadline; `unconfirmed` on debug/teardown means process-tree exit wasn't confirmed (keep the worktree, verify exit, then clean up); `failed` before `response` means the run never started. Steps never include credentials, paths, or output.
 - **Host transcript collection:** Selects only the current host session via `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `OPENCODE_SESSION_ID` (OpenCode reads `opencode.db` read-only), including nested subagents. Host/subagent stages are timestamp-derived estimates; delegate stages are recorded. Diagnostics reads no host sources when disabled and never gates workflow outcomes.
 - **Collection limits & notes:** `no adapter` (unsupported host), `no host id` / `invalid host id` / `host id file missing`, `invalid session start`, `transcript over size cap` (64 MiB decoded per file), `read budget reached` (256 MiB total decoded), `too many candidates`, `zstd unavailable` (needs `zlib.zstdDecompressSync`), `no usage records`, or `read-error:*` (`ENOENT`, `EACCES`, `EPERM`, `EBUSY`, `EMFILE`, `EUNKNOWN`). None of these change workflow results.
-- **Delegate usage:** Read from each delegate's own session data (within the same 64 MiB / 256 MiB caps). `transcript unavailable` means Dispatch used reported totals or left a resumed cumulative launch unmeasured; keep default delegate session storage readable. `no usage` means the provider reports no usage (Copilot).
+- **Delegate usage:** Dispatch reads each delegate's session data within the same 64 MiB / 256 MiB caps. `stdout fallback` retains usable reported counters when session data is unavailable. Inspect delegate session storage for `transcript unavailable`, `invalid counters` or `unverified zero`. Older captures can have usable counters with an unknown source. Copilot remains unmeasured.
 - **Retro notes & integrity:** While diagnostics is on, follow the returned retrospective instructions at each verb's final handoff before `report complete` or `diagnostics render` (failed retro merges do not gate the workflow; empty arrays record no friction; proposed fixes are unverified). Review `diagnostics.md` before sharing it; it is not uploaded automatically. Captures in `.state/diagnostics/` retain sanitized version/content identity and effective configuration snapshots; corrupt captures are discarded while valid ones remain, and No findings does not prove complete collection or absence of defects. Total storage loss can also prevent failure markers from being stored. Supported rejection and writer relaunch evidence can indicate rework without establishing a defective writer or its cause. Keep the session folder to inspect captures or resume.
 
 </details>

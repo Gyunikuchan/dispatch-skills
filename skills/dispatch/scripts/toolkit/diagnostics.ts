@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { delegateResponseActor } from '../lib/usage/delegate.ts';
+import type { Invocation } from '../providers/types.ts';
 import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
 import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
@@ -132,14 +134,16 @@ function reviewFacts(round: ReviewRound, fold: Fold): ReviewFacts | null {
   let accepted = 0;
   let rejected = 0;
   const reraised = new Set<string>();
+  let recurring = 0;
   for (const finding of findings) {
     const ruling = fold.records.findLast((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
     if (ruling?.data['ruling'] === 'accepted') accepted++;
     if (ruling?.data['ruling'] === 'rejected') rejected++;
+    if (finding.recurrence || finding.unresolved) recurring++;
     if (typeof finding.recurrence?.of === 'string') reraised.add(finding.recurrence.of);
     if (typeof finding.unresolved?.of === 'string') reraised.add(finding.unresolved.of);
   }
-  return {phase: round.review, round: round.round, cap: round.cap, accepted, rejected, ...(reraised.size ? {reraised: [...reraised]} : {})};
+  return {phase: round.review, round: round.round, cap: round.cap, accepted, rejected, recurring, ...(reraised.size ? {reraised: [...reraised]} : {})};
 }
 
 /** A round plus every generation directory, so superseded invocations still map to their review. */
@@ -185,12 +189,17 @@ function slotYieldFacts(rounds: readonly YieldRound[], invocations: readonly Inv
       if (!provider) continue;
       const rosterModel = typeof roster?.model === 'string' ? roster.model : Array.isArray(roster?.model) ? roster.model[0] ?? null : null;
       const recentCli = recent.filter((row) => row.surface === 'cli' && row.launched);
+      const priorLaunches = attempts.filter((row) => row.subject !== current && row.surface === 'cli' && row.launched).length;
       const value: SlotYieldFacts = {
         kind: native ? 'native' : 'provider', provider, model: native ? null : responder?.model ?? last?.model ?? rosterModel,
         raised: emptyRaised(), accepted: 0, rejected: 0, deferred: 0, duplicate: 0, unruled: 0,
         measured: recentCli.filter((row) => row.usage).length,
-        launched: attempts.filter((row) => row.surface === 'cli' && row.launched).length,
-        ...(recentCli.length ? { attempts: recentCli.map((row) => ({ provider: row.provider, model: row.model, effort: row.effort ?? null, ...(row.usage ? { usage: row.usage } : {}) })) } : {}),
+        launched: recentCli.length, ...(priorLaunches ? { priorLaunches } : {}),
+        ...(recentCli.length ? { attempts: recentCli.map(({ provider, model, effort, usage, usageSource, reportedModels, reportedModelAmbiguous, coverage }) => ({
+          provider, model, effort: effort ?? null, ...(usage ? { usage } : {}), ...(usageSource ? { usageSource } : {}),
+          ...(reportedModels ? { reportedModels } : {}), ...(reportedModelAmbiguous ? { reportedModelAmbiguous } : {}),
+          ...(coverage ? { coverage } : {}),
+        })) } : {}),
       };
       let tokens: number | undefined, fixInduced = 0;
       for (const row of recentCli) {
@@ -383,9 +392,13 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   };
   const phaseBySubject=new Map<string,string>();
   const reviewKeys=new Map<string,string>();
+  const superseded=new Set<string>();
   for(const round of rounds) {
     const key=reviewKeys.get(round.review)??'review-'+hash(path.join(root,round.review));reviewKeys.set(round.review,key);
-    for(const generation of round.generations)phaseBySubject.set(generation.subject,key);
+    for(const generation of round.generations) {
+      phaseBySubject.set(generation.subject,key);
+      if (generation.generation !== round.generation) superseded.add(generation.subject);
+    }
     const name=round.review.startsWith('plan-')?'plan review':round.review.startsWith('design-')?'design review':'code review';
     if(!phases.has(key))phases.set(key,{key,name});
   }
@@ -406,9 +419,9 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   phaseMilestones.sort((a,b)=>a.atMs-b.atMs);
   const invocations:InvocationFacts[]=[];
   const native=new Map<string,InvocationFacts>();
-  const add=(row:InvocationFacts)=>{
+  const add=({superseded: _superseded, ...row}:InvocationFacts)=>{
     const phase=row.subject?phaseBySubject.get(row.subject):undefined;
-    const value={...row,...(phase?{phase}:{})};
+    const value={...row,...(phase?{phase}:{}),...(row.subject && superseded.has(row.subject) ? {superseded:true as const} : {})};
     if(value.surface!=='native'){invocations.push(value);return;}
     const key=[value.subject??value.phase,value.slot??''].join('|');
     const previous=native.get(key);
@@ -455,8 +468,8 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     return {review:reviewKeys.get(round.review)!,round:round.round,slots:round.roster.filter(slot=>!slot.reserve).map(slot=>{
       const outcome=round.slots.find(value=>value.slot===slot.slot);
       const native=outcome?.state==='native'||(outcome?.state==='done'&&outcome.responder?.native===true)||invocations.some(i=>i.subject===subject&&i.surface==='native'&&(i.targetSlot??i.slot)===slot.slot);
-      const attempts=invocations.filter(i=>i.subject===subject&&i.launched&&(i.targetSlot??i.slot)===slot.slot).map(i=>({...i.startMs===undefined?{}:{startMs:i.startMs},...i.endMs===undefined?{}:{endMs:i.endMs}}));
-      return {slot:slot.slot,attempts:native?[...attempts,{}]:attempts};
+      const attempts=invocations.filter(i=>i.subject===subject&&i.launched&&(i.targetSlot??i.slot)===slot.slot).map(i=>({surface:i.surface,...i.startMs===undefined?{}:{startMs:i.startMs},...i.endMs===undefined?{}:{endMs:i.endMs}}));
+      return {slot:slot.slot,attempts:native?[...attempts,{surface:'native' as const}]:attempts};
     })};
   });
   const workload=roundTimeline(rounds,measured,reviewKeys,fold.records);
@@ -553,7 +566,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
   if (!diagnosticsEnabled(deps.skillRoot)) return undefined;
   const started = deps.clock();
   const phase = tool + '-' + action + (tool === 'review' ? '-' + (kind ?? 'code') : '');
-  const name = tool === 'ask' ? 'ask' : tool === 'review' ? (kind === 'plan' ? 'plan review' : kind === 'design' ? 'design review' : 'code review') : 'implementation';
+  const name: HostStage = tool === 'ask' ? 'ask' : tool === 'review' ? (kind === 'plan' ? 'plan review' : kind === 'design' ? 'design review' : 'code review') : 'implementation';
   const facts: RunFacts = {os:process.platform,...(deps.orchestrator ? {host:deps.orchestrator.platform} : {}),phases:[],invocations:[],reviews:[]};
   const directory = path.join(session,'.state','diagnostics');
   const file = path.join(directory,crypto.randomUUID()+'.json');
@@ -594,12 +607,21 @@ export function observeTool(session: string, tool: string, action: string, kind:
       const subject=subjectOf(path.dirname(path.dirname(request.logPath)));
       const key=subject+slot;
       let added=false;
-      for(const i of rows) {
+      for(const i of rows as Invocation[]) {
         if (!i || typeof i !== 'object' || seen.has(i)) continue;
         const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
         const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
+        const source=i.usage?.provenance;
+        const usageSource=usage&&(source==='session'||source==='stdout')?source:undefined;
+        const responses = i.launched && Array.isArray(i.responses) ? i.responses.map(response => {
+          const actor = delegateResponseActor(response);
+          const role = response.role;
+          const agent = actor === undefined ? undefined : `delegate-${role === 'subagent' ? 'child-' : ''}${
+            crypto.createHmac('sha256', path.resolve(session)).update(JSON.stringify([i.provider, role, actor])).digest('hex').slice(0, 16)}`;
+          return { ...response, stage: name, ...(agent ? { agent } : {}) };
+        }) : undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
+          ...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
         seen.add(i);added=true;
       }
       if(added||pendingPersistence)persist();

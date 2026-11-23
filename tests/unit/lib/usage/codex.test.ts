@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { zstdCompressSync } from 'node:zlib';
 import assert from 'node:assert/strict';
-import { nodeHostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
+import { nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import { codex, codexUsage } from '../../../../skills/dispatch/scripts/lib/usage/codex.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
@@ -38,6 +38,23 @@ test('turns: codex counts resumed host and direct child usage row fields once by
     ['subagent', 'm', 'high', 1, 4000, true, 3, 2, 1, undefined],
     ['subagent', 'm', 'high', 2, 3000, true, 6, 5, 4, 2],
   ]);
+});
+
+test('codex counts accepted snapshots per thread and leaves repeated totals ambiguous', () => {
+  const facts = readHostUsage('codex', { ...query, env: name => name === 'CODEX_THREAD_ID' ? 'host' : undefined }, memoryFs({
+    [rollout('00-01', 'host')]: lines(context, event(15, 1500)),
+    [rollout('00-02', 'host')]: lines(context, event(15, 3000), event(22, 3500)),
+    [rollout('00-03', 'first-child')]: lines(meta('host'), context, event(15, 3000)),
+    [rollout('00-04', 'first-child')]: lines(meta('host'), context, event(15, 3500), event(22, 3600)),
+    [rollout('00-05', 'second-child')]: lines(meta('host'), context, event(15, 3000)),
+  }));
+  assert.deepEqual(facts.responses?.map(r => [r.stage, r.agent, r.basis, r.coverage, r.observed, r.uncachedInput]), [
+    ['spec', 'host-1', 'codex-token-count', 'partial', 1, 6],
+    ['plan', 'host-1', 'codex-token-count', 'partial', 1, 6],
+    ['plan', 'subagent-1', 'codex-token-count', 'partial', 2, 12],
+    ['plan', 'subagent-2', 'codex-token-count', 'partial', 1, 6],
+  ]);
+  assert.doesNotMatch(JSON.stringify(facts), /first-child|second-child/);
 });
 
 test('codex ignores a pre-window token total copied into a resumed rollout', () => {

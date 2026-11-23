@@ -16,9 +16,10 @@ function applyCacheSplit(target: Counters, rawUsage: unknown, valid: (v: unknown
 }
 
 export const claudeCode: HostUsageAdapter = { sessionEnv: ['CLAUDE_CODE_SESSION_ID'], read(query, fs) { return collectClaudeUsage(query, fs); } };
-export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { projectDir?: string; rootRole?: 'host' | 'delegate' }): HostUsageResult {
+export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { projectDir?: string; rootRole?: 'host' | 'delegate'; responseStartMs?: number }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} }; const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
+  if (query.collectResponses) result.response = { basis: 'claude-assistant-message' };
   const root = path.join(query.env('CLAUDE_CONFIG_DIR') || path.join(query.home, '.claude'), 'projects');
   const hosts: { file: string; stat: { size: number; mtimeMs: number } }[] = [];
   if (options?.projectDir !== undefined) {
@@ -37,17 +38,38 @@ export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, optio
       const data = readTranscript(fs, file, query.budget);
       if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'subagents over size cap'); return; }
       if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return; }
-      const messages = new Map<string, { at: number; model: string; effort: string | null; usage: Record<string, unknown> }>();
+      const messages = new Map<string, { at: number; firstAt: number; model: string; effort: string | null; usage: Record<string, unknown> }>();
       for (const line of data.text.split('\n')) {
         if (!line.trim()) continue;
         let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
         if (!entry || typeof entry !== 'object' || entry.type !== 'assistant' || !entry.message || typeof entry.message !== 'object' || !('usage' in entry.message)) continue;
         const message = entry.message; const usage = message.usage; const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
         if (typeof message.id !== 'string' || !message.id || typeof message.model !== 'string' || !message.model || !Number.isFinite(at) || !usage || typeof usage !== 'object' || !counter(usage.input_tokens) || !counter(usage.output_tokens) || ['cache_read_input_tokens', 'cache_creation_input_tokens'].some(key => usage[key] !== undefined && !counter(usage[key]))) { note(notes, role, 'unparsed lines'); continue; }
-        messages.set(message.id, { at, model: message.model, effort: typeof entry.effort === 'string' ? entry.effort : null, usage });
+        messages.set(message.id, { at, firstAt: messages.get(message.id)?.firstAt ?? at, model: message.model, effort: typeof entry.effort === 'string' ? entry.effort : null, usage });
       }
       let count = 0;
-      for (const entry of messages.values()) { if (entry.model === '<synthetic>' || !(entry.at >= query.startMs && entry.at <= query.endMs)) continue; const u = entry.usage; if (typeof u['input_tokens'] !== 'number' || typeof u['output_tokens'] !== 'number') continue; count++; const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, entry.at), role: role === 'host' ? rootRole : role, model: entry.model, effort: entry.effort, depth, atMs: entry.at, reasoningInOutput: true, ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}), input: u['input_tokens'], output: u['output_tokens'] }; if (typeof u['cache_read_input_tokens'] === 'number') hostRow.cacheRead = u['cache_read_input_tokens']; if (typeof u['cache_creation_input_tokens'] === 'number') hostRow.cacheWrite = u['cache_creation_input_tokens']; applyCacheSplit(hostRow, u, counter); result.rows.push(hostRow); }
+      for (const entry of messages.values()) {
+        if (entry.model === '<synthetic>' || !(entry.at >= query.startMs && entry.at <= query.endMs)) continue;
+        const u = entry.usage;
+        if (typeof u['input_tokens'] !== 'number' || typeof u['output_tokens'] !== 'number') continue;
+        count++;
+        const hostRow: UsageRow & { stage: HostStage } = {
+          stage: stageAt(query.stages, entry.at), role: role === 'host' ? rootRole : role,
+          model: entry.model, effort: entry.effort, depth, atMs: entry.at, reasoningInOutput: true,
+          ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}),
+          input: u['input_tokens'], output: u['output_tokens'],
+        };
+        if (typeof u['cache_read_input_tokens'] === 'number') hostRow.cacheRead = u['cache_read_input_tokens'];
+        if (typeof u['cache_creation_input_tokens'] === 'number') hostRow.cacheWrite = u['cache_creation_input_tokens'];
+        applyCacheSplit(hostRow, u, counter);
+        if (result.response) {
+          hostRow.responseActor = file;
+          // A streaming update can cross the boundary of the launch that owns the message.
+          const start = options?.responseStartMs;
+          if (start !== undefined && (entry.firstAt < start || entry.firstAt > query.endMs)) hostRow.skipResponse = true;
+        }
+        result.rows.push(hostRow);
+      }
       if (role === 'host' && !count && !result.unavailable) result.unavailable = 'no usage records';
     } catch (error) { if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); }
   }

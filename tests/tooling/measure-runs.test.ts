@@ -3,8 +3,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { measureRuns, parsePairs, runMeasureRuns, type Comparison, type SideResult } from '../../scripts/measure-runs.ts';
+import { measureRuns, parsePairs, renderComparison, runMeasureRuns, type Comparison, type SideResult } from '../../scripts/measure-runs.ts';
+import { readManifest } from '../../skills/dispatch/scripts/lib/session.ts';
+import { orchestratorFor } from '../../skills/dispatch/scripts/lib/platform.ts';
+import { resolvePricing } from '../../skills/dispatch/scripts/lib/pricing.ts';
+import { readDelegateSession } from '../../skills/dispatch/scripts/lib/usage/delegate.ts';
+import { nodeHostUsageFs } from '../../skills/dispatch/scripts/lib/usage/index.ts';
+import type { CliDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
+import { observeTool, sessionFacts, writeDiagnostics } from '../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 const CREATED = '2020-01-01T00:00:00.000Z';
 const E0 = Date.parse(CREATED);
@@ -13,7 +22,7 @@ const SESSION = '20200101T0000Z-plan-fixture';
 const PRICING = { asOf: '2026-11-19', source: ['https://example.test/pricing'], models: { m: { rates: { input: 2, output: 10 } } } };
 
 type Fixture = { root: string; claudeConfig: string; env: NodeJS.ProcessEnv; cleanup: () => void };
-type SideSpec = { session: string; host: string; nativeId?: string };
+type SideSpec = { session: string; host: string; nativeId?: string; reportComplete?: string };
 type MeasureOptions = { baseDir?: string; pricing?: string };
 
 function fixture(): Fixture {
@@ -30,7 +39,7 @@ function writeText(file: string, text: string): void {
 const writeJson = (file: string, value: unknown) => writeText(file, `${JSON.stringify(value)}\n`);
 const digest = (value: string) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
 const reviewKey = (session: string) => `review-${digest(path.join(session, '.state', 'reviews', REVIEW))}`;
-const subjectFor = (base: string, round: number) => digest(path.join(base, '.state', 'reviews', REVIEW, `round-${round}`, 'gen-1'));
+const subjectFor = (base: string, round: number, generation = 1) => digest(path.join(base, '.state', 'reviews', REVIEW, `round-${round}`, `gen-${generation}`));
 
 function makeSession(fx: Fixture, options: { name?: string; sessionId?: string } = {}): string {
   const name = options.name ?? SESSION;
@@ -57,7 +66,7 @@ function writeCapture(session: string, name: string, capture: { start: number; e
   });
 }
 
-// NOTE: a reviewer run without usage is an unpriced unit, so the fixture records usage to keep cost complete.
+// A reviewer run without usage is an unpriced unit.
 const REVIEWER_USAGE = { input: 10, output: 5 };
 // Standard fixture cost: two host rows (999/1 and 100/50) plus three reviewer runs, priced at PRICING rates.
 const FIXTURE_COST = (999 * 2 + 1 * 10 + 100 * 2 + 50 * 10 + 3 * (REVIEWER_USAGE.input * 2 + REVIEWER_USAGE.output * 10)) / 1_000_000;
@@ -75,8 +84,8 @@ function writeRoundFixture(session: string, base: string = session): void {
   writeCapture(session, 'review-3', { start: E0 + 20000, end: E0 + 21000 }, 'review-run-plan', [reviewRun(subjectFor(base, 3))]);
 }
 
-const usageLine = (id: string, at: number, input: number, output: number) => JSON.stringify({
-  type: 'assistant', timestamp: new Date(at).toISOString(), message: { id, model: 'm', usage: { input_tokens: input, output_tokens: output } },
+const usageLine = (id: string, at: number, input: number, output: number, model = 'm') => JSON.stringify({
+  type: 'assistant', timestamp: new Date(at).toISOString(), message: { id, model, usage: { input_tokens: input, output_tokens: output } },
 });
 const denialLine = (at: number, source: string) => JSON.stringify({
   type: 'user', timestamp: new Date(at).toISOString(), toolDenialKind: 'tool', permissionDecision: { decision: 'reject', source },
@@ -335,9 +344,83 @@ test('prices every host and reviewer unit from the given pricing table and ignor
     writeJson(path.join(fx.root, 'skills', 'dispatch', 'config.local.jsonc'), { pricing: { m: { rates: { input: 1000, output: 1000 } } } });
     const side = measureOne(fx, { session, host: 'claude' });
     assert.equal(side.cost.priced, true);
-    assert.equal(side.cost.partial, false);
+    assert.equal(side.cost.unpricedUnits, 0);
     assert.ok(Math.abs(side.cost.low - FIXTURE_COST) < 1e-12, `${side.cost.low} vs ${FIXTURE_COST}`);
     assert.equal(side.cost.high, side.cost.low);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('Matched comparisons disclose cost scope and basis', async () => {
+  const fx = fixture();
+  try {
+    const dbFile = path.join(fx.root, '.local', 'share', 'opencode', 'opencode.db');
+    fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+    const db = new DatabaseSync(dbFile);
+    try {
+      db.exec('CREATE TABLE session_v2 (id TEXT, parent_id TEXT)');
+      db.exec('CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)');
+      db.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?)').run('row-1', 'delegate-1', 'assistant', E0 + 1,
+        JSON.stringify({ model: { providerID: 'route', id: 'm' }, tokens: { input: 1000, output: 0 } }));
+    } finally {
+      db.close();
+    }
+    const parsed = readDelegateSession({
+      platform: 'opencode', sessionId: 'delegate-1', startMs: E0, endMs: E0 + 10, resumed: false,
+      home: fx.root, env: () => undefined, fs: nodeHostUsageFs, budget: { remaining: 100_000 },
+    });
+    assert.equal(parsed.complete, true);
+    const qualified = makeSession(fx);
+    const generic = makeSession(fx, { name: `${SESSION}-generic`, sessionId: 'host-2' });
+    const delegate = { ...reviewRun('valid-subject'), provider: 'opencode', model: 'route/m' };
+    const skillRoot = path.join(fx.root, 'skill');
+    writeJson(path.join(skillRoot, 'config.jsonc'), { diagnostics: true });
+    let now = E0;
+    const observer = observeTool(qualified, 'review', 'run', 'plan', {
+      skillRoot, clock: () => now,
+      delegate: async () => ({
+        outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null },
+        invocations: [{ provider: 'opencode', model: 'route/m', effort: null, mode: 'cli', launched: true, outcome: 'ok', usage: parsed.usage! }],
+      }),
+    } as Pick<CliDeps, 'skillRoot' | 'clock' | 'delegate'> as CliDeps)!;
+    await observer.deps.delegate('opencode', { logPath: path.join(qualified, 'logs', 'opencode[0].log') } as Parameters<CliDeps['delegate']>[1], 'cli');
+    now += 10;
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+    const later = Date.parse('2021-01-01T00:00:00.000Z');
+    writeCapture(generic, 'run', { start: later, end: later + 10 }, delegate.phase,
+      [{ ...delegate, usage: { input: 1000, output: 0 }, reportedModels: ['m'], usageSource: 'stdout', coverage: ['transcript unavailable'] },
+        { ...delegate, attempt: 2, usage: { input: 1000, output: 0, cacheWrite: 1000 }, usageSource: 'stdout' }]);
+    const table = { ...PRICING, models: {
+      m: { ...PRICING.models.m, periods: [{ from: '2021-01-01', rates: { input: 20, output: 10, cacheWrite5m: 10, cacheWrite1h: 30 } }] },
+      'route/m': { rates: { input: 2, output: 10 }, periods: [{ from: '2020-01-01', rates: { input: 100, output: 10 } }] },
+    } };
+    const comparison = measureSides(fx, [{ session: qualified, host: 'claude' }, { session: generic, host: 'claude' }],
+      { pricing: JSON.stringify(table) });
+    const pair = comparison.pairs[0]!;
+    const [left, right] = pair.sides as [SideResult, SideResult];
+    const report = fs.readFileSync(writeDiagnostics(qualified, sessionFacts(qualified, foldLedger(qualified), 'measured'), resolvePricing(table, undefined)), 'utf8');
+    assert.equal(left.cost.low, 0.1);
+    assert.equal(right.cost.low, 0.05);
+    assert.equal(right.cost.high, 0.07);
+    assert.ok(right.cost.coverage.reasons.includes('bounded cost range'));
+    assert.match(report, /Estimated cost .*~\$0\.10/);
+    assert.match(report, /matches: 1 qualified, 0 wildcard, 0 generic/);
+    assert.deepEqual(left.cost.rateBasis.matches, ['qualified']);
+    assert.deepEqual(right.cost.rateBasis.matchCounts, { qualified: 0, wildcard: 0, generic: 2 });
+    assert.deepEqual(left.cost.rateBasis.periods, ['2020-01-01']);
+    assert.deepEqual(right.cost.rateBasis.periods, ['2021-01-01']);
+    assert.match(report, /Cost coverage: partial · host usage unavailable, subagent usage unavailable/);
+    assert.deepEqual(left.cost.coverage.reasons, ['host usage unavailable', 'subagent usage unavailable']);
+    assert.equal(right.cost.coverage.sources['stdout fallback'], 1);
+    assert.ok(pair.comparisonLimits.includes('effective tariff periods differ'));
+    assert.ok(pair.comparisonLimits.includes('usage coverage differs'));
+    const markdown = renderComparison(comparison);
+    assert.match(markdown, /\| Cost \(USD\) \| ~\$0\.10 \(partial\) \| ~\$0\.05–\$0\.07 \(partial\) \|/);
+    for (const limit of pair.comparisonLimits) assert.ok(markdown.includes(limit));
+    assert.match(markdown, /host usage unavailable.*delegate stdout fallback/);
+    assert.match(markdown, /2020-01-01.*1 qualified.*2021-01-01.*2 generic/);
+    assert.doesNotMatch(markdown, /Comparable priced subtotal/);
   } finally {
     fx.cleanup();
   }
@@ -445,7 +528,7 @@ test('a corrupt capture marks cost partial and calls and host tokens partial in 
     const side = measureOne(fx, { session, host: 'claude' });
     assert.equal(side.cost.priced, true);
     assert.equal(side.cost.partial, true);
-    assert.deepEqual(side.cost.reasons, ['captures partial']);
+    assert.ok(side.cost.reasons.includes('captures partial'));
     assert.ok(side.unavailable.includes('perRound calls partial: captures partial (1)'));
     assert.ok(side.unavailable.includes('hostTokens partial: captures partial (1)'));
     const out = path.join(fx.root, 'out');
@@ -551,6 +634,30 @@ test('a subagent-only note leaves host tokens unflagged while cost stays partial
   }
 });
 
+test('comparison and report reject the same malformed host model attribution', () => {
+  const fx = fixture();
+  try {
+    const session = makeSession(fx);
+    const end = E0 + 2000;
+    writeCapture(session, 'work', { start: E0, end }, 'review-run-plan');
+    writeClaudeTranscript(fx, 'host-1', [usageLine('host', E0 + 1000, 100, 5, 'https://route/m')]);
+    const side = measureOne(fx, { session, host: 'claude' });
+    const deps = {
+      orchestrator: orchestratorFor('claude', () => undefined), clock: () => end,
+      env: { ...fx.env, CLAUDE_CODE_SESSION_ID: 'host-1' }, hostUsageFs: nodeHostUsageFs,
+    } as Pick<CliDeps, 'orchestrator' | 'clock' | 'env' | 'hostUsageFs'> as CliDeps;
+    const run = sessionFacts(session, foldLedger(session), 'measured', { manifest: readManifest(session), deps });
+    const report = fs.readFileSync(writeDiagnostics(session, run, resolvePricing(PRICING, undefined)), 'utf8');
+    assert.match(report, /Estimated cost .*— .*priced 0 · unpriced 1/);
+    assert.equal(side.hostTokens, 105);
+    assert.equal(side.cost.pricedUnits, 0);
+    assert.equal(side.cost.unpricedUnits, 1);
+    assert.ok(side.cost.reasons.includes('unpriced model'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('writes comparison.json and comparison.md with pair tables, per-round rows and confounds', () => {
   const fx = fixture();
   try {
@@ -573,14 +680,105 @@ test('writes comparison.json and comparison.md with pair tables, per-round rows 
     assert.deepEqual(comparison.pricing, { path: 'pricing.json', asOf: PRICING.asOf });
     assert.deepEqual(comparison.confounds, ['one run per side']);
     assert.deepEqual(comparison.pairs.map((pair) => pair.sides.map((side) => side.label)), [['historical', 'p3-desktop']]);
+    assert.ok(comparison.pairs[0]!.comparisonLimits.includes('verification evidence unavailable'));
     const md = fs.readFileSync(path.join(out, 'comparison.md'), 'utf8');
     assert.match(md, /^## plan$/m);
     assert.match(md, /^\| Metric \| historical \| p3-desktop \|$/m);
     assert.match(md, /^\| Rounds \| 2 \| 2 \|$/m);
+    assert.doesNotMatch(md, /^\| Comparable priced subtotal \(USD\) \|/m);
     assert.match(md, /^### Per-round$/m);
     assert.match(md, /^## Confounds$/m);
     assert.match(md, /^- one run per side$/m);
     assert.match(md, /Pricing: `pricing\.json` as of 2026-11-19/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('Efficiency measures keep their denominators and evidence', () => {
+  const fx = fixture();
+  try {
+    const session = makeSession(fx);
+    writeRound(session, 1, true);
+    writeRound(session, 2, true);
+    const roundDir = path.join(session, '.state', 'reviews', REVIEW, 'round-1');
+    writeJson(path.join(roundDir, 'round.json'), { round: 1, generation: 2, cap: 4, roster: [{ slot: 'claude[0]' }, { slot: 'native[0]' }, { slot: 'empty[0]' }] });
+    writeJson(path.join(roundDir, 'gen-2', 'slots', 'native.json'), { slot: 'native[0]', state: 'native' });
+    writeJson(path.join(roundDir, 'findings.json'), { findings: [{ id: 'f1', recurrence: { of: 'old' } }, { id: 'f2', recurrence: { of: 'old' } }] });
+    writeClaudeTranscript(fx, 'host-1', [usageLine('host', E0 + 1100, 30, 5)]);
+    writeCapture(session, 'work', { start: E0 + 1000, end: E0 + 4000 }, 'review-run-plan', [
+      { ...reviewRun(subjectFor(session, 1, 2)), startMs: 1000, endMs: 2000, outcome: 'timeout', responses: [
+        { stage: 'unattributed', role: 'delegate', basis: 'claude-assistant-message', coverage: 'partial', observed: 2, uncachedInput: 20 },
+      ] },
+      { ...reviewRun(subjectFor(session, 1, 2)), slot: 'claude[1]', targetSlot: 'native[0]', startMs: 2000, endMs: 6000, usage: { input: 700, output: 5 } },
+      { ...reviewRun(subjectFor(session, 1, 2)), attempt: 2, startMs: 3000, endMs: 4000 },
+      { ...reviewRun(subjectFor(session, 1)), startMs: 0, endMs: 9999 },
+    ]);
+    const comparison = measureSides(fx, [{ session, host: 'claude' }, { session, host: 'claude' }]);
+    const { efficiency } = comparison.pairs[0]!.sides[0]!;
+    assert.equal(efficiency.matchedUncachedInput, 50);
+    assert.equal(efficiency.responseEvents.matchedObserved, 3);
+    assert.equal(efficiency.uncachedInputPerResponse, 50 / 3);
+    assert.equal(efficiency.responseEvents.coverage, 'partial');
+    assert.deepEqual(efficiency.reviewOutcomes, { rounds: 2, accepted: 0, rejected: 0, recurring: 2 });
+    assert.equal(efficiency.recovery.extraLaunches, 2);
+    assert.equal(efficiency.recovery.reworkLaunches, 1);
+    assert.deepEqual(efficiency.recovery.byCause['superseded generation'], { count: 1, cost: { low: 0.00007, high: 0.00007, partial: false } });
+    assert.deepEqual(efficiency.recovery.byCause['timeout'], { count: 1, cost: { low: 0.00007, high: 0.00007, partial: false } });
+    assert.deepEqual(efficiency.criticalPath, [
+      { review: reviewKey(session), round: 1, elapsedMs: 5000, finishingSlot: 'native[0]' },
+      { review: reviewKey(session), round: 2, elapsedMs: null, finishingSlot: null },
+    ]);
+    assert.equal(efficiency.verification, null);
+    assert.match(renderComparison(comparison), /verification evidence unavailable/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('completed reports project only criterion states and disclose mismatches', () => {
+  const fx = fixture();
+  try {
+    const session = makeSession(fx);
+    const base = { session, host: 'claude' };
+    const name = (n: number) => `.state/results/report-complete-00000000-0000-4000-8000-${String(n).padStart(12, '0')}.json`;
+    const source = 'a'.repeat(40);
+    const status = (criterion: string, state: string) => ({ criterion, state, evidence: 'private evidence' });
+    const body = (statuses: unknown[]) => ({ delivered: { source }, statuses });
+    writeJson(path.join(session, name(1)), body([status('SC2', 'manual'), status('contract', 'verified'), status('SC1', 'verified')]));
+    writeJson(path.join(session, name(2)), body([status('SC1', 'verified'), status('SC3', 'manual')]));
+    writeJson(path.join(session, name(3)), body([status('SC1', 'verified'), status('SC2', 'waived')]));
+    writeJson(path.join(session, name(4)), body([status('SC1', 'verified'), status('SC1', 'missing')]));
+    writeJson(path.join(session, name(5)), { delivered: null, statuses: [status('SC1', 'verified')] });
+    writeText(path.join(session, name(6)), '{[');
+    writeText(path.join(session, name(7)), JSON.stringify(body([status('SC1', 'verified')])) + ' '.repeat(1024 * 1024));
+    fs.mkdirSync(path.join(session, name(8)));
+    writeJson(path.join(session, name(9)), body([status('SC1', 'pending')]));
+    const withEvidence = (n: number) => ({ ...base, reportComplete: name(n) });
+    const pairWith = (n: number) => measureSides(fx, [withEvidence(1), withEvidence(n)]);
+    const matching = pairWith(1);
+    assert.deepEqual(matching.pairs[0]!.sides[0]!.efficiency.verification, {
+      verified: 1, manual: 1, waived: 0, missing: 0,
+      criteria: [{ id: 'SC1', state: 'verified' }, { id: 'SC2', state: 'manual' }],
+    });
+    assert.ok(!matching.pairs[0]!.comparisonLimits.some(limit => limit.startsWith('verification')));
+    assert.doesNotMatch(renderComparison(matching), /private evidence/);
+    for (const [number, limit] of [[2, 'verification criteria differ'], [3, 'verification states differ']] as const) {
+      const comparison = pairWith(number);
+      assert.ok(comparison.pairs[0]!.comparisonLimits.includes(limit));
+      assert.ok(renderComparison(comparison).includes(limit));
+    }
+    for (const number of [4, 5, 6, 7, 8, 9, 10]) {
+      assert.equal(measureOne(fx, withEvidence(number)).efficiency.verification, null);
+    }
+    assert.equal(measureOne(fx, { ...base, reportComplete: `../${name(1)}` }).efficiency.verification, null);
+
+    const outside = path.join(fx.root, 'outside-results');
+    writeJson(path.join(outside, path.basename(name(1))), body([status('SC1', 'verified')]));
+    const escaped = makeSession(fx, { name: '20200101T0001Z-results-link' });
+    fs.mkdirSync(path.join(escaped, '.state'));
+    fs.symlinkSync(outside, path.join(escaped, '.state', 'results'), 'junction');
+    assert.equal(measureOne(fx, { ...withEvidence(1), session: escaped }).efficiency.verification, null);
   } finally {
     fx.cleanup();
   }

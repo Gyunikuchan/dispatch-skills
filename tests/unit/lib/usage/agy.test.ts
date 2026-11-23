@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { agy } from '../../../../skills/dispatch/scripts/lib/usage/agy.ts';
 import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import type { HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
@@ -238,6 +239,14 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
     ],
   }, fs);
 
+  const facts = readHostUsage('agy', { ...query, startMs: 1000, env: name => name === 'ANTIGRAVITY_CONVERSATION_ID' ? hostId : undefined }, fs);
+  assert.deepEqual(facts.responses?.map(r => [r.stage, r.agent, r.basis, r.observed, r.uncachedInput]), [
+    ['spec', 'host-1', 'agy-planner-response', 1, 100],
+    ['plan', 'host-1', 'agy-planner-response', 1, 200],
+    ['plan', 'subagent-1', 'agy-planner-response', 1, 50],
+    ['plan', 'subagent-2', 'agy-planner-response', 1, 60],
+    ['plan', 'subagent-3', 'agy-planner-response', 1, 30],
+  ]);
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(result.rows, [
     {
@@ -575,4 +584,16 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
   });
   const resInvalid = agy.read({ ...query, sessionId: hostId }, fsInvalid);
   assert.equal(resInvalid.rows.length, 1); // only host row
+});
+
+test('agy bounds planner response counts when repeated step indexes or malformed metadata occur', () => {
+  const host = '/home/.gemini/antigravity/brain/host/.system_generated/logs/transcript.jsonl';
+  const step = { step_index: 2, type: 'PLANNER_RESPONSE', created_at: new Date(1500).toISOString(), input_tokens: 8, output_tokens: 1 };
+  const facts = readHostUsage('agy', { ...query, env: name => name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'host' : undefined }, memoryFs({
+    [host]: lines(step, { ...step }, { ...step, step_index: 3, created_at: undefined }),
+  }));
+  assert.deepEqual(facts.responses, [
+    { stage: 'spec', role: 'host', agent: 'host-1', basis: 'agy-planner-response', coverage: 'partial', observed: 1, uncachedInput: 8 },
+  ]);
+  assert.equal(facts.rows[0]?.input, 16);
 });

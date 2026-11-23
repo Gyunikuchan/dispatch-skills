@@ -15,8 +15,15 @@ type Tier = { abovePromptTokens: number; rates: Rates };
 type Period = { from: string; rates: Rates; tiers?: Tier[] };
 type PriceEntry = { rates: Rates; tiers?: Tier[]; periods?: Period[] };
 export type CostReason = 'unpriced model' | 'no usage' | 'tier unknown' | 'cache TTL unknown';
+export type AppliedRateBasis = {
+  origin: 'shipped' | 'override';
+  match: 'qualified' | 'wildcard' | 'generic';
+  effectiveDay: string | null;
+  periodFrom: string | null;
+};
 /** USD; `low` equals `high` unless a tier or cache TTL is unknown. */
-export type Cost = { low: number; high: number; priced: boolean; reasons: Set<CostReason> };
+export type Cost = { low: number; high: number; priced: boolean; reasons: Set<CostReason>; rateBasis?: AppliedRateBasis };
+type MatchedRate = { entry: PriceEntry; origin: AppliedRateBasis['origin']; match: AppliedRateBasis['match'] };
 export type Pricer = {
   meta: { asOf: string; source: readonly string[] };
   price(model: string, usage: Counters & { bands?: Bands }, reasoningInOutput?: boolean, onDate?: string): Cost;
@@ -114,17 +121,25 @@ export function resolvePricing(table: unknown, override: unknown): Pricer | unde
   if (!isRecord(table) || typeof table['asOf'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(table['asOf'])
     || !Array.isArray(table['source']) || !table['source'].every((url) => typeof url === 'string')
     || !isRecord(table['models']) || Object.values(table['models']).some((entry) => entryProblem(entry))) return undefined;
-  const models = new Map<string, PriceEntry>(), wildcards = new Map<string, PriceEntry>();
-  for (const source of [table['models'], isRecord(override) ? override : {}]) {
-    for (const [key, entry] of Object.entries(source)) {
-      if (!entryProblem(entry)) (key.endsWith(WILDCARD) ? wildcards : models).set(key.toLowerCase(), entry as PriceEntry);
+  const models = new Map<string, MatchedRate>();
+  const qualified = new Map<string, MatchedRate>();
+  const wildcards = new Map<string, MatchedRate>();
+  const sources = [['shipped', table['models']], ['override', isRecord(override) ? override : {}]] as const;
+  for (const [origin, entries] of sources) {
+    for (const [key, entry] of Object.entries(entries)) {
+      if (entryProblem(entry)) continue;
+      const match = key.endsWith(WILDCARD) ? 'wildcard' : key.indexOf('/') > 0 ? 'qualified' : 'generic';
+      const index = match === 'wildcard' ? wildcards : match === 'qualified' ? qualified : models;
+      index.set(key.toLowerCase(), { entry: entry as PriceEntry, origin, match });
     }
   }
 
-  const find = (id: string): PriceEntry | undefined => {
+  const find = (id: string): MatchedRate | undefined => {
     let rest = id.toLowerCase();
     const slash = rest.indexOf('/');
     if (slash > 0) {
+      const exact = qualified.get(rest);
+      if (exact) return exact;
       const wildcard = wildcards.get(rest.slice(0, slash) + WILDCARD);
       if (wildcard) return wildcard;
       rest = rest.slice(slash + 1);
@@ -162,14 +177,16 @@ const NONE: Counters = { input: 0, output: 0 };
 const unpriced = (): Cost => ({ low: 0, high: 0, priced: false, reasons: new Set<CostReason>(['unpriced model']) });
 const tokens = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
 const promptOf = (c: Counters): number => tokens(c.input) + tokens(c.cacheRead) + tokens(c.cacheWrite);
-type RateSet = { rates: Rates; tiers?: Tier[] };
+type RateSet = { rates: Rates; tiers?: Tier[]; from?: string };
 const tierRates = (set: RateSet, tier: number): Rates => tier ? set.tiers![tier - 1]!.rates : set.rates;
 /** Tier index for a prompt size: 0 is the base rate; tier N applies above its threshold. */
 const tierAt = (set: RateSet, prompt: number): number => set.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
 
-function activeRateSet(entry: PriceEntry, onDate: string | undefined): RateSet {
-  if (!onDate || !/^\d{4}-\d{2}-\d{2}$/.test(onDate) || !entry.periods?.length) return entry;
-  let active: RateSet = entry;
+function activeRateSet(entry: PriceEntry, onDate: string | null): RateSet {
+  const { rates, tiers } = entry;
+  const base = { rates, ...(tiers ? { tiers } : {}) };
+  if (onDate === null || !entry.periods?.length) return base;
+  let active: RateSet = base;
   for (const period of entry.periods) {
     if (period.from <= onDate) active = period;
     else break;
@@ -191,9 +208,11 @@ function rated(c: Counters, r: Rates, reasoningApart: boolean): { low: number; h
   return { low: base + rest * low, high: base + rest * high, ttl: low !== high };
 }
 
-function priceUsage(entry: PriceEntry | undefined, usage: Counters & { bands?: Bands }, reasoningInOutput: boolean | undefined, onDate: string | undefined): Cost {
-  if (!entry) return unpriced();
-  const active = activeRateSet(entry, onDate);
+function priceUsage(matched: MatchedRate | undefined, usage: Counters & { bands?: Bands }, reasoningInOutput: boolean | undefined, onDate: string | undefined): Cost {
+  if (!matched) return unpriced();
+  const { entry, origin, match } = matched;
+  const effectiveDay = isIsoDate(onDate) ? onDate : null;
+  const active = activeRateSet(entry, effectiveDay);
   const apart = reasoningInOutput === false;
   // Each band prices at the tiers its prompt range spans; an aggregate spans every tier up to its own prompt size.
   const spans: { c: Counters; first: number; last: number }[] = [];
@@ -213,7 +232,8 @@ function priceUsage(entry: PriceEntry | undefined, usage: Counters & { bands?: B
     if (first < last) reasons.add('tier unknown');
     if (options.some((o) => o!.ttl)) reasons.add('cache TTL unknown');
   }
-  return Number.isFinite(high) ? { low, high, priced: true, reasons } : unpriced();
+  const rateBasis = { origin, match, effectiveDay, periodFrom: active.from ?? null };
+  return Number.isFinite(high) ? { low, high, priced: true, reasons, rateBasis } : unpriced();
 }
 
 // SECTION: Rendering helpers

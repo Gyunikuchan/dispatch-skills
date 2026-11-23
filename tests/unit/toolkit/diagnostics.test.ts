@@ -376,7 +376,7 @@ test('diagnostics detect toolkit rejection and writer relaunch evidence', async 
   const fold={records:records.slice(0,2),lastSeq:2,torn:null} as Fold;
   assert.equal(sessionFacts(f.session,fold,'complete').relaunches,0);
   fold.records=records;fold.lastSeq=3;const facts=sessionFacts(f.session,fold,'complete');assert.equal(facts.relaunches,1);assert.deepEqual(facts.rejectedTools,[{tool:'record',action:'append',cls:'invalid-record'},{tool:'record',action:'append',cls:'invalid-record'}]);
-  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.doesNotMatch(report,/writer relaunch/);assert.equal(facts.verb,'implement');assert.equal(sessionFacts(f.session,{...fold,records:[]},'complete').verb,undefined);assert.doesNotMatch(report,/defective writer|private/);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.doesNotMatch(report,/- Source: H9/);assert.match(report,/Writer relaunches observed: 1/);assert.equal(facts.verb,'implement');assert.equal(sessionFacts(f.session,{...fold,records:[]},'complete').verb,undefined);assert.doesNotMatch(report,/defective writer|private/);
  }finally{f.cleanup();}
 });
 
@@ -441,8 +441,8 @@ test('session diagnostics include producer rounds, invocations, and gated retro 
 
     const facts = sessionFacts(fixture.session, fold, 'pass');
     assert.deepEqual(facts.reviews, [
-      {phase: facts.reviews[0]!.phase, round: 1, cap: 4, accepted: 1, rejected: 1},
-      {phase: facts.reviews[0]!.phase, round: 2, cap: 4, accepted: 0, rejected: 0, reraised: ['F001', 'F002']},
+      {phase: facts.reviews[0]!.phase, round: 1, cap: 4, accepted: 1, rejected: 1, recurring: 0},
+      {phase: facts.reviews[0]!.phase, round: 2, cap: 4, accepted: 0, rejected: 0, recurring: 2, reraised: ['F001', 'F002']},
     ]);
     assert.deepEqual(facts.observations, observations);
     assert.equal(facts.phases.length,2);

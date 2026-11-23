@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
+import { measureRuns, parsePairs } from '../../scripts/measure-runs.ts';
 import { toolkitRepo } from './helpers/toolkit-repo.ts';
 
 test('diagnostics stay observational across CLI recovery and report completion', async () => {
@@ -70,6 +71,16 @@ test('diagnostics stay observational across CLI recovery and report completion',
       const complete = run(['report', 'complete']);
       assert.ok(fs.existsSync(path.resolve(f.session, complete.value.path)));
       assert.equal('diagnostics' in complete.value, true);
+      assert.ok(complete.value.statuses.some((status: { criterion: string }) => status.criterion === 'contract'));
+      const pairs = parsePairs({ pairs: [{ name: 'delivered', sides: [{
+        label: 'current', session: f.session, host: 'codex',
+        reportComplete: path.relative(f.session, complete.output.path).split(path.sep).join('/'),
+      }] }] });
+      const comparison = measureRuns(pairs, {
+        baseDir: f.root, home: f.root, env,
+        pricing: { path: 'pricing.json', text: fs.readFileSync(path.join(skill, 'references/pricing.json'), 'utf8') },
+      });
+      assert.deepEqual(comparison.pairs[0]?.sides[0]?.efficiency.verification?.criteria, [{ id: 'SC1', state: 'verified' }]);
       assert.equal(fs.readFileSync(path.join(f.root, 'src/file.ts'), 'utf8'), 'delivered\n');
       run(['worktree', 'cleanup']);
   } finally { f.cleanup(); }

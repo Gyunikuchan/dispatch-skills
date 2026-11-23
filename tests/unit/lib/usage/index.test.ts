@@ -238,3 +238,40 @@ test('turns: host rows sum per key only when all inputs for that key carry turns
     ['complete', 20, 3], ['missing', 10, undefined], ['mixed', 20, undefined],
   ]);
 });
+
+test('Response counts retain stage and agent coverage while token totals reconcile', () => {
+  const base = { stage: 'spec' as const, role: 'subagent' as const, model: 'm', effort: null, input: 10, output: 2, atMs: 100, depth: 1, reasoningInOutput: true };
+  const rows = [
+    { ...base, responseActor: 'private-first' },
+    { ...base, responseActor: 'private-second' },
+    { ...base, responseActor: 'private-first', stage: 'plan' as const, atMs: 200 },
+    { ...base, responseActor: 'private-root', role: 'host' as const, depth: 0, atMs: 10 },
+  ];
+  const response = { basis: 'claude-assistant-message' as const };
+  const facts = readHostUsage('claude', {
+    ...input, env: () => 'host', stages: [{ stage: 'spec', atMs: 100 }, { stage: 'plan', atMs: 200 }],
+  }, memoryFs({}), { claude: { sessionEnv: ['HOST'], read: () => ({ rows, response }) } });
+  assert.deepEqual(facts.responses?.map(row => [row.stage, row.role, row.agent, row.observed, row.uncachedInput]).sort(), [
+    ['plan', 'subagent', 'subagent-1', 1, 10],
+    ['spec', 'subagent', 'subagent-1', 1, 10],
+    ['spec', 'subagent', 'subagent-2', 1, 10],
+    ['unattributed', 'host', 'host-1', 1, 10],
+  ]);
+  assert.equal(facts.rows.reduce((sum, row) => sum + row.input, 0), 40);
+  assert.doesNotMatch(JSON.stringify(facts), /private-/);
+});
+
+test('response overflow keeps the observed count and same-subset input by stage', () => {
+  const row = { stage: 'plan' as const, role: 'subagent' as const, model: 'm', effort: null, input: 4, output: 2, atMs: 3000, depth: 1, reasoningInOutput: true };
+  const rows = Array.from({ length: 34 }, (_, i) => ({ ...row, responseActor: `private-${i}` }));
+  const result = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
+    claude: { sessionEnv: ['HOST'], read: () => ({ rows, response: { basis: 'claude-assistant-message' } }) },
+  });
+  const responses = result.responses ?? [];
+  assert.equal(responses.filter(r => r.agent).length, 32);
+  assert.deepEqual(responses.filter(r => !r.agent), [
+    { stage: 'plan', role: 'subagent', basis: 'claude-assistant-message', coverage: 'partial', observed: 2, uncachedInput: 8 },
+  ]);
+  assert.equal(responses.reduce((sum, r) => sum + (r.observed ?? 0), 0), 34);
+  assert.equal(result.rows[0]?.input, 136);
+});

@@ -50,7 +50,7 @@ function parseEnvelope(stdout: string): Envelope | null {
 
 export const claude: ProviderSpec = {
   usage: claudeUsage,
-  sessionUsage(raw, context, stdoutHasUsage) {
+  sessionUsage(raw, context) {
     if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
     const sessionId = parseEnvelope(raw)?.sessionId ?? null;
     if (!sessionId) return { complete: false };
@@ -60,7 +60,7 @@ export const claude: ProviderSpec = {
       startMs: context.launchStartMs,
       endMs: context.launchEndMs,
       resumed: context.resumed ?? false,
-      stdoutHasUsage,
+      ...(context.collectResponses ? { collectResponses: true } : {}),
       home: context.platform.home,
       env: (name) => context.env[name],
       ...(context.cwd === undefined ? {} : { cwd: context.cwd }),

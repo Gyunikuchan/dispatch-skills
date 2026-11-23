@@ -130,6 +130,7 @@ Use the strongest available model for the orchestrator, because cheap explorers 
 ```jsonc
 {
   "pricing": {
+    "lmstudio/qwen3.8-27b-ridge": { "rates": { "input": 0.1, "output": 0.2 } },
     "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
     "my-model": {
       "rates": { "input": 0.5, "output": 2, "cacheRead": 0.05 },
@@ -140,18 +141,20 @@ Use the strongest available model for the orchestrator, because cheap explorers 
 }
 ```
 
-- **Key:** a model id without its `provider/` prefix or version suffix, or `provider/*`. For `opencode-go/muse-spark-1.3-contributor`, use `muse-spark-1.3-contributor`. Keys match without regard to case. A key replaces the shipped key of the same name.
+- **Key:** an exact `route/model`, a `route/*` wildcard, or a generic model id without the route prefix or version suffix. Keys match without regard to case. An override replaces the shipped key of the same name.
 - **`rates`:** USD per 1M tokens. `input` and `output` are required; `cacheRead`, `cacheWrite5m` and `cacheWrite1h` are optional. Each value is a number of 0 or more. List every counter rate that the model's route reports: usage with a nonzero counter that has no rate renders unpriced. A cache write that the source does not split by lifetime needs both `cacheWrite5m` and `cacheWrite1h`. Reasoning that a source reports apart from output (OpenCode and Antigravity) always bills at the output rate.
 - **`tiers`:** optional. Each tier holds `abovePromptTokens` (a positive integer, ascending across tiers) and `rates` with the same keys as the base `rates`. A request whose prompt (uncached input, cache read and cache write) is above the threshold takes that tier's rates for all its tokens.
 - **`periods`:** optional array of dated rate changes (`from`: `YYYY-MM-DD` UTC, ascending and unique; `rates` and optional `tiers` with the same shape as the base entry). Base `rates` and `tiers` apply before the first `from`; the latest period with `from` on or before the run's UTC start date applies (and a period without `tiers` has no tiers).
 
 Dispatch matches each model id in this order:
 
-1. Lowercase the id. If its `provider/` prefix has a `provider/*` entry, that entry applies and matching stops.
-2. Strip a `provider/` prefix, then any version suffix: `[1m]`, `@<date>`, `-v<n>:<n>` or `-YYYYMMDD`.
-3. Take the longest key that the id ends with, at its start or after `.`, `/` or `:`.
+1. For a qualified id, look up the exact `route/model`, including any reported suffix.
+2. If the qualified id has no exact entry, look up `route/*`.
+3. For a generic lookup, strip the route if present and remove any version suffix (`[1m]`, `@<date>`, `-v<n>:<n>` or `-YYYYMMDD`). Take the longest generic key that ends the id at its start or after `.`, `/` or `:`.
 
-An id with no match is unpriced. For example, `bedrock.claude-opus-5-5`, `us.anthropic.claude-opus-5-5-v1:0` and `claude-opus-5-5@20261001` use the `claude-opus-5-5` rate, and `lmstudio/qwen3.8-27b-ridge` uses the `lmstudio/*` entry above. Bedrock and Vertex ids use first-party rates; add an entry when your partner rates differ.
+Usage sources that supply a bare model id use the generic lookup. OpenCode session data can supply the provider and model together. The report labels configured model fallbacks separately from reported models.
+
+An id with no match is unpriced. For example, `bedrock.claude-opus-5-5`, `us.anthropic.claude-opus-5-5-v1:0` and `claude-opus-5-5@20261001` use the `claude-opus-5-5` rate, and `lmstudio/qwen3.8-27b-ridge` uses its exact entry above. Other qualified `lmstudio` models use `lmstudio/*`. Add a qualified entry when the observed route has partner-specific rates.
 
 Dispatch ignores a malformed entry (unknown key, missing `input` or `output`, negative or non-numeric rate, tiers out of order or with different keys, or invalid/non-ascending `periods`). `doctor run` lists each one in `config.warnings`; the configuration stays valid and no launch is blocked. For the cost columns, tier ranges and cost reasons, see [`diagnostics render`](../toolkit.md#diagnostics-render).
 

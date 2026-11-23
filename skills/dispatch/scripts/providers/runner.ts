@@ -3,10 +3,10 @@
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
 import path from 'node:path';
-import type { CoverageReason, FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
+import type { CoverageReason, DelegateResponse, FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
 import { normalizeAgyModelEffort } from '../lib/usage/agy.ts';
 import { nodeHostUsageFs } from '../lib/usage/index.ts';
-import { MAX_TOTAL_BYTES } from '../lib/usage/read.ts';
+import { baseCounters, hasUsageTokens, MAX_TOTAL_BYTES } from '../lib/usage/read.ts';
 import { addCounters, type HostUsageFs } from '../lib/usage/rows.ts';
 import { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { OsId } from '../lib/platform.ts';
@@ -720,26 +720,41 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     }
     const outcome = settle(spec, current, result);
     let usage: DiagnosticUsage | undefined;
-    let transcriptUnavailable = false;
+    let responses: DelegateResponse[] | undefined;
+    const coverage: CoverageReason[] = [];
     steps?.push({ step: 'response', elapsedMs: Math.round(result.durationMs), budgetMs: current.timeoutMs, outcome: result.timedOut ? 'timeout' : result.exit === 0 && !result.truncated ? 'ok' : 'failed' });
     try {
       const wantUsage = (req.collectUsage === true || (spec.resumeUsage === 'cumulative' && req.onInvocation !== undefined)) && !result.truncated && (!current.resume || Boolean(spec.resumeUsage));
       if (wantUsage) {
         const transcripts = { fs: ports.usageFs ?? nodeHostUsageFs, budget: { remaining: MAX_TOTAL_BYTES } };
-        const stdoutUsage = spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages, transcripts });
-        const sessionRead = req.collectUsage === true && spec.sessionUsage
-          ? (clockBehind ? { complete: false } : spec.sessionUsage(result.stdout, {
-            mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages,
-            cwd: current.cwd, resumed: isResume, transcripts,
-          }, stdoutUsage !== undefined))
-          : undefined;
-        if (sessionRead?.complete) {
-          usage = sessionRead.usage ? { ...sessionRead.usage, provenance: 'session' } : undefined;
+        let stdoutUsage: DiagnosticUsage | undefined;
+        try {
+          stdoutUsage = spec.usage?.(result.stdout, { mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages, transcripts });
+        } catch { /* A stdout parse error leaves the transcript eligible. */ }
+        const stdoutCounters = baseCounters(stdoutUsage);
+        let sessionRead: ReturnType<NonNullable<ProviderSpec['sessionUsage']>>;
+        if (req.collectUsage === true && spec.sessionUsage) {
+          try {
+            sessionRead = clockBehind ? { complete: false } : spec.sessionUsage(result.stdout, {
+              mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages,
+              cwd: current.cwd, resumed: isResume, collectResponses: true, transcripts,
+            });
+          } catch { sessionRead = { complete: false }; }
+        }
+        responses = sessionRead?.responses;
+        const sessionUsage = sessionRead?.usage;
+        const sessionCounters = baseCounters(sessionUsage);
+        if (sessionRead?.complete && sessionUsage && sessionCounters) {
+          usage = { ...sessionUsage, provenance: 'session' };
           baseline = 'none';
         } else {
-          if (sessionRead !== undefined) transcriptUnavailable = true;
+          if (sessionRead !== undefined) coverage.push('transcript unavailable');
+          if (sessionRead?.invalidCounters || (sessionUsage && !sessionCounters) || (stdoutUsage && !stdoutCounters)) coverage.push('invalid counters');
+          if (!stdoutCounters) stdoutUsage = undefined;
           const perLaunchClaude = spec.id === 'claude' && stdoutUsage?.provenance === 'claude.result.usage';
           const isCumulativeStdout = spec.resumeUsage === 'cumulative' && !perLaunchClaude;
+          const observedEvent = (spec.id === 'codex' && stdoutUsage?.provenance === 'codex.turn.completed')
+            || (spec.id === 'opencode' && stdoutUsage?.provenance === 'opencode.step.finish');
           if (!isCumulativeStdout) {
             usage = stdoutUsage ? { ...stdoutUsage, provenance: 'stdout' } : undefined;
             baseline = 'none';
@@ -754,21 +769,31 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             usage = undefined;
             baseline = 'none';
           }
+          const selected = baseCounters(usage);
+          const perLaunchReport = perLaunchClaude || spec.resumeUsage === 'per-launch';
+          if (stdoutCounters && !hasUsageTokens(stdoutCounters) && !observedEvent && !(outcome.status === 'ok' && perLaunchReport)) {
+            coverage.push('unverified zero');
+            usage = undefined;
+            baseline = 'none';
+          } else if (req.collectUsage === true && current.resume && selected && !hasUsageTokens(selected) && stdoutCounters && hasUsageTokens(stdoutCounters)) {
+            // A zero delta from a nonzero cumulative report preserves the baseline without proving a response.
+            coverage.push('unverified zero');
+            usage = undefined;
+          }
         }
       } else {
         baseline = 'none';
       }
     } catch { usage = undefined; baseline = 'none'; /* A usage parse failure cannot change provider results. */ }
-    const coverage: CoverageReason[] = [];
     if (req.collectUsage === true) {
-      if (transcriptUnavailable) coverage.push('transcript unavailable');
       if (!usage && spec.usageUnavailable) coverage.push(spec.usageUnavailable);
+      if (spec.sessionUsage && !responses?.length) responses = [{ role: 'delegate', basis: 'unavailable', coverage: 'unknown' }];
     }
     const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
     const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
     const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
     const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(coverage.length ? { coverage } : {}) });
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(responses?.length ? { responses } : {}), ...(req.collectUsage === true && coverage.length ? { coverage } : {}) });
     if (isWrapUpLaunch) {
       if (outcome.status === 'ok') return { outcome, result, attempts, briefFile, invocations };
       return wrapUpTimeout(result);

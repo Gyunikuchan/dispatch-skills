@@ -273,7 +273,7 @@ test('cost cells keep unpriced units out of the sum', () => {
   assert.match(text, /priced 1 · unpriced 2$/m);
 });
 
-test('phase cost sums CLI delegates and host rows by phase, with the rest in before first phase and a run total', () => {
+test('phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total', () => {
   const host = (phase: string | undefined, role: 'host' | 'subagent', model: string, input: number) =>
     ({ stage: 'plan' as const, ...(phase ? { phase } : {}), role, model, effort: null, input, output: 0 });
   const run = facts({
@@ -286,12 +286,12 @@ test('phase cost sums CLI delegates and host rows by phase, with the rest in bef
   const costOf = (phase: string) => lastCells(rows.find((line) => line.includes(`| ${phase} |`))!, 2)[0];
   assert.equal(costOf('plan · p1'), '~$10.00');
   assert.equal(costOf('implementation · p2'), '~$3.00');
-  assert.equal(costOf('before first phase'), '~$8.00');
+  assert.equal(costOf('unattributed phase'), '~$8.00');
   assert.equal(costOf('all phases'), '~$21.00');
   assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$21\.00 · rates as of 2026-11-14 · priced 6 · unpriced 0$/m);
-  assert.ok(rows.find((line) => line.includes('| before first phase |'))!.includes('| — | 1 | 1,000,000 |'), 'only the orphan CLI invocation fills the token columns');
+  assert.ok(rows.find((line) => line.includes('| unattributed phase |'))!.includes('| — | 1 | 1,000,000 |'), 'only the orphan CLI invocation fills the token columns');
   const none = costRender([facts({ hostUsage: { platform: 'claude', rows: [host('review', 'host', 'alpha', M)] }, invocations: [] })]);
-  assert.ok(!none.includes('before first phase'), 'a phased host row leaves no before first phase row');
+  assert.ok(!none.includes('unattributed phase'), 'a phased host row leaves no unattributed phase row');
 });
 
 test('phase cost adds reasoning at the output rate only when the platform reports it apart from output', () => {
@@ -461,7 +461,7 @@ test('cost end to end: mixed-platform facts price in all four locations and surv
       } } }),
       // OpenCode reports reasoning apart from output, so it adds at the output rate
       mega('gemini-4-hydrogen', 'low', 0, { provider: 'opencode', phase: 'review', usage: { input: 0, output: 100_000, reasoning: 100_000 } }),
-      mega(lmstudio, 'low', 1_000_000, { provider: 'opencode', phase: 'review' }),
+      mega(lmstudio, 'low', 1_000_000, { provider: 'opencode', phase: 'review', usageSource: 'session', reportedModels: [lmstudio] }),
       ...extra,
     ],
   });
@@ -476,18 +476,21 @@ test('cost end to end: mixed-platform facts price in all four locations and surv
     cost('| code review | codex | delegate | gpt-6.1-terra | high |', '~$1.50');
     cost('| code review | codex | delegate | gpt-6-luna | low |', '~$0.20');
     cost('| code review | opencode | delegate | gemini-4-hydrogen (configured) |', '~$1.50');
-    cost(`| code review | opencode | delegate | ${lmstudio} (configured) |`, '~$0');
+    cost(`| code review | opencode | delegate | ${lmstudio} |`, '~$0');
   };
 
   const text = renderDiagnostics([run()], endPricer).text;
   assert.ok(!text.includes('Omitted at the report size limit'));
   assertCosts(text);
 
-  const filler = Array.from({ length: 1500 }, () => mega(lmstudio, 'low', 1000, { provider: 'opencode', phase: 'review' }));
+  const filler = Array.from({ length: 1500 }, () => mega(lmstudio, 'low', 1000, { provider: 'opencode', phase: 'review', usageSource: 'session', reportedModels: [lmstudio] }));
   const large = renderDiagnostics([run(filler)], endPricer).text;
   assert.ok(Buffer.byteLength(large) <= CAP);
   assert.match(large, /## Appendix\n\nOmitted at the report size limit\./);
   assert.ok(!large.includes('smaller rows'));
+  assert.match(large, /^\| Host \| 200,000 \| ~\$0\.06 \|/m);
+  assert.match(large, /^\| Subagents \| 1,100,000 \| ~\$3\.00 \|/m);
+  assert.match(large, /^\| CLI delegates \| 5,800,000 \| ~\$3\.20 \|/m);
   assertCosts(large);
 });
 
@@ -534,7 +537,7 @@ test('run start date selects rate period and falls back to base rates when absen
 });
 
 test('multi-host Summary lists every host and names the covered host thread', () => {
-  const known = costRender([facts({ hosts: ['claude', 'agy'], hostUsage: { platform: 'agy', rows: [] }, invocations: [] })]);
+  const known = costRender([facts({ hosts: ['claude', 'agy'], hostUsage: { platform: 'agy', rows: [{ stage: 'code review', role: 'host', model: 'zero', effort: null, input: 0, output: 0 }] }, invocations: [] })]);
   assert.match(known, /^- Host: claude, agy · host rows measure the agy thread; other hosts' threads are unmeasured · OS: windows$/m);
 
   const nullHost = costRender([facts({ hosts: ['claude', 'agy'], hostUsage: { platform: null, rows: [] }, invocations: [] })]);
@@ -593,7 +596,7 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
       mega('mystery', 'high', 100, { provider: 'codex' }),
     ],
   })]);
-  assert.match(drivers(unpricedText), /Ranked by billed tokens: no unit is priced\./);
+  assert.match(drivers(unpricedText), /Share uses observed billed tokens\. No unit is priced\./);
   const unpricedRows = rows(unpricedText);
   assert.deepEqual(unpricedRows.map((r) => r[6]), ['75%', '25%']);
 
@@ -603,7 +606,7 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
       mega('mystery', 'low', 500, { provider: 'codex' }),
     ],
   })]);
-  assert.match(drivers(zeroPricedText), /Priced cost is zero; cost shares unavailable\./);
+  assert.match(drivers(zeroPricedText), /Priced cost is zero\. Cost shares are unavailable\./);
   assert.deepEqual(rows(zeroPricedText).map((r) => [r[3], r[5], r[6]]), [
     ['zero (configured)', '~$0', '—'],
     ['mystery (configured)', '—', 'unpriced'],
@@ -616,4 +619,22 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
 
   const outputOnlyText = costRender([facts({ invocations: [mega('alpha', 'low', 0, { usage: { input: 0, output: 100 } })] })]);
   assert.equal(rows(outputOnlyText)[0]![8], '—');
+});
+
+test('Role cost and usage coverage reconcile', () => {
+  const run = facts({
+    hosts: ['claude', 'codex'],
+    hostUsage: { platform: 'claude', rows: [{ stage: 'code review', role: 'host', model: 'zero', effort: null, input: 0, output: 0 }] },
+    invocations: [
+      mega('alpha', 'low', M, { usageSource: 'session', reportedModels: ['beta'] }),
+      mega('alpha', 'low', 5, { usageSource: 'stdout', coverage: ['transcript unavailable'], reportedModels: ['beta', 'invalid model'] }),
+      bare({ coverage: ['no usage'] }),
+    ],
+  });
+  const text = costRender([run]);
+  assert.match(text, /^\| Host \| 0 \| ~\$0 \| .*host threads unmeasured/m);
+  assert.match(text, /^\| Subagents \| — \| — \| .*unavailable/m);
+  assert.match(text, /^\| CLI delegates \| 1,000,005 \| ~\$2\.00 \| .*1 session.*1 stdout fallback.*1 unmeasured/m);
+  assert.match(text, /priced midpoint/);
+  assert.match(text, /1 observed unit unpriced/);
 });

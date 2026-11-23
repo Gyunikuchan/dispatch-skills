@@ -9,6 +9,7 @@ export const codex: HostUsageAdapter = { sessionEnv: ['CODEX_THREAD_ID'], read(q
 export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} }; const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
+  if (query.collectResponses) result.response = { basis: 'codex-token-count', limited: true };
   const root = path.join(query.env('CODEX_HOME') || path.join(query.home, '.codex'), 'sessions');
   const dirs: { dir: string; date: string }[] = []; const failedLists = new Set<string>();
   function list(dir: string, role: HostRole): string[] { try { return fs.list(dir); } catch (error) { failedLists.add(dir); if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); return []; } }
@@ -24,7 +25,7 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
   const deferred: Deferred[] = [];
   const deferredIds = new Set<string>();
 
-  function parseLines(lines: string[], startIndex: number, role: HostRole, depth: number, totals: Set<number>, model = '', effort: string | null = null) {
+  function parseLines(lines: string[], startIndex: number, role: HostRole, depth: number, totals: Set<number>, actor: string, model = '', effort: string | null = null) {
     for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i]!; if (!line.trim()) continue;
       let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
@@ -36,6 +37,7 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
       if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
       if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
       const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at, reasoningInOutput: true, ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}), input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens };
+      if (result.response) hostRow.responseActor = actor;
       if (!/\.\d+/.test(entry.timestamp)) hostRow.wholeSecond = true;
       if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens;
       if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens;
@@ -49,7 +51,7 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
       if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'unverified candidates'); return false; }
       if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return false; }
       const lines = data.text.split('\n');
-      if (!verify) { parseLines(lines, 0, role, forcedDepth ?? 0, totals); return true; }
+      if (!verify) { parseLines(lines, 0, role, forcedDepth ?? 0, totals, f.id); return true; }
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]!; if (!line.trim()) continue;
         let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); return false; }
@@ -64,7 +66,7 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
         }
         const depth = parentDepth + 1;
         acceptedDepths.set(f.id, depth);
-        parseLines(lines, i + 1, role, depth, totals);
+        parseLines(lines, i + 1, role, depth, totals, f.id);
         return true;
       }
       return false;

@@ -283,8 +283,26 @@ test('diagnostics render writes the session report when enabled and reports off 
     assert.equal(output.ok, true);
     const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
     assert.equal(result.path, path.join(f.session, 'diagnostics.md'));
-    assert.match(fs.readFileSync(result.path, 'utf8'), /## Overview/);
+    const text = fs.readFileSync(result.path, 'utf8');
+    assert.match(text, /## Overview/);
+    assert.match(text, /^\| Host \| — \| — \| host usage unavailable/m);
+    assert.match(text, /^\| CLI delegates \| — \| — \| no recorded launches/m);
     assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false, 'render is not captured as a tool observation');
+
+    writeJson(path.join(skill, 'references', 'pricing.json'), {
+      asOf: '2026-11-19', source: ['https://example.test/pricing'],
+      models: { alpha: { rates: { input: 1, output: 1 } }, 'actual/alpha': { rates: { input: 3, output: 3 } } },
+    });
+    captureRuns(f.session, [{
+      phase: 'plan-review', provider: 'opencode', model: 'configured/alpha', surface: 'cli', launched: true,
+      outcome: 'ok', reportedModels: ['actual/alpha'], usageSource: 'stdout', coverage: ['transcript unavailable'],
+      usage: { input: 1_000_000, output: 0 },
+    }]);
+    f.lines.length = 0;
+    assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+    const priced = fs.readFileSync(result.path, 'utf8');
+    assert.match(priced, /^\| CLI delegates \| 1,000,000 \| ~\$3\.00 \| 1 stdout fallback, transcript unavailable \|$/m);
+    assert.match(priced, /matches: 1 qualified, 0 wildcard, 0 generic/);
   } finally { f.cleanup(); }
 });
 
@@ -313,6 +331,8 @@ test('cost cells render from the skill rate table and fall back to not estimated
     const text = render(true);
     assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$2\.00 · rates as of 2026-11-19 · priced 1 · unpriced 0$/m);
     assert.ok(stageRow(text).endsWith('| 1/1 | — | ~$2.00 |'), stageRow(text));
+    assert.match(text, /^\| CLI delegates \| 1,000,000 \| ~\$2\.00 \| 1 legacy source unknown \|$/m);
+    assert.match(text, /shipped table date 2026-11-19 · UTC effective day .*1 shipped, 0 override/);
 
     writeJson(path.join(skill, 'config.local.jsonc'), { pricing: { 'claude-sonnet-5-5': { rates: { input: 1, output: 1 } }, bad: 'x' } });
     assert.match(render(true), /^- Estimated cost .*: ~\$1\.00 ·/m, 'override replaces the shipped rate and a malformed entry is ignored');

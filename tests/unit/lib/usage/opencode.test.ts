@@ -26,8 +26,8 @@ test('turns: opencode host usage keeps each message model and effort for host an
       messages: [
         message(0, 2500, 'opencode-go/deepseek-v4.1-flash', 'max', 10, 5, { cacheRead: 2, cacheWrite: 1, reasoning: 3 }),
         message(0, 3000, 'lmstudio/qwen3.8-27b@iq4_xs', 'high', 7, 4),
-        message(1, 3500, 'anthropic/claude-opus', null, 20, 8),
-        message(2, 4000, 'openai/gpt-5', 'low', 3, 1, { cacheRead: 0 }),
+        message(1, 3500, 'anthropic/claude-opus', null, 20, 8, { sessionId: 'ses_child-1' }),
+        message(2, 4000, 'openai/gpt-5', 'low', 3, 1, { cacheRead: 0, sessionId: 'ses_child-2' }),
         message(0, 4500, null, null, 1, 2),
       ],
       skipped: 0,
@@ -35,7 +35,7 @@ test('turns: opencode host usage keeps each message model and effort for host an
     };
   }));
 
-  assert.deepEqual(seen, { db: opencodeDbPath('/home', session), id: 'ses_host-1', options: { fromMs: 2000, toMs: 5000 } });
+  assert.deepEqual(seen, { db: opencodeDbPath('/home', session), id: 'ses_host-1', options: { fromMs: 2000, toMs: 5000, includeSessionIdentity: true } });
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(result.rows, [
     { stage: 'spec', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', turns: 1, effort: 'max', input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3, bands: { le100k: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3 } }, reasoningInOutput: false },
@@ -43,6 +43,12 @@ test('turns: opencode host usage keeps each message model and effort for host an
     { stage: 'plan', role: 'host', model: 'lmstudio/qwen3.8-27b@iq4_xs', turns: 1, effort: 'high', input: 7, output: 4, bands: { le100k: { input: 7, output: 4 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'subagent', model: 'anthropic/claude-opus', effort: null, input: 20, output: 8, bands: { le100k: { input: 20, output: 8 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'subagent', model: 'openai/gpt-5', effort: 'low', input: 3, output: 1, cacheRead: 0, bands: { le100k: { input: 3, output: 1, cacheRead: 0 } }, reasoningInOutput: false },
+  ]);
+  assert.deepEqual(result.responses?.map(r => [r.stage, r.agent, r.basis, r.coverage, r.observed, r.uncachedInput]), [
+    ['spec', 'host-1', 'opencode-assistant-message', 'complete', 1, 10],
+    ['plan', 'host-1', 'opencode-assistant-message', 'complete', 2, 8],
+    ['plan', 'subagent-1', 'opencode-assistant-message', 'complete', 1, 20],
+    ['plan', 'subagent-2', 'opencode-assistant-message', 'complete', 1, 3],
   ]);
   assert.ok(!JSON.stringify(result).includes('ses_'));
   assert.ok(!JSON.stringify(result).includes(opencodeDbPath('/home', session)));
@@ -58,6 +64,10 @@ test('opencode host usage notes skipped messages and row and session caps', () =
   assert.equal(rows.unavailable, undefined);
   assert.equal(rows.notes?.host?.['unparsed lines'], 2);
   assert.equal(rows.notes?.host?.['read budget reached'], 1);
+  assert.deepEqual(rows.responses?.map(r => [r.role, r.coverage, r.observed]), [
+    ['host', 'partial', 1],
+    ['subagent', 'unknown', undefined],
+  ]);
 
   const sessions = readHostUsage('opencode', input, port(() => ({
     messages: [message(0, 1000, 'm', null, 1, 1)],
@@ -72,7 +82,10 @@ test('opencode host usage notes skipped messages and row and session caps', () =
 test('opencode host usage maps read failures to allowlisted reasons without leaking locators', () => {
   const failure = Object.assign(new Error('cannot open /home/me/.local/share/opencode/opencode.db for ses_host-1'), { code: 'ENOENT' });
   const missing = readHostUsage('opencode', input, port(() => { throw failure; }));
-  assert.deepEqual(missing, { platform: 'opencode', rows: [], unavailable: 'read-error:ENOENT' });
+  assert.equal(missing.unavailable, 'read-error:ENOENT');
+  assert.deepEqual(missing.responses, [
+    { stage: 'unattributed', role: 'host', basis: 'opencode-assistant-message', coverage: 'unknown' },
+  ]);
   assert.ok(!JSON.stringify(missing).includes('ses_'));
   assert.ok(!JSON.stringify(missing).includes('/home'));
 
@@ -97,6 +110,9 @@ test('opencode host usage reports no records only when no valid message remains'
     truncated: null,
   })));
   assert.equal(childOnly.unavailable, undefined);
+  assert.deepEqual(childOnly.responses, [
+    { stage: 'plan', role: 'subagent', basis: 'opencode-assistant-message', coverage: 'partial', observed: 1, uncachedInput: 4 },
+  ]);
   assert.deepEqual(childOnly.rows, [{ stage: 'plan', role: 'subagent', model: 'm', effort: 'high', input: 4, output: 2, bands: { le100k: { input: 4, output: 2 } }, reasoningInOutput: false }]);
 });
 

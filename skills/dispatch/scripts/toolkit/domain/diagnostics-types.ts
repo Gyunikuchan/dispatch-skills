@@ -1,7 +1,7 @@
 import type { Bands } from '../../lib/usage/bands.ts';
-import type { Counters, HostUsageFacts } from '../../lib/usage/rows.ts';
+import type { Counters, HostUsageFacts, ResponseStage } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
-import type { CoverageReason, FailureClass } from '../types.ts';
+import type { CoverageReason, DelegateResponse, FailureClass, UsageSource } from '../types.ts';
 import type { ReviewKind } from './types.ts';
 
 
@@ -41,9 +41,13 @@ export type DiagnosticEvent = {
   {kind:'native'; state:'pending'|'completed'|'invalid'|'failed'; replay?: boolean} |
   {kind:'slot'; cls?:FailureClass; state:'done'|'native'|'failed'; replay?: boolean}
 );
+export type DelegateResponseFacts = DelegateResponse & { stage: ResponseStage; agent?: string };
+
 export type InvocationFacts = {
   phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
-  launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: Usage; reportedModels?: string[]; coverage?: CoverageReason[];
+  launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: Usage; usageSource?: UsageSource; reportedModels?: string[]; reportedModelAmbiguous?: true; coverage?: CoverageReason[];
+  responses?: DelegateResponseFacts[];
+  superseded?: true;
   slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
@@ -52,12 +56,12 @@ export type InvocationFacts = {
  * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
  * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
  */
-export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
+export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; recurring?: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
 export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number; hostTurns?: number; kind?: ReviewKind };
 
-type SlotYieldAttempt = { provider: string; model: string; effort: string | null; usage?: Usage };
+export type SlotYieldAttempt = Pick<InvocationFacts, 'provider' | 'model' | 'usage' | 'usageSource' | 'reportedModels' | 'reportedModelAmbiguous' | 'coverage'> & { effort: string | null };
 
 /** Per-responder review yield: findings raised and ruled, plus the slot's measured token cost. */
 export type SlotYieldFacts = {
@@ -66,6 +70,7 @@ export type SlotYieldFacts = {
   accepted: number; rejected: number; deferred: number; duplicate: number; unruled: number;
   tokens?: number; measured: number; launched: number;
   attempts?: SlotYieldAttempt[];
+  priorLaunches?: number;
   /** Findings whose origin is `fix-induced`; present only when nonzero. */
   fixInduced?: number;
 };
@@ -75,6 +80,7 @@ export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
   for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const) current[key] += row[key];
   if (row.tokens !== undefined) current.tokens = (current.tokens ?? 0) + row.tokens;
   if (row.attempts?.length) current.attempts = [...(current.attempts ?? []), ...row.attempts];
+  if (row.priorLaunches) current.priorLaunches = (current.priorLaunches ?? 0) + row.priorLaunches;
   if (row.fixInduced) current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
 }
 export type RunFacts = {
@@ -96,7 +102,7 @@ export type RunFacts = {
   invocations: InvocationFacts[];
   reviews: ReviewFacts[];
   slotYield?: SlotYieldFacts[];
-  roundTiming?: {review:string; round:number; slots:{slot:string; attempts:{startMs?:number; endMs?:number}[]}[]}[];
+  roundTiming?: {review:string; round:number; slots:{slot:string; attempts:{startMs?:number; endMs?:number; surface?:'cli'|'native'}[]}[]}[];
   roundWorkload?: RoundWorkload[];
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;

@@ -1,4 +1,4 @@
-import type { DiagnosticUsage } from '../../toolkit/types.ts';
+import type { DiagnosticCounters, DiagnosticUsage } from '../../toolkit/types.ts';
 import type { HostNote, HostNotes, HostRole, HostUnavailable, HostUsageFs, Milestone, PhaseMilestone, ReadBudget } from './rows.ts';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
@@ -34,6 +34,30 @@ export const counter = (value: unknown): value is number => typeof value === 'nu
 export type Row = Record<string, unknown>;
 export const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
 export const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
+export function baseCounters(value: unknown): DiagnosticCounters | undefined {
+  const r = row(value);
+  if (!r || !count(r['input']) || !count(r['output'])) return undefined;
+  const out: DiagnosticCounters = { input: r['input'], output: r['output'] };
+  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
+    const n = r[key];
+    if (n === undefined) continue;
+    if (!count(n)) return undefined;
+    out[key] = n;
+  }
+  const short = r['cacheWrite5m'], long = r['cacheWrite1h'];
+  // An invalid split does not invalidate the observed total cache writes.
+  if ((short === undefined || count(short)) && (long === undefined || count(long)) && (short ?? 0) + (long ?? 0) <= (out.cacheWrite ?? 0)) {
+    if (short !== undefined) out.cacheWrite5m = short;
+    if (long !== undefined) out.cacheWrite1h = long;
+  }
+  return out;
+}
+
+export function hasUsageTokens(counters: DiagnosticCounters): boolean {
+  return counters.input > 0 || counters.output > 0 || (counters.cacheRead ?? 0) > 0
+    || (counters.cacheWrite ?? 0) > 0 || (counters.reasoning ?? 0) > 0;
+}
+
 export function counters(value: unknown, names: Record<string, string>, provenance: string, inputSemantics: DiagnosticUsage['inputSemantics']): DiagnosticUsage | undefined {
   const r = row(value);
   if (!r || !count(r[names['input']!]) || !count(r[names['output']!])) return undefined;

@@ -8,6 +8,22 @@ export const STAGE_ORDER = ['spec', 'design', 'design review', 'plan', 'plan rev
 export type HostStage = typeof STAGE_ORDER[number];
 export type HostRole = typeof HOST_ROLES[number];
 export type Counters = DiagnosticCounters;
+export const MAX_RESPONSE_AGENTS = 32;
+export const HOST_RESPONSE_BASES = ['agy-planner-response', 'claude-assistant-message', 'codex-token-count', 'opencode-assistant-message'] as const;
+export const RESPONSE_STAGES = [...STAGE_ORDER, 'unattributed'] as const;
+export const RESPONSE_COVERAGES = ['complete', 'partial', 'unknown'] as const;
+export type HostResponseBasis = typeof HOST_RESPONSE_BASES[number];
+export type ResponseStage = typeof RESPONSE_STAGES[number];
+export type ResponseCoverage = typeof RESPONSE_COVERAGES[number];
+export type HostResponseAggregate = {
+  stage: ResponseStage;
+  role: HostRole;
+  agent?: string;
+  basis: HostResponseBasis;
+  coverage: ResponseCoverage;
+  observed?: number;
+  uncachedInput?: number;
+};
 export type UsageRow = Counters & {
   model: string;
   effort: string | null;
@@ -17,23 +33,25 @@ export type UsageRow = Counters & {
   wholeSecond?: true;
   reasoningInOutput: boolean;
   turns?: number;
+  responseActor?: string; // Adapter-local identity, projected to an alias before returning facts.
+  skipResponse?: true;
 };
 export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; reasoningInOutput?: boolean; turns?: number };
 export type HostUnavailable = typeof HOST_UNAVAILABLE[number];
 export type HostNote = typeof HOST_NOTES[number];
 export type HostNotes = Partial<Record<HostRole, Partial<Record<HostNote, number>>>>;
-export type HostUsageFacts = { platform: string | null; rows: HostUsageRow[]; unavailable?: HostUnavailable; notes?: HostNotes };
+export type HostUsageFacts = { platform: string | null; rows: HostUsageRow[]; responses?: HostResponseAggregate[]; unavailable?: HostUnavailable; notes?: HostNotes };
 export type Milestone = { stage: HostStage; atMs: number };
 export type PhaseMilestone = { phase: string; atMs: number };
 export type ReadBudget = { remaining: number };
-export type HostUsageQuery = { sessionId: string; startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[]; budget: ReadBudget };
+export type HostUsageQuery = { collectResponses?: true; sessionId: string; startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[]; budget: ReadBudget };
 export type DelegateQuery = {
+  collectResponses?: true;
   platform: 'claude' | 'codex' | 'opencode' | 'agy';
   sessionId: string;
   startMs: number;
   endMs: number;
   resumed: boolean;
-  stdoutHasUsage: boolean;
   home: string;
   env: (name: string) => string | undefined;
   cwd?: string;
@@ -42,7 +60,7 @@ export type DelegateQuery = {
   budget: ReadBudget;
 };
 export type HostUsageFs = { list(dir: string): string[]; stat(file: string): { size: number; mtimeMs: number } | null; read(file: string, maxBytes: number): Buffer; decompress: ((data: Buffer, maxBytes: number) => Buffer) | null; sqliteGenMetadata?: (file: string) => readonly Uint8Array[] | null; opencodeMessages?: typeof readOpencodeMessages };
-export type HostUsageResult = { rows: (UsageRow & { stage: HostStage })[]; unavailable?: HostUnavailable; notes?: HostNotes };
+export type HostUsageResult = { rows: (UsageRow & { stage: HostStage })[]; response?: { basis: HostResponseBasis; limited?: true }; unavailable?: HostUnavailable; notes?: HostNotes };
 export type HostUsageAdapter = { sessionEnv: readonly string[]; read(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult };
 
 const OPTIONAL_COUNTERS = ['cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;

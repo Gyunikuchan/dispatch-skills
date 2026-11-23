@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
 import { claudeCode, claudeUsage } from '../../../../skills/dispatch/scripts/lib/usage/claude.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
@@ -9,14 +10,23 @@ test('turns: claude counts the last in-window message usage row fields once by s
     type: 'assistant', timestamp: new Date(at).toISOString(), effort: 'high',
     message: { id, model, usage: { input_tokens: input, output_tokens: 2, cache_read_input_tokens: 3 }, text: 'secret transcript' },
   });
-  const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100000 } }, memoryFs({
+  const fs = memoryFs({
     '/home/.claude/projects/p/host.jsonl': lines(message('a', 2000, 1), message('a', 3000, 5), message('second', 4000, 8), message('synthetic', 3000, 100, '<synthetic>'), message('late', 20000, 100)),
-    '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(message('b', 2500, 7)),
-  }));
+    '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(message('a', 2400, 1), message('a', 2500, 7)),
+    '/home/.claude/projects/p/host/subagents/agent-2.jsonl': lines(message('a', 2600, 11)),
+  });
+  const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100000 } }, fs);
   assert.deepEqual(result.rows, [
     { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, turns: 1, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
     { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 4000, reasoningInOutput: true, turns: 1, input: 8, output: 2, cacheRead: 3 },
     { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2500, reasoningInOutput: true, input: 7, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2600, reasoningInOutput: true, input: 11, output: 2, cacheRead: 3 },
+  ]);
+  const facts = readHostUsage('claude', { ...query, startMs: 2000, env: name => name === 'CLAUDE_CODE_SESSION_ID' ? query.sessionId : undefined }, fs);
+  assert.deepEqual(facts.responses?.map(r => [r.agent, r.basis, r.coverage, r.observed, r.uncachedInput]), [
+    ['host-1', 'claude-assistant-message', 'complete', 2, 13],
+    ['subagent-1', 'claude-assistant-message', 'complete', 1, 7],
+    ['subagent-2', 'claude-assistant-message', 'complete', 1, 11],
   ]);
   assert.ok(!JSON.stringify(result).includes('secret transcript'));
 });

@@ -9,7 +9,7 @@ import { codex } from './codex.ts';
 import { opencode } from './opencode.ts';
 import { boundModels, foldRows, OTHER_KEY, type BandedCounters } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
-import { HOST_ROLES, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
+import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostResponseAggregate, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type HostUsageResult, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
 
 function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases: readonly PhaseMilestone[]): HostUsageRow[] {
   const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[] }>();
@@ -71,6 +71,43 @@ function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases
     || usageKey(a.model, a.effort).localeCompare(usageKey(b.model, b.effort)));
 }
 
+function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]): HostResponseAggregate[] | undefined {
+  const source = result.response;
+  if (!source) return undefined;
+  const firstMilestone = stages.reduce((first, stage) => Math.min(first, stage.atMs), Infinity);
+  const aliases = new Map<string, string>();
+  const serial = { host: 0, subagent: 0 };
+  const groups = new Map<string, HostResponseAggregate>();
+  for (const row of result.rows) {
+    if (row.role === 'delegate' || row.skipResponse) continue;
+    const role = row.role;
+    const stage = row.atMs >= firstMilestone ? row.stage : 'unattributed';
+    const actor = row.responseActor === undefined ? undefined : `${role}\0${row.responseActor}`;
+    if (actor !== undefined && !aliases.has(actor) && aliases.size < MAX_RESPONSE_AGENTS) {
+      aliases.set(actor, `${role}-${++serial[role]}`);
+    }
+    const agent = actor === undefined ? undefined : aliases.get(actor);
+    const key = `${stage}\0${role}\0${agent ?? ''}`;
+    const coverage = source.limited || result.unavailable || result.notes?.[role] || !agent ? 'partial' : 'complete';
+    const group: HostResponseAggregate = groups.get(key) ?? {
+      stage, role, basis: source.basis, coverage, observed: 0, uncachedInput: 0,
+      ...(agent === undefined ? {} : { agent }),
+    };
+    group.observed = (group.observed ?? 0) + 1;
+    const input = (group.uncachedInput ?? NaN) + row.input;
+    if (Number.isSafeInteger(input)) group.uncachedInput = input;
+    else delete group.uncachedInput;
+    groups.set(key, group);
+  }
+  const aggregates = [...groups.values()];
+  for (const role of HOST_ROLES) {
+    const incomplete = result.notes?.[role] || (role === 'host' ? result.unavailable : result.notes?.host?.['read budget reached']);
+    if (incomplete && !aggregates.some(group => group.role === role)) {
+      aggregates.push({ stage: 'unattributed', role, basis: source.basis, coverage: 'unknown' });
+    }
+  }
+  return aggregates;
+}
 const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
 type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
 export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = ADAPTERS): HostUsageFacts {
@@ -81,8 +118,15 @@ export function readHostUsage(platform: ProviderKey | null, input: HostUsageInpu
   if (!validSessionId(sessionId)) return { platform, rows: [], unavailable: 'invalid host id' };
   if (!Number.isFinite(input.startMs)) return { platform, rows: [], unavailable: 'invalid session start' };
   try {
-    const res = adapter.read({ ...input, sessionId, budget: { remaining: MAX_TOTAL_BYTES } }, fsPort);
-    return { platform, ...res, rows: foldHostRows(res.rows, input.phases ?? []) };
+    const res = adapter.read({ ...input, sessionId, collectResponses: true, budget: { remaining: MAX_TOTAL_BYTES } }, fsPort);
+    const { unavailable, notes } = res;
+    const responses = foldHostResponses(res, input.stages);
+    return {
+      platform, rows: foldHostRows(res.rows, input.phases ?? []),
+      ...(unavailable === undefined ? {} : { unavailable }),
+      ...(notes === undefined ? {} : { notes }),
+      ...(responses === undefined ? {} : { responses }),
+    };
   } catch (error) { return { platform, rows: [], unavailable: readErrorReason(error) }; }
 }
 export const nodeHostUsageFs: HostUsageFs = {

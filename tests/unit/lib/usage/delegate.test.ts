@@ -57,11 +57,11 @@ function buildGenMetadataBlob(opts: {
 function baseQuery(overrides: Partial<DelegateQuery> & { fs: HostUsageFs }): DelegateQuery {
   return {
     platform: 'claude',
+    collectResponses: true,
     sessionId: 'sess-1',
     startMs: 10_000,
     endMs: 20_000,
     resumed: true,
-    stdoutHasUsage: true,
     home: '/home',
     env: () => undefined,
     cwd: '/repo/my app',
@@ -121,6 +121,10 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
   assert.equal(res.usage?.scope, 'invocation');
   assert.equal(res.usage?.inputSemantics, 'uncached');
   assert.equal(res.usage?.input, 121_500);
+  assert.deepEqual(res.responses, [
+    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 121_000 },
+    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 500 },
+  ]);
   assert.equal(res.usage?.cacheWrite5m, 36);
   assert.equal(res.usage?.cacheWrite1h, 24);
   assert.deepEqual(res.usage?.models?.['claude-haiku-5-5#low']?.bands, {
@@ -310,17 +314,17 @@ test('agy delegate reads mode-profile appDataDir and treats wholeSecond created_
   })).complete, false);
 });
 
-test('incomplete reads: missing, unreadable, budget-exhausted, empty window with stdout usage, and traversal id', () => {
+test('incomplete reads: missing, unreadable, budget-exhausted, empty window, and traversal id', () => {
   const emptyFs = memoryFs({});
   assert.equal(readDelegateSession(baseQuery({ platform: 'claude', fs: emptyFs })).complete, false);
 
   const encoded = '-repo-my-app';
   const sessionFile = `/home/.claude/projects/${encoded}/sess-1.jsonl`;
   const noRowsFs = memoryFs({ [sessionFile]: lines({ type: 'system', text: 'hi' }) });
-  assert.equal(readDelegateSession(baseQuery({ platform: 'claude', stdoutHasUsage: true, fs: noRowsFs })).complete, false);
-  const noUsageOk = readDelegateSession(baseQuery({ platform: 'claude', stdoutHasUsage: false, fs: noRowsFs }));
-  assert.equal(noUsageOk.complete, true);
-  assert.equal(noUsageOk.usage, undefined);
+  const noUsage = readDelegateSession(baseQuery({ platform: 'claude', fs: noRowsFs }));
+  assert.equal(noUsage.complete, false);
+  assert.equal(noUsage.usage, undefined);
+  assert.deepEqual(noUsage.responses, [{ role: 'delegate', basis: 'unavailable', coverage: 'unknown' }]);
 
   const validFileFs = memoryFs({
     [sessionFile]: lines({

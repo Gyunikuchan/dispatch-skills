@@ -115,7 +115,7 @@ export const opencode: ProviderSpec = {
   native: 'opencode',
   modeCascadeOn: [],
   usage: opencodeUsage,
-  sessionUsage(raw, context, stdoutHasUsage) {
+  sessionUsage(raw, context) {
     if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
     const sessionId = parseEvents(raw).sessionId;
     if (!sessionId) return { complete: false };
@@ -130,7 +130,7 @@ export const opencode: ProviderSpec = {
       startMs: context.launchStartMs,
       endMs: context.launchEndMs,
       resumed: context.resumed ?? false,
-      stdoutHasUsage,
+      ...(context.collectResponses ? { collectResponses: true } : {}),
       home: context.platform.home,
       env: (name) => context.env[name],
       fs,

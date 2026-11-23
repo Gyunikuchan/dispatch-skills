@@ -36,7 +36,7 @@ function parseCodexEvents(raw: string): { answer: string; threadId: string | nul
 
 export const codex: ProviderSpec = {
   usage: codexUsage,
-  sessionUsage(raw, context, stdoutHasUsage) {
+  sessionUsage(raw, context) {
     if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
     const sessionId = parseCodexEvents(raw).threadId;
     if (!sessionId) return { complete: false };
@@ -46,7 +46,7 @@ export const codex: ProviderSpec = {
       startMs: context.launchStartMs,
       endMs: context.launchEndMs,
       resumed: context.resumed ?? false,
-      stdoutHasUsage,
+      ...(context.collectResponses ? { collectResponses: true } : {}),
       home: context.platform.home,
       env: (name) => context.env[name],
       fs: context.transcripts.fs,

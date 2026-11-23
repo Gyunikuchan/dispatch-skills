@@ -8,6 +8,8 @@ import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
+import { readDelegateSession } from '../../../skills/dispatch/scripts/lib/usage/delegate.ts';
+import { memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
@@ -469,6 +471,96 @@ test('attempt persistence retries a failed write without repeating successful wr
  }finally{t.mock.restoreAll();f.cleanup();}
 });
 
+test('capture reread retains selected usage sources and rejects legacy failed zero', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    const invocation = { provider: 'claude', effort: null, mode: 'cli', launched: true } as const;
+    const usage = { input: 0, output: 0, scope: 'invocation', inputSemantics: 'uncached' } as const;
+    const rows = [
+      { ...invocation, model: 'event-zero', outcome: 'quota' as const, usage: { ...usage, provenance: 'session' } },
+      { ...invocation, model: 'fallback', outcome: 'ok' as const, usage: { ...usage, input: 3, provenance: 'stdout' }, coverage: ['transcript unavailable', 'invalid counters'] as ('transcript unavailable' | 'invalid counters')[] },
+    ];
+    f.deps.delegate = async (_provider, request) => {
+      rows.forEach((row) => request.onInvocation?.(row));
+      return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: rows };
+    };
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+    const legacy = { ...invocation, surface: 'cli', outcome: 'quota' };
+    captureRuns(f.session, [
+      { ...legacy, model: 'legacy-zero', usage: { input: 0, output: 0 }, coverage: ['transcript unavailable'] },
+      { ...legacy, model: 'legacy-nonzero', usage: { input: 2, output: 0 }, usageSource: 'private-source' },
+    ]);
+    const observed = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations;
+    assert.deepEqual(observed.map((row) => [row.model, row.usage?.input, row.usageSource, row.coverage]).sort(), [
+      ['event-zero', 0, 'session', undefined],
+      ['fallback', 3, 'stdout', ['transcript unavailable', 'invalid counters']],
+      ['legacy-nonzero', 2, undefined, undefined],
+      ['legacy-zero', undefined, undefined, ['transcript unavailable', 'unverified zero']],
+    ]);
+  } finally { f.cleanup(); }
+});
+
+test('response evidence retains verified aliases across captures and distinguishes zero from unknown', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    const event = (id: string, at: number) => JSON.stringify({
+      type: 'assistant', timestamp: new Date(at).toISOString(),
+      message: { id, model: 'm', usage: { input_tokens: 42, output_tokens: 1 } },
+    });
+    const first = 'private-session-one';
+    const second = 'private-session-two';
+    const files = memoryFs({
+      ['/home/.claude/projects/-repo/' + first + '.jsonl']: [event('private-event', 12), event('private-event', 22)].join('\n'),
+      ['/home/.claude/projects/-repo/' + second + '.jsonl']: event('private-event-two', 12),
+    });
+    for (const [sessionId, startMs, endMs, resumed, model] of [
+      [first, 0, 20, false, 'first'], [first, 21, 30, true, 'resume'], [second, 0, 20, false, 'other'],
+    ] as const) {
+      // Read the first capture before its streaming update is available.
+      const usageFs = model === 'first' ? memoryFs({ ['/home/.claude/projects/-repo/' + first + '.jsonl']: event('private-event', 12) }) : files;
+      const { responses } = readDelegateSession({
+        platform: 'claude', collectResponses: true, sessionId, startMs, endMs, resumed, home: '/home',
+        env: () => undefined, cwd: '/repo', fs: usageFs, budget: { remaining: 1024 },
+      });
+      assert.ok(responses?.length);
+      f.deps.delegate = async () => ({
+        outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null },
+        invocations: [{ provider: 'claude', effort: null, mode: 'cli', launched: true, model, outcome: 'ok', responses }],
+      });
+      const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+      await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+      observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+    }
+    const legacy = { provider: 'claude', model: 'legacy', launched: true, outcome: 'ok' };
+    captureRuns(f.session, [legacy, { ...legacy, model: 'unsafe', responses: [
+      { stage: 'ask', role: 'delegate', agent: first, basis: 'claude-assistant-message', coverage: 'complete', observed: 9 },
+      { stage: 'ask', role: 'delegate', basis: 'unavailable', coverage: 'unknown', observed: 0 },
+    ] }]);
+    const observed = new Map(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations.map(row => [row.model, row.responses?.[0]]));
+    const agent = observed.get('first')?.agent;
+    assert.match(agent ?? '', /^delegate-[a-f0-9]{16}$/);
+    assert.notEqual(observed.get('other')?.agent, agent);
+    assert.deepEqual(observed.get('first'), {
+      stage: 'ask', role: 'delegate', agent, basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 42,
+    });
+    assert.deepEqual(observed.get('resume'), { ...observed.get('first'), observed: 0, uncachedInput: 0 });
+    assert.equal(observed.get('legacy'), undefined);
+    assert.equal(observed.get('unsafe'), undefined);
+    const directory = path.join(f.session, '.state', 'diagnostics');
+    for (const file of fs.readdirSync(directory).filter(name => name !== 'run-1.json')) {
+      assert.doesNotMatch(fs.readFileSync(path.join(directory, file), 'utf8'), /private-session|private-event/);
+    }
+  } finally { f.cleanup(); }
+});
+
 test('agy delegate invocations render resolved model and effort in diagnostics report', async () => {
   const f = sessionFixture({ memory: true });
   try {
@@ -576,14 +668,16 @@ test('review timing joins current generation and reserve attempts', async () => 
   await observer.deps.delegate('claude',{logPath:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1','logs','codex[0].log')} as never,'cli');
   observer.deps.diagnostics!({kind:'native',subject:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1'),slot:'codex[0]',provider:'native',attempt:1,state:'failed'});
   await observer.deps.delegate('claude',{logPath:path.join(f.session,'.state','reviews','plan-a','round-2','gen-1','logs','codex[0].log')} as never,'cli');
+  await observer.deps.delegate('claude',{logPath:path.join(f.session,'.state','reviews','plan-a','round-2','gen-1','logs','claude[0].log'),targetSlot:'native[0]'} as never,'cli');
+  observer.deps.diagnostics!({kind:'native',subject:path.join(f.session,'.state','reviews','plan-a','round-2','gen-1'),slot:'native[0]',provider:'native',attempt:1,state:'failed'});
   observer.finish({ok:true,exit:0,summary:'done',value:null});
   const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
-  assert.deepEqual(facts.roundTiming?.[1]?.slots,[{slot:'codex[0]',attempts:[{startMs:0,endMs:30}]},{slot:'native[0]',attempts:[]}]);
-  assert.deepEqual(facts.roundTiming?.[0]?.slots,[{slot:'codex[0]',attempts:[{startMs:0,endMs:30}]}]);
+  assert.deepEqual(facts.roundTiming?.[1]?.slots,[{slot:'codex[0]',attempts:[{surface:'cli',startMs:0,endMs:30}]},{slot:'native[0]',attempts:[{surface:'cli',startMs:0,endMs:30},{surface:'native'}]}]);
+  assert.deepEqual(facts.roundTiming?.[0]?.slots,[{slot:'codex[0]',attempts:[{surface:'cli',startMs:0,endMs:30}]}]);
  } finally {f.cleanup();}
 });
 
-test('native substitution makes timed CLI slots unmeasured', () => {
+test('native substitution preserves the legacy gap and the measured CLI span', () => {
  const f=sessionFixture({memory:true}); try {
   const roster=[rosterSlot('codex[0]','codex'),rosterSlot('claude[0]','claude')];
   for(const [round,outcome] of [[1,{slot:'codex[0]',state:'done',responder:{slot:'native[0]',provider:'native',model:null,native:true}}],[2,{slot:'codex[0]',state:'native'}]] as const) {
@@ -591,9 +685,10 @@ test('native substitution makes timed CLI slots unmeasured', () => {
   }
   captureRuns(f.session,[1,2].flatMap(round=>['codex[0]','claude[0]'].map(slot=>({...attempt(roundSubject(f.session,'plan-a',round),{slot,provider:'codex',model:'m',outcome:'timeout'}),startMs:0,endMs:1000}))));
   const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
-  for(const round of facts.roundTiming!) assert.deepEqual(round.slots[0]!.attempts,[{startMs:0,endMs:1000},{}]);
+  for(const round of facts.roundTiming!) assert.deepEqual(round.slots[0]!.attempts,[{surface:'cli',startMs:0,endMs:1000},{surface:'native'}]);
   const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
   assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
+  assert.match(report,/\| 1 \| 1s \| codex\[0\] \|/);
  } finally {f.cleanup();}
 });
 
@@ -608,8 +703,9 @@ test('failed native reserve remains unmeasured after terminal failure', () => {
   observer.deps.diagnostics!({kind:'native',subject:path.join(f.session,'.state','reviews','plan-a','round-1','gen-1'),slot:'codex[0]',provider:'native',attempt:1,state:'failed'});
   observer.finish({ok:true,exit:0,summary:'done',value:null});
   const facts=sessionFacts(f.session,{records:[],lastSeq:0,torn:null} as Fold,'complete');
-  assert.deepEqual(facts.roundTiming?.[0]?.slots[0]?.attempts,[{startMs:0,endMs:1000},{}]);
+  assert.deepEqual(facts.roundTiming?.[0]?.slots[0]?.attempts,[{surface:'cli',startMs:0,endMs:1000},{surface:'native'}]);
   const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
   assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
+  assert.match(report,/\| 1 \| 5s \| claude\[0\] \|/);
  } finally {f.cleanup();}
 });

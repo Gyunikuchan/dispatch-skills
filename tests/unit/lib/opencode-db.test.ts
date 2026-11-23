@@ -125,6 +125,9 @@ test('readOpencodeMessages caps descendant sessions with one session cap across 
 
   const breadth = readOpencodeMessages(breadthPath, 'root', { fromMs: 0, toMs: 10000, maxSessions: 2 });
 
+  const identified = readOpencodeMessages(breadthPath, 'root', { fromMs: 0, toMs: 10000, maxSessions: 2, includeSessionIdentity: true });
+  assert.deepEqual(identified.messages.map(message => [message.sessionId, message.depth]), [['root', 0], ['a', 1], ['b', 1]]);
+  assert.ok(breadth.messages.every(message => !Object.hasOwn(message, 'sessionId')));
   assert.equal(breadth.truncated, 'sessions');
   assert.deepEqual(breadth.messages.map(message => [message.depth, message.input]), [[0, 1], [1, 2], [1, 3]]);
 

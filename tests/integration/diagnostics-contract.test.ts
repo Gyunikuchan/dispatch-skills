@@ -35,9 +35,13 @@ test('phase prose completes the report before cleaning owned worktrees', () => {
 test('diagnostics retain privacy and measurement guidance', () => {
   const human = read('references/readme/troubleshooting.md');
   const concepts = read('references/readme/concepts.md');
+  const toolkit = read('references/toolkit.md').split('### diagnostics render')[1] ?? '';
+  for (const label of ['Observed billed tokens', 'Priced cost', 'Rate basis', 'Responses by agent', 'Input / matched response']) {
+    assert.ok(toolkit.includes('`' + label + '`'), label);
+  }
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
   assert.ok(concepts.includes('Native timing and usage'));
-  for (const term of ['unavailable value, not zero', 'cost estimate in USD', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection']) assert.ok(human.includes(term), term);
+  for (const term of ['marks an unavailable value', 'cost estimate in USD', 'full conversation totals', 'work, pauses and scheduling', 'Review `diagnostics.md` before sharing it', 'Total storage loss', 'effective configuration', 'Native slots', 'No findings does not prove complete collection', 'zero unpriced units', 'matched input and event columns']) assert.ok(human.includes(term), term);
 });
 
 test('diagnostics instructions specify grounding retro items and yield format', () => {

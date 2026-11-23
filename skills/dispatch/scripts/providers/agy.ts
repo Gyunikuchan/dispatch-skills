@@ -53,7 +53,7 @@ export const agy: ProviderSpec = {
       ...(context?.transcripts?.budget ? { budget: context.transcripts.budget } : {}),
     });
   },
-  sessionUsage(raw, context, stdoutHasUsage) {
+  sessionUsage(raw, context) {
     if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
     const sessionId = parseEnvelope(raw)?.conversationId ?? null;
     if (!sessionId) return { complete: false };
@@ -65,7 +65,7 @@ export const agy: ProviderSpec = {
       startMs: context.launchStartMs,
       endMs: context.launchEndMs,
       resumed: context.resumed ?? false,
-      stdoutHasUsage,
+      ...(context.collectResponses ? { collectResponses: true } : {}),
       home: context.platform.home,
       env: (name) => context.env[name],
       ...(appDataDir ? { appDataDir } : {}),

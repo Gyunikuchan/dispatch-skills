@@ -27,6 +27,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
+  if (query.collectResponses) result.response = { basis: 'agy-planner-response' };
 
   if (!ID_REGEX.test(query.sessionId)) {
     return { ...result, unavailable: 'invalid host id' };
@@ -253,8 +254,11 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
     }
 
     let inWindowCount = 0;
+    const observedSteps = result.response ? new Set<number>() : undefined;
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i]!;
+      const repeated = observedSteps?.has(s.step_index);
+      observedSteps?.add(s.step_index);
       if (!(s.atMs >= query.startMs && s.atMs <= query.endMs)) continue;
       inWindowCount++;
       let model: string;
@@ -287,6 +291,13 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
       };
       if (s.cache_read_tokens !== undefined) hostRow.cacheRead = s.cache_read_tokens;
       if (reasoning !== undefined && counter(reasoning)) hostRow.reasoning = reasoning;
+      if (result.response) {
+        hostRow.responseActor = id;
+        if (repeated) {
+          hostRow.skipResponse = true;
+          result.response.limited = true;
+        }
+      }
       result.rows.push(hostRow);
     }
 

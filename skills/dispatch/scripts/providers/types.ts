@@ -6,7 +6,7 @@ import type { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
 import type { SessionRead } from '../lib/usage/delegate.ts';
 import type { HostUsageFs, ReadBudget } from '../lib/usage/rows.ts';
-import type { CoverageReason, DiagnosticUsage } from '../toolkit/types.ts';
+import type { CoverageReason, DelegateResponse, DiagnosticUsage } from '../toolkit/types.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 
@@ -98,7 +98,7 @@ export type RunOutcome =
 export type LifecycleStep = { step: 'debug-config' | 'debug-agents' | 'prepare' | 'response' | 'teardown'; elapsedMs: number; budgetMs: number; outcome: 'ok' | 'failed' | 'timeout' | 'unconfirmed' };
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: DiagnosticUsage; coverage?: CoverageReason[]; usageBaseline?: UsageBaseline; usageWindowEndMs?: number; lifecycleSteps?: LifecycleStep[]; /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true; /** Set on the wrap-up resume launch. */ wrapUp?: true };
+export type Invocation = { provider: ProviderId; model: string | null; mode: ModeId; effort: string | null; launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: DiagnosticUsage; responses?: DelegateResponse[]; coverage?: CoverageReason[]; usageBaseline?: UsageBaseline; usageWindowEndMs?: number; lifecycleSteps?: LifecycleStep[]; /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true; /** Set on the wrap-up resume launch. */ wrapUp?: true };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
 export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
@@ -135,6 +135,7 @@ export type ProviderUsageContext = {
   readOpencodeMessages?: typeof readOpencodeMessages;
   cwd?: string;
   resumed?: boolean;
+  collectResponses?: true;
   transcripts?: { fs: HostUsageFs; budget: ReadBudget };
 };
 
@@ -147,7 +148,7 @@ export type ProviderSpec = {
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
   stepEvent?(line: string): 'step-start' | 'step-end' | null;
   usage?(raw: string, context?: ProviderUsageContext): DiagnosticUsage | undefined;
-  sessionUsage?(raw: string, context: ProviderUsageContext, stdoutHasUsage: boolean): SessionRead | undefined;
+  sessionUsage?(raw: string, context: ProviderUsageContext): SessionRead | undefined;
   resumeUsage?: 'per-launch' | 'cumulative' | undefined;
   /** Marks a launched invocation whose provider has no machine-readable usage output. */
   usageUnavailable?: CoverageReason;

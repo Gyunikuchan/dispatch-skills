@@ -13,21 +13,24 @@ export const opencode: HostUsageAdapter = {
 export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
+  const rootRole = options?.rootRole ?? 'host';
+  if (query.collectResponses) result.response = { basis: 'opencode-assistant-message' };
   if (query.budget.remaining <= 0) {
     note(notes, 'host', 'read budget reached');
     return result;
   }
-  if (!fs.opencodeMessages) return { rows: [], unavailable: 'read-error:EUNKNOWN' };
+  if (!fs.opencodeMessages) return { ...result, unavailable: 'read-error:EUNKNOWN' };
 
-  const rootRole = options?.rootRole ?? 'host';
   const dbPath = opencodeDbPath(query.home, query.env);
   let read: ReturnType<NonNullable<HostUsageFs['opencodeMessages']>>;
   try {
-    read = fs.opencodeMessages(dbPath, query.sessionId, { fromMs: query.startMs, toMs: query.endMs });
+    read = fs.opencodeMessages(dbPath, query.sessionId, { fromMs: query.startMs, toMs: query.endMs, ...(result.response ? { includeSessionIdentity: true } : {}) });
   } catch (error) {
-    return { rows: [], unavailable: readErrorReason(error) };
+    return { ...result, unavailable: readErrorReason(error) };
   }
 
+  // Skipped or row-capped messages can come from any session in the query.
+  if (result.response && (read.skipped > 0 || read.truncated === 'rows')) result.response.limited = true;
   for (const message of read.messages) {
     const hostRow: UsageRow & { stage: HostStage } = {
       stage: stageAt(query.stages, message.createdMs),
@@ -42,6 +45,10 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
       input: message.input,
       output: message.output,
     };
+    if (result.response) {
+      const actor = message.depth === 0 ? query.sessionId : message.sessionId;
+      if (actor !== undefined) hostRow.responseActor = actor;
+    }
     if (message.cacheRead !== undefined) hostRow.cacheRead = message.cacheRead;
     if (message.cacheWrite !== undefined) hostRow.cacheWrite = message.cacheWrite;
     if (message.reasoning !== undefined) hostRow.reasoning = message.reasoning;

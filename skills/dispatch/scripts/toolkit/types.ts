@@ -1,3 +1,13 @@
+import type { HostResponseBasis, ResponseCoverage } from '../lib/usage/rows.ts';
+
+export type DelegateResponse = {
+  role: 'delegate' | 'subagent';
+  basis: HostResponseBasis | 'unavailable';
+  coverage: ResponseCoverage;
+  observed?: number;
+  uncachedInput?: number;
+};
+
 export const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Level = (typeof LEVELS)[number];
 export type FindingId = string;
@@ -19,4 +29,5 @@ export type DiagnosticModelUsage = DiagnosticCounters & { bands?: Partial<Record
 export type DiagnosticUsage = DiagnosticCounters & { scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage>; actualEffort?: string | null; reasoningInOutput?: boolean };
 
 /** Why a launched CLI invocation has no or incomplete measured usage; fixed enum so exception text never renders. */
-export type CoverageReason = 'no usage' | 'transcript unavailable';
+export type CoverageReason = 'no usage' | 'transcript unavailable' | 'invalid counters' | 'unverified zero';
+export type UsageSource = 'session' | 'stdout';

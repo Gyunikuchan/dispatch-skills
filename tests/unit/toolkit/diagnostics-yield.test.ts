@@ -458,10 +458,10 @@ test('review yield responder change across rounds', async () => {
     const fold = {records: [ruling(1, review, 'F1', 'accepted'), ruling(2, review, 'F2', 'accepted')], lastSeq: 2, torn: null} as Fold;
     const facts = sessionFacts(f.session, fold, 'complete');
     assert.deepEqual(facts.slotYield?.map((row) => [row.provider, row.model, row.tokens, row.accepted, row.measured, row.launched]).sort(), [
-      ['claude', 'model-a', 100, 1, 1, 2], ['codex', 'model-b', 200, 1, 1, 1],
+      ['claude', 'model-a', 100, 1, 1, 1], ['codex', 'model-b', 200, 1, 1, 1],
     ]);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 partial \| 100 partial \| — \| — \| — \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 \| 100 \| — \| — \| 1 prior-generation launches excluded \|$/m);
     assert.match(report, /^\| codex \| model-b \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 200 \| 200 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
@@ -542,6 +542,41 @@ test('origin: a nonzero fix-induced count renders the column', async () => {
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /^\| Provider \| Model \| MUST \| SHOULD \| CONSIDER \| Fix-induced \| Accepted /m);
     assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| 0 accepted \| — \| 0 accepted \| — \|$/m);
+  } finally { f.cleanup(); }
+});
+
+test('review yield prices an observed route and keeps redacted mixed usage in the partial subtotal', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const review = 'plan-observed-model';
+    const configured = 'configured/alpha';
+    const observed = 'actual/alpha';
+    const subject = roundSubject(f.session, review, 1);
+    saveRound({
+      session: f.session, review, round: 1,
+      roster: [rosterSlot('opencode[0]', 'opencode', {model: configured})],
+      outcomes: [{slot: 'opencode[0]', state: 'done', text: 'ok', responder: {provider: 'opencode', model: configured, native: false}}],
+      findings: [finding('F1', {sources: ['opencode[0]']})],
+    });
+    const raw = attempt(subject, {slot: 'opencode[0]', provider: 'opencode', model: configured, tokens: 1_000_000});
+    captureRuns(f.session, [
+      {...raw, reportedModels: [observed], usageSource: 'session'},
+      {...raw, attempt: 2, usage: {input: 25, output: 0}, reportedModels: [observed, 'bad model'], usageSource: 'session'},
+      {...raw, attempt: 3, usage: {input: 1_000_000, output: 0}, usageSource: 'stdout', coverage: ['transcript unavailable']},
+    ]);
+    const fold = {records: [ruling(1, review, 'F1', 'accepted')], lastSeq: 1, torn: null} as Fold;
+    const facts = sessionFacts(f.session, fold, 'complete');
+    assert.equal(facts.invocations[1]?.reportedModelAmbiguous, true);
+    assert.deepEqual(facts.invocations[1]?.reportedModels, [observed]);
+    assert.equal(facts.slotYield?.[0]?.attempts?.[1]?.reportedModelAmbiguous, true);
+    const pricer = resolvePricing({
+      asOf: '2026-11-16', source: ['https://example.test/pricing'],
+      models: {alpha: {rates: {input: 0, output: 0}}, [configured]: {rates: {input: 9, output: 9}}},
+    }, {[observed]: {rates: {input: 3, output: 3}}})!;
+    const text = renderDiagnostics([facts], pricer).text;
+    assert.match(text, /^\| CLI delegates \| 2,000,025 \| ~\$3\.00 \| 2 session, 1 stdout fallback, transcript unavailable, 1 observed unit unpriced \|$/m);
+    const yieldRows = text.split('### Review yield by slot')[1]!;
+    assert.match(yieldRows, /\| 2,000,025 partial \| 2,000,025 partial \| ~\$3\.00 partial \| ~\$3\.00 partial \| unpriced model, override qualified rate .*session, stdout fallback, reported: actual\/alpha \|/);
   } finally { f.cleanup(); }
 });
 

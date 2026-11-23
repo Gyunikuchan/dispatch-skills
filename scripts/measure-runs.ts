@@ -9,9 +9,9 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { CliDeps } from '../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFacts } from '../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { billedTokens, unitsOf } from '../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { billedTokens, costCoverage, efficiencyOf, formatDuration, sanitizeFacts } from '../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { foldLedger, type Fold } from '../skills/dispatch/scripts/toolkit/ledger.ts';
-import { formatCost, resolvePricing, sumCost, type CostReason, type Pricer } from '../skills/dispatch/scripts/lib/pricing.ts';
+import { formatCost, resolvePricing, type CostReason, type Pricer } from '../skills/dispatch/scripts/lib/pricing.ts';
 import { orchestratorFor } from '../skills/dispatch/scripts/lib/platform.ts';
 import { stripBom } from '../skills/dispatch/scripts/lib/fs-ext.ts';
 import { readManifest, validSessionId, type Manifest } from '../skills/dispatch/scripts/lib/session.ts';
@@ -24,13 +24,19 @@ import type { HostUsageFacts } from '../skills/dispatch/scripts/lib/usage/rows.t
 
 // SECTION: Types
 
-export type PairSide = { label: string; session: string; host: string; nativeId?: string };
+export type PairSide = { label: string; session: string; host: string; nativeId?: string; reportComplete?: string };
 export type PairsFile = { pricing?: string; pairs: { name: string; sides: PairSide[] }[]; confounds: string[] };
 export type MeasureOptions = { baseDir: string; home: string; env: NodeJS.ProcessEnv; pricing: { path: string; text: string } };
 export type PathForm = 'canonical' | 'as-given';
 export type DenialCounts = { config: number; hook: number; other: number };
 export type Denials = (DenialCounts & { inWindow: DenialCounts }) | { unavailable: string };
 export type PerRound = { review: string; round: number; calls?: number; hostTokens?: number; hostTurns?: number };
+type CostCoverage = ReturnType<typeof costCoverage>;
+const VERIFICATION_STATES = ['verified', 'manual', 'waived', 'missing'] as const;
+type VerificationState = typeof VERIFICATION_STATES[number];
+type Verification = Record<VerificationState, number> & { criteria: { id: string; state: VerificationState }[] };
+type Efficiency = Omit<ReturnType<typeof efficiencyOf>, 'responses'> & { verification: Verification | null };
+
 export type SideResult = {
   label: string; session: string; host: string; nativeId: string;
   window: { startMs: number; endMs: number; pathForm: PathForm };
@@ -38,12 +44,16 @@ export type SideResult = {
   perRound: PerRound[];
   hostTokens?: number;
   denials: Denials;
-  cost: { low: number; high: number; priced: boolean; reasons: string[]; partial: boolean };
+  cost: {
+    low: number; high: number; priced: boolean; reasons: string[]; partial: boolean;
+    pricedUnits: number; unpricedUnits: number; coverage: CostCoverage['coverage']; rateBasis: CostCoverage['rateBasis'];
+  };
   unavailable: string[];
+  efficiency: Efficiency;
 };
 export type Comparison = {
   pricing: { path: string; asOf: string }; generatedAt: string;
-  pairs: { name: string; sides: SideResult[] }[]; confounds: string[];
+  pairs: { name: string; sides: SideResult[]; comparisonLimits: string[] }[]; confounds: string[];
 };
 
 const DEFAULT_PRICING = 'skills/dispatch/references/pricing.json';
@@ -66,11 +76,11 @@ const HOST_TOKENS_PARTIAL = 'hostTokens partial:';
 
 function sideOf(value: unknown, where: string): PairSide {
   if (!isRecord(value)) throw new Error(`${where} must be an object`);
-  const { label, session, host, nativeId } = value;
+  const { label, session, host, nativeId, reportComplete } = value;
   if (typeof label !== 'string' || typeof session !== 'string' || typeof host !== 'string') throw new Error(`${where} needs label, session and host strings`);
   if (orchestratorFor(host, () => undefined) === null) throw new Error(`${where} host is not a known host: ${host}`);
   if (nativeId !== undefined && typeof nativeId !== 'string') throw new Error(`${where} nativeId must be a string`);
-  return { label, session, host, ...(typeof nativeId === 'string' ? { nativeId } : {}) };
+  return { label, session, host, ...(typeof nativeId === 'string' ? { nativeId } : {}), ...(typeof reportComplete === 'string' ? { reportComplete } : {}) };
 }
 
 function pairOf(value: unknown, where: string): { name: string; sides: PairSide[] } {
@@ -98,6 +108,55 @@ export function parsePairs(input: unknown): PairsFile {
 }
 
 // SECTION: Session facts
+
+const REPORT_PATH = /^\.state\/results\/report-complete-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.json$/i;
+const MAX_REPORT_BYTES = 1024 * 1024;
+
+function verificationOf(session: string, relative: string | undefined): Verification | null {
+  if (!relative || !REPORT_PATH.test(relative) || relative.includes('\n') || relative.includes('\r')) return null;
+  try {
+    const results = fs.realpathSync.native(path.join(session, '.state', 'results'));
+    const file = fs.realpathSync.native(path.join(session, relative));
+    if (results === session || !isWithin(results, session) || !isWithin(file, results) || !fs.statSync(file).isFile()) return null;
+    const fd = fs.openSync(file, 'r');
+    let result: unknown;
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) return null;
+      const data = Buffer.allocUnsafe(stat.size + 1);
+      let read = 0;
+      while (read < data.length) {
+        const bytes = fs.readSync(fd, data, read, data.length - read, null);
+        if (!bytes) break;
+        read += bytes;
+      }
+      if (read !== stat.size) return null;
+      result = JSON.parse(stripBom(data.toString('utf8', 0, read)));
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (!isRecord(result)) return null;
+    const { delivered, statuses } = result;
+    if (!isRecord(delivered) || typeof delivered['source'] !== 'string' ||
+      !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(delivered['source']) || !Array.isArray(statuses)) return null;
+    const verification: Verification = { verified: 0, manual: 0, waived: 0, missing: 0, criteria: [] };
+    const seen = new Set<string>();
+    for (const status of statuses) {
+      if (!isRecord(status) || typeof status['criterion'] !== 'string') return null;
+      const id = status['criterion'];
+      const state = VERIFICATION_STATES.find(state => state === status['state']);
+      if (!state || seen.has(id) || (id !== 'contract' && !/^SC[1-9]\d*$/.test(id))) return null;
+      seen.add(id);
+      if (id === 'contract') continue;
+      verification[state]++;
+      verification.criteria.push({ id, state });
+    }
+    verification.criteria.sort((a, b) => a.id.localeCompare(b.id));
+    return verification;
+  } catch {
+    return null;
+  }
+}
 
 function folderOf(given: string, where: string): string {
   try {
@@ -174,11 +233,6 @@ function hostEnvOf(options: MeasureOptions, host: string, hostId: string): NodeJ
 
 function hostTokensOf(host: HostUsageFacts): number {
   return host.rows.filter((row) => row.role === 'host').reduce((total, row) => total + billedTokens(row, host.platform ?? '', row.reasoningInOutput), 0);
-}
-
-/** Collection notes such as unreadable subagent files; each one marks the cost partial. */
-function hostNotes(host: HostUsageFacts): string[] {
-  return [...new Set(Object.values(host.notes ?? {}).flatMap((role) => Object.keys(role ?? {})))].sort();
 }
 
 function listDir(dir: string): string[] {
@@ -311,19 +365,11 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
   const denials = denialsOf(side.host, nativeId, { env, home: options.home }, { startMs, endMs });
   if ('unavailable' in denials) unavailable.push(`denials: ${denials.unavailable}`);
 
-  const units = unitsOf(run, pricer);
-  const total = sumCost(units.flatMap((unit) => (unit.cost ? [unit.cost] : [])));
-  const notes = hostNotes(host);
+  const facts = sanitizeFacts(run);
+  const { total, priced, unpriced, coverage, rateBasis } = costCoverage([facts], pricer);
   // Host-role notes only: a subagent note marks cost partial but leaves the host-token cell unflagged.
   const hostRoleNotes = Object.keys(host.notes?.host ?? {}).sort();
   if (hostRoleNotes.length) unavailable.push(`${HOST_TOKENS_PARTIAL} ${hostRoleNotes.join(', ')}`);
-  const reasons = new Set<string>(total.reasons);
-  if (hostReason) reasons.add('host usage unavailable');
-  if ((run.collection?.partial ?? 0) > 0) reasons.add('captures partial');
-  for (const unit of units) for (const reason of unit.coverage ?? []) reasons.add(`delegate coverage: ${reason}`);
-  for (const note of notes) reasons.add(note);
-  const partial = hostReason !== undefined || notes.length > 0 || (run.collection?.partial ?? 0) > 0
-    || units.some((unit) => !unit.cost?.priced || (unit.coverage?.length ?? 0) > 0);
   if (!total.priced) unavailable.push('cost: no priced unit');
 
   const done = new Set((run.reviews).map((review) => roundKey(review.phase ?? '', review.round)));
@@ -363,6 +409,11 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
   const byReview: Record<string, number> = {};
   for (const row of rows) byReview[row.review] = (byReview[row.review] ?? 0) + 1;
 
+  const { responses: _responses, ...efficiency } = efficiencyOf([facts], pricer);
+  const verification = verificationOf(folder, side.reportComplete);
+  const timing = new Map(efficiency.criticalPath.map(span => [roundKey(span.review, span.round), span]));
+  const criticalPath = perRound.map(({ review, round }) => timing.get(roundKey(review, round)) ??
+    { review, round, elapsedMs: null, finishingSlot: null });
   return {
     label: side.label, session: measured, host: side.host, nativeId,
     window: { startMs, endMs, pathForm },
@@ -370,9 +421,51 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
     perRound,
     ...(hostTokens === undefined ? {} : { hostTokens }),
     denials,
-    cost: { low: total.low, high: total.high, priced: total.priced, reasons: [...reasons].sort(), partial },
+    cost: {
+      low: total.low, high: total.high, priced: total.priced, reasons: coverage.reasons, partial: coverage.partial,
+      pricedUnits: priced, unpricedUnits: unpriced, coverage, rateBasis,
+    },
     unavailable,
+    efficiency: { ...efficiency, criticalPath, verification },
   };
+}
+
+function pairedComparisonLimits(sides: readonly SideResult[]): string[] {
+  if (sides.length < 2) return [];
+  const costs = sides.map((side) => side.cost);
+  const differs = (value: (cost: SideResult['cost']) => unknown) => new Set(costs.map(cost => JSON.stringify(value(cost)))).size > 1;
+  const limits: string[] = [];
+  if (differs(cost => cost.rateBasis.periods)) limits.push('effective tariff periods differ');
+  if (differs(cost => [cost.rateBasis.origins, cost.rateBasis.matches])) limits.push('rate origins or matches differ');
+  if (differs(cost => [
+    cost.coverage.partial, cost.coverage.reasons,
+    Object.entries(cost.coverage.sources).filter(([, count]) => count > 0).map(([source]) => source),
+  ])) limits.push('usage coverage differs');
+  if (costs.some(cost => !cost.priced)) limits.push('priced subtotal unavailable');
+
+  const evidence = sides.map(side => side.efficiency);
+  const responseScope = evidence.map(({ responseEvents }) => responseEvents.byStageRole.map(({ stage, role, basis, observed, matchedObserved, coverage }) =>
+    JSON.stringify([stage, role, basis, coverage, matchedObserved === null ? 'none' : matchedObserved === observed ? 'all observed' : 'some observed'])).sort());
+  if (new Set(responseScope.map(scope => JSON.stringify(scope))).size > 1) limits.push('response event basis or coverage differs');
+  if (evidence.some(({ uncachedInputPerResponse }) => uncachedInputPerResponse === null)) limits.push('matched response ratio unavailable');
+  if (evidence.some(({ criticalPath }) => criticalPath.some(span => span.elapsedMs === null))) limits.push('CLI attempt span unavailable');
+  if (evidence.some(({ reviewOutcomes }) => reviewOutcomes === null || reviewOutcomes.recurring === null)) limits.push('review outcome evidence unavailable');
+  const workloads = sides.map(side => JSON.stringify({
+    rounds: Object.values(side.rounds.byReview).sort((a, b) => a - b),
+    calls: side.perRound.map(row => row.calls ?? null).sort(),
+    review: side.efficiency.reviewOutcomes,
+  }));
+  if (new Set(workloads).size > 1) limits.push('review workload or outcomes differ');
+  if (sides.some(side => flagged(side, CALLS_PARTIAL) || side.perRound.some(row => row.calls === undefined))) limits.push('review workload evidence unavailable');
+
+  const verified = evidence.flatMap(({ verification }) => verification ? [verification.criteria] : []);
+  if (verified.length !== evidence.length) limits.push('verification evidence unavailable');
+  if (new Set(verified.map(criteria => JSON.stringify(criteria.map(({ id }) => id)))).size > 1) {
+    limits.push('verification criteria differ');
+  } else if (new Set(verified.map(criteria => JSON.stringify(criteria))).size > 1) {
+    limits.push('verification states differ');
+  }
+  return limits;
 }
 
 /** Measures every side of every pair; throws naming the side when its folder or manifest is invalid. */
@@ -381,7 +474,10 @@ export function measureRuns(input: PairsFile, options: MeasureOptions): Comparis
   return {
     pricing: { path: options.pricing.path, asOf: pricer.meta.asOf },
     generatedAt: new Date().toISOString(),
-    pairs: input.pairs.map((pair) => ({ name: pair.name, sides: pair.sides.map((side) => measureSide(pair.name, side, options, pricer)) })),
+    pairs: input.pairs.map((pair) => {
+      const sides = pair.sides.map((side) => measureSide(pair.name, side, options, pricer));
+      return { name: pair.name, sides, comparisonLimits: pairedComparisonLimits(sides) };
+    }),
     confounds: input.confounds,
   };
 }
@@ -405,6 +501,13 @@ function costText(side: SideResult): string {
   return side.cost.partial && side.cost.priced ? `${text} (partial)` : text;
 }
 
+function rateBasisText({ cost: { rateBasis } }: SideResult): string {
+  const labels = (values: readonly (string | null)[], fallback: string) => values.map(value => value ?? fallback).join(', ') || '—';
+  const origins = Object.entries(rateBasis.originCounts).filter(([, count]) => count).map(([origin, count]) => `${count} ${origin}`).join(', ');
+  const matches = Object.entries(rateBasis.matchCounts).filter(([, count]) => count).map(([match, count]) => `${count} ${match}`).join(', ');
+  return `UTC day ${labels(rateBasis.effectiveDays, 'base-rate fallback')} · effective period ${labels(rateBasis.periods, 'base rate')} · ${origins || 'origin unavailable'} · ${matches || 'match unavailable'}`;
+}
+
 /** Markdown view of the comparison: one metric table per pair, per-round rows, then confounds and pricing. */
 export function renderComparison(comparison: Comparison): string {
   const lines = ['# Matched measurement comparison', '', `Generated ${comparison.generatedAt}. Results are advisory; no value gates delivery.`, ''];
@@ -417,9 +520,49 @@ export function renderComparison(comparison: Comparison): string {
     lines.push(metric('Host tokens in rounds', (side) => withPartial(sumOf(side.perRound.map((row) => row.hostTokens)), flagged(side, HOST_TOKENS_PARTIAL))));
     lines.push(metric('Denials (config / hook / other)', denialText));
     lines.push(metric('Cost (USD)', costText));
+    if (sides.length >= 2 && !pair.comparisonLimits.length) lines.push(metric('Comparable priced subtotal (USD)', costText));
+    lines.push(metric('Cost coverage', ({ cost }) => [
+      cost.partial ? 'partial' : 'complete for observed scope', `${cost.pricedUnits} priced, ${cost.unpricedUnits} unpriced`,
+      ...cost.coverage.reasons,
+    ].join(' · ')));
+    lines.push(metric('Delegate usage source', ({ cost }) => Object.entries(cost.coverage.sources)
+      .filter(([, count]) => count).map(([source, count]) => `${count} ${source}`).join(', ') || 'no recorded launches'));
+    lines.push(metric('Rate basis', rateBasisText));
+    lines.push(metric('Response events', ({ efficiency: { responseEvents } }) =>
+      `${responseEvents.observed ?? 'unavailable'} observed · ${responseEvents.coverage} · ${responseEvents.matchedObserved ?? 'unavailable'} matched`));
+    lines.push(metric('Uncached input / matched response', ({ efficiency }) =>
+      efficiency.uncachedInputPerResponse === null ? 'unavailable'
+        : `${efficiency.uncachedInputPerResponse.toFixed(2)} · ${efficiency.matchedUncachedInput} input / ${efficiency.responseEvents.matchedObserved} events`));
+    lines.push(metric('Recovery (extra CLI / superseded CLI / writer relaunches)', ({ efficiency: { recovery } }) =>
+      `${recovery.extraLaunches ?? '—'} / ${recovery.reworkLaunches ?? '—'} / ${recovery.writerRelaunches ?? '—'} · ${recovery.coverage}`));
+    lines.push(metric('Retry and rework costs by cause', ({ efficiency: { recovery } }) =>
+      Object.entries(recovery.byCause).map(([cause, { count, cost }]) =>
+        `${cause} ${count} (${cost ? withPartial(formatCost({ ...cost, priced: true, reasons: new Set() }), cost.partial) : 'unavailable'})`).join(' · ') || '—'));
+    lines.push(metric('Review finding occurrences', ({ efficiency: { reviewOutcomes } }) => reviewOutcomes
+      ? `${reviewOutcomes.accepted} accepted · ${reviewOutcomes.rejected} rejected · ${reviewOutcomes.recurring ?? 'unavailable'} recurring` : 'unavailable'));
+    lines.push(metric('Verification', ({ efficiency: { verification } }) => verification
+      ? VERIFICATION_STATES.map(state => `${verification[state]} ${state}`).concat(verification.criteria.map(({ id, state }) => `${id} ${state}`)).join(' · ')
+      : 'unavailable'));
+    if (pair.comparisonLimits.length) lines.push('', `Comparison limits — ${pair.comparisonLimits.join(', ')}`);
     lines.push('', '### Per-round', '', '| Side | Review | Round | Calls | Host tokens | Host turns |', '| --- | --- | ---: | ---: | ---: | ---: |');
     for (const side of sides) {
       for (const row of side.perRound) lines.push(`| ${side.label} | ${row.review} | ${row.round} | ${row.calls ?? '—'} | ${row.hostTokens ?? '—'} | ${row.hostTurns ?? 'unavailable'} |`);
+    }
+    lines.push('', '### Response evidence by stage and role', '',
+      '| Side | Stage | Role | Event basis | Observed | Coverage | Matched events | Matched input | Input / matched response |',
+      '| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: |');
+    for (const side of sides) {
+      for (const row of side.efficiency.responseEvents.byStageRole) {
+        lines.push(`| ${side.label} | ${row.stage} | ${row.role} | ${row.basis} | ${row.observed ?? '—'} | ${row.coverage} | ${row.matchedObserved ?? '—'} | ${row.matchedUncachedInput ?? '—'} | ${row.uncachedInputPerResponse?.toFixed(2) ?? '—'} |`);
+      }
+    }
+    lines.push('', '### Review CLI attempt spans', '',
+      'Spans cover current-generation CLI launches, including retry gaps. Native completion timing is unavailable.', '',
+      '| Side | Review | Round | CLI span | Finishing logical slot |', '| --- | --- | ---: | ---: | --- |');
+    for (const side of sides) {
+      for (const span of side.efficiency.criticalPath) {
+        lines.push(`| ${side.label} | ${span.review} | ${span.round} | ${formatDuration(span.elapsedMs ?? undefined)} | ${span.finishingSlot ?? '—'} |`);
+      }
     }
     const gaps = sides.flatMap((side) => side.unavailable.map((entry) => `- ${side.label}: ${entry}`));
     if (gaps.length) lines.push('', 'Unavailable:', ...gaps);

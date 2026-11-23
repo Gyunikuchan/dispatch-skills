@@ -367,11 +367,11 @@ test('diagnostics report: renders per-model token rows across launch states', ()
     invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 100, output: 10, models: { 'claude-opus-5-5': { input: 100, output: 10 } } } }),
     bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
   ] })]);
-  assert.ok(mixed.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | 100 | — | — | 10 | — | 1/2 |'), mixed);
+  assert.ok(mixed.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), mixed);
   const table = mixed.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
-  assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 1);
+  assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 2);
   const configured = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
-  assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol (configured) | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
+  assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol-2026 | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
   assert.ok(configured.includes('gpt-6-sol (reported: gpt-6-sol-2026)'), configured);
 
   const multi = render([facts({ invocations: [invocation({ provider: 'claude', model: 'claude-opus-5-5', reportedModels: ['claude-opus-5-5', 'claude-haiku-5'], usage: { input: 100, output: 10 } })] })]);
@@ -485,7 +485,7 @@ test('host rows preserve totals and notes, scrub labels, and surface unavailabil
   assert.ok(text.includes('| plan | claude | host | m | — | 10 | 5 | 2 | 2 | 4 | — |'));
   assert.ok(text.includes('| plan | claude | subagent | m | — | 20 | — | — | 3 | — | — |'));
   assert.ok(text.includes('| code review | claude | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 1 | — | 1/1 |'));
-  assert.ok(text.includes('Overview token columns count CLI delegates only; Cost also counts host and subagent usage attributed by time.'));
+  assert.ok(text.includes('Cost includes delegate usage in its recorded phase and host and subagent usage in time-estimated phases.'));
   assert.ok(text.includes('other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.'));
   assert.ok(!text.includes('secret transcript'));
   const invalidUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
@@ -596,13 +596,30 @@ test('coverage list: sanitizes legacy string and renders reasons on measured and
   assert.match(text, /\| code review \| copilot \| delegate \| .* \| — \| — \| — \| — \| — \| 0\/1 no usage \|/);
 });
 
-test('review timing marks the latest finisher and preserves unknown slots', () => {
+test('review timing preserves unknown slots and limits CLI spans to launched attempts', () => {
  const timing=[{review:'review-1234567890abcdef',round:1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:100}]},{slot:'claude[0]',attempts:[{startMs:90,endMs:110}]}]}];
  const text=render([facts({roundTiming:timing} as never)]);
  assert.match(text,/subject 1234567890abcdef/);
  assert.match(text,/claude\[0\].*✓/);
  const unknown=render([facts({roundTiming:[{...timing[0],slots:[...timing[0]!.slots,{slot:'native[0]',attempts:[]}]}]} as never)]);
  assert.doesNotMatch(unknown,/✓/);
+ const review='review-1234567890abcdef';
+ const cli=(startMs:number,endMs?:number)=>({surface:'cli' as const,startMs,...(endMs===undefined?{}:{endMs})});
+ const native={surface:'native' as const};
+ const empty={slot:'empty[0]',attempts:[]};
+ const nativeOnly={slot:'native[0]',attempts:[native]};
+ const prior={slot:'codex[0]',attempts:[cli(1000,2500),native]};
+ const last={slot:'native[1]',attempts:[cli(6000,8000)]};
+ const cliText=render([facts({roundTiming:[
+  {review,round:1,slots:[prior,empty,nativeOnly,last]},
+  {review,round:2,slots:[prior,{...last,attempts:[cli(6000)]}]},
+  {review,round:3,slots:[empty,nativeOnly]},
+  {review,round:4,slots:[prior,{...last,attempts:[{startMs:6000,endMs:8000}]}]},
+]} as never)]);
+ const spans=cliText.split('### Review CLI attempt spans')[1]!;
+ assert.match(spans,/\| 1 \| 7s \| native\[1\] \|/);
+ for(const round of [2,3,4]) assert.ok(spans.includes(`| ${round} | — | — |`));
+ assert.match(cliText,/\| 1 \| codex\[0\] \| — \| — \|/);
 });
 
 test('review timing includes retry gaps, ties and invalid endpoints', () => {
@@ -629,7 +646,8 @@ test('review timing compaction omits complete rounds and retains the omission co
  assert.ok(count>1);
  assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3000-count} \\|`));
  assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3001-count} \\|`));
- const next=text.replace(`\n\n${count} review timing rounds omitted`, `\n| subject 1234567890abcdef | ${3001-count} | codex[0] | 1s | ✓ |\n\n${count-1} review timing rounds omitted`);
+ const next=text.replace('\n\n### Review CLI attempt spans', `\n| subject 1234567890abcdef | ${3001-count} | codex[0] | 1s | ✓ |\n\n### Review CLI attempt spans`)
+   .replace(`\n\n${count} review timing rounds omitted`, `\n| subject 1234567890abcdef | ${3001-count} | — | — |\n\n${count-1} review timing rounds omitted`);
  assert.ok(Buffer.byteLength(next)>DIAGNOSTIC_LIMITS.reportBytes, 'another complete round exceeds the cap');
 });
 
@@ -697,4 +715,91 @@ test('round workload survives sanitizing and drops malformed rows, keys, and fie
   {review,round:1,calls:{total:2,phases:[{key:'lint-run',count:2}]},hostTokens:40},
   {review,round:2},
  ]);
+});
+
+test('the render path keeps allowlisted host response facts and removes raw identities', () => {
+  const response = { stage: 'plan', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 18 } as const;
+  const hostUsage = {
+    platform: 'claude',
+    rows: [{ stage: 'plan', role: 'host', model: 'fixture-model', effort: null, input: 18, output: 2 }],
+    responses: [
+      { ...response, actor: 'private-thread', raw: 'secret transcript' },
+      { ...response, agent: 'private-thread' },
+      { ...response, coverage: 'partial', observed: -1 },
+      { ...response, basis: 'unverified-shape' },
+      { ...response, stage: 'unattributed', role: 'subagent', agent: undefined, coverage: 'unknown', observed: undefined, uncachedInput: undefined },
+    ],
+  } as NonNullable<RunFacts['hostUsage']>;
+  const run = facts({ hostUsage, invocations: [] });
+  const clean = sanitizeFacts(run);
+  assert.deepEqual(clean.hostUsage?.responses, [
+    response,
+    { stage: 'unattributed', role: 'subagent', basis: 'claude-assistant-message', coverage: 'unknown' },
+  ]);
+  assert.deepEqual(sanitizeFacts(clean).hostUsage?.responses, clean.hostUsage?.responses);
+  const report = render([run]);
+  assert.match(report, /fixture-model/);
+  assert.doesNotMatch(report, /private-thread|secret transcript|unverified-shape/);
+  assert.equal(sanitizeFacts(facts({ hostUsage: { platform: 'claude', rows: [] } })).hostUsage?.responses, undefined);
+});
+
+test('response tables reconcile matched input while retaining partial and zero evidence', () => {
+  const basis = 'claude-assistant-message' as const;
+  const text = render([facts({
+    hostUsage: { platform: 'claude', rows: [], responses: [
+      { stage: 'plan', role: 'host', agent: 'host-1', basis, coverage: 'partial', observed: 2, uncachedInput: 21 },
+      { stage: 'plan', role: 'host', basis, coverage: 'partial', observed: 1 },
+      { stage: 'plan review', role: 'host', agent: 'host-1', basis, coverage: 'complete', observed: 1, uncachedInput: 80 },
+    ] },
+    invocations: [
+      invocation({ responses: [
+        { stage: 'code review', role: 'delegate', agent: 'delegate-0123456789abcdef', basis, coverage: 'complete', observed: 0, uncachedInput: 0 },
+      ] }),
+      invocation({ responses: [
+        { stage: 'code review', role: 'delegate', agent: 'delegate-fedcba9876543210', basis, coverage: 'complete', observed: 2, uncachedInput: 10 },
+      ] }),
+      invocation(),
+    ],
+  })]);
+  assert.match(text, /\| plan \| host \| claude-assistant-message \| 3 \| partial \| 2 \| 21 \| 10\.50 \|/);
+  assert.match(text, /\| plan review \| host \| host-1 \| claude-assistant-message \| 1 \| complete \| 1 \| 80 \| 80\.00 \|/);
+  assert.match(text, /\| code review \| delegate \| delegate-2 \| claude-assistant-message \| 0 \| complete \| 0 \| 0 \| — \|/);
+  assert.match(text, /\| code review \| delegate \| unavailable \| — \| unavailable \|/);
+  assert.doesNotMatch(text, /delegate-0123456789abcdef|delegate-fedcba9876543210/);
+});
+
+test('each run retains its own bounded response aliases', () => {
+  const invocations = Array.from({ length: 33 }, (_, index) => invocation({ responses: [{
+    stage: 'code review', role: 'delegate', agent: `delegate-${index.toString(16).padStart(16, '0')}`,
+    basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 2,
+  }] }));
+  const returning = invocation({ responses: [{ ...invocations[0]!.responses![0]!, stage: 'plan review' }] });
+  const run = facts({ invocations: [...invocations, returning] });
+  const text = render([run, run]);
+  const detail = text.split('### Responses by agent')[1]!.split('### Review yield')[0]!;
+  for (const run of [1, 2]) {
+    assert.equal(detail.match(new RegExp(`\\| code review \\| delegate \\| run ${run} delegate-\\d+ \\|`, 'g'))?.length, 32);
+    assert.ok(detail.includes(`| plan review | delegate | run ${run} delegate-1 |`));
+  }
+  assert.match(detail, /\| code review \| delegate \| Unnamed or folded \| claude-assistant-message \| 2 \| partial \| 2 \| 4 \|/);
+  assert.match(text, /\| code review \| delegate \| claude-assistant-message \| 66 \| partial \| 66 \| 132 \|/);
+});
+
+test('report compaction retains response coverage and totals ahead of bounded agent and workload detail', () => {
+  const responses = Array.from({ length: 64 }, (_, i) => ({
+    stage: 'code review' as const, role: 'delegate' as const,
+    agent: `delegate-${i.toString(16).padStart(16, '0')}`,
+    basis: 'claude-assistant-message' as const, coverage: 'complete' as const, observed: 1, uncachedInput: 2,
+  }));
+  const phases = Array.from({ length: 100 }, (_, i) => ({ key: `ledger-append-${i}`, count: i }));
+  const text = render([facts({
+    invocations: responses.map(response => invocation({ responses: [response] })),
+    roundWorkload: Array.from({ length: 1000 }, (_, i) => ({
+      review: 'review-1234567890abcdef', round: i + 1, calls: { total: 4950, phases },
+    })),
+  })]);
+  assert.ok(Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes);
+  assert.match(text, /\| code review \| delegate \| claude-assistant-message \| 64 \| partial \| 64 \| 128 \| 2\.00 \|/);
+  assert.match(text, /workload rows omitted/);
+  assert.doesNotMatch(text, /Truncated at the report size limit/);
 });

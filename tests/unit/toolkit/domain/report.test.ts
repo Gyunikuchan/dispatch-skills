@@ -827,7 +827,7 @@ test('per-model rows render delegate, host, subagent and edge keys with summed c
     assert.ok(local.includes('| code review | opencode | delegate | lmstudio/qwen3.8-27b@iq4_xs | high | 20 | — | — | 2 | — | 1/1 |'), local);
     const email = render([facts({ invocations: [invocation({ provider: 'opencode', usage: { input: 10, output: 1, models: { 'user@example.com': { input: 10, output: 1 } } } })] })]);
     assert.doesNotMatch(email, /user@example\.com/);
-    assert.ok(email.includes('| code review | opencode | delegate | gpt-6-sol (configured) | medium | 10 | — | — | 1 | — | 1/1 |'), email);
+    assert.ok(email.includes('| code review | opencode | delegate | — | medium | 10 | — | — | 1 | — | 1/1 |'), email);
 
   }
   // merged from: per model and effort rows: off-pattern model keys keep their own counters beside valid keys

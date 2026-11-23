@@ -1,9 +1,10 @@
 import { pricingProblems } from '../../lib/pricing.ts';
 import { BANDS, boundModels, type Bands } from '../../lib/usage/bands.ts';
-import { addCounters, HOST_ROLES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Counters, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
+import { baseCounters, count as safeCount, hasUsageTokens } from '../../lib/usage/read.ts';
+import { addCounters, HOST_ROLES, HOST_RESPONSE_BASES, MAX_RESPONSE_AGENTS, RESPONSE_COVERAGES, RESPONSE_STAGES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Counters, type HostResponseAggregate, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason } from '../types.ts';
-import { CATEGORIES, COMPONENTS, DASH, DIAGNOSTIC_LIMITS, PHASE_NAMES, type Category, type InvocationFacts, type ModelUsage, type RetroObservation, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
+import { CATEGORIES, COMPONENTS, DASH, DIAGNOSTIC_LIMITS, PHASE_NAMES, type Category, type DelegateResponseFacts, type InvocationFacts, type ModelUsage, type RetroObservation, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
 
 const MAX_REVIEW_ROUND_CAP = 1000;
 
@@ -29,6 +30,7 @@ const locatorFree = (v: string): boolean => !PROHIBITED.some((re) => re.test(v))
 const commandText = (v: unknown): string => typeof v === 'string' && v.length <= 80 && /^[A-Za-z0-9._:=@+-]+(?: [A-Za-z0-9._:=@+-]+)*$/.test(v) && locatorFree(v) ? v : DASH;
 // Every rendered identifier and alias passes the locator gate too: a well-formed id can still be a UUID or a host name.
 const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === 'string' && re.test(v) && locatorFree(v) ? v : undefined;
+const responseAgent = match(/^(?:host|subagent)-(?:[1-9]|[12][0-9]|3[0-2])$/);
 const token = match(/^[a-z][a-z0-9-]{0,39}$/);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/);
 const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/@\[\]-]{0,95}$/);
@@ -38,7 +40,7 @@ function isoDate(v: unknown): string | undefined {
   const d = new Date(`${v}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(v) ? v : undefined;
 }
-const count = (v: unknown): number | undefined => Number.isSafeInteger(v) && Number(v) >= 0 ? Number(v) : undefined;
+const count = (v: unknown): number | undefined => safeCount(v) ? v : undefined;
 const millis = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
 export const opt = <K extends string, V>(key: K, value: V | undefined) => (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 
@@ -60,29 +62,6 @@ function categoryOf(v: unknown): Category | undefined {
 }
 
 // SECTION: Usage
-
-function baseCounters(v: unknown): Counters | undefined {
-  if (!record(v)) return undefined;
-  const input = count(v['input']), output = count(v['output']);
-  if (input === undefined || output === undefined) return undefined;
-  const out: Counters = { input, output };
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
-    if (v[key] === undefined) continue;
-    const n = count(v[key]);
-    if (n === undefined) return undefined;
-    out[key] = n;
-  }
-  const has5m = v['cacheWrite5m'] !== undefined, has1h = v['cacheWrite1h'] !== undefined;
-  if (has5m || has1h) {
-    const n5m = has5m ? count(v['cacheWrite5m']) : 0;
-    const n1h = has1h ? count(v['cacheWrite1h']) : 0;
-    if (n5m !== undefined && n1h !== undefined && n5m + n1h <= (out.cacheWrite ?? 0)) {
-      if (has5m) out.cacheWrite5m = n5m;
-      if (has1h) out.cacheWrite1h = n1h;
-    }
-  }
-  return out;
-}
 
 function bandsOf(v: unknown, expected: Counters): Bands | undefined {
   if (!record(v)) return undefined;
@@ -207,23 +186,78 @@ function lifecycleOf(v: unknown): LifecycleStep[] | undefined {
   return rows.length ? rows : undefined;
 }
 
-const COVERAGE_REASONS: readonly CoverageReason[] = ['no usage', 'transcript unavailable'];
+const COVERAGE_REASONS: readonly CoverageReason[] = ['no usage', 'transcript unavailable', 'invalid counters', 'unverified zero'];
 function coverageOf(v: unknown): CoverageReason[] | undefined {
   const raw = typeof v === 'string' ? [v] : Array.isArray(v) ? v : [];
   const reasons = [...new Set(raw.flatMap((x): CoverageReason[] => {
     const mapped = x === 'no usage output' ? 'no usage' : x;
-    return (COVERAGE_REASONS as readonly string[]).includes(String(mapped)) ? [mapped as CoverageReason] : [];
+    const reason = COVERAGE_REASONS.find((candidate) => candidate === mapped);
+    return reason ? [reason] : [];
   }))];
   return reasons.length ? reasons : undefined;
 }
 
+function reportedModelsOf(v: Record<string, unknown>, usage: Usage | undefined): Pick<InvocationFacts, 'reportedModels' | 'reportedModelAmbiguous'> {
+  const raw = list(v['reportedModels']);
+  const names = raw.slice(0, 8).map(modelName);
+  const reported = [...new Set(names.filter((name): name is string => !!name))];
+  const ambiguous = v['reportedModelAmbiguous'] === true || raw.length > 8 || names.some(name => name === undefined)
+    || (v['reportedModels'] !== undefined && !Array.isArray(v['reportedModels']))
+    || (record(v['usage']) && record(v['usage']['models']) && Object.keys(v['usage']['models']).length > 0 && !usage?.models);
+  return { ...opt('reportedModels', reported.length ? reported : undefined), ...(ambiguous ? { reportedModelAmbiguous: true } : {}) };
+}
+
+function usageSourceOf(value: unknown): InvocationFacts['usageSource'] {
+  return value === 'session' || value === 'stdout' ? value : undefined;
+}
+
+const delegateAgent = match(/^delegate-(?:child-)?[a-f0-9]{16}$/);
+
+function delegateResponsesOf(value: unknown): DelegateResponseFacts[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set<string>();
+  const aliases = new Set<string>();
+  const responses = value.slice(0, MAX_RESPONSE_AGENTS + 2).flatMap((item): DelegateResponseFacts[] => {
+    if (!record(item)) return [];
+    const {role, observed: rawObserved, uncachedInput: rawInput} = item;
+    const stage = RESPONSE_STAGES.find(x => x === item['stage']);
+    const basis = [...HOST_RESPONSE_BASES, 'unavailable' as const].find(x => x === item['basis']);
+    const coverage = RESPONSE_COVERAGES.find(x => x === item['coverage']);
+    if (!stage || !basis || !coverage || (role !== 'delegate' && role !== 'subagent')) return [];
+    const agent = delegateAgent(item['agent']);
+    if (item['agent'] !== undefined && (!agent || agent.startsWith('delegate-child-') !== (role === 'subagent'))) return [];
+    const observed = count(rawObserved);
+    const uncachedInput = count(rawInput);
+    if (coverage === 'unknown' ? rawObserved !== undefined || rawInput !== undefined : observed === undefined || basis === 'unavailable') return [];
+    if (coverage === 'complete' && !agent) return [];
+    const key = JSON.stringify([stage, role, basis, agent]);
+    if (seen.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
+    seen.add(key);
+    if (agent) aliases.add(agent);
+    return [{ stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed), ...opt('uncachedInput', uncachedInput) }];
+  });
+  return responses.length ? responses : undefined;
+}
+
 function invocationOf(v: unknown): InvocationFacts[] {
   if (!record(v)) return [];
-  const reported = list(v['reportedModels']).map(modelName).filter((m): m is string => !!m).slice(0, 8);
+  const surface = v['surface'] === 'native' ? 'native' : 'cli';
+  const launched = v['launched'] === true;
+  const outcome = token(v['outcome']) ?? DASH;
+  const usageSource = surface === 'cli' ? usageSourceOf(v['usageSource']) : undefined;
+  const coverage = new Set(coverageOf(v['coverage']));
+  let usage = usageOf(v['usage'], false);
+  if (surface === 'cli' && launched) {
+    if (!usage && v['usage'] !== undefined) coverage.add('invalid counters');
+    if (usage && !usageSource && outcome !== 'ok' && !hasUsageTokens(usage)) {
+      usage = undefined;
+      coverage.add('unverified zero');
+    }
+  }
   return [{
     phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
     ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
-    surface: v['surface'] === 'native' ? 'native' : 'cli', launched: v['launched'] === true, ...opt('durationMs', millis(v['durationMs'])),
+    surface, launched, ...opt('durationMs', millis(v['durationMs'])),
     ...opt('startMs', millis(v['startMs'])), ...opt('endMs', millis(v['endMs'])),
     ...opt('routingOutcome',(['next-model','next-mode','reserve','stop'] as const).find(x=>x===v['routingOutcome'])),
     ...opt('slotState',(['done','native','failed'] as const).find(x=>x===v['slotState'])),
@@ -231,13 +265,40 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('nativeState',(['pending','completed','invalid','failed'] as const).find(x=>x===v['nativeState'])),
     ...opt('subject',match(/^[a-f0-9]{16}$/)(v['subject'])), ...opt('attempt',count(v['attempt'])),
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
-    outcome: token(v['outcome']) ?? DASH, ...opt('usage', usageOf(v['usage'], false)), ...opt('reportedModels', reported.length ? reported : undefined),
-    ...opt('coverage', coverageOf(v['coverage'])),
+    outcome, ...opt('usage', usage), ...(usage && usageSource ? { usageSource } : {}), ...reportedModelsOf(v, usage),
+    ...opt('coverage', coverage.size ? [...coverage] : undefined),
+    ...opt('responses', surface === 'cli' && launched ? delegateResponsesOf(v['responses']) : undefined),
     ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
+    ...(v['superseded'] === true ? { superseded: true as const } : {}),
     ...(v['nudge'] === true ? { nudge: true as const } : {}),
   }];
 }
 
+function hostResponsesOf(value: unknown): HostResponseAggregate[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const aliases = new Set<string>();
+  const keys = new Set<string>();
+  return value.flatMap((item: unknown): HostResponseAggregate[] => {
+    if (!record(item)) return [];
+    const stage = RESPONSE_STAGES.find(x => x === item['stage']);
+    const role = HOST_ROLES.find(x => x === item['role']);
+    const basis = HOST_RESPONSE_BASES.find(x => x === item['basis']);
+    const coverage = RESPONSE_COVERAGES.find(x => x === item['coverage']);
+    if (!stage || !role || !basis || !coverage) return [];
+    const agent = responseAgent(item['agent']);
+    if (item['agent'] !== undefined && (!agent || !agent.startsWith(`${role}-`))) return [];
+    const observed = count(item['observed']);
+    const uncachedInput = count(item['uncachedInput']);
+    if (coverage === 'unknown' ? observed !== undefined : observed === undefined) return [];
+    if (coverage === 'complete' && !agent) return [];
+    const key = `${stage}\0${role}\0${basis}\0${agent ?? ''}`;
+    if (keys.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
+    keys.add(key);
+    if (agent) aliases.add(agent);
+    return [{ stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed),
+      ...opt('uncachedInput', observed === undefined ? undefined : uncachedInput) }];
+  });
+}
 function hostUsageOf(value: unknown): HostUsageFacts | undefined {
   if (!record(value)) return undefined;
   const rows: HostUsageRow[] = list(value['rows']).flatMap(v => {
@@ -253,7 +314,7 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
     if(Object.keys(clean).length) notes[role]=clean;
   }
   const unavailable=HOST_UNAVAILABLE.find(x=>x===value['unavailable']);
-  return {platform:token(value['platform']) ?? null,rows,...opt('unavailable',unavailable),...(Object.keys(notes).length?{notes}:{})};
+  return {platform:token(value['platform']) ?? null,rows,...opt('responses',hostResponsesOf(value['responses'])),...opt('unavailable',unavailable),...(Object.keys(notes).length?{notes}:{})};
 }
 
 /** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
@@ -300,6 +361,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       const kind = escalation?.['kind'] === 'regression' || escalation?.['kind'] === 'deadlock' ? escalation['kind'] : undefined;
       return [{
         ...opt('phase', phaseKey(v['phase'])), round, accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0,
+        ...opt('recurring', count(v['recurring'])),
         ...opt('reraised', reraised.length ? reraised : undefined), ...opt('escalation', kind && { kind, ids: ids(escalation?.['ids']) }),
         ...opt('cap', cap !== undefined && cap <= MAX_REVIEW_ROUND_CAP ? cap : undefined),
       }];
@@ -309,7 +371,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       if (!review || !round) return [];
       const slots=list(v['slots']).map(s => {
         const slot=record(s)?match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(s['slot']):undefined;
-        const attempts=slot&&record(s)?list(s['attempts']).map(a=>record(a)?({...opt('startMs',millis(a['startMs'])),...opt('endMs',millis(a['endMs']))}):{}):[];
+        const attempts=slot&&record(s)?list(s['attempts']).map(a=>record(a)?({...opt('startMs',millis(a['startMs'])),...opt('endMs',millis(a['endMs'])),...opt('surface',(['cli','native'] as const).find(surface=>surface===a['surface']))}):{}):[];
         return {slot:slot??DASH,attempts};
       });
       return [{review,round,slots}];
@@ -330,18 +392,22 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       const provider = token(v['provider']);
       if (!kind || !provider) return [];
       const raised = record(v['raised']) ? v['raised'] : {};
-      const attempts = Array.isArray(v['attempts']) ? v['attempts'].filter(record).map((a) => ({
-        provider: token(a['provider']) ?? DASH,
-        model: modelName(a['model']) ?? DASH,
-        effort: a['effort'] === null || a['effort'] === undefined ? null : token(a['effort']) ?? DASH,
-        ...opt('usage', usageOf(a['usage'], false)),
-      })) : undefined;
+      const attempts = Array.isArray(v['attempts']) ? v['attempts'].filter(record).map((a) => {
+        const usage = usageOf(a['usage'], false);
+        return {
+          provider: token(a['provider']) ?? DASH,
+          model: modelName(a['model']) ?? DASH,
+          effort: a['effort'] === null || a['effort'] === undefined ? null : token(a['effort']) ?? DASH,
+          ...opt('usage', usage), ...opt('usageSource', usage ? usageSourceOf(a['usageSource']) : undefined),
+          ...reportedModelsOf(a, usage), ...opt('coverage', coverageOf(a['coverage'])),
+        };
+      }) : undefined;
       return [{
         kind, provider, model: kind === 'provider' ? modelName(v['model']) ?? null : null,
         raised: { MUST: count(raised['MUST']) ?? 0, SHOULD: count(raised['SHOULD']) ?? 0, CONSIDER: count(raised['CONSIDER']) ?? 0 },
         accepted: count(v['accepted']) ?? 0, rejected: count(v['rejected']) ?? 0, deferred: count(v['deferred']) ?? 0,
         duplicate: count(v['duplicate']) ?? 0, unruled: count(v['unruled']) ?? 0, ...opt('tokens', count(v['tokens'])), ...opt('fixInduced', count(v['fixInduced']) || undefined),
-        measured: count(v['measured']) ?? 0, launched: count(v['launched']) ?? 0,
+        measured: count(v['measured']) ?? 0, launched: count(v['launched']) ?? 0, ...opt('priorLaunches', count(v['priorLaunches']) || undefined),
         ...opt('attempts', attempts?.length ? attempts : undefined),
       }];
     }) : undefined),

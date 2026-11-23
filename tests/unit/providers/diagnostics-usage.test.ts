@@ -422,7 +422,6 @@ test('delegate session id extraction across providers and agy budget skip', () =
   const claudeRes = claude.sessionUsage?.(
     JSON.stringify({ type: 'result', session_id: 'c-sess-1', result: 'ok' }),
     { mode: 'cli', platform, env: {}, cwd: '/repo', launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: claudeFs, budget: { remaining: 100_000 } } },
-    true,
   );
   assert.equal(claudeRes?.complete, true);
   assert.equal(claudeRes?.usage?.input, 15);
@@ -445,7 +444,6 @@ test('delegate session id extraction across providers and agy budget skip', () =
   const codexRes = codex.sessionUsage?.(
     lines({ type: 'thread.started', thread_id: 'x-sess-1' }),
     { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: codexFs, budget: { remaining: 100_000 } } },
-    true,
   );
   assert.equal(codexRes?.complete, true);
   assert.equal(codexRes?.usage?.input, 20);
@@ -462,7 +460,6 @@ test('delegate session id extraction across providers and agy budget skip', () =
   const opencodeRes = opencode.sessionUsage?.(
     lines({ type: 'step_finish', sessionID: 'o-sess-1', part: { tokens: { input: 30, output: 6 } } }),
     { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: opencodeFs, budget: { remaining: 100_000 } } },
-    true,
   );
   assert.equal(opencodeRes?.complete, true);
   assert.equal(opencodeRes?.usage?.input, 30);
@@ -498,7 +495,6 @@ test('delegate session id extraction across providers and agy budget skip', () =
     const agyRes = agy.sessionUsage?.(
       JSON.stringify(payload),
       { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: agyFs, budget: { remaining: 100_000 } } },
-      true,
     );
     assert.equal(agyRes?.complete, true);
     assert.equal(agyRes?.usage?.input, 40);
