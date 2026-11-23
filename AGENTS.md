@@ -22,7 +22,7 @@ Dispatch turns the host agent into an end-to-end orchestrator across native suba
 
 ## Communication and Ambiguity
 
-Follow ASD-STE100 (Simplified Technical English). Be terse and high-signal: omit filler and hedging; preserve exact terms, code, and units. Link to artifacts or run logs instead of pasting long traces.
+Use ASD-STE100 (Simplified Technical English): terse prose without filler or hedging; preserve exact terms, code, and units. Link artifacts/logs instead of long traces.
 
 Investigate repository facts and governing intent before consulting the user. Escalate through the [Decision Frame](skills/dispatch/references/decision-frame.md) when unresolved requirements, constraints, or trade-offs change scope, behavior, or risk, and pause at the [user gate](skills/dispatch/references/decision-frame.md#user-gate-boundaries) before changing intent, adding external dependencies or runtime prerequisites, or discarding work. Continue independent work while a decision is pending; for routine progress within approved scope, state a reasonable assumption, proceed, and suggest simpler alternatives.
 
