@@ -4,40 +4,42 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
 
-**Turn your coding agent into a multi-platform, end-to-end workflow orchestrator.** `dispatch-skills` lets your main agent delegate research to fast subagents, get designs, plans, and code reviewed by independent models across platforms, and build changes in isolated worktrees with automated testing, verification, and cleanup.
+![Dispatch Skills — Orchestrator, Explorers, Reviewers, Writers, Verifiers, and Cleaners](docs/assets/banner.webp)
+
+**Turn your coding agent into an end-to-end orchestrator across native subagents and multi-platform delegates.** `dispatch-skills` puts your host agent in charge of a specialized team: fast native subagents explore code and run cleanup, independent models across platforms answer questions and review designs, plans, and code, and native writers build tested changes in isolated worktrees—delivering verified, unstaged code ready to inspect.
 
 ## Why dispatch-skills?
 
-Most agent workflows ask one model to make the assumptions, write the code, and grade its own work. Dispatch separates those roles:
+Single-agent workflows ask one model to make assumptions, burn its context window reading files, write the code, and grade its own work. Dispatch separates those roles across native subagents and cross-platform CLI delegates:
 
 | Benefit | How Dispatch delivers it |
 |---|---|
-| **🎲 Independent perspectives** | Cross-platform reviewers run first and your host platform last, catching shared blind spots across model families. |
-| **💡 Review designs & plans** | Designs and plans are reviewed before a single line is written, surfacing missing edge cases or migrations early. |
-| **⚖️ Evidence, not votes** | Reviewers cite `file:L<line>` or plan sections; your host agent checks every claim against real code and rejects unsupported noise. |
-| **🔴 Test-first & verified** | Writers capture failing tests (RED) before code, runtime verification proves behavior, and test cleanup prunes redundant tests. |
-| **🌿 Isolated worktrees** | Parallel tasks run in isolated worktrees and deliver clean unstaged changes—never committing, pushing, or opening PRs. |
-| **🛡️ Read-only delegates** | CLI delegates run sandboxed with ambient credentials stripped; only host-platform writers touch production code after approval. |
-| **🧾 Lean context, lower cost** | Scripts handle routing, logs, and artifacts; cheap explorer subagents do heavy reading so your main context stays focused. |
-| **🎚️ Proportional to risk** | Scale model tiers and review depth (`low`–`max`) to the task, with resumable sessions and optional token/cost diagnostics. |
-| **💰 Spread usage across providers** | Mix Claude Code, Antigravity, GitHub Copilot, OpenCode, and Codex using the subscriptions or CLIs you already have. |
+| **🧭 Host agent as your deputy** | Your current agent orchestrates the workflow—routing tasks to native subagents and cross-platform CLI delegates while keeping your main context clean. |
+| **⚡ Specialized native subagents** | Fast explorer and utility subagents map the codebase and prune redundant tests; scoped writer and verifier subagents build and prove changes in parallel. |
+| **🎲 Cross-platform perspectives** | Independent reviewers on other platforms run first and your host platform runs last, catching shared blind spots across model families. |
+| **💡 Catch design & plan flaws early** | Designs and plans are reviewed and fixed before a single line is written, surfacing missing edge cases or migrations upfront. |
+| **⚖️ Evidence, not votes** | Reviewers must cite `file:L<line>` or plan sections; your host agent checks every claim against real code and rejects unsupported noise. |
+| **🔴 Test-first & runtime-verified** | Writers capture failing tests (RED) before code (GREEN), runtime verification proves behavior, and test cleanup removes redundant assertions. |
+| **🌿 Isolated worktrees, clean delivery** | Parallel tasks run in isolated internal worktrees and deliver clean unstaged changes—never committing, pushing, or opening PRs behind your back. |
+| **🛡️ Structural least privilege** | External CLI delegates run read-only in OS sandboxes with ambient credentials stripped; only host-platform writers touch code after your approval. |
+| **🎚️ Proportional to risk & budget** | Scale model tiers and review depth (`low`–`max`) to the task, mix subscriptions you already own (Claude Code, Antigravity, Copilot, OpenCode, Codex), and track optional token/cost diagnostics. |
 
 ## How it works
 
-Every workflow except a quick question (`ask`) starts by confirming one **spec**. Large cross-boundary work flows through a **design** and ordered increments; focused changes go straight to a **plan**.
+Every workflow except a quick question (`ask`) starts by grounding the codebase and confirming one **spec**. Large cross-boundary work flows through a **design** and ordered increments; focused changes go straight to a **plan**.
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(utility subagents)"]
+    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(explorer subagents)"]
     Ground --> Spec["📄 Spec + confirm"]
     Spec --> ScopeCheck{"Multi-increment?"}
-    ScopeCheck -->|Yes| Design["🗺️ Design + review + approve"]
+    ScopeCheck -->|Yes| Design["🗺️ Design + multi-platform review + approve"]
     ScopeCheck -->|No| Plan
-    Design --> Plan["📝 Plan + review + approve"]
-    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(🔴 RED tests → 🟢 GREEN code)"]
-    Tasks --> Verify["🧪 All checks + runtime verification"]
-    Verify --> Cleanup["🧹 Test cleanup"]
-    Cleanup --> Review["⚡ Final checks + code review + fixes"]
+    Design --> Plan["📝 Plan + multi-platform review + approve"]
+    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(writer subagents: 🔴 RED → 🟢 GREEN)"]
+    Tasks --> Verify["🧪 Checks + runtime verification<br/>(verifier subagent)"]
+    Verify --> Cleanup["🧹 Test cleanup<br/>(utility subagent)"]
+    Cleanup --> Review["⚡ Final checks + multi-platform code review + fixes"]
     Review --> Deliver["📦 Deliver & clean up worktrees"]
     Deliver -.->|Next increment| Plan
     Deliver -->|Done| Handoff(["✅ Unstaged changes + walkthrough"])

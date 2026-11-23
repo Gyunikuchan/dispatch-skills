@@ -1,6 +1,6 @@
 # Dispatch
 
-Orchestrate multi-model research, planning, review, verification, and implementation from your current agent environment. Your **host agent** acts as your deputy: it routes exploration and routine tasks to utility subagents, questions and reviews to independent read delegates, and implementation to host-platform writers—checking all claims against the real code before acting.
+Orchestrate multi-model research, planning, review, verification, and implementation from your current agent environment. Your **host agent** acts as your deputy: it routes exploration and routine cleanup to native explorer and utility subagents, questions and reviews to independent multi-platform read delegates, and implementation and runtime verification to host-platform writer and verifier subagents—checking all claims against the real code before acting.
 
 ## Contents
 
@@ -82,22 +82,22 @@ Not sure between `plan` and `design`? Dispatch grounds the scope and recommends 
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(utility subagents)"]
+    User(["👤 Requirement"]) --> Ground["🔍 Explore codebase<br/>(explorer subagents)"]
     Ground --> Spec["📄 Spec + confirm"]
     Spec --> ScopeCheck{"Multi-increment?"}
-    ScopeCheck -->|Yes| Design["🗺️ Design + review + approve"]
+    ScopeCheck -->|Yes| Design["🗺️ Design + multi-platform review + approve"]
     ScopeCheck -->|No| Plan
-    Design --> Plan["📝 Plan + review + approve"]
-    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(🔴 RED tests → 🟢 GREEN code)"]
-    Tasks --> Verify["🧪 All checks + runtime verification"]
-    Verify --> Cleanup["🧹 Test cleanup"]
-    Cleanup --> Review["⚡ Final checks + code review + fixes"]
+    Design --> Plan["📝 Plan + multi-platform review + approve"]
+    Plan --> Tasks["🧩 Isolated worktree tasks<br/>(writer subagents: 🔴 RED → 🟢 GREEN)"]
+    Tasks --> Verify["🧪 Checks + runtime verification<br/>(verifier subagent)"]
+    Verify --> Cleanup["🧹 Test cleanup<br/>(utility subagent)"]
+    Cleanup --> Review["⚡ Final checks + multi-platform code review + fixes"]
     Review --> Deliver["📦 Deliver & clean up worktrees"]
     Deliver -.->|Next increment| Plan
     Deliver -->|Done| Handoff(["✅ Unstaged changes + walkthrough"])
 ```
 
-1. **Ground and clarify:** Utility subagents explore relevant code first. Dispatch asks only open decisions that affect scope, behavior, or risk—laying out 2–3 approach options with a recommendation (including the simplest worth considering, each with its trade-off, limitation and risk)—then writes the **spec** for you to confirm.
+1. **Ground and clarify:** Explorer subagents (using your `utility-subagents` config) map relevant code first. Dispatch asks only open decisions that affect scope, behavior, or risk—laying out 2–3 approach options with a recommendation (including the simplest worth considering, each with its trade-off, limitation and risk)—then writes the **spec** for you to confirm.
 2. **Author and review:** Dispatch grounds the confirmed scope, writes the **plan** or **design**, proposes a level if omitted, and sends the artifact to independent reviewers. Your host agent checks each cited finding and applies accepted fixes.
 3. **Approve:** You confirm the spec before authoring at every level. At `medium` and above, you approve the plan or design before implementation; at `low`, Dispatch proceeds after spec confirmation and shows artifacts at handoff. The level may rise mid-run if complexity increases, never down.
 4. **Build, verify, clean up, and review:** Writers implement each task (RED failing tests first, then GREEN) in isolated worktrees. After integration, Dispatch runs plan checks and **runtime verification**, runs **test cleanup** to prune redundant tests while preserving criterion coverage, then runs **final checks + code review** (with fix and re-check rounds if needed) before delivering and cleaning up worktrees.

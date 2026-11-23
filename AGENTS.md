@@ -4,7 +4,7 @@ Repository-wide instructions for work in this checkout. `.claude/CLAUDE.md` syml
 
 ## Product Objective and Principles
 
-Dispatch enables high-confidence development across native agent harnesses: catch flawed assumptions early and verify delivery with minimal routine human coordination. Guide changes with these principles:
+Dispatch turns the host agent into an end-to-end orchestrator across native subagents and cross-platform CLI delegates—catching flawed assumptions early and verifying delivery with minimal routine human coordination. Guide changes with these principles:
 
 - **AX / DX / UX balance:** Evaluate code and prose across **AX** (agents running the skill: reliability, context and tool-call cost), **DX** (human and agent maintainers), and **UX** (human users). Protect **UX** outcomes and **AX** reliability first; use **DX** to serve both without adding runtime friction.
 - **Proportional assurance:** Balance correctness, token efficiency, and speed against task risk. Preserve acceptance and safety boundaries with the simplest, least costly workflow.

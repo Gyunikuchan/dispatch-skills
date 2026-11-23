@@ -1,10 +1,13 @@
 {
   "name": "dispatch-skills",
   "version": "0.8.5",
-  "description": "Collaborative development workflows across native agent platforms, combining independent model perspectives with structured, evidence-based review.",
+  "description": "Dispatch turns the host agent into an end-to-end orchestrator across native subagents and cross-platform CLI delegates—catching flawed assumptions early and verifying delivery with minimal routine human coordination.",
   "license": "MIT",
   "type": "module",
-  "author": "Gyunikuchan (https://github.com/Gyunikuchan)",
+  "author": {
+    "name": "Gyunikuchan",
+    "url": "https://github.com/Gyunikuchan"
+  },
   "homepage": "https://github.com/Gyunikuchan/dispatch-skills#readme",
   "repository": {
     "type": "git",
@@ -16,20 +19,27 @@
   "keywords": [
     "ai",
     "agent-skills",
+    "coding-agents",
+    "orchestration",
+    "subagents",
+    "multi-agent",
+    "delegation",
     "claude-code",
     "antigravity",
-    "copilot",
+    "github-copilot",
     "opencode",
+    "codex",
     "code-review",
     "plan-review",
-    "multi-agent",
-    "delegation"
+    "git-worktree"
   ],
   "engines": {
     "node": "^22.18 || >=23.6"
   },
   "files": [
     "skills",
+    "!skills/dispatch/config.jsonc",
+    "!skills/dispatch/config.local.jsonc",
     "LICENSE",
     "README.md"
   ],
