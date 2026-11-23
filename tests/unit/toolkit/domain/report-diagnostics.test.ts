@@ -74,6 +74,7 @@ import {
   CATEGORIES, COMPONENTS, DIAGNOSTIC_LIMITS, formatDuration, heuristics, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts,
   type Finding, type InvocationFacts, type RunFacts, type Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { resolvePricing } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
@@ -132,7 +133,7 @@ const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuri
 
 
 
-const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
+const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('</details>')[0]!.split('\n').filter((line) => line.startsWith('|'));
 
 
 
@@ -211,7 +212,7 @@ test('diagnostics render one subject per phase cell and bound observed collectio
  for(const identity of [`${generations[0]}/1`,`${generations[0]}/2`,`${generations[1]}/1`])assert.ok(text.includes(`subject ${subject} · attempt ${identity} · slot codex[0]`),identity);
  const ask=render([facts({phases:[{key:'ask',name:'ask'}],invocations:[invocation({phase:'ask',subject:generations[0]!,attempt:3,slot:'codex[0]'})]})]);
  assert.ok(ask.includes(`ask · subject ${generations[0]} · attempt 3 · slot codex[0]`));
- assert.match(text,/Full collection coverage is unavailable/);
+ assert.match(text,/storage loss are unobservable/);
  assert.equal(sanitizeFacts(facts({collection:{completed:9_000_000}})).collection?.completed,1_000_000);
 });
 
@@ -226,8 +227,8 @@ test('diagnostics distinguish invalid retro native completion and unavailable co
   assert.match(text,/native completed/); assert.match(text,/native pending/);
   assert.doesNotMatch(text,/attempt 0\b|\/0\b/);
   assert.doesNotMatch(text,/ok \(not launched\)/);
-  assert.match(text,/launch coverage —/);
-  assert.match(render([facts({invocations:[invocation({usage:{input:0,output:0}})]})]),/measured tokens: 0 /);
+  assert.match(text,/\| CLI delegates \|[^|]+\| — \| — \|/);
+  assert.match(render([facts({invocations:[invocation({usage:{input:0,output:0}})]})]),/\| CLI delegates \|[^|]+\| — \| 0 \|/);
   const semantic=render([facts({invocations:[invocation({slot:'codex[0]',validationOutcome:'schema'}),invocation({slot:'codex[0]',validationOutcome:'schema'})]})]);
   assert.match(semantic,/`schema`: 2 of 2 CLI attempts failed/);
   assert.match(semantic,/ok · validation schema/);
@@ -236,13 +237,13 @@ test('diagnostics distinguish invalid retro native completion and unavailable co
 test('diagnostics render collection health and provenance within privacy limits', () => {
   const text=render([facts({collection:{corrupt:2,incomplete:1,storageFailed:1},provenance:[{version:'1.2.3',build:'ab'.repeat(32),config:{diagnostics:true,'api-key':'secret-canary','read-delegates':{codex:{model:'/home/canary/model'}}}}]})]);
   assert.match(text,/Collection health: partial/); assert.match(text,/corrupt 2/);assert.match(text,/incomplete 1/);assert.match(text,/storage-failed 1/);
-  assert.match(text,/dispatch 1\.2\.3 · build abababababab/);assert.match(text,/Total storage loss can be unobservable/);
+  assert.match(text,/dispatch 1\.2\.3 · build abababababab/);assert.match(text,/storage loss are unobservable/);
   assert.doesNotMatch(text,/canary|api-key|secret/);assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
 });
 
 test('diagnostics report: renders summary shell with sections, version, and durations', () => {
   const text = render([facts()]);
-  const at = ['## Summary', '## Overview', '## Findings', '## Appendix', '<details>'].map((marker) => text.indexOf(marker));
+  const at = ['## Summary', '### Spend & Turns by Role', '### Spend & Turns by Stage', '## Cost drivers', '## Findings', '<details>'].map((marker) => text.indexOf(marker));
   assert.ok(at.every((index) => index >= 0), `all sections present: ${at.join(',')}`);
   assert.deepEqual([...at].sort((a, b) => a - b), at);
   assert.match(text, /^- Build: dispatch 0\.7\.1 · build abababababab$/m);
@@ -257,16 +258,16 @@ test('diagnostics report: renders summary shell with sections, version, and dura
 test('diagnostics report: renders duration, token, and estimate columns with unavailable handling', () => {
   const text = render([facts()]);
   assert.match(text, /\| Phase \| Outcome \| Wall \| Driver \| Host \| User wait \|/);
-  assert.ok(text.includes('| 1 · review · medium | code review · review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
-  assert.match(text, /^- Runs: 1 · measured duration: 1h 2m 3s$/m);
+  assert.ok(text.includes('| code review · review | complete | 1h 2m 3s | 45s | 1m 0s | <1s | 1 |'), text);
+  assert.match(text, /^- Runs: 1 · Host: claude · OS: windows · Measured duration: 1h 2m 3s$/m);
   assert.match(text, /\| Input \| Cache read \| Cache write \| Output \|/);
   assert.ok(text.includes('| 1 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), text);
-  assert.match(text, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
+  assert.ok(text.includes('| CLI delegates | ██████████ 100% | — | 3,340 | 61% |'), text);
   const partial = render([facts({
     phases: [{ key: 'review', name: 'code review', outcome: 'complete', wallMs: 3_723_000 }],
     invocations: [invocation({ usage: { input: 500, output: 20 } }), bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' })],
   })]);
-  assert.ok(partial.includes('| 1 · review · medium | code review · review | complete | 1h 2m 3s | 2 | 500 | — | — | 20 | 1/2 |'), partial);
+  assert.ok(partial.includes('| code review · review | complete | 1h 2m 3s | 2 | 500 | — | — | 20 | 1/2 |'), partial);
   assert.ok(partial.includes('| code review | claude | delegate | claude-opus-5-5 (configured) | medium | — | — | — | — | — | 0/1 | — | — |'), partial);
 
   const legacy = render([facts({
@@ -275,7 +276,7 @@ test('diagnostics report: renders duration, token, and estimate columns with una
       { ...bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native' }), estimated: true, tokens: 5000 } as unknown as InvocationFacts,
     ],
   })]);
-  assert.match(legacy, /^- Provider CLI measured tokens: 3,340 \(input 1,000 · cache read 2,000 · cache write 300 · output 40\) · launch coverage 1\/1$/m);
+  assert.ok(legacy.includes('| CLI delegates | ██████████ 100% | — | 3,340 | 61% |'), legacy);
   assert.doesNotMatch(legacy, /Estimated, excluded from measured totals/);
   assert.doesNotMatch(legacy, /~5,000/);
   assert.ok(legacy.includes('| 2 | 1,000 | 2,000 | 300 | 40 | 1/1 |'), legacy);
@@ -292,8 +293,8 @@ test('elapsed waits and partial usage remain explicit', () => {
     ],
   });
   const text = render([run]);
-  assert.match(text, /Provider CLI measured tokens: 3,040 \(input 1,000 · cache read 2,000 · cache write — · output 40\) · launch coverage 1\/2/);
-  assert.match(text, /Full conversation totals are unavailable/);
+  assert.match(text, /\| codex \| 1,000 \| 2,000 \| — \| 40 \| 20 \| delegates 1\/1 \|/);
+  assert.match(text, /Full conversation totals unavailable/);
 
   assert.ok(text.includes('| — | native completed |'), 'unattested native usage stays unavailable');
   const quota = only(heuristics(facts({ invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' })] })), 'H1')[0]!;
@@ -368,7 +369,7 @@ test('diagnostics report: renders per-model token rows across launch states', ()
     bare({ provider: 'claude', model: 'claude-opus-5-5', outcome: 'timeout' }),
   ] })]);
   assert.ok(mixed.includes('| code review | claude | delegate | claude-opus-5-5 | medium | 100 | — | — | 10 | — | 1/1 |'), mixed);
-  const table = mixed.split('### Tokens by stage')[1]!.split('### Review yield')[0]!;
+  const table = mixed.split('### Tokens by stage')[1]!.split('</details>')[0]!;
   assert.equal((table.match(/claude-opus-5-5/g) ?? []).length, 2);
   const configured = render([facts({ invocations: [invocation({ reportedModels: ['gpt-6-sol-2026'], usage: { input: 100, output: 10 } })] })]);
   assert.ok(configured.includes('| code review | codex | delegate | gpt-6-sol-2026 | medium | 100 | — | — | 10 | — | 1/1 |'), configured);
@@ -453,7 +454,7 @@ test('retro observations: rejects locators in ids models and config', () => {
     invocations: names.map((model) => invocation({ model, reportedModels: [model], usage: { input: 10, output: 1, models: { [model]: { input: 10, output: 1 } } } })),
   })]);
   for (const name of names) {
-    assert.ok(text.includes(`| ${name} (reported: ${name}) |`), `model ${name}`);
+    assert.doesNotMatch(text, new RegExp(`\\| ${name} \\(reported: ${name}\\) \\|`));
     assert.ok(text.includes(`| code review | codex | delegate | ${name} | medium | 10 |`), `usage key ${name}`);
     assert.ok(text.includes(`"model": "${name}"`), `config ${name}`);
   }
@@ -485,8 +486,7 @@ test('host rows preserve totals and notes, scrub labels, and surface unavailabil
   assert.ok(text.includes('| plan | claude | host | m | — | 10 | 5 | 2 | 2 | 4 | — |'));
   assert.ok(text.includes('| plan | claude | subagent | m | — | 20 | — | — | 3 | — | — |'));
   assert.ok(text.includes('| code review | claude | delegate | gpt-6-sol (configured) | medium | 7 | — | — | 1 | — | 1/1 |'));
-  assert.ok(text.includes('Cost includes delegate usage in its recorded phase and host and subagent usage in time-estimated phases.'));
-  assert.ok(text.includes('other threads are unavailable. Full collection coverage is unavailable. Total storage loss can be unobservable.'));
+  assert.ok(text.includes('other threads, full collection, and storage loss are unobservable.'));
   assert.ok(!text.includes('secret transcript'));
   const invalidUsage={platform:'claude',rows:[{stage:'plan',role:'host',model:'C:/private/path',effort:'C:/private',input:4,output:1}],unavailable:'read-error:EACCES',notes:{subagent:{'unreadable files':2}}} as NonNullable<RunFacts['hostUsage']>;
   const sanitized=render([facts({hostUsage:invalidUsage,invocations:[]})]);
@@ -616,9 +616,8 @@ test('review timing preserves unknown slots and limits CLI spans to launched att
   {review,round:3,slots:[empty,nativeOnly]},
   {review,round:4,slots:[prior,{...last,attempts:[{startMs:6000,endMs:8000}]}]},
 ]} as never)]);
- const spans=cliText.split('### Review CLI attempt spans')[1]!;
- assert.match(spans,/\| 1 \| 7s \| native\[1\] \|/);
- for(const round of [2,3,4]) assert.ok(spans.includes(`| ${round} | — | — |`));
+ const health=cliText.split('## Review health')[1]!;
+ assert.match(health,/\| subject 1234567890abcdef \| 1\/4 \| 7s \(CLI only\) \|/);
  assert.match(cliText,/\| 1 \| codex\[0\] \| — \| — \|/);
 });
 
@@ -642,12 +641,13 @@ test('review timing compaction omits complete rounds and retains the omission co
  const rounds=Array.from({length:3000},(_,i)=>({review:'review-1234567890abcdef',round:i+1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:1000}]}]}));
  const text=render([facts({roundTiming:rounds} as never)]);
  assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
- const count=Number(/(\d+) review timing rounds omitted/.exec(text)?.[1]);
+ const count=Number(/(\d+) review round rows omitted\./.exec(text)?.[1]);
  assert.ok(count>1);
- assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3000-count} \\|`));
- assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${3001-count} \\|`));
- const next=text.replace('\n\n### Review CLI attempt spans', `\n| subject 1234567890abcdef | ${3001-count} | codex[0] | 1s | ✓ |\n\n### Review CLI attempt spans`)
-   .replace(`\n\n${count} review timing rounds omitted`, `\n| subject 1234567890abcdef | ${3001-count} | — | — |\n\n${count-1} review timing rounds omitted`);
+ assert.match(text,/\d+ review timing rounds omitted/);
+ const kept=3000-count;
+ assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept}/3000 \\|`));
+ assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept+1}/3000 \\|`));
+ const next=text.replace(`\n\n${count} review round rows omitted.`, `\n| subject 1234567890abcdef | ${kept+1}/3000 | — | — | — | — | — | — |\n\n${count-1} review round rows omitted.`);
  assert.ok(Buffer.byteLength(next)>DIAGNOSTIC_LIMITS.reportBytes, 'another complete round exceeds the cap');
 });
 
@@ -674,13 +674,13 @@ test('round workload renders observed calls, dashes for unavailable cells, and t
   {review,round:3},
   {review,round:4,calls:{total:1,phases:[{key:'review-run-plan',count:1}]}},
  ]})]);
- assert.match(text,/### Review round workload\n\n\| Review \| Round \| Toolkit calls \| Host tokens \| Host turns \|\n\| --- \| ---: \| --- \| ---: \| ---: \|/);
+ assert.match(text,/### Review round workload\n\n\| Review \| Round \| Toolkit calls \| Host tokens \| Host turns \| Reviewer turns \|\n\| --- \| ---: \| --- \| ---: \| ---: \| ---: \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 1 \| 9: ledger-append 4 · lint-run 3 · brief-explorer 1 · review-run-plan 1 \| 8,214,330 \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 2 \| 1: review-run-plan 1 \| 2,901,550 \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 3 \| — \| — \|/);
  assert.match(text,/\| subject 1234567890abcdef \| 4 \| 1: review-run-plan 1 \| — \|/);
- assert.match(text,/Observed toolkit calls only: `report` and `diagnostics` calls and work outside round windows are not counted\./);
- assert.match(text,/Advisory budget per round with a lightweight fix review: at most 6 toolkit calls and 25 host turns; over: none/);
+ assert.match(text,/Observed toolkit calls only \(`report`, `diagnostics`, and outside-window work excluded\)\./);
+ assert.match(text,/Advisory budget \(lightweight fix review\): <=6 toolkit calls, <=25 host turns; over: none/);
  assert.doesNotMatch(text,/capture storage failure/);
 });
 
@@ -692,16 +692,17 @@ test('round workload notes storage failures once and is omitted without review r
  assert.doesNotMatch(render([facts({roundWorkload:[]})]),/### Review round workload/);
 });
 
-test('round workload follows review round timing and precedes review yield by kind, provider and model', () => {
+test('round workload follows review round timing inside Execution & review detail', () => {
  const review='review-1234567890abcdef';
  const text=render([facts({
   roundTiming:[{review,round:1,slots:[{slot:'claude[0]',attempts:[{startMs:0,endMs:100}]}]}],
   roundWorkload:[{review,round:1,calls:{total:1,phases:[{key:'review-run-plan',count:1}]}}],
  })]);
  const at=(heading:string)=>text.indexOf(heading);
+ assert.ok(at('## Review health')>=0);
  assert.ok(at('### Review round timing')>=0);
+ assert.ok(at('## Review health')<at('### Review round timing'));
  assert.ok(at('### Review round timing')<at('### Review round workload'));
- assert.ok(at('### Review round workload')<at('### Review yield by kind, provider and model'));
 });
 
 test('round workload survives sanitizing and drops malformed rows, keys, and fields', () => {
@@ -776,7 +777,7 @@ test('each run retains its own bounded response aliases', () => {
   const returning = invocation({ responses: [{ ...invocations[0]!.responses![0]!, stage: 'plan review' }] });
   const run = facts({ invocations: [...invocations, returning] });
   const text = render([run, run]);
-  const detail = text.split('### Responses by agent')[1]!.split('### Review yield')[0]!;
+  const detail = text.split('### Turns & context efficiency by agent')[1]!.split('</details>')[0]!;
   for (const run of [1, 2]) {
     assert.equal(detail.match(new RegExp(`\\| code review \\| delegate \\| run ${run} delegate-\\d+ \\|`, 'g'))?.length, 32);
     assert.ok(detail.includes(`| plan review | delegate | run ${run} delegate-1 |`));
@@ -802,4 +803,435 @@ test('report compaction retains response coverage and totals ahead of bounded ag
   assert.match(text, /\| code review \| delegate \| claude-assistant-message \| 64 \| partial \| 64 \| 128 \| 2\.00 \|/);
   assert.match(text, /workload rows omitted/);
   assert.doesNotMatch(text, /Truncated at the report size limit/);
+});
+
+// SECTION: 3-tier executive layout, unified turns, Unicode bars, and compaction
+
+const testPricer = () => resolvePricing({
+  asOf: '2026-11-23',
+  source: ['test'],
+  models: {
+    'gpt-6-sol': { rates: { input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5 } },
+    'claude-opus-5-5': { rates: { input: 15, output: 75, cacheRead: 1.5, cacheWrite5m: 18.75 } },
+    'claude-haiku-5': { rates: { input: 0.25, output: 1.25, cacheRead: 0.025, cacheWrite5m: 0.3 } },
+    'bounded-model': {
+      rates: { input: 1, output: 5, cacheRead: 0.1 },
+      tiers: [{ abovePromptTokens: 1000, rates: { input: 3, output: 15, cacheRead: 0.3 } }],
+    },
+  },
+}, undefined);
+
+function multiRoundFixture(): RunFacts {
+  const review = 'review-1234567890abcdef';
+  return facts({
+    startedAt: '2026-11-23T12:00:00Z',
+    host: 'claude',
+    hosts: ['claude'],
+    hostThread: '0123456789abcdef',
+    relaunches: 1,
+    phases: [
+      { key: 'plan', name: 'plan', outcome: 'complete', wallMs: 120_000, driverMs: 10_000, hostMs: 90_000, userMs: 5_000 },
+      { key: 'plan-review', name: 'plan review', outcome: 'complete', wallMs: 180_000, driverMs: 15_000, hostMs: 120_000, userMs: 5_000 },
+      { key: 'implementation', name: 'implementation', outcome: 'complete', wallMs: 300_000, driverMs: 20_000, hostMs: 240_000, userMs: 10_000 },
+      { key: review, name: 'code review', outcome: 'complete', wallMs: 240_000, driverMs: 25_000, hostMs: 180_000, userMs: 5_000 },
+      { key: 'ask', name: 'ask', outcome: 'complete', wallMs: 400 },
+    ],
+    hostUsage: {
+      platform: 'claude',
+      userTurns: 6,
+      userTurnsByStage: { plan: 2, 'plan review': 1, implementation: 2, 'code review': 1 },
+      subagentCount: 2,
+      maxSubagentDepth: 2,
+      rows: [
+        { stage: 'plan', phase: 'plan', role: 'host', model: 'claude-opus-5-5', effort: 'high', input: 50_000, cacheRead: 200_000, output: 4_000, turns: 5, toolCalls: 8, toolTurns: 4 },
+        { stage: 'implementation', phase: 'implementation', role: 'host', model: 'claude-opus-5-5', effort: 'high', input: 80_000, cacheRead: 400_000, output: 10_000, turns: 10, toolCalls: 20, toolTurns: 8 },
+        { stage: 'implementation', phase: 'implementation', role: 'subagent', model: 'claude-haiku-5', effort: null, input: 40_000, cacheRead: 100_000, output: 3_000, turns: 8, toolCalls: 12, toolTurns: 6, maxDepth: 2 },
+      ],
+      responses: [
+        { stage: 'plan', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 5, uncachedInput: 50_000, toolCalls: 8, toolTurns: 4 },
+        { stage: 'implementation', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 10, uncachedInput: 80_000, toolCalls: 20, toolTurns: 8 },
+        { stage: 'implementation', role: 'subagent', agent: 'subagent-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 8, uncachedInput: 40_000, toolCalls: 12, toolTurns: 6 },
+      ],
+    },
+    invocations: [
+      invocation({
+        phase: 'plan-review', provider: 'codex', model: 'gpt-6-sol', reportedModels: ['gpt-6-sol'], effort: 'medium',
+        usageSource: 'session', usage: { input: 20_000, cacheRead: 60_000, output: 2_000, turns: 4, toolCalls: 6, toolTurns: 3, models: { 'gpt-6-sol': { input: 20_000, cacheRead: 60_000, output: 2_000, turns: 4, toolCalls: 6, toolTurns: 3 } } },
+        responses: [{ stage: 'plan review', role: 'delegate', agent: 'delegate-1111222233334444', basis: 'codex-token-count', coverage: 'complete', observed: 4, uncachedInput: 20_000, toolCalls: 6, toolTurns: 3 }],
+        subject: '1111222233334444', attempt: 1, slot: 'codex[0]',
+      }),
+      invocation({
+        phase: review, provider: 'codex', model: 'gpt-6-sol', reportedModels: ['gpt-6-sol'], effort: 'medium',
+        usageSource: 'session', wrapUp: true,
+        usage: { input: 30_000, cacheRead: 90_000, output: 3_000, turns: 5, toolCalls: 7, toolTurns: 4, models: { 'gpt-6-sol': { input: 30_000, cacheRead: 90_000, output: 3_000, turns: 5, toolCalls: 7, toolTurns: 4 } } },
+        responses: [{ stage: 'code review', role: 'delegate', agent: 'delegate-2222333344445555', basis: 'codex-token-count', coverage: 'complete', observed: 5, uncachedInput: 30_000, toolCalls: 7, toolTurns: 4 }],
+        subject: '2222333344445555', attempt: 1, slot: 'codex[0]',
+      }),
+    ],
+    reviews: [
+      { phase: 'plan-review', round: 1, accepted: 2, rejected: 1, recurring: 0 },
+      { phase: review, round: 1, accepted: 3, rejected: 0, recurring: 0 },
+    ],
+    roundTiming: [
+      { review: 'review-aaaa111122223333', round: 1, slots: [{ slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 1000, endMs: 41_000 }] }] },
+      { review, round: 1, slots: [{ slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 50_000, endMs: 110_000 }] }] },
+    ],
+    roundWorkload: [
+      { review: 'review-aaaa111122223333', kind: 'plan', round: 1, calls: { total: 3, phases: [{ key: 'review-run-plan', count: 1 }] }, hostTokens: 120_000, hostTurns: 4, reviewerTurns: 4 },
+      { review, kind: 'code', round: 1, calls: { total: 4, phases: [{ key: 'review-run-code', count: 1 }] }, hostTokens: 180_000, hostTurns: 5, reviewerTurns: 5 },
+    ],
+    slotYield: [
+      {
+        kind: 'provider', provider: 'codex', model: 'gpt-6-sol', raised: { MUST: 2, SHOULD: 3, CONSIDER: 1 },
+        accepted: 5, rejected: 1, deferred: 0, duplicate: 0, unruled: 0, tokens: 207_000, measured: 2, launched: 2,
+        attempts: [
+          { provider: 'codex', model: 'gpt-6-sol', effort: 'medium', usageSource: 'session', usage: { input: 20_000, cacheRead: 60_000, output: 2_000, turns: 4 } },
+          { provider: 'codex', model: 'gpt-6-sol', effort: 'medium', usageSource: 'session', usage: { input: 30_000, cacheRead: 90_000, output: 3_000, turns: 5 } },
+        ],
+      },
+    ],
+  });
+}
+
+test('3-tier executive layout renders visible dashboard, 4 labeled details blocks, and omits Top findings when <= 3', () => {
+  const pricer = testPricer();
+  const { text } = renderDiagnostics([multiRoundFixture()], pricer);
+  const firstDetails = text.indexOf('<details>');
+  assert.ok(firstDetails > 0);
+  const visible = text.slice(0, firstDetails);
+  for (const heading of ['## Summary', '### Spend & Turns by Role', '### Spend & Turns by Stage', '## Cost drivers', '## Review health', '## Findings']) {
+    assert.ok(visible.includes(heading), `visible missing ${heading}`);
+  }
+  assert.doesNotMatch(visible, /### Tokens by platform|### Tokens by stage|### Phases|### Review round timing|### Review round workload|### Responses by agent|### Turns & context efficiency/);
+  assert.doesNotMatch(text, /### Response events by stage and role|### Review CLI attempt spans/);
+  assert.doesNotMatch(visible, /Top findings:/);
+  for (const label of [
+    '<summary>Cost & token breakdown (platform, stage, model, and metadata)</summary>',
+    '<summary>Turn & context efficiency (by stage, role, and agent)</summary>',
+    '<summary>Execution & review detail (phases, per-slot timing, and workload)</summary>',
+    '<summary>Invocations, provenance, and configuration</summary>',
+  ]) {
+    assert.ok(text.includes(label), `missing ${label}`);
+  }
+  const manyFindings = renderDiagnostics([facts({
+    invocations: [invocation({ outcome: 'quota' }), invocation({ outcome: 'quota' }), invocation({ usage: { input: 9000, cacheRead: 100, output: 0 } })],
+    reviews: [1, 2, 3].map((round) => ({ phase: 'review', round, accepted: 1, rejected: 0, cap: 3, ...(round === 3 ? { reraised: ['R1-F001'] } : {}) })),
+    observations: [observation({ id: 'o1' }), observation({ id: 'o2' })],
+  })], pricer).text;
+  assert.match(manyFindings.slice(0, manyFindings.indexOf('<details>')), /Top findings:/);
+});
+
+test('divergent cost vs token ranking uses priced midpoint bars, 1-block floor, 0% empty bar, and unpriced dash', () => {
+  const pricer = testPricer();
+  const text = renderDiagnostics([facts({
+    invocations: [
+      invocation({ provider: 'claude', model: 'claude-opus-5-5', usage: { input: 10_000, output: 2_000, turns: 3 } }),
+      invocation({ provider: 'claude', model: 'claude-haiku-5', usage: { input: 200_000, output: 20_000, turns: 5 } }),
+      invocation({ provider: 'codex', model: 'gpt-6-sol', usage: { input: 1_500, output: 100, turns: 1 } }),
+      invocation({ provider: 'codex', model: 'gpt-6-sol', effort: 'low', usage: { input: 10, output: 1, turns: 1 } }),
+      invocation({ provider: 'codex', model: 'unpriced-model', usage: { input: 50_000, output: 1_000, turns: 2 } }),
+    ],
+  })], pricer).text;
+  const drivers = text.split('## Cost drivers')[1]!.split('## ')[0]!;
+  const opusAt = drivers.indexOf('claude-opus-5-5');
+  const haikuAt = drivers.indexOf('claude-haiku-5');
+  assert.ok(opusAt > 0 && haikuAt > 0 && opusAt < haikuAt, 'priced cost midpoint ranks opus ahead of higher-token haiku');
+  assert.match(drivers, /█.*1%/, '1% share renders at least one filled block');
+  assert.match(drivers, /░░░░░░░░░░ 0%/, 'valid 0% share renders empty 10-char bar');
+  assert.match(drivers, /unpriced-model.*\| — \|/);
+});
+
+test('Review health consolidates round timing and responder yield and omits empty review sections', () => {
+  const pricer = testPricer();
+  const empty = renderDiagnostics([facts({ reviews: [], roundTiming: [], roundWorkload: [], slotYield: [] })], pricer).text;
+  assert.doesNotMatch(empty, /## Review health/);
+  const review = 'review-1234567890abcdef';
+  const withReview = renderDiagnostics([facts({
+    reviews: [{ phase: review, round: 1, accepted: 2, rejected: 1 }],
+    roundTiming: [{ review, round: 1, slots: [{ slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 0, endMs: 12_000 }] }] }],
+    roundWorkload: [{ review, round: 1, calls: { total: 3, phases: [] }, hostTokens: 1000, hostTurns: 4, reviewerTurns: 3, reviewerTurnsPartial: true }],
+    slotYield: [{ kind: 'provider', provider: 'codex', model: 'gpt-6-sol', raised: { MUST: 1, SHOULD: 1, CONSIDER: 1 }, accepted: 2, rejected: 1, deferred: 0, duplicate: 0, unruled: 0, tokens: 1000, measured: 1, launched: 1, attempts: [{ provider: 'codex', model: 'gpt-6-sol', effort: 'medium', usageSource: 'session', usage: { input: 900, output: 100, turns: 3 } }] }],
+  })], pricer).text;
+  const health = withReview.split('## Review health')[1]!.split('\n## ')[0]!;
+  assert.match(health, /3 partial/);
+  assert.match(health, /1\/1\/1/);
+  assert.doesNotMatch(withReview, /### Review CLI attempt spans/);
+});
+
+test('mixed undefined-turn units render dash via all-defined guard across Summary, Role, Stage, and Cost drivers', () => {
+  const pricer = testPricer();
+  const text = renderDiagnostics([facts({
+    invocations: [
+      invocation({ usageSource: 'session', usage: { input: 1000, output: 100, turns: 4, toolCalls: 2, toolTurns: 1, models: { 'gpt-6-sol': { input: 1000, output: 100, turns: 4, toolCalls: 2, toolTurns: 1 } } } }),
+      invocation({ usageSource: 'stdout', usage: { input: 500, output: 50 } }),
+    ],
+  })], pricer).text;
+  const roleSection = text.split('### Spend & Turns by Role')[1]!.split('### Spend & Turns by Stage')[0]!;
+  assert.match(roleSection, /\| CLI delegates \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| — \| — \|/);
+});
+
+test('delegate-and-child turns reconcile Summary, Role, and Stage without cost duplication across shared, split, and Codex limited fixtures', () => {
+  const pricer = testPricer();
+  // Shared model: root delegate + child subagent on gpt-6-sol
+  const shared = renderDiagnostics([facts({
+    invocations: [invocation({
+      usageSource: 'session',
+      usage: { input: 1000, output: 100, turns: 3, toolCalls: 2, toolTurns: 2, models: { 'gpt-6-sol': { input: 1000, output: 100, turns: 3, toolCalls: 2, toolTurns: 2 } } },
+      responses: [
+        { stage: 'code review', role: 'delegate', agent: 'delegate-1111222233334444', basis: 'claude-assistant-message', coverage: 'complete', observed: 3, uncachedInput: 1000, toolCalls: 2, toolTurns: 2 },
+        { stage: 'code review', role: 'subagent', agent: 'delegate-child-1111222233334444', basis: 'claude-assistant-message', coverage: 'complete', observed: 5, uncachedInput: 400, toolCalls: 4, toolTurns: 3 },
+      ],
+    })],
+  })], pricer).text;
+  assert.match(shared, /LLM 8/);
+  assert.match(shared.split('### Spend & Turns by Role')[1]!, /\| Subagents \|[^|]+\| — \| — \| — \| — \| 5 \| 4 \(3\) \|/);
+  assert.match(shared.split('### Spend & Turns by Role')[1]!, /\| CLI delegates \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 3 \| 2 \(2\) \|/);
+  assert.match(shared.split('## Cost drivers')[1]!, /\| code review \| codex \| delegate \| gpt-6-sol \|[^|]+\|[^|]+\|[^|]+\|[^|]+\|[^|]+\| 3 \|/);
+
+  // Root-A / Child-B different models: root gpt-6-sol, child-only claude-haiku-5 with known-zero root turns
+  const split = renderDiagnostics([facts({
+    invocations: [invocation({
+      usageSource: 'session',
+      usage: {
+        input: 1500, output: 150, turns: 3, toolCalls: 2, toolTurns: 2,
+        models: {
+          'gpt-6-sol': { input: 1000, output: 100, turns: 3, toolCalls: 2, toolTurns: 2 },
+          'claude-haiku-5': { input: 500, output: 50, turns: 0, toolCalls: 0, toolTurns: 0 },
+        },
+      },
+      responses: [
+        { stage: 'code review', role: 'delegate', agent: 'delegate-1111222233334444', basis: 'claude-assistant-message', coverage: 'complete', observed: 3, uncachedInput: 1000, toolCalls: 2, toolTurns: 2 },
+        { stage: 'code review', role: 'subagent', agent: 'delegate-child-2222333344445555', basis: 'claude-assistant-message', coverage: 'complete', observed: 4, uncachedInput: 500, toolCalls: 1, toolTurns: 1 },
+      ],
+    })],
+  })], pricer).text;
+  assert.match(split, /LLM 7/);
+  assert.match(split.split('### Spend & Turns by Role')[1]!, /\| CLI delegates \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 3 \| 2 \(2\) \|/);
+
+  // Codex session delegate+child with limited codex-token-count coverage
+  const codexLimited = renderDiagnostics([facts({
+    invocations: [invocation({
+      usageSource: 'session',
+      usage: { input: 1000, output: 100, turns: 2, toolCalls: 1, toolTurns: 1, models: { 'gpt-6-sol': { input: 1000, output: 100, turns: 2, toolCalls: 1, toolTurns: 1 } } },
+      responses: [
+        { stage: 'code review', role: 'delegate', agent: 'delegate-1111222233334444', basis: 'codex-token-count', coverage: 'complete', observed: 2, uncachedInput: 1000, toolCalls: 1, toolTurns: 1 },
+        { stage: 'code review', role: 'subagent', agent: 'delegate-child-3333444455556666', basis: 'codex-token-count', coverage: 'partial', observed: 6, uncachedInput: 300 },
+      ],
+    })],
+  })], pricer).text;
+  assert.match(codexLimited, /LLM 8/);
+  assert.match(codexLimited.split('### Spend & Turns by Role')[1]!, /\| Subagents \|[^\n]*limited/);
+});
+
+const BASELINE_MULTI_ROUND_BYTES = 9468;
+
+test('multi-round byte ceiling stays strictly below unmodified baseline', () => {
+  const { text } = renderDiagnostics([multiRoundFixture()], testPricer());
+  const bytes = Buffer.byteLength(text);
+  assert.ok(bytes < BASELINE_MULTI_ROUND_BYTES, `expected ${bytes} < baseline ${BASELINE_MULTI_ROUND_BYTES}`);
+});
+
+test('bounded-range waste cost, midpoint share, wrapUp, and writerRelaunches render in Summary and Tier 2', () => {
+  const pricer = testPricer();
+  const text = renderDiagnostics([facts({
+    relaunches: 2,
+    invocations: [
+      invocation({ model: 'bounded-model', usageSource: 'session', usage: { input: 10_000, output: 1_000, turns: 2 }, slot: 'codex[0]', subject: '1111222233334444', attempt: 1 }),
+      invocation({ model: 'bounded-model', usageSource: 'session', usage: { input: 10_000, output: 1_000, turns: 2 }, slot: 'codex[0]', subject: '1111222233334444', attempt: 2, nudge: true }),
+      invocation({ model: 'bounded-model', usageSource: 'session', usage: { input: 10_000, output: 1_000, turns: 2 }, slot: 'codex[0]', subject: '2222333344445555', attempt: 1, wrapUp: true, superseded: true }),
+    ],
+  })], pricer).text;
+  assert.match(text, /Waste \/ recovery:.*~/);
+  assert.match(text, /wrap-up/i);
+  assert.match(text, /writer relaunch/i);
+  assert.match(text, /wrapUp/);
+});
+
+test('session and stdout delegate turns, subagent depth, and thread-verified workload render cleanly', () => {
+  const pricer = testPricer();
+  const text = renderDiagnostics([multiRoundFixture()], pricer).text;
+  assert.doesNotMatch(text, /0123456789abcdef/);
+  assert.match(text, /Subagents: 2 · max depth 2/);
+  assert.doesNotMatch(text, /\| Run \|/);
+  assert.doesNotMatch(text, /gpt-6-sol \(reported: gpt-6-sol\)/);
+  assert.doesNotMatch(text.slice(0, text.indexOf('<details>')), /^- Build:/m);
+});
+
+test('folds Tier-2 details before Tier-1 yield and keeps Summary and Cost drivers intact', () => {
+  const responses = Array.from({ length: 64 }, (_, i) => ({
+    stage: 'code review' as const, role: 'delegate' as const,
+    agent: `delegate-${i.toString(16).padStart(16, '0')}`,
+    basis: 'claude-assistant-message' as const, coverage: 'complete' as const, observed: 1, uncachedInput: 2,
+  }));
+  const phases = Array.from({ length: 100 }, (_, i) => ({ key: `ledger-append-${i}`, count: i }));
+  const text = renderDiagnostics([facts({
+    invocations: responses.map(response => invocation({ responses: [response] })),
+    roundWorkload: Array.from({ length: 1000 }, (_, i) => ({
+      review: 'review-1234567890abcdef', round: i + 1, calls: { total: 4950, phases },
+    })),
+    slotYield: [{ kind: 'provider', provider: 'codex', model: 'gpt-6-sol', raised: { MUST: 1, SHOULD: 0, CONSIDER: 0 }, accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 1, launched: 1 }],
+  })], testPricer()).text;
+  assert.ok(Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes);
+  assert.match(text, /## Summary/);
+  assert.match(text, /### Spend & Turns by Role/);
+  assert.match(text, /## Cost drivers/);
+  assert.match(text, /<summary>Execution & review detail/);
+  assert.match(text, /workload rows omitted/);
+  assert.doesNotMatch(text, /yield rows omitted/);
+});
+
+test('yield-heavy overflow folds Tier-2 first and then folds Responder yield last-resort', () => {
+  const slotYield = Array.from({ length: 3500 }, (_, i) => ({
+    kind: 'provider' as const, provider: `p${i}`, model: `model-${i}`,
+    raised: { MUST: 1, SHOULD: 2, CONSIDER: 3 }, accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0,
+    tokens: 1000, measured: 1, launched: 1,
+  }));
+  const text = renderDiagnostics([facts({ slotYield })], testPricer()).text;
+  assert.ok(Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes);
+  assert.match(text, /## Summary/);
+  assert.match(text, /### Spend & Turns by Role/);
+  assert.match(text, /## Cost drivers/);
+  assert.match(text, /yield rows omitted/);
+});
+
+test('Context efficiency tables keep exact header-to-cell alignment with distinct Observed turns and Matched turns', () => {
+  const fixture = multiRoundFixture();
+  fixture.hostUsage!.responses!.push({ stage: 'plan', role: 'host', basis: 'claude-assistant-message', coverage: 'partial', observed: 2 });
+  const text = renderDiagnostics([fixture], testPricer()).text;
+  for (const heading of ['### Context efficiency by stage and role', '### Turns & context efficiency by agent']) {
+    const table = text.split(heading)[1]!.split(/\n###|\n<\/details>/)[0]!.split('\n').filter(l => l.startsWith('|'));
+    const headers = table[0]!.slice(2, -2).split(' | ');
+    for (const dataRow of table.slice(2)) {
+      assert.equal(dataRow.slice(2, -2).split(' | ').length, headers.length, `${heading}: ${dataRow}`);
+    }
+  }
+  const stageTable = text.split('### Context efficiency by stage and role')[1]!.split(/\n###|\n<\/details>/)[0]!.split('\n').filter(l => l.startsWith('|'));
+  const sHeaders = stageTable[0]!.slice(2, -2).split(' | ');
+  const planRow = stageTable.slice(2).find(l => l.includes('| plan | host |'))!.slice(2, -2).split(' | ');
+  assert.equal(planRow[sHeaders.indexOf('Observed turns')], '7');
+  assert.equal(planRow[sHeaders.indexOf('Coverage')], 'partial');
+  assert.equal(planRow[sHeaders.indexOf('Matched turns')], '5');
+});
+
+test('Summary qualifies missing host turns without degrading CLI delegates and preserves sparse zero User turns', () => {
+  const pricer = testPricer();
+  // Missing host usage + session delegate -> Summary partial, CLI delegates and Stage unqualified
+  const delegateOnly = renderDiagnostics([facts({
+    collection: { completed: 5, incomplete: 1, corrupt: 0, unreadable: 0, storageFailed: 0 },
+    invocations: [invocation({ usageSource: 'session', usage: { input: 1000, output: 100, turns: 4, toolCalls: 2, toolTurns: 1, models: { 'gpt-6-sol': { input: 1000, output: 100, turns: 4, toolCalls: 2, toolTurns: 1 } } } })],
+  })], pricer).text;
+  assert.match(delegateOnly, /LLM 4 \(partial\) · Tool calls 2 \(1\) \(partial\) · Captured toolkit calls 6 \(partial\) \(excl\. report\/diagnostics\)/);
+  assert.match(delegateOnly.split('### Spend & Turns by Role')[1]!, /\| CLI delegates \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 4 \| 2 \(1\) \|/);
+  assert.match(delegateOnly.split('### Spend & Turns by Stage')[1]!, /Stage uses observed rows\. Summary flags missing host\/subagent data\./);
+  assert.match(delegateOnly.split('### Spend & Turns by Stage')[1]!, /\| code review \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 4 \| 2 \(1\) \|/);
+
+  // Incomplete host notes.host degrades Summary and Host role User turns to —, and marks Host/plan stage Cache hit & turns (partial)
+  const incompleteHost = renderDiagnostics([facts({
+    hostUsage: { platform: 'claude', userTurns: 2, userTurnsByStage: { plan: 2 }, notes: { host: { 'unparsed lines': 1 } }, rows: [{ stage: 'plan', role: 'host', model: 'claude-opus-5-5', effort: null, input: 100, cacheRead: 50, output: 10, turns: 2 }] },
+    invocations: [],
+  })], pricer).text;
+  assert.match(incompleteHost, /Turns: User — · LLM 2 \(partial\)/);
+  assert.match(incompleteHost.split('### Spend & Turns by Role')[1]!, /\| Host \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \|/);
+  assert.match(incompleteHost.split('### Spend & Turns by Role')[1]!, /\| Host \|[^|]+\|[^|]+\|[^|]+\| 33% \(partial\) \| — \| 2 \|/);
+  assert.match(incompleteHost.split('### Spend & Turns by Stage')[1]!, /\| plan \|[^|]+\|[^|]+\|[^|]+\| 33% \(partial\) \| — \| 2 \(partial\) \|/);
+
+  // Sparse userTurnsByStage on complete host -> zero-turn stage renders 0; multi-run sums 2 + 0 = 2
+  const runA = facts({ hostUsage: { platform: 'claude', userTurns: 2, userTurnsByStage: { plan: 2 }, rows: [{ stage: 'plan', role: 'host', model: 'claude-opus-5-5', effort: null, input: 100, output: 10, turns: 2 }] }, invocations: [] });
+  const runB = facts({ hostUsage: { platform: 'claude', userTurns: 1, userTurnsByStage: { implementation: 1 }, rows: [{ stage: 'implementation', role: 'host', model: 'claude-opus-5-5', effort: null, input: 100, output: 10, turns: 1 }] }, invocations: [] });
+  const multiStage = renderDiagnostics([runA, runB], pricer).text.split('### Spend & Turns by Stage')[1]!.split('## ')[0]!;
+  assert.match(multiStage, /\| plan \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| 2 \|/);
+  assert.match(multiStage, /\| implementation \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| 1 \|/);
+});
+
+test('Cache hit marks missing host scope (partial) in Summary only and distinguishes zero-token from unmeasured units', () => {
+  const pricer = testPricer();
+  // Delegate cache counters with missing host -> Summary Cache hit (partial), Stage code review unqualified
+  const delegateCacheOnly = renderDiagnostics([facts({
+    invocations: [invocation({
+      usageSource: 'session',
+      usage: { input: 1000, cacheRead: 500, output: 100, turns: 2, models: { 'gpt-6-sol': { input: 1000, cacheRead: 500, output: 100, turns: 2 } } },
+    })],
+  })], pricer).text;
+  assert.match(delegateCacheOnly, /Cache hit: 33% \(partial\)/);
+  assert.match(delegateCacheOnly.split('### Spend & Turns by Stage')[1]!, /\| code review \|[^|]+\|[^|]+\|[^|]+\| 33% \|/);
+
+  // Measured zero-token unit does not mark Cache hit (partial); wholly unmeasured unit does
+  const completeHost: NonNullable<RunFacts['hostUsage']> = { platform: 'claude', userTurns: 1, userTurnsByStage: { 'code review': 1 }, rows: [{ stage: 'code review', role: 'host' as const, model: 'claude-opus-5-5', effort: null, input: 0, output: 0, turns: 1 }] };
+  const withZeroToken = renderDiagnostics([facts({
+    hostUsage: completeHost,
+    invocations: [
+      invocation({ usageSource: 'session', usage: { input: 1000, cacheRead: 1000, output: 100, turns: 2, models: { 'gpt-6-sol': { input: 1000, cacheRead: 1000, output: 100, turns: 2 } } } }),
+      invocation({ usageSource: 'session', usage: { input: 0, output: 0 } }),
+    ],
+  })], pricer).text;
+  assert.match(withZeroToken, /Cache hit: 50%\n/);
+
+  const withUnmeasured = renderDiagnostics([facts({
+    hostUsage: completeHost,
+    invocations: [
+      invocation({ usageSource: 'session', usage: { input: 1000, cacheRead: 1000, output: 100, turns: 2, models: { 'gpt-6-sol': { input: 1000, cacheRead: 1000, output: 100, turns: 2 } } } }),
+      bare(),
+    ],
+  })], pricer).text;
+  assert.match(withUnmeasured, /Cache hit: 50% \(partial\)/);
+});
+
+test('Cache hit distinguishes missing vs zero, waste qualifies incomplete denominator, and override rates warn in Summary', () => {
+  const overridePricer = resolvePricing({
+    asOf: '2026-11-23', source: ['test'],
+    models: {
+      'gpt-6-sol': { rates: { input: 2, output: 10 } },
+      'claude-opus-5-5': { rates: { input: 15, output: 75 } },
+    },
+  }, { 'tiny-override': { rates: { input: 0.01, output: 0.01 } } });
+  const text = renderDiagnostics([facts({
+    invocations: [
+      invocation({ model: 'gpt-6-sol', usage: { input: 1000, output: 100 } }),
+      invocation({ model: 'gpt-6-sol', effort: 'low', usage: { input: 1000, cacheRead: 0, output: 100 } }),
+      invocation({ model: 'claude-opus-5-5', usage: { input: 10000, output: 1000 } }),
+      invocation({ model: 'claude-opus-5-5', effort: 'low', usage: { input: 9000, output: 1000 } }),
+      invocation({ model: 'claude-opus-5-5', effort: 'high', usage: { input: 8000, output: 1000 } }),
+      invocation({ model: 'claude-opus-5-5', effort: 'xhigh', usage: { input: 7000, output: 1000 } }),
+      invocation({ model: 'tiny-override', effort: 'low', usage: { input: 100, output: 10 }, nudge: true }),
+      invocation({ model: 'unpriced-model', usage: { input: 100, output: 10 } }),
+    ],
+  })], overridePricer).text;
+  assert.match(text, /- Rate warning: 1 override rate applied/);
+  assert.match(text, /Cache hit: 0% \(partial\)/);
+  assert.match(text, /Waste \/ recovery:.*\(partial\)/);
+});
+
+test('Review health shows per-round rows, CLI-only native span qualifier, partial hostTurns, and uncompacted empty phases', () => {
+  const review = 'review-1234567890abcdef';
+  const text = renderDiagnostics([facts({
+    phases: [{ key: 'plan', name: 'plan', outcome: 'ok', wallMs: 400 }, { key: 'ask', name: 'ask', outcome: 'ok', wallMs: 300 }],
+    reviews: [{ phase: review, round: 1, accepted: 1, rejected: 0 }, { phase: review, round: 2, accepted: 0, rejected: 1 }],
+    roundTiming: [
+      { review, round: 1, slots: [{ slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 0, endMs: 5000 }] }] },
+      { review, round: 2, slots: [{ slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 0, endMs: 3000 }, { surface: 'native' }] }] },
+    ],
+    roundWorkload: [
+      { review, round: 1, calls: { total: 1, phases: [] }, hostTokens: 100, hostTurns: 4, reviewerTurns: 2 },
+      { review, round: 2, calls: { total: 1, phases: [] }, reviewerTurns: 1 },
+    ],
+    invocations: [],
+  })], testPricer()).text;
+  assert.match(text, /Host turns 4 partial/);
+  assert.match(text, /\| subject 1234567890abcdef \| 1\/2 \| 5s \| 4 \| 2 \| 1 \| 0 \| — \|/);
+  assert.match(text, /\| subject 1234567890abcdef \| 2\/2 \| 3s \(CLI only\) \| — \| 1 \| 0 \| 1 \| — \|/);
+  assert.match(text, /\| plan \| ok \| <1s \|/);
+  assert.match(text, /\| ask \| ok \| <1s \|/);
+
+  // Legacy partial-only collection without completed/incomplete does not emit Toolkit calls 0,
+  // and multi-run identical review/round IDs retain separate round rows.
+  const reviewRun = (n: number) => facts({
+    collection: { storageFailed: 1 },
+    reviews: [{ phase: review, round: 1, accepted: n, rejected: 0 }, { phase: review, round: 3, accepted: 0, rejected: 1 }],
+    roundWorkload: [{ review, round: 1, calls: { total: 1, phases: [] }, hostTurns: n, reviewerTurns: 1 }, { review, round: 3, calls: { total: 1, phases: [] }, hostTurns: 1, reviewerTurns: 1 }],
+  });
+  const multiRun = renderDiagnostics([reviewRun(2), reviewRun(3)], testPricer()).text;
+  assert.match(multiRun, /Review-window toolkit calls 4 \(excl\. report\/diagnostics\)/);
+  assert.match(multiRun, /- 2 reviews · 4 rounds · Host turns 7 · Reviewer turns 4/);
+  assert.match(multiRun, /\| 1 \| subject 1234567890abcdef \| 1\/3 \| — \| 2 \|/);
+  assert.match(multiRun, /\| 2 \| subject 1234567890abcdef \| 3\/3 \| — \| 1 \|/);
 });

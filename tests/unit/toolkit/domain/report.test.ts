@@ -894,7 +894,7 @@ test('grounding retro observations pass the gate and render only in the Overview
     assert.deepEqual(gated.values[0], item);
 
     const text = render([facts({ observations: [item] })]);
-    assert.ok(text.includes('| 1 | spec | map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |'), text);
+    assert.ok(text.includes('| spec | map 1, nested 2, research 1, not-covered 0, yield 2/3, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |'), text);
 
   }
   // merged from: grounding retro items render only in the Overview Grounding table
@@ -904,11 +904,11 @@ test('grounding retro observations pass the gate and render only in the Overview
       evidence: 'map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable', impact: 'Keep the token limit at 150000.', proposedFix: 'Keep the current discovery bounds.' });
     const run = facts({ observations: [grounding, observation()] });
     const text = render([run]);
-    assert.ok(text.includes('### Grounding\n\n| Run | Phase | Evidence | Assessment | Proposed change |\n| --- | --- | --- | --- | --- |\n'
-      + '| 1 | plan | map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |\n'), text);
+    assert.ok(text.includes('### Grounding\n\n| Phase | Evidence | Assessment | Proposed change |\n| --- | --- | --- | --- |\n'
+      + '| plan | map 1, nested 0, research 0, not-covered 0, yield 0/0, tokens unavailable | Keep the token limit at 150000. | Keep the current discovery bounds. |\n'), text);
     assert.doesNotMatch(text, /grounding-plan/);
     assert.match(text, /^- Source: host retro `o1` · run 1$/m, 'other retro items stay findings');
-    assert.doesNotMatch(text.slice(0, text.indexOf('## Overview')), /grounding/, 'summary top findings');
+    assert.doesNotMatch(text.slice(0, text.indexOf('### Grounding')), /grounding/, 'summary top findings');
     assert.equal(renderDiagnostics([run]).findings, 1);
     assert.match(text, /- Host retro: collected · 2 accepted · 0 rejected/);
     assert.doesNotMatch(render([facts()]), /### Grounding/, 'empty grounding table is omitted');

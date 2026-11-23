@@ -3,8 +3,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 export type OpencodeMessage = { depth: number; sessionId?: string; createdMs: number; model: string | null; effort: string | null;
-  input: number; output: number; reasoning?: number; cacheRead?: number; cacheWrite?: number };
-export type OpencodeRead = { messages: OpencodeMessage[]; skipped: number; truncated: 'sessions' | 'rows' | null };
+  input: number; output: number; reasoning?: number; cacheRead?: number; cacheWrite?: number; toolCalls?: number };
+export type OpencodeRead = { messages: OpencodeMessage[]; skipped: number; truncated: 'sessions' | 'rows' | null; userMessageTimes?: number[]; userTurnsTruncated?: true };
 export type OpencodeReadOptions = { fromMs: number; toMs: number; maxSessions?: number; maxRows?: number; includeSessionIdentity?: true };
 
 const DEFAULT_MAX_SESSIONS = 256;
@@ -67,7 +67,7 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
     const ids = [...depths.keys()];
     const placeholders = ids.map(() => '?').join(',');
     const rows = db.prepare(`
-      SELECT session_id, time_created,
+      SELECT id, session_id, time_created,
         json_extract(data, '$.tokens.input') AS input,
         json_extract(data, '$.tokens.output') AS output,
         json_extract(data, '$.tokens.reasoning') AS reasoning,
@@ -82,6 +82,27 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
       ORDER BY time_created, id
       LIMIT ?
     `).all(...ids, options.fromMs, options.toMs, maxRows + 1) as Row[];
+
+    const tables = new Set(
+      (db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`).all() as Row[])
+        .map(r => r['name'])
+        .filter((n): n is string => typeof n === 'string'),
+    );
+    let toolCounts: Map<string, number> | null = null;
+    const partQuery = tables.has('part')
+      ? `SELECT message_id, COUNT(*) AS tool_calls FROM part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND json_extract(data, '$.type') = 'tool' GROUP BY message_id`
+      : tables.has('session_part')
+        ? `SELECT message_id, COUNT(*) AS tool_calls FROM session_part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND type = 'tool' GROUP BY message_id`
+        : null;
+    if (partQuery) {
+      toolCounts = new Map<string, number>();
+      const toolRows = db.prepare(partQuery).all(...ids, options.fromMs, options.toMs) as Row[];
+      for (const tr of toolRows) {
+        const msgId = tr['message_id'];
+        const cnt = tr['tool_calls'];
+        if (typeof msgId === 'string' && token(cnt)) toolCounts.set(msgId, cnt);
+      }
+    }
 
     const messages: OpencodeMessage[] = [];
     let skipped = 0;
@@ -100,6 +121,7 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
       const providerId = row['provider_id'];
       const modelId = row['model_id'];
       const variant = row['variant'];
+      const msgId = row['id'];
       messages.push({
         depth: messageDepth,
         ...(options.includeSessionIdentity ? { sessionId } : {}),
@@ -111,11 +133,30 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
         ...(reasoning !== undefined ? { reasoning } : {}),
         ...(cacheRead !== undefined ? { cacheRead } : {}),
         ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+        ...(toolCounts !== null && typeof msgId === 'string' ? { toolCalls: toolCounts.get(msgId) ?? 0 } : {}),
       });
     }
     // Session truncation wins: it limits which sessions the row cap is applied to.
     if (rows.length > maxRows && truncated === null) truncated = 'rows';
-    return { messages, skipped, truncated };
+
+    const userRows = db.prepare(`
+      SELECT time_created
+      FROM session_message
+      WHERE type = 'user' AND session_id = ?
+        AND time_created >= ? AND time_created <= ?
+      ORDER BY time_created, id
+      LIMIT ?
+    `).all(rootSessionId, options.fromMs, options.toMs, maxRows + 1) as Row[];
+    const userTurnsTruncated = userRows.length > maxRows;
+
+    return {
+      messages,
+      skipped,
+      truncated,
+      ...(userTurnsTruncated
+        ? { userTurnsTruncated: true as const }
+        : { userMessageTimes: userRows.map(r => r['time_created']).filter(token) }),
+    };
   } finally {
     db.close();
   }

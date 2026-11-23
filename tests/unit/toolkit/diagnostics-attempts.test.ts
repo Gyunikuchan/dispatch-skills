@@ -311,7 +311,7 @@ test('nudge marker persists only for boolean resume launches', async () => {
     assert.equal(facts.invocations.length, 2);
     assert.equal((facts.invocations[1] as Record<string, unknown>)['nudge'], true);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, / · nudge/);
+    assert.match(report, /ok · nudge/);
   } finally { f.cleanup(); }
   const g = sessionFixture({ memory: true });
   try {
@@ -322,7 +322,7 @@ test('nudge marker persists only for boolean resume launches', async () => {
     const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
     assert.ok(facts.invocations.every((i) => !('nudge' in i)));
     const report = fs.readFileSync(writeDiagnostics(g.session, facts), 'utf8');
-    assert.doesNotMatch(report, / · nudge/);
+    assert.doesNotMatch(report, /ok · nudge/);
   } finally { g.cleanup(); }
 });
 
@@ -394,7 +394,7 @@ test('diagnostics resume chain leaves waste only without a successful end', asyn
     const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
     assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H1'), [], 'two failed resumes absorbed by a third');
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.equal((report.match(/ · nudge/g) ?? []).length, 3, 'every resume launch is marked');
+    assert.equal((report.match(/(?:timeout|ok) · nudge/g) ?? []).length, 3, 'every resume launch is marked');
   } finally { f.cleanup(); }
   const g = sessionFixture({ memory: true });
   try {
@@ -549,9 +549,9 @@ test('response evidence retains verified aliases across captures and distinguish
     assert.match(agent ?? '', /^delegate-[a-f0-9]{16}$/);
     assert.notEqual(observed.get('other')?.agent, agent);
     assert.deepEqual(observed.get('first'), {
-      stage: 'ask', role: 'delegate', agent, basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 42,
+      stage: 'ask', role: 'delegate', agent, basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 42, toolCalls: 0, toolTurns: 0,
     });
-    assert.deepEqual(observed.get('resume'), { ...observed.get('first'), observed: 0, uncachedInput: 0 });
+    assert.deepEqual(observed.get('resume'), { stage: 'ask', role: 'delegate', agent, basis: 'claude-assistant-message', coverage: 'complete', observed: 0, uncachedInput: 0 });
     assert.equal(observed.get('legacy'), undefined);
     assert.equal(observed.get('unsafe'), undefined);
     const directory = path.join(f.session, '.state', 'diagnostics');
@@ -626,8 +626,8 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
     assert.doesNotMatch(report, /gemini-4-argon \(configured\)/);
     assert.doesNotMatch(report, /gemini-3.8-flash \(configured\)/);
 
-    // Appendix should render reportedModels
-    assert.match(report, /gemini-4-argon \(reported: gemini-4-argon\)/);
+    // Appendix should suppress redundant (reported: X) when equal to configured model
+    assert.doesNotMatch(report, /gemini-4-argon \(reported: gemini-4-argon\)/);
   } finally {
     f.cleanup();
   }
@@ -688,7 +688,8 @@ test('native substitution preserves the legacy gap and the measured CLI span', (
   for(const round of facts.roundTiming!) assert.deepEqual(round.slots[0]!.attempts,[{surface:'cli',startMs:0,endMs:1000},{surface:'native'}]);
   const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
   assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
-  assert.match(report,/\| 1 \| 1s \| codex\[0\] \|/);
+  assert.match(report,/\| subject [a-f0-9]{16} \| 1\/2 \| 1s \(CLI only\) \|/);
+  assert.match(report,/\| subject [a-f0-9]{16} \| 2\/2 \| 1s \(CLI only\) \|/);
  } finally {f.cleanup();}
 });
 
@@ -706,6 +707,6 @@ test('failed native reserve remains unmeasured after terminal failure', () => {
   assert.deepEqual(facts.roundTiming?.[0]?.slots[0]?.attempts,[{surface:'cli',startMs:0,endMs:1000},{surface:'native'}]);
   const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
   assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
-  assert.match(report,/\| 1 \| 5s \| claude\[0\] \|/);
+  assert.match(report,/\| subject [a-f0-9]{16} \| 1\/1 \| 5s \(CLI only\) \|/);
  } finally {f.cleanup();}
 });

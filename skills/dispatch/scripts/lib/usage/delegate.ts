@@ -1,12 +1,12 @@
-import type { DelegateResponse, DiagnosticUsage } from '../../toolkit/types.ts';
+import type { DelegateResponse, DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
 import { validSessionId } from '../session.ts';
 import { collectAgyUsage } from './agy.ts';
-import { boundModels, foldRows } from './bands.ts';
+import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { collectClaudeUsage } from './claude.ts';
 import { collectCodexUsage } from './codex.ts';
 import { collectOpencodeUsage } from './opencode.ts';
 import { baseCounters } from './read.ts';
-import { MAX_RESPONSE_AGENTS, type DelegateQuery, type HostUsageQuery, type HostUsageResult } from './rows.ts';
+import { MAX_RESPONSE_AGENTS, usageKey, type DelegateQuery, type HostUsageQuery, type HostUsageResult } from './rows.ts';
 
 export type SessionRead = { usage?: DiagnosticUsage; complete: boolean; invalidCounters?: true; responses?: DelegateResponse[] };
 
@@ -18,7 +18,7 @@ export const delegateResponseActor = (response: DelegateResponse): string | unde
 function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplete: boolean): DelegateResponse[] {
   if (!result.response || (query.resumed && result.rows.some(row => row.wholeSecond))) return [];
   const { basis, limited } = result.response;
-  const groups = new Map<string, DelegateResponse>();
+  const groups = new Map<string, { response: DelegateResponse; activeCount: number; toolCalls: number; toolTurns: number; allToolCalls: boolean; allToolTurns: boolean }>();
   const named = new Set<string>();
   for (const row of result.rows) {
     if (row.role === 'host' || !baseCounters(row) || (!row.wholeSecond && row.atMs < query.startMs)) continue;
@@ -27,28 +27,42 @@ function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplet
     const actor = identity && (named.has(identity) || named.size < MAX_RESPONSE_AGENTS) ? identity : undefined;
     if (actor) named.add(actor);
     const key = JSON.stringify([role, actor]);
-    let group = groups.get(key);
-    if (!group) {
-      group = { role, basis, coverage: incomplete || limited || !actor ? 'partial' : 'complete', observed: 0, uncachedInput: 0 };
-      if (actor) actors.set(group, actor);
-      groups.set(key, group);
+    let entry = groups.get(key);
+    if (!entry) {
+      const response: DelegateResponse = { role, basis, coverage: incomplete || limited || !actor ? 'partial' : 'complete', observed: 0, uncachedInput: 0 };
+      if (actor) actors.set(response, actor);
+      entry = { response, activeCount: 0, toolCalls: 0, toolTurns: 0, allToolCalls: true, allToolTurns: true };
+      groups.set(key, entry);
     }
+    const group = entry.response;
     if (!row.skipResponse) {
+      entry.activeCount++;
       group.observed! += 1;
       const input = (group.uncachedInput ?? Infinity) + row.input;
       if (Number.isSafeInteger(input)) group.uncachedInput = input;
       else delete group.uncachedInput;
+      if (row.toolCalls !== undefined) entry.toolCalls += row.toolCalls;
+      else entry.allToolCalls = false;
+      if (row.toolTurns !== undefined) entry.toolTurns += row.toolTurns;
+      else entry.allToolTurns = false;
     }
   }
+  const out = [...groups.values()].map(({ response, activeCount, toolCalls, toolTurns, allToolCalls, allToolTurns }) => {
+    if (!incomplete && activeCount > 0) {
+      if (allToolCalls) response.toolCalls = toolCalls;
+      if (allToolTurns) response.toolTurns = toolTurns;
+    }
+    return response;
+  });
   if (incomplete) {
-    if (!Array.from(groups.values()).some(group => group.role === 'delegate')) {
-      groups.set('unknown-root', { role: 'delegate', basis: 'unavailable', coverage: 'unknown' });
+    if (!out.some(group => group.role === 'delegate')) {
+      out.push({ role: 'delegate', basis: 'unavailable', coverage: 'unknown' });
     }
-    if (result.notes?.subagent && !Array.from(groups.values()).some(group => group.role === 'subagent')) {
-      groups.set('unknown-child', { role: 'subagent', basis: 'unavailable', coverage: 'unknown' });
+    if (result.notes?.subagent && !out.some(group => group.role === 'subagent')) {
+      out.push({ role: 'subagent', basis: 'unavailable', coverage: 'unknown' });
     }
   }
-  return [...groups.values()];
+  return out;
 }
 
 /** Reads one delegate launch's own session data in its launch window and folds rows into banded counters. */
@@ -118,15 +132,55 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   const efforts = new Set(rows.map((r) => r.effort));
   const actualEffort = efforts.size === 1 ? [...efforts][0]! : null;
 
+  const models: Record<string, DiagnosticModelUsage> = boundModels(folded.models);
+  const activeDelegateRows = rows.filter(r => r.role === 'delegate' && !r.skipResponse);
+  const hasDelegateRows = activeDelegateRows.length > 0;
+  const usageTurns = hasDelegateRows && activeDelegateRows.every(r => r.turns !== undefined)
+    ? activeDelegateRows.reduce((sum, r) => sum + r.turns!, 0)
+    : undefined;
+  const usageToolCalls = hasDelegateRows && activeDelegateRows.every(r => r.toolCalls !== undefined)
+    ? activeDelegateRows.reduce((sum, r) => sum + r.toolCalls!, 0)
+    : undefined;
+  const usageToolTurns = hasDelegateRows && activeDelegateRows.every(r => r.toolTurns !== undefined)
+    ? activeDelegateRows.reduce((sum, r) => sum + r.toolTurns!, 0)
+    : undefined;
+
+  if (hasDelegateRows) {
+    const delegateByModel = new Map<string, typeof activeDelegateRows>();
+    for (const r of activeDelegateRows) {
+      const rawKey = usageKey(r.model, r.effort);
+      const key = Object.hasOwn(models, rawKey) ? rawKey : OTHER_KEY;
+      const list = delegateByModel.get(key) ?? [];
+      list.push(r);
+      delegateByModel.set(key, list);
+    }
+    for (const key of Object.keys(models)) {
+      const entry = models[key]!;
+      const group = delegateByModel.get(key) ?? [];
+      if (group.length > 0) {
+        if (group.every(r => r.turns !== undefined)) entry.turns = group.reduce((s, r) => s + r.turns!, 0);
+        if (group.every(r => r.toolCalls !== undefined)) entry.toolCalls = group.reduce((s, r) => s + r.toolCalls!, 0);
+        if (group.every(r => r.toolTurns !== undefined)) entry.toolTurns = group.reduce((s, r) => s + r.toolTurns!, 0);
+      } else {
+        if (usageTurns !== undefined) entry.turns = 0;
+        if (usageToolCalls !== undefined) entry.toolCalls = 0;
+        if (usageToolTurns !== undefined) entry.toolTurns = 0;
+      }
+    }
+  }
+
   return {
     complete: true,
     ...evidence,
     usage: {
       ...folded.total,
+      ...(usageTurns === undefined ? {} : { turns: usageTurns }),
+      ...(usageToolCalls === undefined ? {} : { toolCalls: usageToolCalls }),
+      ...(usageToolTurns === undefined ? {} : { toolTurns: usageToolTurns }),
       scope: 'invocation',
       provenance: 'session',
       inputSemantics: 'uncached',
-      models: boundModels(folded.models),
+      models,
       ...(actualModels.length > 0 ? { actualModels: actualModels.slice(0, 8) } : {}),
       actualEffort,
       ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }),

@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
-import { nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
+import { hostSessionId, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, readTranscript, stageAt } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
 
@@ -274,4 +274,137 @@ test('response overflow keeps the observed count and same-subset input by stage'
   ]);
   assert.equal(responses.reduce((sum, r) => sum + (r.observed ?? 0), 0), 34);
   assert.equal(result.rows[0]?.input, 136);
+});
+
+test('readHostUsage computes subagentCount across 40 distinct subagents before 32-alias cap and tracks maxSubagentDepth', () => {
+  const hostRow = {
+    stage: 'plan' as const, role: 'host' as const, model: 'm', effort: null, input: 10, output: 2,
+    atMs: 2500, depth: 0, reasoningInOutput: true, turns: 1, toolCalls: 2, toolTurns: 1, responseActor: 'private-host',
+  };
+  const subRows = Array.from({ length: 40 }, (_, i) => ({
+    stage: 'plan' as const, role: 'subagent' as const, model: 'm', effort: null, input: 4, output: 1,
+    atMs: 3000 + i, depth: i === 39 ? 3 : 1, reasoningInOutput: true, turns: 1, toolCalls: 1, toolTurns: 1,
+    responseActor: `private-sub-${i}`,
+  }));
+  const result = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
+    claude: {
+      sessionEnv: ['HOST'],
+      read: () => ({
+        rows: [hostRow, ...subRows],
+        response: { basis: 'claude-assistant-message' },
+        userTurns: 2,
+        userTurnsByStage: { plan: 2 },
+      }),
+    },
+  });
+  assert.equal(result.subagentCount, 40);
+  assert.equal(result.maxSubagentDepth, 3);
+  assert.equal(result.userTurns, 2);
+  assert.deepEqual(result.userTurnsByStage, { plan: 2 });
+  assert.equal(result.responses?.filter(r => r.agent).length, 32);
+  const subSummary = result.rows.find(r => r.role === 'subagent');
+  assert.equal(subSummary?.turns, 40);
+  assert.equal(subSummary?.toolCalls, 40);
+  assert.equal(subSummary?.toolTurns, 40);
+  assert.equal(subSummary?.maxDepth, 3);
+  assert.doesNotMatch(JSON.stringify(result), /private-/);
+
+  const { responseActor: _omitActor, ...subWithoutActor } = subRows[0]!;
+  const missingActor = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
+    claude: {
+      sessionEnv: ['HOST'],
+      read: () => ({
+        rows: [hostRow, subWithoutActor],
+        response: { basis: 'claude-assistant-message' },
+      }),
+    },
+  });
+  assert.equal(missingActor.subagentCount, undefined);
+});
+
+test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/tool counters on partial transcript reads', () => {
+  const hostRow = {
+    stage: 'plan' as const, role: 'host' as const, model: 'm', effort: null, input: 10, output: 2,
+    atMs: 2500, depth: 0, reasoningInOutput: true, turns: 1, toolCalls: 2, toolTurns: 1, responseActor: 'h',
+  };
+  const subRow = {
+    stage: 'plan' as const, role: 'subagent' as const, model: 'm', effort: null, input: 5, output: 1,
+    atMs: 3000, depth: 2, reasoningInOutput: true, turns: 1, toolCalls: 1, toolTurns: 1, responseActor: 's',
+  };
+
+  const hostNoted = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
+    claude: {
+      sessionEnv: ['HOST'],
+      read: () => ({
+        rows: [hostRow, subRow],
+        response: { basis: 'claude-assistant-message' },
+        notes: { host: { 'unparsed lines': 1 } },
+        userTurns: 3,
+        userTurnsByStage: { plan: 3 },
+      }),
+    },
+  });
+  assert.equal(hostNoted.userTurns, undefined);
+  assert.equal(hostNoted.userTurnsByStage, undefined);
+  assert.equal(hostNoted.subagentCount, undefined);
+  assert.equal(hostNoted.maxSubagentDepth, undefined);
+  for (const row of hostNoted.rows) {
+    assert.equal(row.turns, undefined);
+    assert.equal(row.toolCalls, undefined);
+    assert.equal(row.toolTurns, undefined);
+    assert.equal(row.maxDepth, undefined);
+  }
+
+  const subNoted = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
+    claude: {
+      sessionEnv: ['HOST'],
+      read: () => ({
+        rows: [hostRow, subRow],
+        response: { basis: 'claude-assistant-message' },
+        notes: { subagent: { 'read budget reached': 1 } },
+        userTurns: 3,
+        userTurnsByStage: { plan: 3 },
+      }),
+    },
+  });
+  assert.equal(subNoted.userTurns, 3);
+  assert.equal(subNoted.subagentCount, undefined);
+  assert.equal(subNoted.maxSubagentDepth, undefined);
+  const hostOut = subNoted.rows.find(r => r.role === 'host');
+  const subOut = subNoted.rows.find(r => r.role === 'subagent');
+  assert.equal(hostOut?.turns, 1);
+  assert.equal(hostOut?.toolCalls, 2);
+  assert.equal(subOut?.turns, undefined);
+  assert.equal(subOut?.toolCalls, undefined);
+  assert.equal(subOut?.maxDepth, undefined);
+});
+
+test('foldHostRows excludes skipResponse rows from turns and tool sums', () => {
+  const base = {
+    stage: 'spec' as const, role: 'host' as const, model: 'm', effort: null,
+    input: 10, output: 2, atMs: 1000, depth: 0, reasoningInOutput: true, responseActor: 'h',
+  };
+  const result = readHostUsage('agy', { ...input, env: () => 'host' }, memoryFs({}), {
+    agy: {
+      sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
+      read: () => ({
+        rows: [
+          { ...base, turns: 1, toolCalls: 2, toolTurns: 1 },
+          { ...base, skipResponse: true as const },
+        ],
+        response: { basis: 'agy-planner-response', limited: true },
+      }),
+    },
+  });
+  assert.equal(result.rows[0]?.input, 20);
+  assert.equal(result.rows[0]?.turns, 1);
+  assert.equal(result.rows[0]?.toolCalls, 2);
+  assert.equal(result.rows[0]?.toolTurns, 1);
+});
+
+test('hostSessionId validates env session ids and returns undefined when absent or unsafe', () => {
+  assert.equal(hostSessionId('claude', n => n === 'CLAUDE_CODE_SESSION_ID' ? 'sess-123' : undefined), 'sess-123');
+  assert.equal(hostSessionId('claude', n => n === 'CLAUDE_CODE_SESSION_ID' ? '../bad' : undefined), undefined);
+  assert.equal(hostSessionId('copilot', () => 'sess-123'), undefined);
+  assert.equal(hostSessionId(null, () => 'sess-123'), undefined);
 });

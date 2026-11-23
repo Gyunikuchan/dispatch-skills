@@ -10,6 +10,9 @@ import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
+import { observeTool, sessionFacts } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { sessionFixture } from '../toolkit/helpers/session.ts';
 import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 
 const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
@@ -547,4 +550,61 @@ test('agy fallback models omits models map on mismatched sums or undecodable mod
   );
   assert.deepEqual(undecodable?.actualModels, ['gemini-4-argon']);
   assert.equal(undecodable?.models, undefined);
+});
+
+test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeTool -> sanitizeFacts without leaking session data', async () => {
+    const claudeFile = '/home/.claude/projects/-repo/c-wrapup-1.jsonl';
+    const platform: PlatformEnv = {
+      os: process.platform as PlatformEnv['os'],
+      arch: 'x64',
+      wsl: false,
+      bubblewrap: false,
+      argvLimit: 100000,
+      home: '/home',
+      path: [],
+      pathExt: [],
+    };
+    const startMs = Date.parse('2026-11-14T08:00:10.500Z');
+    const endMs = Date.parse('2026-11-14T08:00:20.000Z');
+    const sessionRead = claude.sessionUsage?.(
+      JSON.stringify({ type: 'result', session_id: 'c-wrapup-1', result: 'secret text' }),
+      { mode: 'cli', platform, env: {}, cwd: '/repo', launchStartMs: startMs, launchEndMs: endMs, collectResponses: true, transcripts: { fs: memoryFs({
+        [claudeFile]: lines(
+          { type: 'assistant', timestamp: '2026-11-14T08:00:12.100Z', message: { id: 'm1', model: 'claude-haiku-5-5', content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/secret/private.ts' } }], usage: { input_tokens: 15, output_tokens: 3 } } },
+          { type: 'assistant', timestamp: '2026-11-14T08:00:13.100Z', message: { id: 'm2', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'secret transcript answer' }], usage: { input_tokens: 20, output_tokens: 5 } } },
+        ),
+      }), budget: { remaining: 100_000 } } },
+    );
+    assert.equal(sessionRead?.complete, true);
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: true }));
+    f.deps.skillRoot = skill;
+    f.deps.delegate = async () => ({
+      outcome: { status: 'ok', text: 'done', sessionId: 'c-wrapup-1', resume: 'c-wrapup-1' },
+      invocations: [{
+        provider: 'claude', model: 'claude-haiku-5-5', effort: null, mode: 'cli',
+        launched: true, outcome: 'ok', wrapUp: true,
+        ...(sessionRead?.usage ? { usage: sessionRead.usage } : {}),
+        ...(sessionRead?.responses ? { responses: sessionRead.responses } : {}),
+      }],
+    });
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+
+    const facts = sanitizeFacts(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete')) as unknown as {
+      invocations: Array<{ wrapUp?: boolean; usage?: { turns?: number; toolCalls?: number; toolTurns?: number; models?: Record<string, { turns?: number; toolCalls?: number; toolTurns?: number }> }; responses?: Array<{ toolCalls?: number; toolTurns?: number }> }>;
+    };
+    const inv = facts.invocations[0]!;
+    assert.equal(inv.wrapUp, true);
+    assert.deepEqual([inv.usage?.turns, inv.usage?.toolCalls, inv.usage?.toolTurns], [2, 1, 1]);
+    assert.deepEqual([inv.usage?.models?.['claude-haiku-5-5#']?.turns, inv.usage?.models?.['claude-haiku-5-5#']?.toolCalls, inv.usage?.models?.['claude-haiku-5-5#']?.toolTurns], [2, 1, 1]);
+    assert.deepEqual([inv.responses?.[0]?.toolCalls, inv.responses?.[0]?.toolTurns], [1, 1]);
+    assert.doesNotMatch(JSON.stringify(facts), /c-wrapup-1|secret|private\.ts/);
+  } finally {
+    f.cleanup();
+  }
 });

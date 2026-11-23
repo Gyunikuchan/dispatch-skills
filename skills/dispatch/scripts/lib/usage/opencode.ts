@@ -41,7 +41,8 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
       depth: message.depth,
       atMs: message.createdMs,
       reasoningInOutput: false,
-        ...(message.depth === 0 && rootRole === 'host' ? { turns: 1 } : {}),
+      turns: 1,
+      ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls, toolTurns: message.toolCalls > 0 ? 1 : 0 } : {}),
       input: message.input,
       output: message.output,
     };
@@ -60,6 +61,21 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
   if (read.truncated === 'rows') note(notes, 'host', 'read budget reached');
   if (read.truncated === 'sessions') note(notes, 'subagent', 'too many candidates');
   if (read.messages.length === 0) result.unavailable = 'no usage records';
+  if (
+    rootRole === 'host'
+    && !result.unavailable
+    && !Object.keys(notes.host ?? {}).length
+    && !read.userTurnsTruncated
+    && read.userMessageTimes !== undefined
+  ) {
+    const userTurnsByStage: Partial<Record<HostStage, number>> = {};
+    for (const at of read.userMessageTimes) {
+      const stage = stageAt(query.stages, at);
+      userTurnsByStage[stage] = (userTurnsByStage[stage] ?? 0) + 1;
+    }
+    result.userTurns = read.userMessageTimes.length;
+    result.userTurnsByStage = userTurnsByStage;
+  }
   return result;
 }
 

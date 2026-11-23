@@ -20,28 +20,59 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
   if (failedLists.size) return result;
   hosts.sort((a, b) => a.file.localeCompare(b.file)); if (!hosts.length) return { ...result, unavailable: result.unavailable ?? 'host id file missing' };
   const seen = new Set<number>(); let hostCount = 0;
+  let hostUserTurns = 0;
+  const hostUserTurnsByStage: Partial<Record<HostStage, number>> = {};
   const acceptedDepths = new Map<string, number>([[query.sessionId, 0]]);
   type Deferred = { f: File; parentId: string };
   const deferred: Deferred[] = [];
   const deferredIds = new Set<string>();
 
   function parseLines(lines: string[], startIndex: number, role: HostRole, depth: number, totals: Set<number>, actor: string, model = '', effort: string | null = null) {
+    let hasResponseItems = false;
+    let pendingToolCalls = 0;
+    const fileRows: (UsageRow & { stage: HostStage })[] = [];
     for (let i = startIndex; i < lines.length; i++) {
       const line = lines[i]!; if (!line.trim()) continue;
       let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
       if (!entry || typeof entry !== 'object') continue;
-      if (entry.type === 'turn_context') { model = typeof entry.payload?.model === 'string' ? entry.payload.model : ''; effort = typeof entry.payload?.effort === 'string' ? entry.payload.effort : null; }
-      if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') continue;
+      if (entry.type === 'turn_context') { model = typeof entry.payload?.model === 'string' ? entry.payload.model : ''; effort = typeof entry.payload?.effort === 'string' ? entry.payload.effort : null; continue; }
+      if (entry.type === 'response_item') {
+        hasResponseItems = true;
+        if (entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call') pendingToolCalls++;
+        continue;
+      }
+      if (entry.type !== 'event_msg') continue;
+      if (entry.payload?.type === 'user_message' && role === 'host' && rootRole === 'host') {
+        const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+        if (Number.isFinite(at) && at >= query.startMs && at <= query.endMs) {
+          hostUserTurns++;
+          const stage = stageAt(query.stages, at);
+          hostUserTurnsByStage[stage] = (hostUserTurnsByStage[stage] ?? 0) + 1;
+        }
+        continue;
+      }
+      if (entry.payload?.type !== 'token_count') continue;
       const info = entry.payload.info; const total = info?.total_token_usage?.total_tokens; const u = info?.last_token_usage;
       const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
       if (!counter(total) || !u || typeof u !== 'object' || !counter(u.input_tokens) || !counter(u.output_tokens) || (u.cached_input_tokens !== undefined && (!counter(u.cached_input_tokens) || u.cached_input_tokens > u.input_tokens)) || (u.reasoning_output_tokens !== undefined && !counter(u.reasoning_output_tokens)) || !Number.isFinite(at) || !model) { note(notes, role, 'unparsed lines'); continue; }
-      if (totals.has(total)) continue; totals.add(total); if (!(at >= query.startMs && at <= query.endMs)) continue;
-      const hostRow: UsageRow & { stage: HostStage } = { stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at, reasoningInOutput: true, ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}), input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens };
+      if (totals.has(total)) continue; totals.add(total);
+      const toolCalls = pendingToolCalls;
+      pendingToolCalls = 0;
+      if (!(at >= query.startMs && at <= query.endMs)) continue;
+      const hostRow: UsageRow & { stage: HostStage } = {
+        stage: stageAt(query.stages, at), role: role === 'host' ? rootRole : role, model, effort, depth, atMs: at,
+        reasoningInOutput: true, turns: 1, toolCalls, toolTurns: toolCalls > 0 ? 1 : 0,
+        input: u.input_tokens - (typeof u.cached_input_tokens === 'number' ? u.cached_input_tokens : 0), output: u.output_tokens,
+      };
       if (result.response) hostRow.responseActor = actor;
       if (!/\.\d+/.test(entry.timestamp)) hostRow.wholeSecond = true;
       if (typeof u.cached_input_tokens === 'number') hostRow.cacheRead = u.cached_input_tokens;
       if (typeof u.reasoning_output_tokens === 'number') hostRow.reasoning = u.reasoning_output_tokens;
-      result.rows.push(hostRow); if (role === 'host') hostCount++;
+      fileRows.push(hostRow); if (role === 'host') hostCount++;
+    }
+    for (const r of fileRows) {
+      if (!hasResponseItems) { delete r.toolCalls; delete r.toolTurns; }
+      result.rows.push(r);
     }
   }
 
@@ -75,6 +106,10 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
   for (const host of hosts) { if (host.failed || !read(host, 'host', seen, false)) break; if (notes.host?.['read budget reached']) return result; }
   if (notes.host?.['read budget reached']) return result;
   if (!hostCount && !result.unavailable) result.unavailable = 'no usage records';
+  if (rootRole === 'host' && hostUserTurns > 0 && !result.unavailable && !Object.keys(notes.host ?? {}).length) {
+    result.userTurns = hostUserTurns;
+    result.userTurnsByStage = hostUserTurnsByStage;
+  }
   const end = new Date(query.endMs + 86400000).toISOString().slice(0, 10); const candidates: File[] = [];
   for (const { dir, date } of dirs) {
     if (date < hosts[0]!.date || date > end) continue;

@@ -41,8 +41,8 @@ test('turns: opencode host usage keeps each message model and effort for host an
     { stage: 'spec', role: 'host', model: 'opencode-go/deepseek-v4.1-flash', turns: 1, effort: 'max', input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3, bands: { le100k: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, reasoning: 3 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'host', model: '', turns: 1, effort: null, input: 1, output: 2, bands: { le100k: { input: 1, output: 2 } }, reasoningInOutput: false },
     { stage: 'plan', role: 'host', model: 'lmstudio/qwen3.8-27b@iq4_xs', turns: 1, effort: 'high', input: 7, output: 4, bands: { le100k: { input: 7, output: 4 } }, reasoningInOutput: false },
-    { stage: 'plan', role: 'subagent', model: 'anthropic/claude-opus', effort: null, input: 20, output: 8, bands: { le100k: { input: 20, output: 8 } }, reasoningInOutput: false },
-    { stage: 'plan', role: 'subagent', model: 'openai/gpt-5', effort: 'low', input: 3, output: 1, cacheRead: 0, bands: { le100k: { input: 3, output: 1, cacheRead: 0 } }, reasoningInOutput: false },
+    { stage: 'plan', role: 'subagent', model: 'anthropic/claude-opus', turns: 1, maxDepth: 1, effort: null, input: 20, output: 8, bands: { le100k: { input: 20, output: 8 } }, reasoningInOutput: false },
+    { stage: 'plan', role: 'subagent', model: 'openai/gpt-5', turns: 1, maxDepth: 2, effort: 'low', input: 3, output: 1, cacheRead: 0, bands: { le100k: { input: 3, output: 1, cacheRead: 0 } }, reasoningInOutput: false },
   ]);
   assert.deepEqual(result.responses?.map(r => [r.stage, r.agent, r.basis, r.coverage, r.observed, r.uncachedInput]), [
     ['spec', 'host-1', 'opencode-assistant-message', 'complete', 1, 10],
@@ -113,7 +113,7 @@ test('opencode host usage reports no records only when no valid message remains'
   assert.deepEqual(childOnly.responses, [
     { stage: 'plan', role: 'subagent', basis: 'opencode-assistant-message', coverage: 'partial', observed: 1, uncachedInput: 4 },
   ]);
-  assert.deepEqual(childOnly.rows, [{ stage: 'plan', role: 'subagent', model: 'm', effort: 'high', input: 4, output: 2, bands: { le100k: { input: 4, output: 2 } }, reasoningInOutput: false }]);
+  assert.deepEqual(childOnly.rows, [{ stage: 'plan', role: 'subagent', model: 'm', turns: 1, maxDepth: 1, effort: 'high', input: 4, output: 2, bands: { le100k: { input: 4, output: 2 } }, reasoningInOutput: false }]);
 });
 
 test('opencode usage row fields carry time, depth and reasoning semantics', async () => {
@@ -133,4 +133,44 @@ test('opencode usage row fields carry time, depth and reasoning semantics', asyn
       { role: 'subagent', atMs: 4000, depth: 2, reasoningInOutput: false },
     ],
   );
+});
+
+test('opencode extracts unified turns, user turns by stage, and tool calls when present', async () => {
+  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
+  const result = opencode.read({
+    ...input,
+    sessionId: 'ses_host-1',
+    stages: [{ stage: 'spec', atMs: 0 }, { stage: 'plan', atMs: 3000 }],
+    budget: { remaining: 10000 },
+  }, port(() => ({
+    messages: [
+      message(0, 1500, 'm0', null, 10, 5, { toolCalls: 2 }),
+      message(1, 3500, 'm1', null, 20, 8, { toolCalls: 0 }),
+    ],
+    userMessageTimes: [1000, 3200, 3800],
+    skipped: 0,
+    truncated: null,
+  })));
+  assert.equal(result.userTurns, 3);
+  assert.deepEqual(result.userTurnsByStage, { spec: 1, plan: 2 });
+  assert.deepEqual(result.rows.map(r => [r.role, r.turns, r.toolCalls, r.toolTurns]), [
+    ['host', 1, 2, 1],
+    ['subagent', 1, 0, 0],
+  ]);
+});
+
+test('opencode omits userTurns when userTurnsTruncated is true while preserving assistant turns', async () => {
+  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
+  const result = opencode.read({ ...input, sessionId: 'ses_host-1', budget: { remaining: 10000 } }, port(() => ({
+    messages: [message(0, 2500, 'm0', null, 10, 5)],
+    userTurnsTruncated: true,
+    skipped: 0,
+    truncated: null,
+  })));
+  assert.equal(result.userTurns, undefined);
+  assert.equal(result.userTurnsByStage, undefined);
+  assert.equal(result.notes?.host, undefined);
+  assert.equal(result.rows[0]?.turns, 1);
+  assert.equal(result.rows[0]?.toolCalls, undefined);
+  assert.equal(result.rows[0]?.toolTurns, undefined);
 });

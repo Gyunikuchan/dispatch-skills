@@ -254,6 +254,8 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       role: 'host',
       model: 'gemini-4-argon',
       turns: 1,
+      toolCalls: 1,
+      toolTurns: 1,
       effort: 'medium',
       depth: 0,
       atMs: 1500,
@@ -268,6 +270,8 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       role: 'host',
       model: 'gemini-3.8-flash',
       turns: 1,
+      toolCalls: 0,
+      toolTurns: 0,
       effort: 'high',
       depth: 0,
       atMs: 3500,
@@ -281,6 +285,9 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       stage: 'plan',
       role: 'subagent',
       model: 'gemini-3.8-flash',
+      turns: 1,
+      toolCalls: 1,
+      toolTurns: 1,
       effort: 'low',
       depth: 1,
       atMs: 2500,
@@ -294,6 +301,9 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       stage: 'plan',
       role: 'subagent',
       model: 'gemini-3.8-flash',
+      turns: 1,
+      toolCalls: 0,
+      toolTurns: 0,
       effort: null,
       depth: 1,
       atMs: 2800,
@@ -306,6 +316,9 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       stage: 'plan',
       role: 'subagent',
       model: 'gemini-3.8-flash',
+      turns: 1,
+      toolCalls: 0,
+      toolTurns: 0,
       effort: 'max',
       depth: 2,
       atMs: 3200,
@@ -368,6 +381,8 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
       role: 'host',
       model: 'gemini-2.5-flash',
       turns: 1,
+      toolCalls: 1,
+      toolTurns: 1,
       effort: null,
       depth: 0,
       atMs: 1500,
@@ -379,6 +394,9 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
       stage: 'plan',
       role: 'subagent',
       model: 'pro',
+      turns: 1,
+      toolCalls: 0,
+      toolTurns: 0,
       effort: null,
       depth: 1,
       atMs: 2500,
@@ -596,4 +614,57 @@ test('agy bounds planner response counts when repeated step indexes or malformed
     { stage: 'spec', role: 'host', agent: 'host-1', basis: 'agy-planner-response', coverage: 'partial', observed: 1, uncachedInput: 8 },
   ]);
   assert.equal(facts.rows[0]?.input, 16);
+});
+
+test('agy extracts unified turns, USER_EXPLICIT user turns by stage, and PLANNER_RESPONSE tool calls', () => {
+  const host = '/home/.gemini/antigravity/brain/host/.system_generated/logs/transcript.jsonl';
+  const child = '/home/.gemini/antigravity/brain/child/.system_generated/logs/transcript.jsonl';
+  const desc = '/home/.gemini/antigravity/brain/host/.system_generated/subagents/child.json';
+  const res = agy.read({
+    ...query,
+    stages: [{ stage: 'spec', atMs: 0 }, { stage: 'plan', atMs: 2000 }],
+  }, memoryFs({
+    [host]: lines(
+      { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(1000).toISOString(), content: 'secret prompt' },
+      { step_index: 2, type: 'USER_INPUT', source: 'SYSTEM', created_at: new Date(1200).toISOString() },
+      { step_index: 3, type: 'PLANNER_RESPONSE', created_at: new Date(1500).toISOString(), input_tokens: 10, output_tokens: 2, tool_calls: [{ name: 'read_file' }, { name: 'grep' }] },
+      { step_index: 4, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2500).toISOString() },
+      { step_index: 5, type: 'PLANNER_RESPONSE', created_at: new Date(3000).toISOString(), input_tokens: 20, output_tokens: 4 },
+    ),
+    [desc]: JSON.stringify({ conversationId: 'child' }),
+    [child]: lines(
+      { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2600).toISOString() },
+      { step_index: 2, type: 'PLANNER_RESPONSE', created_at: new Date(2700).toISOString(), input_tokens: 5, output_tokens: 1, tool_calls: [{ name: 'read_file' }] },
+    ),
+  }));
+  assert.equal(res.userTurns, 2);
+  assert.deepEqual(res.userTurnsByStage, { spec: 1, plan: 1 });
+  assert.deepEqual(res.rows.map(r => [r.role, r.turns, r.toolCalls, r.toolTurns]), [
+    ['host', 1, 2, 1],
+    ['host', 1, 0, 0],
+    ['subagent', 1, 1, 1],
+  ]);
+  assert.ok(!JSON.stringify(res).includes('secret prompt'));
+});
+
+test('agy omits turns and tool calls on repeated step_index rows', () => {
+  const host = '/home/.gemini/antigravity/brain/host/.system_generated/logs/transcript.jsonl';
+  const step = {
+    step_index: 2,
+    type: 'PLANNER_RESPONSE',
+    created_at: new Date(1500).toISOString(),
+    input_tokens: 8,
+    output_tokens: 1,
+    tool_calls: [{ name: 'read_file' }, { name: 'edit_file' }],
+  };
+  const res = agy.read({ ...query }, memoryFs({ [host]: lines(step, { ...step }) }));
+  assert.equal(res.rows.length, 2);
+  assert.equal(res.rows[0]?.skipResponse, undefined);
+  assert.equal(res.rows[0]?.turns, 1);
+  assert.equal(res.rows[0]?.toolCalls, 2);
+  assert.equal(res.rows[0]?.toolTurns, 1);
+  assert.equal(res.rows[1]?.skipResponse, true);
+  assert.equal(res.rows[1]?.turns, undefined);
+  assert.equal(res.rows[1]?.toolCalls, undefined);
+  assert.equal(res.rows[1]?.toolTurns, undefined);
 });

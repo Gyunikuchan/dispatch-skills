@@ -3,7 +3,14 @@ import { CATEGORIES, DASH, type Category, type Finding, type InvocationFacts, ty
 
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
-const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5 } as const;
+const DIAGNOSTIC_THRESHOLDS = { reviewRounds: 3, minSamples: 3, rejectedShare: 0.5, cacheReadShare: 0.5, invocationShare: 0.5, minCacheTokens: 100_000, turnChurn: 40 } as const;
+const NON_REVIEW_STAGES = new Set(['spec', 'design', 'plan', 'implementation', 'ask']);
+
+const cacheReadMetrics = (items: readonly { input: number; cacheRead?: number }[]) => {
+  const cacheRead = sum(items.map((item) => item.cacheRead)) ?? 0;
+  const total = cacheRead + (sum(items.map((item) => item.input)) ?? 0);
+  return { cacheRead, total, share: total > 0 ? cacheRead / total : undefined };
+};
 
 // SECTION: Heuristics
 
@@ -140,9 +147,40 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
   const metered = run.invocations.filter((i) => measured(i));
   for (const [provider, items] of groups(metered, (i) => i.provider)) {
     const reporting = items.filter((i) => i.usage!.cacheRead !== undefined);
-    const cacheRead = sum(reporting.map((i) => i.usage!.cacheRead)) ?? 0, input = cacheRead + (sum(reporting.map((i) => i.usage!.input)) ?? 0);
-    if (!reporting.length || !input || cacheRead / input >= T.cacheReadShare) continue;
-    add('H4', 'token-economy', 'scripts/toolkit/domain/prompt.ts', `${provider}: cache read ${pct(cacheRead / input)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
+    const { cacheRead, total: input, share } = cacheReadMetrics(reporting.map((i) => i.usage!));
+    if (!reporting.length || share === undefined || share >= T.cacheReadShare) continue;
+    add('H4', 'token-economy', 'scripts/toolkit/domain/prompt.ts', `${provider}: cache read ${pct(share)} of input (${num(cacheRead)} of ${num(input)} tokens) across ${plural(reporting.length, 'invocation')}.`, 'Uncached input is billed and processed in full on every launch.', 'Put stable content (rules, templates, shared context) before per-voice and per-round content so provider prompt caches hit.');
+  }
+  for (const [role, rows] of groups(run.hostUsage?.rows ?? [], (r) => r.role)) {
+    const reporting = rows.filter((r) => r.cacheRead !== undefined);
+    const { cacheRead, total, share } = cacheReadMetrics(reporting);
+    if (!reporting.length || total < T.minCacheTokens || share === undefined || share >= T.cacheReadShare) continue;
+    const platform = run.hostUsage?.platform ?? 'host';
+    add('H10', 'token-economy', 'SKILL.md', `${platform} ${role}: cache-read share of non-write input ${pct(share)} (${num(cacheRead)} of ${num(total)} tokens).`, 'Low prompt-cache reuse forces the host or subagents to reprocess stable context at full input rates.', 'Keep stable repository context and skill rules ahead of changing task state to preserve prompt-cache prefixes.');
+  }
+  const stageOf = (i: InvocationFacts): string => {
+    const phase = run.phases.find((p) => p.key === i.phase)?.name;
+    return phase === 'integration review' ? 'code review' : phase ?? DASH;
+  };
+  const hostRowsByStage = groups((run.hostUsage?.rows ?? []).filter((r) => NON_REVIEW_STAGES.has(r.stage)), (r) => r.stage);
+  const cliByStage = groups(cli.filter((i) => NON_REVIEW_STAGES.has(stageOf(i))), stageOf);
+  for (const stage of new Set([...hostRowsByStage.keys(), ...cliByStage.keys()])) {
+    const hRows = hostRowsByStage.get(stage) ?? [];
+    const dRows = cliByStage.get(stage) ?? [];
+    const hostOk = !run.hostUsage?.unavailable
+      && (hRows.length === 0 ? !Object.keys(run.hostUsage?.notes?.host ?? {}).length : hRows.every((r) => r.turns !== undefined && !Object.keys(run.hostUsage?.notes?.[r.role] ?? {}).length && !Object.keys(run.hostUsage?.notes?.host ?? {}).length));
+    const delegatesOk = dRows.every((i) => i.usageSource === 'session' && !i.coverage?.includes('transcript unavailable') && i.usage?.turns !== undefined);
+    if (!hostOk || !delegatesOk) continue;
+    const turns = (sum(hRows.map((r) => r.turns)) ?? 0) + (sum(dRows.map((i) => i.usage!.turns)) ?? 0);
+    if (turns < T.turnChurn) continue;
+    add('H11', 'token-economy', 'SKILL.md', `${stage}: ${plural(turns, 'LLM turn')} across host, subagents, and session-measured delegates.`, 'High turn counts in one non-review stage multiply repeated context tokens and latency.', 'Split broad tasks into smaller increments or tighten explorer/writer scope before launching.');
+  }
+  for (const [agent, items] of groups((run.hostUsage?.responses ?? []).filter((r) => NON_REVIEW_STAGES.has(r.stage) && r.agent !== undefined), (r) => r.agent!)) {
+    const complete = !run.hostUsage?.unavailable && items.every((r) => r.coverage === 'complete' && r.observed !== undefined && !Object.keys(run.hostUsage?.notes?.[r.role] ?? {}).length && !Object.keys(run.hostUsage?.notes?.host ?? {}).length);
+    if (!complete) continue;
+    const turns = sum(items.map((r) => r.observed)) ?? 0;
+    if (turns < T.turnChurn) continue;
+    add('H11', 'token-economy', 'SKILL.md', `${agent} (${items[0]!.role}): ${plural(turns, 'LLM turn')} across non-review stages.`, 'One agent accumulated excessive round-trips, multiplying repeated input tokens.', 'Tighten the agent brief and turn budget, or delegate focused sub-tasks.');
   }
   // Cache reads are cheap and dominate long sessions, so rank launches by uncached tokens; zero-usage failures are not samples.
   const sizes = metered.map((i) => [i, uncached(i.usage!)] as const).filter(([, n]) => n > 0);

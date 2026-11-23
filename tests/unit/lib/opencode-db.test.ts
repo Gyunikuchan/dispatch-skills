@@ -68,6 +68,7 @@ test('readOpencodeMessages returns root and nested descendant messages with mode
     ],
     skipped: 0,
     truncated: null,
+    userMessageTimes: [],
   });
 });
 
@@ -90,6 +91,7 @@ test('readOpencodeMessages filters to the window and counts rows without valid c
     ],
     skipped: 3,
     truncated: null,
+    userMessageTimes: [2000],
   });
 });
 
@@ -168,6 +170,7 @@ test('readOpencodeMessages caps message rows and reports row truncation', t => {
     messages: [],
     skipped: 0,
     truncated: 'rows',
+    userMessageTimes: [],
   });
 });
 
@@ -196,4 +199,63 @@ test('readOpencodeMessages resolves its database under XDG_DATA_HOME or the home
     opencodeDbPath('/home/me', name => name === 'XDG_DATA_HOME' ? '' : undefined),
     path.join('/home/me', '.local', 'share', 'opencode', 'opencode.db'),
   );
+});
+
+test('readOpencodeMessages queries root userMessageTimes and userTurnsTruncated independently of assistant row truncation', t => {
+  const dbPath = databasePath(t);
+  seedDatabase(dbPath, [{ id: 'root' }, { id: 'child', parentId: 'root' }], [
+    { sessionId: 'root', seq: 1, createdMs: 1000, type: 'user', data: { text: 'u1' } },
+    { sessionId: 'root', seq: 2, createdMs: 1500, type: 'assistant', data: assistant({ input: 5, output: 1 }) },
+    { sessionId: 'root', seq: 3, createdMs: 2000, type: 'user', data: { text: 'u2' } },
+    { sessionId: 'child', seq: 1, createdMs: 2200, type: 'user', data: { text: 'child-user' } },
+    { sessionId: 'root', seq: 4, createdMs: 3000, type: 'user', data: { text: 'u3' } },
+  ]);
+
+  const cappedUsers = readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 5000, maxRows: 2 });
+  assert.equal(cappedUsers.truncated, null);
+  assert.equal(cappedUsers.userTurnsTruncated, true);
+  assert.equal(cappedUsers.userMessageTimes, undefined);
+  assert.equal(cappedUsers.messages.length, 1);
+
+  const uncapped = readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 5000, maxRows: 3 });
+  assert.equal(uncapped.truncated, null);
+  assert.equal(uncapped.userTurnsTruncated, undefined);
+  assert.deepEqual(uncapped.userMessageTimes, [1000, 2000, 3000]);
+});
+
+test('readOpencodeMessages probes part then session_part for toolCalls and omits toolCalls when absent', t => {
+  const partDb = databasePath(t);
+  seedDatabase(partDb, [{ id: 'root' }], [
+    { id: 'a1', sessionId: 'root', seq: 1, createdMs: 1000, data: assistant({ input: 10, output: 2 }) },
+    { id: 'a2', sessionId: 'root', seq: 2, createdMs: 2000, data: assistant({ input: 20, output: 4 }) },
+  ]);
+  const db1 = new DatabaseSync(partDb);
+  try {
+    db1.exec('CREATE TABLE part (id TEXT, message_id TEXT, data TEXT)');
+    db1.exec('CREATE TABLE session_part (id TEXT, message_id TEXT, type TEXT)');
+    db1.prepare('INSERT INTO part VALUES (?, ?, ?)').run('p1', 'a1', JSON.stringify({ type: 'tool', tool: 'bash' }));
+    db1.prepare('INSERT INTO part VALUES (?, ?, ?)').run('p2', 'a1', JSON.stringify({ type: 'tool', tool: 'read' }));
+    db1.prepare('INSERT INTO part VALUES (?, ?, ?)').run('p3', 'a1', JSON.stringify({ type: 'text' }));
+    db1.prepare('INSERT INTO session_part VALUES (?, ?, ?)').run('sp1', 'a2', 'tool');
+  } finally {
+    db1.close();
+  }
+  const fromPart = readOpencodeMessages(partDb, 'root', { fromMs: 0, toMs: 5000 });
+  assert.deepEqual(fromPart.messages.map(m => m.toolCalls), [2, 0]);
+
+  const sessionPartDb = databasePath(t);
+  seedDatabase(sessionPartDb, [{ id: 'root' }], [
+    { id: 'b1', sessionId: 'root', seq: 1, createdMs: 1000, data: assistant({ input: 10, output: 2 }) },
+    { id: 'b2', sessionId: 'root', seq: 2, createdMs: 2000, data: assistant({ input: 20, output: 4 }) },
+  ]);
+  const db2 = new DatabaseSync(sessionPartDb);
+  try {
+    db2.exec('CREATE TABLE session_part (id TEXT, message_id TEXT, type TEXT)');
+    db2.prepare('INSERT INTO session_part VALUES (?, ?, ?)').run('sp1', 'b2', 'tool');
+    db2.prepare('INSERT INTO session_part VALUES (?, ?, ?)').run('sp2', 'b2', 'text');
+  } finally {
+    db2.close();
+  }
+  const fromSessionPart = readOpencodeMessages(sessionPartDb, 'root', { fromMs: 0, toMs: 5000 });
+  assert.deepEqual(fromSessionPart.messages.map(m => m.toolCalls), [0, 1]);
 });

@@ -5,8 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { hostThreadId, observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { heuristics, normalizeUsage, sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
@@ -376,7 +376,7 @@ test('diagnostics detect toolkit rejection and writer relaunch evidence', async 
   const fold={records:records.slice(0,2),lastSeq:2,torn:null} as Fold;
   assert.equal(sessionFacts(f.session,fold,'complete').relaunches,0);
   fold.records=records;fold.lastSeq=3;const facts=sessionFacts(f.session,fold,'complete');assert.equal(facts.relaunches,1);assert.deepEqual(facts.rejectedTools,[{tool:'record',action:'append',cls:'invalid-record'},{tool:'record',action:'append',cls:'invalid-record'}]);
-  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.doesNotMatch(report,/- Source: H9/);assert.match(report,/Writer relaunches observed: 1/);assert.equal(facts.verb,'implement');assert.equal(sessionFacts(f.session,{...fold,records:[]},'complete').verb,undefined);assert.doesNotMatch(report,/defective writer|private/);
+  const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');assert.match(report,/toolkit operation.*rejected/);assert.doesNotMatch(report,/- Source: H9/);assert.match(report,/writer relaunches 1/);assert.equal(facts.verb,'implement');assert.equal(sessionFacts(f.session,{...fold,records:[]},'complete').verb,undefined);assert.doesNotMatch(report,/defective writer|private/);
  }finally{f.cleanup();}
 });
 
@@ -610,8 +610,8 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
     assert.equal(facts.phases[0]?.name,'plan review');
     assert.equal(facts.phases[0]?.outcome,'fault');
     const report=fs.readFileSync(writeDiagnostics(f.session,facts),'utf8');
-    assert.match(report,/launch coverage 0\/1/);
-    assert.match(report,/Timing scope: summed measured tool-call durations/);
+    assert.match(report,/delegates 0\/1/);
+    assert.match(report,/Timing scope: summed tool-call durations/);
   } finally {f.cleanup();}
 });
 
@@ -768,8 +768,17 @@ const workloadRound = (session: string, review: string, round: number, generatio
   for (let g = 1; g <= generations; g++) fs.mkdirSync(path.join(roundDir, `gen-${g}`), {recursive: true});
 };
 
-const workloadCapture = (session: string, name: string, capture: {start: number; end?: number}, phase: string | undefined, invocations: unknown[] = []) =>
+const workloadCapture = (
+  session: string,
+  name: string,
+  capture: {start: number; end?: number},
+  phase: string | undefined,
+  invocations: unknown[] = [],
+  meta: {host?: string; hostThread?: string} = {},
+) =>
   writeJson(path.join(session, '.state', 'diagnostics', `${name}.json`), {
+    ...(meta.host === undefined ? {} : {host: meta.host}),
+    ...(meta.hostThread === undefined ? {} : {hostThread: meta.hostThread}),
     capture: {state: capture.end === undefined ? 'opened' : 'completed', ...capture},
     phases: phase ? [{key: phase, name: 'plan review'}] : [], invocations, reviews: [],
   });
@@ -1000,4 +1009,401 @@ test('round turns: in-window rulings and notes set the close without counting ga
     assert.deepEqual(read([ruling, note, unrelated, late])?.[1], before);
     assert.deepEqual(workload(read([ruling, note, unrelated, late], [...main, 'malformed'])?.[1]), [3, undefined]);
   } finally { f.cleanup(); }
+});
+
+test('observeTool and sanitizeFacts preserve wrapUp, hostThread, and turn/tool counters while rejecting malformed values', async () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const expectedThread = crypto.createHmac('sha256', path.resolve(f.session)).update(JSON.stringify(['claude', 'host-thread-1'])).digest('hex').slice(0, 16);
+    assert.equal(hostThreadId('claude', { CLAUDE_CODE_SESSION_ID: 'host-thread-1' }, f.session), expectedThread);
+    assert.equal(hostThreadId('claude', {}, f.session), undefined);
+    assert.equal(hostThreadId(null, { CLAUDE_CODE_SESSION_ID: 'host-thread-1' }, f.session), undefined);
+    assert.equal(hostThreadId('claude', { CLAUDE_CODE_SESSION_ID: '../bad-id' }, f.session), undefined);
+
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill, { recursive: true });
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    f.deps.orchestrator = { platform: 'claude', model: 'm' };
+    f.deps.env = { CLAUDE_CODE_SESSION_ID: 'host-thread-1' };
+    f.deps.delegate = async () => ({
+      outcome: { status: 'ok', text: 'done', sessionId: 'secret-session-1', resume: null },
+      invocations: [{
+        provider: 'claude', model: 'm', effort: 'high', mode: 'cli', launched: true, outcome: 'ok',
+        wrapUp: true,
+        usage: {
+          input: 100, output: 20, turns: 3, toolCalls: 5, toolTurns: 2,
+          scope: 'invocation', provenance: 'session', inputSemantics: 'uncached',
+          models: { 'm#high': { input: 100, output: 20, turns: 3, toolCalls: 5, toolTurns: 2 } },
+        },
+        responses: [{ role: 'delegate', basis: 'claude-assistant-message', coverage: 'partial', observed: 3, uncachedInput: 100, toolCalls: 5, toolTurns: 2 }],
+      }],
+    });
+    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+
+    const diagDir = path.join(f.session, '.state', 'diagnostics');
+    const persisted = JSON.parse(fs.readFileSync(path.join(diagDir, fs.readdirSync(diagDir)[0]!), 'utf8')) as Record<string, unknown>;
+    assert.equal(persisted['hostThread'], expectedThread);
+    assert.doesNotMatch(JSON.stringify(persisted), /host-thread-1|secret-session-1/);
+
+    const sanitized = sanitizeFacts(persisted as never) as Record<string, unknown>;
+    assert.equal(sanitized['hostThread'], expectedThread);
+    const inv = (sanitized['invocations'] as Array<Record<string, unknown>>)[0]!;
+    assert.equal(inv['wrapUp'], true);
+    const usage = inv['usage'] as Record<string, unknown>;
+    assert.deepEqual([usage['turns'], usage['toolCalls'], usage['toolTurns']], [3, 5, 2]);
+    const modelPart = (usage['models'] as Record<string, Record<string, unknown>>)['m#high']!;
+    assert.deepEqual([modelPart['turns'], modelPart['toolCalls'], modelPart['toolTurns']], [3, 5, 2]);
+    const resp = (inv['responses'] as Array<Record<string, unknown>>)[0]!;
+    assert.deepEqual([resp['toolCalls'], resp['toolTurns']], [5, 2]);
+
+    const normalized = normalizeUsage({
+      input: 30, output: 6, turns: 2, toolCalls: 4, toolTurns: 2,
+      models: {
+        'm#bad effort': { input: 10, output: 2, turns: 1, toolCalls: 2, toolTurns: 1 },
+        'm#': { input: 20, output: 4, turns: 1, toolCalls: 2, toolTurns: 1 },
+      },
+    }, 'uncached') as unknown as Record<string, unknown>;
+    assert.deepEqual([normalized['turns'], normalized['toolCalls'], normalized['toolTurns']], [2, 4, 2]);
+    const mergedPart = (normalized['models'] as Record<string, Record<string, unknown>>)['m#']!;
+    assert.deepEqual([mergedPart['turns'], mergedPart['toolCalls'], mergedPart['toolTurns']], [2, 4, 2]);
+
+    const partialMerged = normalizeUsage({
+      input: 30, output: 6,
+      models: {
+        'm#bad effort': { input: 10, output: 2, turns: 1 },
+        'm#': { input: 20, output: 4 },
+      },
+    }, 'uncached') as unknown as Record<string, unknown>;
+    assert.equal((partialMerged['models'] as Record<string, Record<string, unknown>>)['m#']!['turns'], undefined);
+
+    const malformed = sanitizeFacts({
+      hostThread: '/Users/dev/secret',
+      phases: [],
+      reviews: [],
+      invocations: [{
+        phase: 'ask-run', provider: 'claude', model: 'm', surface: 'cli', launched: true, outcome: 'ok',
+        wrapUp: 'yes' as never,
+        usage: { input: 10, output: 2, turns: -1, toolCalls: 1.5, toolTurns: NaN } as never,
+      }],
+    } as never) as Record<string, unknown>;
+    assert.equal(malformed['hostThread'], undefined);
+    const badInv = (malformed['invocations'] as Array<Record<string, unknown>>)[0]!;
+    assert.equal(badInv['wrapUp'], undefined);
+    assert.equal((badInv['usage'] as Record<string, unknown>)['turns'], undefined);
+    assert.equal((badInv['usage'] as Record<string, unknown>)['toolCalls'], undefined);
+    assert.equal((badInv['usage'] as Record<string, unknown>)['toolTurns'], undefined);
+
+    const longHex = sanitizeFacts({ hostThread: 'a'.repeat(32), phases: [], reviews: [], invocations: [] } as never) as Record<string, unknown>;
+    assert.equal(longHex['hostThread'], undefined);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('hostUsageOf retains userTurnsByStage, subagentCount, maxSubagentDepth, and row turn counters while rejecting invalid values', () => {
+  const clean = sanitizeFacts({
+    phases: [], invocations: [], reviews: [],
+    hostUsage: {
+      platform: 'claude',
+      userTurns: 4,
+      userTurnsByStage: { spec: 1, implementation: 3, bogus: 9, 'plan review': -1 } as never,
+      subagentCount: 5,
+      maxSubagentDepth: 2,
+      rows: [
+        { stage: 'spec', role: 'host', model: 'm', effort: null, input: 10, output: 2, turns: 2, toolCalls: 4, toolTurns: 2 },
+        { stage: 'implementation', role: 'subagent', model: 'm', effort: 'low', input: 20, output: 4, turns: 3, toolCalls: 1, toolTurns: 1, maxDepth: 2 },
+      ],
+      responses: [
+        { stage: 'spec', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 10, toolCalls: 4, toolTurns: 2 },
+        { stage: 'implementation', role: 'subagent', basis: 'claude-assistant-message', coverage: 'unknown', toolCalls: 99, toolTurns: 99 } as never,
+      ],
+    } as never,
+  }) as unknown as { hostUsage?: Record<string, unknown> };
+  const hu = clean.hostUsage!;
+  assert.equal(hu['userTurns'], 4);
+  assert.deepEqual(hu['userTurnsByStage'], { spec: 1, implementation: 3 });
+  assert.equal(hu['subagentCount'], 5);
+  assert.equal(hu['maxSubagentDepth'], 2);
+  const rows = hu['rows'] as Array<Record<string, unknown>>;
+  assert.deepEqual([rows[0]!['turns'], rows[0]!['toolCalls'], rows[0]!['toolTurns'], rows[0]!['maxDepth']], [2, 4, 2, undefined]);
+  assert.deepEqual([rows[1]!['turns'], rows[1]!['toolCalls'], rows[1]!['toolTurns'], rows[1]!['maxDepth']], [3, 1, 1, 2]);
+  const resps = hu['responses'] as Array<Record<string, unknown>>;
+  assert.deepEqual([resps[0]!['toolCalls'], resps[0]!['toolTurns']], [4, 2]);
+  assert.deepEqual([resps[1]!['toolCalls'], resps[1]!['toolTurns']], [undefined, undefined]);
+
+  const invalid = sanitizeFacts({
+    phases: [], invocations: [], reviews: [],
+    hostUsage: {
+      platform: 'claude',
+      userTurns: -1,
+      userTurnsByStage: { bogus: 1, spec: 'https://evil.example.com' } as never,
+      subagentCount: 1.5,
+      maxSubagentDepth: -2,
+      rows: [{ stage: 'spec', role: 'subagent', model: 'm', effort: null, input: 10, output: 2, turns: -1, toolCalls: 'bad', toolTurns: NaN, maxDepth: 0.5 } as never],
+    } as never,
+  }) as unknown as { hostUsage?: Record<string, unknown> };
+  const badHu = invalid.hostUsage!;
+  assert.equal(badHu['userTurns'], undefined);
+  assert.equal(badHu['userTurnsByStage'], undefined);
+  assert.equal(badHu['subagentCount'], undefined);
+  assert.equal(badHu['maxSubagentDepth'], undefined);
+  const badRow = (badHu['rows'] as Array<Record<string, unknown>>)[0]!;
+  assert.deepEqual([badRow['turns'], badRow['toolCalls'], badRow['toolTurns'], badRow['maxDepth']], [undefined, undefined, undefined, undefined]);
+});
+
+test('multi-host roundWorkload omits hostTokens and hostTurns on cross-host switches and ambiguous multi-host captures', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    workloadRound(f.session, 'plan-mh', 1);
+    workloadRound(f.session, 'plan-mh', 2);
+    workloadRound(f.session, 'plan-mh', 3);
+    const thread = crypto.createHmac('sha256', path.resolve(f.session)).update(JSON.stringify(['claude', 'host-1'])).digest('hex').slice(0, 16);
+    workloadCapture(f.session, 'r1', { start: 1000, end: 1100 }, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-mh', 1))], { host: 'codex', hostThread: thread });
+    workloadCapture(f.session, 'r2', { start: 2000, end: 2100 }, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-mh', 2))], { host: 'claude', hostThread: thread });
+    workloadCapture(f.session, 'r3', { start: 3000, end: 3100 }, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-mh', 3))]);
+    const deps = claudeHostDeps(f, {
+      clock: 4000,
+      main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 3050, 30, 3)],
+    });
+    const rows = sessionRows(f.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps })!;
+    assert.deepEqual([rows[0]!.hostTokens, rows[0]!.hostTurns], [undefined, undefined]);
+    assert.deepEqual([rows[1]!.hostTokens, rows[1]!.hostTurns], [22, 1]);
+    assert.deepEqual([rows[2]!.hostTokens, rows[2]!.hostTurns], [undefined, undefined]);
+
+    const fAmb = sessionFixture({ memory: true });
+    try {
+      workloadRound(fAmb.session, 'plan-amb', 1);
+      workloadRound(fAmb.session, 'plan-amb', 2);
+      workloadRound(fAmb.session, 'plan-amb', 3);
+      workloadCapture(fAmb.session, 'a1', { start: 1000, end: 1100 }, 'review-run-plan', [reviewRun(roundSubject(fAmb.session, 'plan-amb', 1))], { host: 'codex' });
+      workloadCapture(fAmb.session, 'a2', { start: 2000, end: 2100 }, 'review-run-plan', [reviewRun(roundSubject(fAmb.session, 'plan-amb', 2))], { host: 'claude' });
+      workloadCapture(fAmb.session, 'a3', { start: 3000, end: 3100 }, 'review-run-plan', [reviewRun(roundSubject(fAmb.session, 'plan-amb', 3))]);
+      const ambDeps = claudeHostDeps(fAmb, { clock: 4000, main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 3050, 30, 3)] });
+      const ambRows = sessionRows(fAmb.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps: ambDeps })!;
+      assert.deepEqual([ambRows[0]!.hostTokens, ambRows[0]!.hostTurns], [undefined, undefined]);
+      assert.deepEqual([ambRows[1]!.hostTokens, ambRows[1]!.hostTurns], [22, 1]);
+      assert.deepEqual([ambRows[2]!.hostTokens, ambRows[2]!.hostTurns], [undefined, undefined]);
+    } finally {
+      fAmb.cleanup();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('mid-round thread switch leaves hostTokens and hostTurns undefined even when measured thread has rows in window', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    workloadRound(f.session, 'plan-sw', 1);
+    workloadRound(f.session, 'plan-sw', 2);
+    const measuredThread = crypto.createHmac('sha256', path.resolve(f.session)).update(JSON.stringify(['claude', 'host-1'])).digest('hex').slice(0, 16);
+    const otherThread = '0123456789abcdef';
+    workloadCapture(f.session, 'r1-a', { start: 1000, end: 1100 }, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-sw', 1))], { host: 'claude', hostThread: measuredThread });
+    workloadCapture(f.session, 'r1-b', { start: 1050, end: 1080 }, 'lint-run', [], { host: 'claude', hostThread: otherThread });
+    workloadCapture(f.session, 'r2', { start: 2000, end: 2100 }, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-sw', 2))], { host: 'claude', hostThread: measuredThread });
+    const deps = claudeHostDeps(f, {
+      clock: 3000,
+      main: [usageLine('m1', 1020, 10, 1), usageLine('m2', 2050, 20, 2)],
+    });
+    const rows = sessionRows(f.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps })!;
+    assert.deepEqual([rows[0]!.hostTokens, rows[0]!.hostTurns], [undefined, undefined]);
+    assert.deepEqual([rows[1]!.hostTokens, rows[1]!.hostTurns], [22, 1]);
+
+    // Mixed thread-tracked session: a round missing hostThread when another capture has hostThread omits hostTokens/hostTurns.
+    const fMixed = sessionFixture({ memory: true });
+    try {
+      workloadRound(fMixed.session, 'plan-mx', 1);
+      workloadRound(fMixed.session, 'plan-mx', 2);
+      const t = crypto.createHmac('sha256', path.resolve(fMixed.session)).update(JSON.stringify(['claude', 'host-1'])).digest('hex').slice(0, 16);
+      workloadCapture(fMixed.session, 'r1', { start: 1000, end: 1100 }, 'review-run-plan', [reviewRun(roundSubject(fMixed.session, 'plan-mx', 1))], { host: 'claude' });
+      workloadCapture(fMixed.session, 'r2', { start: 2000, end: 2100 }, 'review-run-plan', [reviewRun(roundSubject(fMixed.session, 'plan-mx', 2))], { host: 'claude', hostThread: t });
+      const mixedDeps = claudeHostDeps(fMixed, { clock: 3000, main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2)] });
+      const mixedRows = sessionRows(fMixed.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps: mixedDeps })!;
+      assert.deepEqual([mixedRows[0]!.hostTokens, mixedRows[0]!.hostTurns], [undefined, undefined]);
+      assert.deepEqual([mixedRows[1]!.hostTokens, mixedRows[1]!.hostTurns], [22, 1]);
+    } finally {
+      fMixed.cleanup();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('multi-generation reviewerTurns excludes superseded generations and omits native-only or zero-launch rounds', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    saveRound({
+      session: f.session, review: 'plan-rev', round: 1, generation: 1,
+      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('copilot[0]', 'copilot', { reserve: true })],
+      outcomes: [{ slot: 'claude[0]', state: 'done', responder: { slot: 'claude[0]', provider: 'claude', model: 'm', native: false } }],
+    });
+    saveRound({
+      session: f.session, review: 'plan-rev', round: 1, generation: 2,
+      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('copilot[0]', 'copilot', { reserve: true })],
+      outcomes: [{ slot: 'claude[0]', state: 'done', responder: { slot: 'claude[0]', provider: 'claude', model: 'm', native: false } }],
+    });
+    saveRound({
+      session: f.session, review: 'plan-rev', round: 2, generation: 1,
+      roster: [rosterSlot('codex[0]', 'codex', { native: true })],
+      outcomes: [{ slot: 'codex[0]', state: 'native' }],
+    });
+    saveRound({
+      session: f.session, review: 'plan-rev', round: 3, generation: 1,
+      roster: [rosterSlot('claude[0]', 'claude')],
+      outcomes: [],
+    });
+    const g1 = roundSubject(f.session, 'plan-rev', 1, 1);
+    const g2 = roundSubject(f.session, 'plan-rev', 1, 2);
+    workloadCapture(f.session, 'r1-g1', { start: 1000, end: 1200 }, 'review-run-plan', [
+      { ...reviewRun(g1), usage: { input: 10, output: 1, turns: 5 } },
+    ]);
+    workloadCapture(f.session, 'r1-g2', { start: 1300, end: 1500 }, 'review-run-plan', [
+      { ...reviewRun(g2), usage: { input: 10, output: 1, turns: 3 } },
+      { ...reviewRun(g2), slot: 'copilot[0]', targetSlot: 'claude[0]', usage: { input: 10, output: 1, turns: 2 } },
+    ]);
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    const rows = facts.roundWorkload as Array<Record<string, unknown>>;
+    assert.equal(rows[0]!['reviewerTurns'], 5);
+    assert.equal(rows[0]!['reviewerTurnsPartial'], undefined);
+    assert.equal(rows[1]!['reviewerTurns'], undefined);
+    assert.equal(rows[1]!['reviewerTurnsPartial'], undefined);
+    assert.equal(rows[2]!['reviewerTurns'], undefined);
+    assert.equal(rows[2]!['reviewerTurnsPartial'], undefined);
+    const sanitized = sanitizeFacts(facts).roundWorkload as Array<Record<string, unknown>>;
+    assert.equal(sanitized[0]!['reviewerTurns'], 5);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('mixed native and CLI round marks reviewerTurnsPartial true and uses complete non-stdout DelegateResponse fallback', () => {
+  const f = sessionFixture({ memory: true });
+  try {
+    saveRound({
+      session: f.session, review: 'code-mix', round: 1, generation: 1,
+      roster: [rosterSlot('claude[0]', 'claude'), rosterSlot('codex[0]', 'codex', { native: true })],
+      outcomes: [
+        { slot: 'claude[0]', state: 'done', responder: { slot: 'claude[0]', provider: 'claude', model: 'm', native: false } },
+        { slot: 'codex[0]', state: 'native' },
+      ],
+    });
+    saveRound({
+      session: f.session, review: 'code-mix', round: 2, generation: 1,
+      roster: [rosterSlot('claude[0]', 'claude')],
+      outcomes: [{ slot: 'claude[0]', state: 'done', responder: { slot: 'claude[0]', provider: 'claude', model: 'm', native: false } }],
+    });
+    const s1 = roundSubject(f.session, 'code-mix', 1, 1);
+    const s2 = roundSubject(f.session, 'code-mix', 2, 1);
+    workloadCapture(f.session, 'r1', { start: 1000, end: 1200 }, 'review-run-code', [
+      { ...reviewRun(s1), usage: { input: 10, output: 1, turns: 4 } },
+    ]);
+    workloadCapture(f.session, 'r2', { start: 2000, end: 2200 }, 'review-run-code', [
+      {
+        ...reviewRun(s2), usage: { input: 10, output: 1 },
+        responses: [
+          { stage: 'code review', role: 'delegate', agent: 'delegate-0123456789abcdef', basis: 'claude-assistant-message', coverage: 'complete', observed: 6 },
+          { stage: 'code review', role: 'subagent', agent: 'delegate-child-0123456789abcdef', basis: 'claude-assistant-message', coverage: 'complete', observed: 9 },
+        ],
+      },
+    ]);
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    const rows = facts.roundWorkload as Array<Record<string, unknown>>;
+    assert.equal(rows[0]!['reviewerTurns'], 4);
+    assert.equal(rows[0]!['reviewerTurnsPartial'], true);
+    assert.equal(rows[1]!['reviewerTurns'], 6);
+    assert.equal(rows[1]!['reviewerTurnsPartial'], undefined);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('H4 and H10 agree on shared cache-read share of non-write input with cacheWrite > 0 and respect floors', () => {
+  const findings = heuristics({
+    phases: [{ key: 'ask', name: 'ask' }],
+    reviews: [],
+    invocations: [{
+      phase: 'ask', provider: 'claude', model: 'm', surface: 'cli', launched: true, outcome: 'ok',
+      usage: { input: 60_000, cacheRead: 40_000, cacheWrite: 500_000, output: 100 },
+    }],
+    hostUsage: {
+      platform: 'claude',
+      rows: [{ stage: 'ask', role: 'host', model: 'm', effort: null, input: 60_000, cacheRead: 40_000, cacheWrite: 500_000, output: 100 }],
+    },
+  });
+  const h4 = findings.find(f => f.source === 'H4');
+  const h10 = findings.find(f => f.source === 'H10');
+  assert.ok(h4, 'expected H4');
+  assert.ok(h10, 'expected H10');
+  assert.equal(h4.category, 'token-economy');
+  assert.equal(h10.category, 'token-economy');
+  assert.match(h4.evidence, /cache read 40% of input \(40,000 of 100,000 tokens\)/);
+  assert.match(h10.evidence, /cache-read share of non-write input 40% \(40,000 of 100,000 tokens\)/);
+
+  const belowFloor = heuristics({
+    phases: [], reviews: [], invocations: [],
+    hostUsage: {
+      platform: 'claude',
+      rows: [{ stage: 'ask', role: 'host', model: 'm', effort: null, input: 59_999, cacheRead: 40_000, cacheWrite: 500_000, output: 100 }],
+    },
+  });
+  assert.equal(belowFloor.some(f => f.source === 'H10'), false);
+
+  const atThreshold = heuristics({
+    phases: [], reviews: [], invocations: [],
+    hostUsage: {
+      platform: 'claude',
+      rows: [{ stage: 'ask', role: 'host', model: 'm', effort: null, input: 50_000, cacheRead: 50_000, output: 100 }],
+    },
+  });
+  assert.equal(atThreshold.some(f => f.source === 'H10'), false);
+});
+
+test('H11 emits non-review turn churn finding above threshold and stays silent on review stages, below floor, or incomplete groups', () => {
+  const fired = heuristics({
+    phases: [{ key: 'impl', name: 'implementation' }],
+    reviews: [],
+    invocations: [{
+      phase: 'impl', provider: 'codex', model: 'm', surface: 'cli', launched: true, outcome: 'ok', usageSource: 'session',
+      usage: { input: 100, output: 10, turns: 15 } as never,
+    }],
+    hostUsage: {
+      platform: 'claude',
+      rows: [{ stage: 'implementation', role: 'host', model: 'm', effort: null, input: 100, output: 10, turns: 25 }],
+      responses: [
+        { stage: 'spec', role: 'subagent', agent: 'subagent-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 20 },
+        { stage: 'plan', role: 'subagent', agent: 'subagent-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 20 },
+      ],
+    },
+  });
+  const h11 = fired.filter(f => f.source === 'H11');
+  assert.equal(h11.length, 2);
+  assert.ok(h11.every(f => f.category === 'token-economy'));
+  assert.ok(h11.some(f => /implementation/.test(f.evidence) && /40/.test(f.evidence)));
+  assert.ok(h11.some(f => /subagent-1/.test(f.evidence) && /40/.test(f.evidence)));
+
+  const silent = heuristics({
+    phases: [{ key: 'rev', name: 'code review' }, { key: 'impl', name: 'implementation' }],
+    reviews: [],
+    invocations: [
+      { phase: 'impl', provider: 'codex', model: 'm', surface: 'cli', launched: true, outcome: 'ok', usageSource: 'stdout', usage: { input: 100, output: 10 } },
+    ],
+    hostUsage: {
+      platform: 'claude',
+      rows: [
+        { stage: 'code review', role: 'host', model: 'm', effort: null, input: 100, output: 10, turns: 60 },
+        { stage: 'plan', role: 'host', model: 'm', effort: null, input: 100, output: 10, turns: 39 },
+        { stage: 'implementation', role: 'host', model: 'm', effort: null, input: 100, output: 10, turns: 50 },
+        { stage: 'spec', role: 'host', model: 'm', effort: null, input: 100, output: 10, turns: 50 },
+        { stage: 'spec', role: 'subagent', model: 'm', effort: null, input: 100, output: 10 },
+      ],
+      responses: [
+        { stage: 'code review', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'complete', observed: 60 },
+        { stage: 'plan', role: 'host', agent: 'host-1', basis: 'claude-assistant-message', coverage: 'partial', observed: 50 },
+      ],
+    },
+  });
+  assert.deepEqual(silent.filter(f => f.source === 'H11'), []);
 });

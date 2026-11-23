@@ -332,12 +332,12 @@ test('review yield renders per slot outcomes', async () => {
       accepted: 1, rejected: 0, deferred: 0, duplicate: 0, unruled: 0, measured: 0, launched: 0,
     });
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /### Review yield by kind, provider and model/);
-    assert.match(report, /^\| claude \| model-a \| 2 \| 2 \| 0 \| 2 \| 1 \| 0 \| 0 \| 1 \| 1,000 \| 500 \| — \| — \| — \|$/m);
-    assert.match(report, /^\| codex \| model-b \| 1 \| 1 \| 1 \| 1 \| 0 \| 1 \| 1 \| 0 \| 500 \| 500 \| — \| — \| — \|$/m);
-    assert.match(report, /^\| agy \| model-c \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| — partial \| 0 accepted \| — \| 0 accepted \| — \|$/m);
-    assert.match(report, /^\| codex \| native \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \| — \| — \| — \|$/m);
-    assert.match(report, /^\| tool \| — \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| — \| — \| — \| — \| — \|$/m);
+    assert.match(report, /### Responder yield/);
+    assert.match(report, /^\| claude \| model-a \| 2\/2\/0 \| 2 \| 1 \| 0 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| codex \| model-b \| 1\/1\/1 \| 1 \| 0 \| 1 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| agy \| model-c \| 0\/0\/0 \| 0 \| 0 \| 0 \| — \| 0 accepted \| — \|$/m);
+    assert.match(report, /^\| codex \| native \| 1\/0\/0 \| 1 \| 0 \| 0 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| tool \| — \| 1\/0\/0 \| 1 \| 0 \| 0 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -393,7 +393,7 @@ test('review yield counts every reserve alias attempt', async () => {
         {provider: 'copilot', model: 'model-r', effort: null, usage: {input: 200, output: 0}},
       ],
     }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 900 \| 450 \| — \| — \| — \|$/m);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| copilot \| model-r \| 2\/0\/0 \| 2 \| 0 \| 0 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -429,7 +429,7 @@ test('review yield credits the last attempted responder across captures', async 
         {provider: 'claude', model: 'model-a', effort: null, usage: {input: 300, output: 0}},
       ],
     }]);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 600 \| 0 accepted \| — \| 0 accepted \| — \|$/m);
+    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /^\| claude \| model-a \| 0\/0\/0 \| 0 \| 0 \| 0 \| — \| 0 accepted \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -461,8 +461,8 @@ test('review yield responder change across rounds', async () => {
       ['claude', 'model-a', 100, 1, 1, 1], ['codex', 'model-b', 200, 1, 1, 1],
     ]);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /^\| claude \| model-a \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 100 \| 100 \| — \| — \| 1 prior-generation launches excluded \|$/m);
-    assert.match(report, /^\| codex \| model-b \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 200 \| 200 \| — \| — \| — \|$/m);
+    assert.match(report, /^\| claude \| model-a \| 1\/0\/0 \| 1 \| 0 \| 0 \| — \| — \| 1 prior-generation launches excluded \|$/m);
+    assert.match(report, /^\| codex \| model-b \| 1\/0\/0 \| 1 \| 0 \| 0 \| — \| — \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -540,8 +540,8 @@ test('origin: a nonzero fix-induced count renders the column', async () => {
     const facts = sessionFacts(f.session, fold, 'complete');
     assert.equal(facts.slotYield?.find((row) => row.provider === 'claude')?.fixInduced, 2);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
-    assert.match(report, /^\| Provider \| Model \| MUST \| SHOULD \| CONSIDER \| Fix-induced \| Accepted /m);
-    assert.match(report, /^\| claude \| model-a \| 1 \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 3 \| 100 \| 0 accepted \| — \| 0 accepted \| — \|$/m);
+    assert.match(report, /^\| Provider \| Model \| M\/S\/C \| Fix-induced \| Accepted /m);
+    assert.match(report, /^\| claude \| model-a \| 1\/2\/0 \| 2 \| 0 \| 0 \| 0 \| — \| 0 accepted \| — \|$/m);
   } finally { f.cleanup(); }
 });
 
@@ -574,9 +574,9 @@ test('review yield prices an observed route and keeps redacted mixed usage in th
       models: {alpha: {rates: {input: 0, output: 0}}, [configured]: {rates: {input: 9, output: 9}}},
     }, {[observed]: {rates: {input: 3, output: 3}}})!;
     const text = renderDiagnostics([facts], pricer).text;
-    assert.match(text, /^\| CLI delegates \| 2,000,025 \| ~\$3\.00 \| 2 session, 1 stdout fallback, transcript unavailable, 1 observed unit unpriced \|$/m);
-    const yieldRows = text.split('### Review yield by kind, provider and model')[1]!;
-    assert.match(yieldRows, /\| 2,000,025 partial \| 2,000,025 partial \| ~\$3\.00 partial \| ~\$3\.00 partial \| unpriced model, override qualified rate .*session, stdout fallback, reported: actual\/alpha \|/);
+    assert.match(text, /^\| CLI delegates \| ██████████ 100% \| ~\$3\.00 \| 2,000,025 \| — \| — \| — \| — \| 2 session, 1 stdout fallback, transcript unavailable, 1 observed unit unpriced \|$/m);
+    const yieldRows = text.split('### Responder yield')[1]!;
+    assert.match(yieldRows, /\| ~\$3\.00 partial \| ~\$3\.00 partial \| unpriced model, override qualified rate .*session, stdout fallback, reported: actual\/alpha \|/);
   } finally { f.cleanup(); }
 });
 
@@ -611,6 +611,6 @@ test('review yield renders Cost, Cost / accepted, Cost notes and 0 accepted cell
       },
     ],
   }], pricer).text;
-  assert.match(text, /^\| claude \| alpha \| 2 \| 0 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1,000,000 partial \| 500,000 partial \| ~\$2\.00 partial \| ~\$1\.00 partial \| no usage \|$/m);
-  assert.match(text, /^\| codex \| alpha \| 0 \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 0 \| 1,000,000 \| 0 accepted \| ~\$2\.00 \| 0 accepted \| — \|$/m);
+  assert.match(text, /^\| claude \| alpha \| 2\/0\/0 \| 2 \| 0 \| 0 \| ~\$2\.00 partial \| ~\$1\.00 partial \| no usage \|$/m);
+  assert.match(text, /^\| codex \| alpha \| 0\/1\/0 \| 0 \| 1 \| 0 \| ~\$2\.00 \| 0 accepted \| — \|$/m);
 });

@@ -6,6 +6,8 @@ export type DelegateResponse = {
   coverage: ResponseCoverage;
   observed?: number;
   uncachedInput?: number;
+  toolCalls?: number;
+  toolTurns?: number;
 };
 
 export const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -25,8 +27,8 @@ export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: num
 
 export type DiagnosticCounters = { input: number; output: number; cacheRead?: number; cacheWrite?: number; cacheWrite5m?: number; cacheWrite1h?: number; reasoning?: number };
 export type DiagnosticBand = 'le100k' | 'le200k' | 'le272k' | 'gt272k';
-export type DiagnosticModelUsage = DiagnosticCounters & { bands?: Partial<Record<DiagnosticBand, DiagnosticCounters>> };
-export type DiagnosticUsage = DiagnosticCounters & { scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage>; actualEffort?: string | null; reasoningInOutput?: boolean };
+export type DiagnosticModelUsage = DiagnosticCounters & { bands?: Partial<Record<DiagnosticBand, DiagnosticCounters>>; turns?: number; toolCalls?: number; toolTurns?: number };
+export type DiagnosticUsage = DiagnosticCounters & { scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage>; actualEffort?: string | null; reasoningInOutput?: boolean; turns?: number; toolCalls?: number; toolTurns?: number };
 
 /** Why a launched CLI invocation has no or incomplete measured usage; fixed enum so exception text never renders. */
 export type CoverageReason = 'no usage' | 'transcript unavailable' | 'invalid counters' | 'unverified zero';

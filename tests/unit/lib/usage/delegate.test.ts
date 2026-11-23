@@ -122,8 +122,8 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
   assert.equal(res.usage?.inputSemantics, 'uncached');
   assert.equal(res.usage?.input, 121_500);
   assert.deepEqual(res.responses, [
-    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 121_000 },
-    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 500 },
+    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 121_000, toolCalls: 0, toolTurns: 0 },
+    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 500, toolCalls: 0, toolTurns: 0 },
   ]);
   assert.equal(res.usage?.cacheWrite5m, 36);
   assert.equal(res.usage?.cacheWrite1h, 24);
@@ -354,4 +354,82 @@ test('incomplete reads: missing, unreadable, budget-exhausted, empty window, and
     assert.equal(readDelegateSession(baseQuery({ platform, sessionId: '../x', fs: spyFs })).complete, false);
   }
   assert.equal(accesses, 0);
+});
+
+test('readDelegateSession keeps delegate turns and tools separate from children on shared and distinct models', () => {
+  const encoded = '-repo-my-app';
+  const sessionFile = `/home/.claude/projects/${encoded}/sess-1.jsonl`;
+  const childFile = `/home/.claude/projects/${encoded}/sess-1/subagents/agent-1.jsonl`;
+  const msg = (id: string, atMs: number, model: string, tools: number) => ({
+    type: 'assistant',
+    timestamp: new Date(atMs).toISOString(),
+    effort: 'high',
+    message: {
+      id,
+      model,
+      content: Array.from({ length: tools }, (_, i) => ({ type: 'tool_use', id: `${id}-t${i}`, name: 'Read', input: {} })),
+      usage: { input_tokens: 100, output_tokens: 10 },
+    },
+  });
+
+  // Shared model between delegate root and child subagent
+  const sharedFs = memoryFs({
+    [sessionFile]: lines(msg('d1', 12_000, 'claude-sonnet-5', 2), msg('d2', 14_000, 'claude-sonnet-5', 0)),
+    [childFile]: lines(msg('c1', 13_000, 'claude-sonnet-5', 3)),
+  }, { [childFile]: 13_000 });
+  const shared = readDelegateSession(baseQuery({ platform: 'claude', fs: sharedFs }));
+  assert.equal(shared.complete, true);
+  assert.equal(shared.usage?.turns, 2);
+  assert.equal(shared.usage?.toolCalls, 2);
+  assert.equal(shared.usage?.toolTurns, 1);
+  assert.equal(shared.usage?.models?.['claude-sonnet-5#high']?.turns, 2);
+  assert.equal(shared.usage?.models?.['claude-sonnet-5#high']?.toolCalls, 2);
+  assert.equal(shared.usage?.models?.['claude-sonnet-5#high']?.toolTurns, 1);
+  assert.deepEqual(shared.responses, [
+    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 200, toolCalls: 2, toolTurns: 1 },
+    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 3, toolTurns: 1 },
+  ]);
+
+  // Distinct models: root uses model A, child uses model B (gets known-zero turns/tools)
+  const splitFs = memoryFs({
+    [sessionFile]: lines(msg('d1', 12_000, 'model-a', 1)),
+    [childFile]: lines(msg('c1', 13_000, 'model-b', 4)),
+  }, { [childFile]: 13_000 });
+  const split = readDelegateSession(baseQuery({ platform: 'claude', fs: splitFs }));
+  assert.equal(split.complete, true);
+  assert.equal(split.usage?.turns, 1);
+  assert.equal(split.usage?.toolCalls, 1);
+  assert.equal(split.usage?.toolTurns, 1);
+  assert.equal(split.usage?.models?.['model-a#high']?.turns, 1);
+  assert.equal(split.usage?.models?.['model-a#high']?.toolCalls, 1);
+  assert.equal(split.usage?.models?.['model-a#high']?.toolTurns, 1);
+  assert.equal(split.usage?.models?.['model-b#high']?.turns, 0);
+  assert.equal(split.usage?.models?.['model-b#high']?.toolCalls, 0);
+  assert.equal(split.usage?.models?.['model-b#high']?.toolTurns, 0);
+  assert.deepEqual(split.responses, [
+    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 1, toolTurns: 1 },
+    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 4, toolTurns: 1 },
+  ]);
+});
+
+test('readDelegateSession omits toolCalls and toolTurns on responses when read is incomplete', () => {
+  const encoded = '-repo-my-app';
+  const sessionFile = `/home/.claude/projects/${encoded}/sess-1.jsonl`;
+  const msg = {
+    type: 'assistant',
+    timestamp: new Date(12_000).toISOString(),
+    message: {
+      id: 'd1',
+      model: 'claude-sonnet-5',
+      content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }],
+      usage: { input_tokens: 50, output_tokens: 5 },
+    },
+  };
+  const partialFs = memoryFs({ [sessionFile]: lines(msg) + '\n{bad-json\n' });
+  const partial = readDelegateSession(baseQuery({ platform: 'claude', fs: partialFs }));
+  assert.equal(partial.complete, false);
+  assert.equal(partial.usage, undefined);
+  assert.equal(partial.responses?.[0]?.coverage, 'partial');
+  assert.equal(partial.responses?.[0]?.toolCalls, undefined);
+  assert.equal(partial.responses?.[0]?.toolTurns, undefined);
 });

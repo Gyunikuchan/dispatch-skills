@@ -17,10 +17,10 @@ test('turns: claude counts the last in-window message usage row fields once by s
   });
   const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100000 } }, fs);
   assert.deepEqual(result.rows, [
-    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, turns: 1, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
-    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 4000, reasoningInOutput: true, turns: 1, input: 8, output: 2, cacheRead: 3 },
-    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2500, reasoningInOutput: true, input: 7, output: 2, cacheRead: 3 },
-    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, atMs: 2600, reasoningInOutput: true, input: 11, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, turns: 1, toolCalls: 0, toolTurns: 0, atMs: 3000, reasoningInOutput: true, input: 5, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'host', model: 'opus', effort: 'high', depth: 0, atMs: 4000, reasoningInOutput: true, turns: 1, toolCalls: 0, toolTurns: 0, input: 8, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, turns: 1, toolCalls: 0, toolTurns: 0, atMs: 2500, reasoningInOutput: true, input: 7, output: 2, cacheRead: 3 },
+    { stage: 'plan', role: 'subagent', model: 'opus', effort: 'high', depth: 1, turns: 1, toolCalls: 0, toolTurns: 0, atMs: 2600, reasoningInOutput: true, input: 11, output: 2, cacheRead: 3 },
   ]);
   const facts = readHostUsage('claude', { ...query, startMs: 2000, env: name => name === 'CLAUDE_CODE_SESSION_ID' ? query.sessionId : undefined }, fs);
   assert.deepEqual(facts.responses?.map(r => [r.agent, r.basis, r.coverage, r.observed, r.uncachedInput]), [
@@ -257,4 +257,112 @@ test('claude cache split carries 5m and 1h counters in host transcripts, stdout,
     provenance: 'claude.result.usage',
     inputSemantics: 'uncached',
   });
+});
+
+test('streaming tool_use blocks accumulate unique ids across chunks without duplicating tool calls', () => {
+  const host = '/home/.claude/projects/p/host.jsonl';
+  const chunk1 = {
+    type: 'assistant',
+    timestamp: new Date(2500).toISOString(),
+    message: {
+      id: 'msg-stream',
+      model: 'claude-sonnet-4-5',
+      content: [
+        { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { path: '/secret/file.ts' } },
+      ],
+      usage: { input_tokens: 10, output_tokens: 2 },
+    },
+  };
+  const chunk2 = {
+    type: 'assistant',
+    timestamp: new Date(2600).toISOString(),
+    message: {
+      id: 'msg-stream',
+      model: 'claude-sonnet-4-5',
+      content: [
+        { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { path: '/secret/file.ts' } },
+        { type: 'tool_use', id: 'toolu_2', name: 'Grep', input: { pattern: 'secret-arg' } },
+      ],
+      usage: { input_tokens: 10, output_tokens: 8 },
+    },
+  };
+  const textOnly = {
+    type: 'assistant',
+    timestamp: new Date(2800).toISOString(),
+    message: {
+      id: 'msg-text',
+      model: 'claude-sonnet-4-5',
+      content: [{ type: 'text', text: 'secret answer' }],
+      usage: { input_tokens: 5, output_tokens: 3 },
+    },
+  };
+  const fs = memoryFs({ [host]: lines(chunk1, chunk2, textOnly) });
+  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, fs);
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.rows[0]?.toolCalls, 2);
+  assert.equal(result.rows[0]?.toolTurns, 1);
+  assert.equal(result.rows[1]?.toolCalls, 0);
+  assert.equal(result.rows[1]?.toolTurns, 0);
+  assert.ok(!JSON.stringify(result).includes('secret'));
+});
+
+test('claude extracts root host user turns by stage while excluding meta and tool_result wrappers', () => {
+  const host = '/home/.claude/projects/p/host.jsonl';
+  const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl';
+  const assistant = (id: string, at: number) => ({
+    type: 'assistant',
+    timestamp: new Date(at).toISOString(),
+    message: { id, model: 'claude-sonnet-4-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 4, output_tokens: 2 } },
+  });
+  const fs = memoryFs({
+    [host]: lines(
+      { type: 'user', timestamp: new Date(500).toISOString(), message: { role: 'user', content: 'spec prompt secret' } },
+      { type: 'user', timestamp: new Date(1000).toISOString(), isMeta: true, message: { role: 'user', content: 'meta' } },
+      { type: 'user', timestamp: new Date(1500).toISOString(), toolUseResult: { stdout: 'x' }, message: { role: 'user', content: 'tool result wrapper' } },
+      { type: 'user', timestamp: new Date(1800).toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' }] } },
+      assistant('h1', 1900),
+      { type: 'user', timestamp: new Date(2500).toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't2', content: 'out' }, { type: 'text', text: 'user follow-up' }] } },
+      { type: 'user', timestamp: new Date(3000).toISOString(), message: { role: 'user', content: 'second plan prompt' } },
+      assistant('h2', 3200),
+      { type: 'user', timestamp: new Date(20000).toISOString(), message: { role: 'user', content: 'out of window' } },
+    ),
+    [child]: lines(
+      { type: 'user', timestamp: new Date(2600).toISOString(), message: { role: 'user', content: 'subagent prompt' } },
+      assistant('c1', 2700),
+    ),
+  });
+  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, fs);
+  assert.equal(result.userTurns, 3);
+  assert.deepEqual(result.userTurnsByStage, { spec: 1, plan: 2 });
+  assert.ok(!JSON.stringify(result).includes('spec prompt secret'));
+});
+
+test('claude emits tool calls and unified turns on subagent and delegate rows', async () => {
+  const { collectClaudeUsage } = await import('../../../../skills/dispatch/scripts/lib/usage/claude.ts');
+  const host = '/home/.claude/projects/p/host.jsonl';
+  const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl';
+  const msg = (id: string, at: number, tools: number) => ({
+    type: 'assistant',
+    timestamp: new Date(at).toISOString(),
+    message: {
+      id,
+      model: 'claude-sonnet-4-5',
+      content: Array.from({ length: tools }, (_, i) => ({ type: 'tool_use', id: `${id}-t${i}`, name: 'Read', input: {} })),
+      usage: { input_tokens: 5, output_tokens: 2 },
+    },
+  });
+  const fs = memoryFs({
+    [host]: lines(
+      { type: 'user', timestamp: new Date(1000).toISOString(), message: { role: 'user', content: 'delegate prompt' } },
+      msg('d1', 1500, 1),
+    ),
+    [child]: lines(msg('s1', 2500, 3)),
+  });
+  const delegateResult = collectClaudeUsage({ ...query, budget: { remaining: 100000 } }, fs, { projectDir: 'p', rootRole: 'delegate' });
+  assert.equal(delegateResult.userTurns, undefined);
+  assert.equal(delegateResult.userTurnsByStage, undefined);
+  assert.deepEqual(delegateResult.rows.map(r => [r.role, r.turns, r.toolCalls, r.toolTurns]), [
+    ['delegate', 1, 1, 1],
+    ['subagent', 1, 3, 1],
+  ]);
 });

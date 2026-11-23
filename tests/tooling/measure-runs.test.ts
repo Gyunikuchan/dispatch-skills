@@ -405,12 +405,12 @@ test('Matched comparisons disclose cost scope and basis', async () => {
     assert.equal(right.cost.high, 0.07);
     assert.ok(right.cost.coverage.reasons.includes('bounded cost range'));
     assert.match(report, /Estimated cost .*~\$0\.10/);
-    assert.match(report, /matches: 1 qualified, 0 wildcard, 0 generic/);
+    assert.match(report, /1 qualified, 0 wildcard, 0 generic/);
     assert.deepEqual(left.cost.rateBasis.matches, ['qualified']);
     assert.deepEqual(right.cost.rateBasis.matchCounts, { qualified: 0, wildcard: 0, generic: 2 });
     assert.deepEqual(left.cost.rateBasis.periods, ['2020-01-01']);
     assert.deepEqual(right.cost.rateBasis.periods, ['2021-01-01']);
-    assert.match(report, /Cost coverage: partial · host usage unavailable, subagent usage unavailable/);
+    assert.match(report, /Coverage warning: partial \(host usage unavailable, subagent usage unavailable\)/);
     assert.deepEqual(left.cost.coverage.reasons, ['host usage unavailable', 'subagent usage unavailable']);
     assert.equal(right.cost.coverage.sources['stdout fallback'], 1);
     assert.ok(pair.comparisonLimits.includes('effective tariff periods differ'));

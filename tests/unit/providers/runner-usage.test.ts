@@ -329,8 +329,8 @@ test('resumed launch subtracts usage already recorded for its session', async ()
   assert.deepEqual({ ...usage?.models }, { m: { input: 4, output: 3 } });
   const rows = [prior, usage!].map(value => ({ phase: 'ask-run', provider: 'agy', model: 'm', surface: 'cli' as const, launched: true, outcome: 'ok', usage: normalizeUsage(value, value.inputSemantics)! }));
   const report = renderDiagnostics([{ phases: [], reviews: [], invocations: rows }]).text;
-  assert.match(report, /Provider CLI measured tokens: 22 \(input 14 .* output 8\)/);
-  assert.match(report, /^\| CLI delegates \| 22 \| .*2 legacy source unknown/m);
+  assert.match(report, /^\| agy \| 14 \| — \| — \| 8 \| — \| delegates 2\/2 \|/m);
+  assert.match(report, /^\| CLI delegates \| ██████████ 100% \| — \| 22 \| .*2 legacy source unknown/m);
 });
 
 test('session usage sums optional counters once and preserves model keys safely', async () => {

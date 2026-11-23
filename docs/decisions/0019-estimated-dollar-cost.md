@@ -26,7 +26,7 @@ A hash-tracked JSON rate table stores USD rates per million tokens, prompt-size 
 
 ### Coverage notes and compaction-safe placement
 
-Session and comparison reports share coverage calculations, separating unpriced models from missing-telemetry gaps. Native slots rely on host-subagent transcript rows rather than a synthetic estimate (avoiding double counting), and Copilot stays a documented telemetry gap. Cost totals appear in Summary, `Cost drivers` (top 5 groups by cost share), Overview phases, platform, stage, and `Review yield` tables rather than the Appendix so cost visibility survives report compaction.
+Session and comparison reports share coverage calculations, separating unpriced models from missing-telemetry gaps. Native slots rely on host-subagent transcript rows rather than a synthetic estimate (avoiding double counting), and Copilot stays a documented telemetry gap. Cost totals appear in visible executive sections (`Summary`, `Spend & Turns`, `Cost drivers`, `Review health`) ahead of the collapsed Tier-2 `<details>` breakdowns and Tier-3 Appendix so cost visibility survives report compaction.
 
 ## Consequences
 

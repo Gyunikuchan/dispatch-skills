@@ -85,11 +85,21 @@ function counters(v: unknown): ModelUsage | undefined {
   const out = baseCounters(v);
   if (!out || !record(v)) return undefined;
   const bands = v['bands'] !== undefined ? bandsOf(v['bands'], out) : undefined;
-  return bands ? { ...out, bands } : out;
+  return {
+    ...out,
+    ...(bands ? { bands } : {}),
+    ...opt('turns', count(v['turns'])),
+    ...opt('toolCalls', count(v['toolCalls'])),
+    ...opt('toolTurns', count(v['toolTurns'])),
+  };
 }
 
 function mergeModelUsage(a: ModelUsage, b: ModelUsage): ModelUsage {
   const merged: ModelUsage = addCounters({ ...a }, b);
+  for (const key of ['turns', 'toolCalls', 'toolTurns'] as const) {
+    if (a[key] !== undefined && b[key] !== undefined && Number.isSafeInteger(a[key]! + b[key]!)) merged[key] = a[key]! + b[key]!;
+    else delete merged[key];
+  }
   if (a.bands && b.bands) {
     const bands: Bands = { ...a.bands };
     for (const [band, bv] of Object.entries(b.bands) as [keyof Bands, Counters][]) {
@@ -228,13 +238,19 @@ function delegateResponsesOf(value: unknown): DelegateResponseFacts[] | undefine
     if (item['agent'] !== undefined && (!agent || agent.startsWith('delegate-child-') !== (role === 'subagent'))) return [];
     const observed = count(rawObserved);
     const uncachedInput = count(rawInput);
+    const toolCalls = count(item['toolCalls']);
+    const toolTurns = count(item['toolTurns']);
     if (coverage === 'unknown' ? rawObserved !== undefined || rawInput !== undefined : observed === undefined || basis === 'unavailable') return [];
     if (coverage === 'complete' && !agent) return [];
     const key = JSON.stringify([stage, role, basis, agent]);
     if (seen.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
     seen.add(key);
     if (agent) aliases.add(agent);
-    return [{ stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed), ...opt('uncachedInput', uncachedInput) }];
+    return [{
+      stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed), ...opt('uncachedInput', uncachedInput),
+      ...opt('toolCalls', coverage === 'unknown' ? undefined : toolCalls),
+      ...opt('toolTurns', coverage === 'unknown' ? undefined : toolTurns),
+    }];
   });
   return responses.length ? responses : undefined;
 }
@@ -271,6 +287,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
     ...(v['superseded'] === true ? { superseded: true as const } : {}),
     ...(v['nudge'] === true ? { nudge: true as const } : {}),
+    ...(v['wrapUp'] === true ? { wrapUp: true as const } : {}),
   }];
 }
 
@@ -289,14 +306,20 @@ function hostResponsesOf(value: unknown): HostResponseAggregate[] | undefined {
     if (item['agent'] !== undefined && (!agent || !agent.startsWith(`${role}-`))) return [];
     const observed = count(item['observed']);
     const uncachedInput = count(item['uncachedInput']);
+    const toolCalls = count(item['toolCalls']);
+    const toolTurns = count(item['toolTurns']);
     if (coverage === 'unknown' ? observed !== undefined : observed === undefined) return [];
     if (coverage === 'complete' && !agent) return [];
     const key = `${stage}\0${role}\0${basis}\0${agent ?? ''}`;
     if (keys.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
     keys.add(key);
     if (agent) aliases.add(agent);
-    return [{ stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed),
-      ...opt('uncachedInput', observed === undefined ? undefined : uncachedInput) }];
+    return [{
+      stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed),
+      ...opt('uncachedInput', observed === undefined ? undefined : uncachedInput),
+      ...opt('toolCalls', observed === undefined ? undefined : toolCalls),
+      ...opt('toolTurns', observed === undefined ? undefined : toolTurns),
+    }];
   });
 }
 function hostUsageOf(value: unknown): HostUsageFacts | undefined {
@@ -305,7 +328,11 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
     if (!record(v)) return [];
     const stage=STAGE_ORDER.find(x=>x===v['stage']), role=HOST_ROLES.find(x=>x===v['role']), usage=counters(v);
     if(!stage || !role || !usage) return [];
-    return [{stage,...opt('phase',phaseKey(v['phase'])),role,model:modelName(v['model']) ?? DASH,effort:token(v['effort']) ?? null,...usage,...(typeof v['reasoningInOutput']==='boolean'?{reasoningInOutput:v['reasoningInOutput']}:{}) }];
+    return [{
+      stage, ...opt('phase', phaseKey(v['phase'])), role, model: modelName(v['model']) ?? DASH, effort: token(v['effort']) ?? null,
+      ...usage, ...opt('maxDepth', role === 'subagent' ? count(v['maxDepth']) : undefined),
+      ...(typeof v['reasoningInOutput']==='boolean'?{reasoningInOutput:v['reasoningInOutput']}:{}),
+    }];
   });
   const notes: NonNullable<HostUsageFacts['notes']> = {};
   if(record(value['notes'])) for(const role of HOST_ROLES) {
@@ -313,8 +340,26 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
     const clean=Object.fromEntries(HOST_NOTES.flatMap(key=>{const n=count(raw[key]);return n===undefined?[]:[[key,n]];}));
     if(Object.keys(clean).length) notes[role]=clean;
   }
+  const rawByStage = record(value['userTurnsByStage']) ? value['userTurnsByStage'] : undefined;
+  const byStageEntries = rawByStage
+    ? STAGE_ORDER.flatMap((stage) => {
+      const n = count(rawByStage[stage]);
+      return n === undefined ? [] : [[stage, n] as const];
+    })
+    : [];
+  const userTurnsByStage = byStageEntries.length ? Object.fromEntries(byStageEntries) as HostUsageFacts['userTurnsByStage'] : undefined;
   const unavailable=HOST_UNAVAILABLE.find(x=>x===value['unavailable']);
-  return {platform:token(value['platform']) ?? null,rows,...opt('responses',hostResponsesOf(value['responses'])),...opt('unavailable',unavailable),...(Object.keys(notes).length?{notes}:{})};
+  return {
+    platform: token(value['platform']) ?? null,
+    rows,
+    ...opt('responses', hostResponsesOf(value['responses'])),
+    ...opt('userTurns', count(value['userTurns'])),
+    ...opt('userTurnsByStage', userTurnsByStage),
+    ...opt('subagentCount', count(value['subagentCount'])),
+    ...opt('maxSubagentDepth', count(value['maxSubagentDepth'])),
+    ...opt('unavailable', unavailable),
+    ...(Object.keys(notes).length ? { notes } : {}),
+  };
 }
 
 /** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
@@ -340,7 +385,7 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
       const cls=['invalid-input','invalid-record','approval-stale','key-conflict','user-only'].find(x=>x===v['cls']),tool=token(v['tool']),action=token(v['action']);return cls&&tool&&action?[{tool,action,cls}]:[];}) : undefined),
     ...opt('relaunches',count(r['relaunches'])===undefined?undefined:Math.min(1_000_000,count(r['relaunches'])!)),
     ...opt('version', match(/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,32})?$/)(r['version'])), ...opt('build', build?.slice(0, 12)),
-    ...opt('os', token(r['os'])), ...opt('host', token(r['host'])),
+    ...opt('os', token(r['os'])), ...opt('host', token(r['host'])), ...opt('hostThread', match(/^[a-f0-9]{16}$/)(r['hostThread'])),
     ...opt('verb', VERBS.find((v) => v === r['verb'])), ...opt('level', LEVELS.find((v) => v === r['level'])),
     ...opt('pins', match(/^[A-Za-z0-9_.,:-]{1,96}$/)(r['pins'])), ...opt('config', config), ...opt('outcome', token(r['outcome'])),
     ...opt('fault', fault && {
@@ -385,7 +430,12 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
         return key && n !== undefined ? [{key, count: n}] : [];
       }) : [];
       const kind = (['plan', 'design', 'code'] as const).find(kind => kind === v['kind']);
-      return [{review, round, ...opt('kind', kind), ...opt('hostTurns', count(v['hostTurns'])), ...opt('calls', total === undefined ? undefined : {total, phases}), ...opt('hostTokens', count(v['hostTokens']))}];
+      return [{
+        review, round, ...opt('kind', kind), ...opt('hostTurns', count(v['hostTurns'])),
+        ...opt('calls', total === undefined ? undefined : {total, phases}), ...opt('hostTokens', count(v['hostTokens'])),
+        ...opt('reviewerTurns', count(v['reviewerTurns'])),
+        ...(v['reviewerTurnsPartial'] === true ? { reviewerTurnsPartial: true as const } : {}),
+      }];
     }) : undefined),
     ...opt('slotYield', Array.isArray(r['slotYield']) ? r['slotYield'].filter(record).flatMap((v): SlotYieldFacts[] => {
       const kind = (['provider', 'native', 'tool'] as const).find((name) => name === v['kind']);

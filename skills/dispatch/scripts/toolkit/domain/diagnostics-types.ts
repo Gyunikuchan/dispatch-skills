@@ -24,7 +24,7 @@ export const CATEGORIES = {
 } as const;
 export type Category = keyof typeof CATEGORIES;
 
-export type ModelUsage = Counters & { bands?: Bands };
+export type ModelUsage = Counters & { bands?: Bands; turns?: number; toolCalls?: number; toolTurns?: number };
 
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
 export type Usage = ModelUsage & { models?: Record<string, ModelUsage>; reasoningInOutput?: boolean };
@@ -48,7 +48,7 @@ export type InvocationFacts = {
   launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: Usage; usageSource?: UsageSource; reportedModels?: string[]; reportedModelAmbiguous?: true; coverage?: CoverageReason[];
   responses?: DelegateResponseFacts[];
   superseded?: true;
-  slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true;
+  slot?: string; lifecycleSteps?: LifecycleStep[]; nudge?: true; wrapUp?: true;
   routingOutcome?: string; slotState?: 'done'|'native'|'failed'; validationOutcome?: string; nativeState?: 'pending'|'completed'|'invalid'|'failed'; subject?: string; attempt?: number; targetSlot?: string;
 };
 
@@ -59,7 +59,7 @@ export type InvocationFacts = {
 export type ReviewFacts = { phase?: string; round: number; accepted: number; rejected: number; recurring?: number; reraised?: readonly string[]; escalation?: Escalation; cap?: number };
 
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
-export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number; hostTurns?: number; kind?: ReviewKind };
+export type RoundWorkload = { review: string; round: number; calls?: {total: number; phases: {key: string; count: number}[]}; hostTokens?: number; hostTurns?: number; reviewerTurns?: number; reviewerTurnsPartial?: true; kind?: ReviewKind };
 
 export type SlotYieldAttempt = Pick<InvocationFacts, 'provider' | 'model' | 'usage' | 'usageSource' | 'reportedModels' | 'reportedModelAmbiguous' | 'coverage'> & { effort: string | null };
 
@@ -94,7 +94,7 @@ export type RunFacts = {
   provenance?: {version?:string; build?:string; config?:Record<string,unknown>}[];
   rejectedTools?: {tool:string; action:string; cls:string}[];
   relaunches?: number;
-  version?: string; build?: string; os?: string; host?: string; verb?: string; level?: string; pins?: string;
+  version?: string; build?: string; os?: string; host?: string; hostThread?: string; verb?: string; level?: string; pins?: string;
   config?: Record<string, unknown>; outcome?: string;
   /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
   fault?: { effectId?: string; cls: string; hostWaitMs?: number; waitBy?: 'user' | 'host'; driverMs?: number };

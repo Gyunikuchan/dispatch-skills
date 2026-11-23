@@ -14,6 +14,7 @@ type ParsedStep = {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;
+  toolCalls: number;
 };
 
 export const agy: HostUsageAdapter = {
@@ -49,6 +50,8 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   const subagentFallbackModels = new Map<string, string>();
   const visited = new Set<string>();
   visited.add(query.sessionId);
+  let userTurns = 0;
+  const userTurnsByStage: Partial<Record<HostStage, number>> = {};
 
   function getDescriptorChildren(parentId: string): string[] {
     const subDir = path.join(root, 'brain', parentId, '.system_generated', 'subagents');
@@ -139,6 +142,16 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
       }
       if (!entry || typeof entry !== 'object') continue;
 
+      if (entry.type === 'USER_INPUT' && role === 'host' && rootRole === 'host' && entry.source === 'USER_EXPLICIT') {
+        const at = typeof entry.created_at === 'string' ? Date.parse(entry.created_at) : NaN;
+        if (Number.isFinite(at) && at >= query.startMs && at <= query.endMs) {
+          userTurns++;
+          const stage = stageAt(query.stages, at);
+          userTurnsByStage[stage] = (userTurnsByStage[stage] ?? 0) + 1;
+        }
+        continue;
+      }
+
       if (entry.type === 'PLANNER_RESPONSE') {
         const at = typeof entry.created_at === 'string' ? Date.parse(entry.created_at) : NaN;
         if (
@@ -158,6 +171,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
           ...(typeof entry.created_at === 'string' && !/\.\d+/.test(entry.created_at) ? { wholeSecond: true as const } : {}),
           input_tokens: entry.input_tokens,
           output_tokens: entry.output_tokens,
+          toolCalls: Array.isArray(entry.tool_calls) ? entry.tool_calls.length : 0,
         };
         if (counter(entry.cache_read_tokens)) {
           parsed.cache_read_tokens = entry.cache_read_tokens;
@@ -254,11 +268,11 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
     }
 
     let inWindowCount = 0;
-    const observedSteps = result.response ? new Set<number>() : undefined;
+    const seenSteps = new Set<number>();
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i]!;
-      const repeated = observedSteps?.has(s.step_index);
-      observedSteps?.add(s.step_index);
+      const repeated = seenSteps.has(s.step_index);
+      seenSteps.add(s.step_index);
       if (!(s.atMs >= query.startMs && s.atMs <= query.endMs)) continue;
       inWindowCount++;
       let model: string;
@@ -285,7 +299,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
         atMs: s.atMs,
         ...(s.wholeSecond ? { wholeSecond: true as const } : {}),
         reasoningInOutput: false,
-        ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}),
+        ...(!repeated ? { turns: 1, toolCalls: s.toolCalls, toolTurns: s.toolCalls > 0 ? 1 : 0 } : { skipResponse: true as const }),
         input: s.input_tokens,
         output: s.output_tokens,
       };
@@ -293,10 +307,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
       if (reasoning !== undefined && counter(reasoning)) hostRow.reasoning = reasoning;
       if (result.response) {
         hostRow.responseActor = id;
-        if (repeated) {
-          hostRow.skipResponse = true;
-          result.response.limited = true;
-        }
+        if (repeated) result.response.limited = true;
       }
       result.rows.push(hostRow);
     }
@@ -314,6 +325,10 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   const hostResult = processConversation(query.sessionId, 'host', hostFallbackModel, 0);
   if (notes.host?.['read budget reached']) {
     return result;
+  }
+  if (rootRole === 'host' && !result.unavailable && !Object.keys(notes.host ?? {}).length) {
+    result.userTurns = userTurns;
+    result.userTurnsByStage = userTurnsByStage;
   }
 
   let currentQueue: string[] = [];

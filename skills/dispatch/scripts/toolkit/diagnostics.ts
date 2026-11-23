@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { delegateResponseActor } from '../lib/usage/delegate.ts';
 import type { Invocation } from '../providers/types.ts';
-import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
+import { hostSessionId, readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
 import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
 import type { ProviderKey } from '../lib/platform.ts';
@@ -251,11 +251,32 @@ export function stageMilestones(fold: Fold, captures: readonly RunFacts[], start
 // Host milestone name for a round; the review hash keeps it within the phase key gate.
 const roundPhase = (review: string, round: number) => `round-${review.slice(7)}-${round}`;
 
+export function hostThreadId(
+  platform: ProviderKey | null,
+  env: Record<string, string | undefined>,
+  sessionPath: string,
+): string | undefined {
+  if (!platform) return undefined;
+  const id = hostSessionId(platform, (name) => env[name]);
+  if (!id) return undefined;
+  return crypto.createHmac('sha256', path.resolve(sessionPath)).update(JSON.stringify([platform, id])).digest('hex').slice(0, 16);
+}
+
 /**
  * Each window closes at its last run, ruling or fix-review-lite note, before the next round starts.
  * A capture belongs to the window holding its start, so closed windows never change on a later render.
  */
-function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFacts[], reviewKeys: ReadonlyMap<string, string>, records: Fold['records']): {rows: RoundWorkload[]; window?: {startMs: number; endMs: number; milestones: PhaseMilestone[]}} {
+function roundTimeline(
+  rounds: readonly YieldRound[],
+  measured: readonly RunFacts[],
+  reviewKeys: ReadonlyMap<string, string>,
+  records: Fold['records'],
+  invocations: readonly InvocationFacts[],
+): {
+  rows: RoundWorkload[];
+  capturesByRound: Map<string, { host?: string; hostThread?: string }[]>;
+  window?: { startMs: number; endMs: number; milestones: PhaseMilestone[] };
+} {
   const owner = new Map<string, {key: string; review: string; round: number}>();
   for (const round of rounds) for (const generation of round.generations) owner.set(generation.subject, {key: reviewKeys.get(round.review)!, review: round.review, round: round.round});
   // Raw `tool-action[-kind]` key; a killed capture has invocations but no phases yet.
@@ -274,11 +295,11 @@ function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFact
     let close = round.start;
     for (const {capture, start} of reviewRuns) {
       if (start < round.start || start >= nextStart) continue;
-      const invocations = capture.invocations.filter(invocation => {
+      const matched = capture.invocations.filter(invocation => {
         const who = invocation.subject ? owner.get(invocation.subject) : undefined;
         return who?.key === round.key && who.round === round.round;
       });
-      if (invocations.length) close = Math.max(close, capture.capture?.end ?? start, ...invocations.map(invocation => invocation.endMs ?? start));
+      if (matched.length) close = Math.max(close, capture.capture?.end ?? start, ...matched.map(invocation => invocation.endMs ?? start));
     }
     for (const record of records) {
       const at = Date.parse(record.at);
@@ -289,29 +310,75 @@ function roundTimeline(rounds: readonly YieldRound[], measured: readonly RunFact
     return Math.min(close, nextStart - 1);
   });
   const calls = new Map<number, Map<string, number>>();
+  const roundCaptures = new Map<number, { host?: string; hostThread?: string }[]>();
   for (const capture of measured) {
-    const key = callKey(capture), start = capture.capture?.start;
-    if (key === undefined || start === undefined) continue;
+    const start = capture.capture?.start;
+    if (start === undefined) continue;
     let index = -1;
     timeline.forEach((round, i) => { if (round.start <= start) index = i; });
     if (index < 0 || start > closes[index]!) continue;
+    const captures = roundCaptures.get(index) ?? [];
+    captures.push({
+      ...(capture.host === undefined ? {} : { host: capture.host }),
+      ...(capture.hostThread === undefined ? {} : { hostThread: capture.hostThread }),
+    });
+    roundCaptures.set(index, captures);
+    const key = callKey(capture);
+    if (key === undefined) continue;
     const counts = calls.get(index) ?? new Map<string, number>();
     counts.set(key, (counts.get(key) ?? 0) + 1);
     calls.set(index, counts);
   }
+  const reviewerTurnsFor = (round: YieldRound): Pick<RoundWorkload, 'reviewerTurns' | 'reviewerTurnsPartial'> => {
+    const activeSlots = round.roster.filter(s => !s.reserve);
+    const currentSubject = round.generations.find(g => g.generation === round.generation)?.subject;
+    let total = 0;
+    let observedSlots = 0;
+    let partial = false;
+    for (const s of activeSlots) {
+      const isNative = s.native === true
+        || round.slots.some(o => o.slot === s.slot && (o.state === 'native' || (o.state === 'done' && o.responder?.native === true)))
+        || invocations.some(i => i.subject === currentSubject && i.surface === 'native' && (i.targetSlot ?? i.slot) === s.slot);
+      const cliInvocations = invocations.filter(i => i.subject === currentSubject && i.surface === 'cli' && i.launched && (i.targetSlot ?? i.slot) === s.slot);
+      let slotTurns = 0;
+      let cliObserved = cliInvocations.length > 0;
+      for (const inv of cliInvocations) {
+        let turns: number | undefined;
+        if (inv.usage?.turns !== undefined) {
+          turns = inv.usage.turns;
+        } else if (inv.usageSource !== 'stdout' && !inv.coverage?.includes('transcript unavailable')) {
+          const delegateResponses = (inv.responses ?? []).filter(r => r.role === 'delegate');
+          if (delegateResponses.length > 0 && delegateResponses.every(r => r.coverage === 'complete' && r.observed !== undefined)) {
+            turns = delegateResponses.reduce((sum, r) => sum + r.observed!, 0);
+          }
+        }
+        if (turns === undefined) { cliObserved = false; break; }
+        slotTurns += turns;
+      }
+      if (cliObserved) {
+        total += slotTurns;
+        observedSlots++;
+      }
+      if (isNative || !cliObserved) partial = true;
+    }
+    if (!observedSlots) return {};
+    return { reviewerTurns: total, ...(partial ? { reviewerTurnsPartial: true as const } : {}) };
+  };
+  const capturesByRound = new Map<string, { host?: string; hostThread?: string }[]>();
   const rows = rounds.map((round): RoundWorkload => {
     const review = reviewKeys.get(round.review)!;
     const index = timeline.findIndex(t => t.key === review && t.round === round.round);
     const kind = (['plan', 'design', 'code'] as const).find(kind => round.review.startsWith(kind + '-'));
-    const row = {review, ...(kind ? {kind} : {}), round: round.round};
+    const row: RoundWorkload = { review, ...(kind ? { kind } : {}), round: round.round, ...reviewerTurnsFor(round) };
     if (index < 0) return row;
+    capturesByRound.set(`${review}#${round.round}`, roundCaptures.get(index) ?? []);
     const phases = [...(calls.get(index) ?? new Map<string, number>())].map(([key, count]) => ({key, count}))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
     return {...row, calls: {total: phases.reduce((sum, p) => sum + p.count, 0), phases}};
   });
   const close = closes.at(-1);
-  if (close === undefined) return {rows};
-  return {rows, window: {
+  if (close === undefined) return {rows, capturesByRound};
+  return {rows, capturesByRound, window: {
     startMs: timeline[0]!.start,
     endMs: close,
     milestones: timeline.flatMap((t, i) => [
@@ -479,7 +546,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
       return {slot:slot.slot,attempts:native?[...attempts,{surface:'native' as const}]:attempts};
     })};
   });
-  const workload=roundTimeline(rounds,measured,reviewKeys,fold.records);
+  const workload=roundTimeline(rounds,measured,reviewKeys,fold.records,invocations);
   let hostUsage: RunFacts['hostUsage'];
   if(hostContext) {
     const {manifest,deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
@@ -492,6 +559,8 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   let roundWorkload = workload.rows;
   if(hostContext && workload.window) {
     const {deps}=hostContext, platform=deps.orchestrator?.platform ?? null;
+    const measuredThread = hostThreadId(platform, deps.env, session);
+    const hasThreadTracking = measured.some(c => c.hostThread !== undefined);
     let windowRead: HostUsageFacts;
     try { windowRead = hostUsageRead(deps,platform,{startMs:workload.window.startMs,endMs:workload.window.endMs,stages:[],phases:workload.window.milestones}); }
     catch(error) { windowRead={platform,rows:[],unavailable:readErrorReason(error)}; }
@@ -507,6 +576,13 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
       }
       roundWorkload = roundWorkload.map(row => {
         if (!row.calls) return row;
+        const captures = workload.capturesByRound.get(`${row.review}#${row.round}`) ?? [];
+        const mismatch = captures.some(c =>
+          (c.host !== undefined && c.host !== windowRead.platform)
+          || (c.hostThread !== undefined && (!measuredThread || c.hostThread !== measuredThread))
+          || (hosts.length > 1 && c.host === undefined)
+          || (hasThreadTracking && c.hostThread === undefined));
+        if (mismatch) return row;
         const phase = roundPhase(row.review, row.round);
         return {...row, hostTokens: tokens.get(phase) ?? 0,
           ...(!Object.keys(windowRead.notes?.host ?? {}).length && !missingTurns.has(phase) ? {hostTurns: turns.get(phase) ?? 0} : {})};
@@ -574,7 +650,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
   const started = deps.clock();
   const phase = tool + '-' + action + (tool === 'review' ? '-' + (kind ?? 'code') : '');
   const name: HostStage = tool === 'ask' ? 'ask' : tool === 'review' ? (kind === 'plan' ? 'plan review' : kind === 'design' ? 'design review' : 'code review') : 'implementation';
-  const facts: RunFacts = {os:process.platform,...(deps.orchestrator ? {host:deps.orchestrator.platform} : {}),phases:[],invocations:[],reviews:[]};
+  const hostThread = hostThreadId(deps.orchestrator?.platform ?? null, deps.env, session);
+  const facts: RunFacts = {os:process.platform,...(deps.orchestrator ? {host:deps.orchestrator.platform} : {}),...(hostThread ? {hostThread} : {}),phases:[],invocations:[],reviews:[]};
   const directory = path.join(session,'.state','diagnostics');
   const file = path.join(directory,crypto.randomUUID()+'.json');
   facts.capture={state:'opened',start:started};
@@ -628,7 +705,7 @@ export function observeTool(session: string, tool: string, action: string, kind:
           return { ...response, stage: name, ...(agent ? { agent } : {}) };
         }) : undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{})});
+          ...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{}),...(i.wrapUp===true?{wrapUp:true as const}:{})});
         seen.add(i);added=true;
       }
       if(added||pendingPersistence)persist();

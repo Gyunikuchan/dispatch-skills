@@ -58,7 +58,7 @@ test('diagnostics stay observational across CLI recovery and report completion',
       assert.ok(fs.existsSync(path.resolve(f.session, rendered.value.path)));
       assert.equal('diagnostics' in rendered.value, true);
       const report = fs.readFileSync(path.resolve(f.session, rendered.value.diagnostics), 'utf8');
-      assert.match(report, /incomplete 1/i);
+      assert.match(report, /Collection warning: partial[\s\S]*incomplete 1/i);
       assert.match(report, /completed/i);
       assert.doesNotMatch(report, /Explain the fixture behavior|Retained native answer/);
       const writer = run(['worktree', 'create', 'T1']);

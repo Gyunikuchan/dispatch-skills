@@ -23,6 +23,8 @@ export type HostResponseAggregate = {
   coverage: ResponseCoverage;
   observed?: number;
   uncachedInput?: number;
+  toolCalls?: number;
+  toolTurns?: number;
 };
 export type UsageRow = Counters & {
   model: string;
@@ -33,14 +35,33 @@ export type UsageRow = Counters & {
   wholeSecond?: true;
   reasoningInOutput: boolean;
   turns?: number;
+  toolCalls?: number;
+  toolTurns?: number;
   responseActor?: string; // Adapter-local identity, projected to an alias before returning facts.
   skipResponse?: true;
 };
-export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; reasoningInOutput?: boolean; turns?: number };
+export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & {
+  bands?: Partial<Record<DiagnosticBand, Counters>>;
+  reasoningInOutput?: boolean;
+  turns?: number;
+  toolCalls?: number;
+  toolTurns?: number;
+  maxDepth?: number;
+};
 export type HostUnavailable = typeof HOST_UNAVAILABLE[number];
 export type HostNote = typeof HOST_NOTES[number];
 export type HostNotes = Partial<Record<HostRole, Partial<Record<HostNote, number>>>>;
-export type HostUsageFacts = { platform: string | null; rows: HostUsageRow[]; responses?: HostResponseAggregate[]; unavailable?: HostUnavailable; notes?: HostNotes };
+export type HostUsageFacts = {
+  platform: string | null;
+  rows: HostUsageRow[];
+  responses?: HostResponseAggregate[];
+  userTurns?: number;
+  userTurnsByStage?: Partial<Record<HostStage, number>>;
+  subagentCount?: number;
+  maxSubagentDepth?: number;
+  unavailable?: HostUnavailable;
+  notes?: HostNotes;
+};
 export type Milestone = { stage: HostStage; atMs: number };
 export type PhaseMilestone = { phase: string; atMs: number };
 export type ReadBudget = { remaining: number };
@@ -60,7 +81,14 @@ export type DelegateQuery = {
   budget: ReadBudget;
 };
 export type HostUsageFs = { list(dir: string): string[]; stat(file: string): { size: number; mtimeMs: number } | null; read(file: string, maxBytes: number): Buffer; decompress: ((data: Buffer, maxBytes: number) => Buffer) | null; sqliteGenMetadata?: (file: string) => readonly Uint8Array[] | null; opencodeMessages?: typeof readOpencodeMessages };
-export type HostUsageResult = { rows: (UsageRow & { stage: HostStage })[]; response?: { basis: HostResponseBasis; limited?: true }; unavailable?: HostUnavailable; notes?: HostNotes };
+export type HostUsageResult = {
+  rows: (UsageRow & { stage: HostStage })[];
+  response?: { basis: HostResponseBasis; limited?: true };
+  userTurns?: number;
+  userTurnsByStage?: Partial<Record<HostStage, number>>;
+  unavailable?: HostUnavailable;
+  notes?: HostNotes;
+};
 export type HostUsageAdapter = { sessionEnv: readonly string[]; read(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult };
 
 const OPTIONAL_COUNTERS = ['cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;

@@ -33,30 +33,60 @@ export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, optio
   }
   if (result.unavailable || !hosts.length) return { ...result, unavailable: result.unavailable ?? 'host id file missing' };
   const host = hosts[0]!.file;
+  let userTurns = 0;
+  const userTurnsByStage: Partial<Record<HostStage, number>> = {};
   function read(file: string, role: HostRole, depth = 0) {
     try {
       const data = readTranscript(fs, file, query.budget);
       if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'subagents over size cap'); return; }
       if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return; }
       const messages = new Map<string, { at: number; firstAt: number; model: string; effort: string | null; usage: Record<string, unknown> }>();
+      const toolUseById = new Map<string, { ids: Set<string>; unnamed: number }>();
       for (const line of data.text.split('\n')) {
         if (!line.trim()) continue;
         let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
-        if (!entry || typeof entry !== 'object' || entry.type !== 'assistant' || !entry.message || typeof entry.message !== 'object' || !('usage' in entry.message)) continue;
-        const message = entry.message; const usage = message.usage; const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+        if (!entry || typeof entry !== 'object') continue;
+        if (entry.type === 'user' && role === 'host' && rootRole === 'host') {
+          if (entry.isMeta === true || entry.toolUseResult !== undefined) continue;
+          const content = entry.message?.content;
+          if (Array.isArray(content) && content.length > 0 && content.every((b: any) => b && typeof b === 'object' && b.type === 'tool_result')) continue;
+          const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+          if (!Number.isFinite(at) || !(at >= query.startMs && at <= query.endMs)) continue;
+          userTurns++;
+          const stage = stageAt(query.stages, at);
+          userTurnsByStage[stage] = (userTurnsByStage[stage] ?? 0) + 1;
+          continue;
+        }
+        if (entry.type !== 'assistant' || !entry.message || typeof entry.message !== 'object') continue;
+        const message = entry.message;
+        if (typeof message.id === 'string' && message.id && Array.isArray(message.content)) {
+          let tracker = toolUseById.get(message.id);
+          if (!tracker) { tracker = { ids: new Set<string>(), unnamed: 0 }; toolUseById.set(message.id, tracker); }
+          let unnamed = 0;
+          for (const block of message.content) {
+            if (!block || typeof block !== 'object' || block.type !== 'tool_use') continue;
+            if (typeof block.id === 'string' && block.id) tracker.ids.add(block.id);
+            else unnamed++;
+          }
+          if (unnamed > tracker.unnamed) tracker.unnamed = unnamed;
+        }
+        if (!('usage' in message)) continue;
+        const usage = message.usage; const at = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
         if (typeof message.id !== 'string' || !message.id || typeof message.model !== 'string' || !message.model || !Number.isFinite(at) || !usage || typeof usage !== 'object' || !counter(usage.input_tokens) || !counter(usage.output_tokens) || ['cache_read_input_tokens', 'cache_creation_input_tokens'].some(key => usage[key] !== undefined && !counter(usage[key]))) { note(notes, role, 'unparsed lines'); continue; }
         messages.set(message.id, { at, firstAt: messages.get(message.id)?.firstAt ?? at, model: message.model, effort: typeof entry.effort === 'string' ? entry.effort : null, usage });
       }
       let count = 0;
-      for (const entry of messages.values()) {
+      for (const [id, entry] of messages) {
         if (entry.model === '<synthetic>' || !(entry.at >= query.startMs && entry.at <= query.endMs)) continue;
         const u = entry.usage;
         if (typeof u['input_tokens'] !== 'number' || typeof u['output_tokens'] !== 'number') continue;
         count++;
+        const tracker = toolUseById.get(id);
+        const toolCalls = tracker ? tracker.ids.size + tracker.unnamed : 0;
         const hostRow: UsageRow & { stage: HostStage } = {
           stage: stageAt(query.stages, entry.at), role: role === 'host' ? rootRole : role,
           model: entry.model, effort: entry.effort, depth, atMs: entry.at, reasoningInOutput: true,
-          ...(role === 'host' && rootRole === 'host' ? { turns: 1 } : {}),
+          turns: 1, toolCalls, toolTurns: toolCalls > 0 ? 1 : 0,
           input: u['input_tokens'], output: u['output_tokens'],
         };
         if (typeof u['cache_read_input_tokens'] === 'number') hostRow.cacheRead = u['cache_read_input_tokens'];
@@ -74,6 +104,10 @@ export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, optio
     } catch (error) { if (role === 'host') result.unavailable = readErrorReason(error); else note(notes, role, 'unreadable files'); }
   }
   read(host, 'host', 0);
+  if (rootRole === 'host' && !result.unavailable && !Object.keys(notes.host ?? {}).length) {
+    result.userTurns = userTurns;
+    result.userTurnsByStage = userTurnsByStage;
+  }
   function walkSubagents(dir: string, depth: number) {
     let names: string[] = [];
     try { names = fs.list(dir); } catch { note(notes, 'subagent', 'unreadable files'); return; }

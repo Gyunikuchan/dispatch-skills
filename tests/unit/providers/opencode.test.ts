@@ -286,11 +286,11 @@ test('opencode sessionUsage sums DB rows for the session and descendants with pe
   assert.equal(usage?.actualEffort, null);
   assert.deepEqual({ ...usage?.models }, {
     'opencode-go/deepseek-v4.1-flash#high': {
-      input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1,
+      input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1, turns: 1,
       bands: { le100k: { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 } },
     },
     'lmstudio/qwen3.8-27b#low': {
-      input: 7, output: 3, reasoning: 2,
+      input: 7, output: 3, reasoning: 2, turns: 0,
       bands: { le100k: { input: 7, output: 3, reasoning: 2 } },
     },
   });

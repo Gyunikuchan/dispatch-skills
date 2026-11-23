@@ -11,7 +11,12 @@ import { boundModels, foldRows, OTHER_KEY, type BandedCounters } from './bands.t
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
 import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostResponseAggregate, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type HostUsageResult, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
 
-function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases: readonly PhaseMilestone[]): HostUsageRow[] {
+function foldHostRows(
+  rows: readonly (UsageRow & { stage: HostStage })[],
+  phases: readonly PhaseMilestone[],
+  hostComplete: boolean,
+  subagentComplete: boolean,
+): HostUsageRow[] {
   const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[] }>();
   for (const r of rows) {
     const phase = phaseAt(phases, r.atMs);
@@ -37,15 +42,23 @@ function foldHostRows(rows: readonly (UsageRow & { stage: HostStage })[], phases
       perKey[k] = { ...entry, ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }) };
     }
     const bounded = boundModels(perKey);
+    const roleComplete = group.role === 'host' ? hostComplete : subagentComplete;
     for (const [k, value] of Object.entries(bounded)) {
       const { model, effort } = splitUsageKey(k);
       const typed = value as BandedCounters & { reasoningInOutput?: boolean };
       const inputs = k === OTHER_KEY
         ? [...byKey].flatMap(([key, list]) => key === OTHER_KEY || !Object.hasOwn(bounded, key) ? list : [])
         : byKey.get(k)!;
-      const turns = inputs.every(r => r.turns !== undefined) ? inputs.reduce((total, r) => total + r.turns!, 0) : undefined;
+      const active = inputs.filter(r => !r.skipResponse);
+      const turns = roleComplete && active.every(r => r.turns !== undefined) ? active.reduce((total, r) => total + r.turns!, 0) : undefined;
+      const toolCalls = roleComplete && active.length > 0 && active.every(r => r.toolCalls !== undefined) ? active.reduce((total, r) => total + r.toolCalls!, 0) : undefined;
+      const toolTurns = roleComplete && active.length > 0 && active.every(r => r.toolTurns !== undefined) ? active.reduce((total, r) => total + r.toolTurns!, 0) : undefined;
+      const maxDepth = roleComplete && group.role === 'subagent' ? inputs.reduce((max, r) => Math.max(max, r.depth), 0) : undefined;
       const row: HostUsageRow = {
         ...(turns === undefined ? {} : { turns }),
+        ...(toolCalls === undefined ? {} : { toolCalls }),
+        ...(toolTurns === undefined ? {} : { toolTurns }),
+        ...(maxDepth === undefined ? {} : { maxDepth }),
         stage: group.stage,
         ...(group.phase === undefined ? {} : { phase: group.phase }),
         role: group.role,
@@ -77,7 +90,8 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
   const firstMilestone = stages.reduce((first, stage) => Math.min(first, stage.atMs), Infinity);
   const aliases = new Map<string, string>();
   const serial = { host: 0, subagent: 0 };
-  const groups = new Map<string, HostResponseAggregate>();
+  const hasHostNotes = Object.keys(result.notes?.host ?? {}).length > 0;
+  const groups = new Map<string, { aggregate: HostResponseAggregate; toolCalls: number; toolTurns: number; allToolCalls: boolean; allToolTurns: boolean }>();
   for (const row of result.rows) {
     if (row.role === 'delegate' || row.skipResponse) continue;
     const role = row.role;
@@ -89,17 +103,37 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
     const agent = actor === undefined ? undefined : aliases.get(actor);
     const key = `${stage}\0${role}\0${agent ?? ''}`;
     const coverage = source.limited || result.unavailable || result.notes?.[role] || !agent ? 'partial' : 'complete';
-    const group: HostResponseAggregate = groups.get(key) ?? {
-      stage, role, basis: source.basis, coverage, observed: 0, uncachedInput: 0,
-      ...(agent === undefined ? {} : { agent }),
-    };
+    let entry = groups.get(key);
+    if (!entry) {
+      entry = {
+        aggregate: {
+          stage, role, basis: source.basis, coverage, observed: 0, uncachedInput: 0,
+          ...(agent === undefined ? {} : { agent }),
+        },
+        toolCalls: 0,
+        toolTurns: 0,
+        allToolCalls: true,
+        allToolTurns: true,
+      };
+      groups.set(key, entry);
+    }
+    const group = entry.aggregate;
     group.observed = (group.observed ?? 0) + 1;
     const input = (group.uncachedInput ?? NaN) + row.input;
     if (Number.isSafeInteger(input)) group.uncachedInput = input;
     else delete group.uncachedInput;
-    groups.set(key, group);
+    if (row.toolCalls !== undefined) entry.toolCalls += row.toolCalls;
+    else entry.allToolCalls = false;
+    if (row.toolTurns !== undefined) entry.toolTurns += row.toolTurns;
+    else entry.allToolTurns = false;
   }
-  const aggregates = [...groups.values()];
+  const aggregates = [...groups.values()].map(({ aggregate, toolCalls, toolTurns, allToolCalls, allToolTurns }) => {
+    if (aggregate.coverage === 'complete' && !hasHostNotes) {
+      if (allToolCalls) aggregate.toolCalls = toolCalls;
+      if (allToolTurns) aggregate.toolTurns = toolTurns;
+    }
+    return aggregate;
+  });
   for (const role of HOST_ROLES) {
     const incomplete = result.notes?.[role] || (role === 'host' ? result.unavailable : result.notes?.host?.['read budget reached']);
     if (incomplete && !aggregates.some(group => group.role === role)) {
@@ -109,6 +143,11 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
   return aggregates;
 }
 const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
+export function hostSessionId(platform: ProviderKey | null, env: (name: string) => string | undefined): string | undefined {
+  const adapter = platform ? ADAPTERS[platform] : undefined;
+  const sessionId = adapter?.sessionEnv.map(env).find(Boolean);
+  return sessionId && validSessionId(sessionId) ? sessionId : undefined;
+}
 type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
 export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = ADAPTERS): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
@@ -120,9 +159,19 @@ export function readHostUsage(platform: ProviderKey | null, input: HostUsageInpu
   try {
     const res = adapter.read({ ...input, sessionId, collectResponses: true, budget: { remaining: MAX_TOTAL_BYTES } }, fsPort);
     const { unavailable, notes } = res;
+    const hostComplete = !unavailable && Object.keys(notes?.host ?? {}).length === 0;
+    const subagentComplete = hostComplete && Object.keys(notes?.subagent ?? {}).length === 0;
+    const subagentRows = res.rows.filter(r => r.role === 'subagent');
+    const subagentActorsComplete = subagentComplete && subagentRows.every(r => r.responseActor !== undefined);
+    const subagentCount = subagentActorsComplete ? new Set(subagentRows.map(r => r.responseActor!)).size : undefined;
+    const maxSubagentDepth = subagentActorsComplete ? subagentRows.reduce((max, r) => Math.max(max, r.depth), 0) : undefined;
     const responses = foldHostResponses(res, input.stages);
     return {
-      platform, rows: foldHostRows(res.rows, input.phases ?? []),
+      platform, rows: foldHostRows(res.rows, input.phases ?? [], hostComplete, subagentComplete),
+      ...(hostComplete && res.userTurns !== undefined ? { userTurns: res.userTurns } : {}),
+      ...(hostComplete && res.userTurns !== undefined && res.userTurnsByStage !== undefined ? { userTurnsByStage: res.userTurnsByStage } : {}),
+      ...(subagentCount === undefined ? {} : { subagentCount }),
+      ...(maxSubagentDepth === undefined ? {} : { maxSubagentDepth }),
       ...(unavailable === undefined ? {} : { unavailable }),
       ...(notes === undefined ? {} : { notes }),
       ...(responses === undefined ? {} : { responses }),

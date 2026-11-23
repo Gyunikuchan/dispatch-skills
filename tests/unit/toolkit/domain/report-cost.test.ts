@@ -186,10 +186,10 @@ const PRICES = {
 };
 const pricer = resolvePricing(PRICES, undefined)!;
 const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) => renderDiagnostics(runs, priced ?? undefined).text;
-const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split('\n###')[0]!.split('\n').filter((line) => line.startsWith('|'));
-const overviewRows = (text: string) => text.split('## Overview')[1]!.split('\n### ')[0]!.split('\n').filter((line) => line.startsWith('| 1 · '));
+const tableLines = (text: string, heading: string) => text.split(heading)[1]!.split(/\n###|\n<\/details>/)[0]!.split('\n').filter((line) => line.startsWith('|'));
+const overviewRows = (text: string) => tableLines(text, '### Phases').slice(2);
 const lastCells = (line: string, n: number) => line.replace(/ \|$/, '').split(' | ').slice(-n);
-const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`) || line.includes(`| ${phase} · `))!, 2);
+const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).find((line) => line.includes(`| ${phase} |`) || line.includes(`| ${phase} · `))!, 1);
 const M = 1_000_000;
 const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
   invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
@@ -213,9 +213,9 @@ const FOLD_PRICES = {
 };
 const foldPricer = resolvePricing(FOLD_PRICES, undefined)!;
 const tableCells = (text: string, heading: string) => tableLines(text, heading).slice(2).map((line) => line.slice(2, -2).split(' | '));
-const overviewCells = (text: string) => text.split('## Overview')[1]!.split('\n### ')[0]!.split('\n').filter((line) => line.startsWith('|')).slice(2).map((line) => line.slice(2, -2).split(' | '));
+const overviewCells = (text: string) => tableLines(text, '### Phases').slice(2).map((line) => line.slice(2, -2).split(' | '));
 const byKey = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const summaryCost = (text: string) => /^- Estimated cost \(host, subagents and CLI delegates\): (\S+) · /m.exec(text)?.[1];
+const summaryCost = (text: string) => /^- Estimated cost ([^\s·]+)/m.exec(text)?.[1];
 
 // Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
 type Source = { key: string; tokens: number; cost: Cost };
@@ -245,24 +245,24 @@ function assertFolded(kept: readonly string[][], folded: readonly string[], keyO
   return rest;
 }
 
-test('cost cells show estimated cost in the Summary, Overview, Tokens by platform and Tokens by stage', () => {
+test('cost cells show estimated cost in the Summary, Phases, Tokens by platform and Tokens by stage', () => {
   const run = facts({ invocations: [mega('alpha', 'high', M)] });
   const text = costRender([run]);
-  assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$10\.00 · rates as of 2026-11-14 · priced 1 · unpriced 0$/m);
-  assert.deepEqual(phaseCost(text, 'code review'), ['~$10.00', 'alpha/high 100%']);
+  assert.match(text, /^- Estimated cost ~\$10\.00 \(partial\) · priced 1 · unpriced 0/m);
+  assert.deepEqual(phaseCost(text, 'code review'), ['~$10.00']);
   assert.ok(tableLines(text, '### Tokens by platform').some((line) => line.endsWith('| delegates 1/1 | — | ~$10.00 |')), text);
   assert.ok(tableLines(text, '### Tokens by stage').some((line) => line.endsWith('| alpha (configured) | high | 1,000,000 | — | — | 0 | — | 1/1 | — | ~$10.00 |')), text);
-  assert.match(text, /\| Run \| Phase \| .* \| Coverage \| Cost \| Top models \|$/m);
+  assert.match(text, /\| Phase \| .* \| Coverage \| Cost \|$/m);
   assert.match(text, /\| Stage \| Platform \| Role \| Model \| Effort \| .* \| Coverage \| Cost notes \| Cost \|$/m);
   assert.match(text, /^\| Platform \| .* \| Coverage \| Cost notes \| Cost \|$/m);
 
   const plain = costRender([run], null);
-  assert.match(plain, /^- Estimated cost: not estimated \(rate table unavailable\)$/m);
-  assert.deepEqual(phaseCost(plain, 'code review'), ['—', '—']);
+  assert.match(plain, /^- Estimated cost not estimated \(rate table unavailable\)/m);
+  assert.deepEqual(phaseCost(plain, 'code review'), ['—']);
   assert.ok(tableLines(plain, '### Tokens by platform').some((line) => line.endsWith('| delegates 1/1 | — | — |')), plain);
   assert.ok(tableLines(plain, '### Tokens by stage').some((line) => line.endsWith('| 1/1 | — | — |')), plain);
-  const measured = (t: string) => /^- Provider CLI measured tokens: .*$/m.exec(t)?.[0];
-  assert.equal(measured(text), measured(plain));
+  const roleLine = (t: string) => /^\| CLI delegates \|.*$/m.exec(t)?.[0];
+  assert.ok(roleLine(text) && roleLine(plain));
 });
 
 test('cost cells keep unpriced units out of the sum', () => {
@@ -270,7 +270,7 @@ test('cost cells keep unpriced units out of the sum', () => {
   assert.equal(cost([mega('beta', 'low', M), mega('mystery', 'low', M)]), '~$2.00');
   assert.equal(cost([mega('mystery', 'low', M)]), '—');
   const text = costRender([facts({ invocations: [mega('beta', 'low', M), mega('mystery', 'low', M), bare({ provider: 'codex' })] })]);
-  assert.match(text, /priced 1 · unpriced 2$/m);
+  assert.match(text, /priced 1 · unpriced 2/m);
 });
 
 test('phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total', () => {
@@ -283,12 +283,12 @@ test('phase cost sums CLI delegates and host rows by phase, with the rest in una
   });
   const text = costRender([run]);
   const rows = overviewRows(text);
-  const costOf = (phase: string) => lastCells(rows.find((line) => line.includes(`| ${phase} |`))!, 2)[0];
+  const costOf = (phase: string) => lastCells(rows.find((line) => line.includes(`| ${phase} |`))!, 1)[0];
   assert.equal(costOf('plan · p1'), '~$10.00');
   assert.equal(costOf('implementation · p2'), '~$3.00');
   assert.equal(costOf('unattributed phase'), '~$8.00');
   assert.equal(costOf('all phases'), '~$21.00');
-  assert.match(text, /^- Estimated cost \(host, subagents and CLI delegates\): ~\$21\.00 · rates as of 2026-11-14 · priced 6 · unpriced 0$/m);
+  assert.match(text, /^- Estimated cost ~\$21\.00 \(partial\) · priced 6 · unpriced 0/m);
   assert.ok(rows.find((line) => line.includes('| unattributed phase |'))!.includes('| — | 1 | 1,000,000 |'), 'only the orphan CLI invocation fills the token columns');
   const none = costRender([facts({ hostUsage: { platform: 'claude', rows: [host('review', 'host', 'alpha', M)] }, invocations: [] })]);
   assert.ok(!none.includes('unattributed phase'), 'a phased host row leaves no unattributed phase row');
@@ -305,35 +305,28 @@ test('phase cost adds reasoning at the output rate only when the platform report
   assert.equal(cost('opencode', { reasoningInOutput: true }), '~$20.00');
   assert.equal(cost('claude', { reasoningInOutput: false }), '~$40.00');
   const host = (reasoningInOutput?: boolean) => facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [{ stage: 'code review', role: 'host', model: 'alpha', effort: null, input: 0, output: M, reasoning: M, ...(reasoningInOutput === undefined ? {} : { reasoningInOutput }) }] } });
-  assert.match(costRender([host()]), /^- Estimated cost .*: ~\$40\.00 ·/m);
-  assert.match(costRender([host(true)]), /^- Estimated cost .*: ~\$20\.00 ·/m);
+  assert.match(costRender([host()]), /^- Estimated cost ~\$40\.00 /m);
+  assert.match(costRender([host(true)]), /^- Estimated cost ~\$20\.00 /m);
 });
 
-test('top models rank keys by cost midpoint share, with exact strings for each edge', () => {
-  const top = (invocations: InvocationFacts[]) => phaseCost(costRender([facts({ invocations })]), 'code review')[1];
+test('cost drivers share bars rank keys by cost midpoint share, with exact strings for each edge', () => {
+  const sharesOf = (invocations: InvocationFacts[]) => {
+    const text = costRender([facts({ invocations })]);
+    return tableLines(text, '## Cost drivers').slice(2).map((l) => {
+      const c = l.slice(2, -2).split(' | ');
+      return `${c[3]?.replace(' (configured)', '')}${c[4] === '—' ? '' : '/' + c[4]} ${c[6]!.split(' ').at(-1)}`;
+    });
+  };
   // range-priced key: tiered spans $1-$5 (midpoint 3) against alpha $10
-  assert.equal(top([mega('alpha', 'low', M), mega('tiered', 'high', M)]), 'alpha/low 77% · tiered/high 23%');
-  // an unpriced key takes no share and is flagged at the end
-  assert.equal(top([mega('alpha', 'low', M), mega('tiered', 'high', M), mega('mystery', 'low', 5)]), 'alpha/low 77% · tiered/high 23% + unpriced');
-  // an unpriced unit under a priced key, or a launched invocation without usage, still flags + unpriced
-  assert.equal(top([mega('alpha', 'low', M), bare({ provider: 'codex' })]), 'alpha/low 100% + unpriced');
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'low', 0, { usage: { input: 0, output: 0, cacheWrite: M } })]), 'alpha/low 100% + unpriced');
-  assert.equal(top([mega('zero', 'high', 300), bare({ provider: 'codex' })]), 'zero/high 100% (tokens) + unpriced');
+  assert.deepEqual(sharesOf([mega('alpha', 'low', M), mega('tiered', 'high', M)]), ['alpha/low 77%', 'tiered/high 23%']);
+  // an unpriced key takes no share and renders —
+  assert.deepEqual(sharesOf([mega('alpha', 'low', M), mega('tiered', 'high', M), mega('mystery', 'low', 5)]), ['alpha/low 77%', 'tiered/high 23%', 'mystery/low —']);
   // shares total 100% by largest remainder
-  assert.equal(top([mega('alpha', 'low', 0.605 * M), mega('alpha', 'high', 0.395 * M)]), 'alpha/low 61% · alpha/high 39%');
-  // no priced key, or a zero priced total: token shares
-  assert.equal(top([mega('mystery', 'medium', 30), mega('lost', 'medium', 10)]), 'mystery/medium 75% · lost/medium 25% (tokens) + unpriced');
-  assert.equal(top([mega('zero', 'high', 300), mega('zero', 'low', 100)]), 'zero/high 75% · zero/low 25% (tokens)');
-  // more than three keys fold into other, floored at zero
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'high', M / 2), mega('beta', 'low', M), mega('beta', 'high', M / 2)]), 'alpha/low 56% · alpha/high 28% · beta/low 11% · other 5%');
-  // ties on midpoint break by tokens, then by key
-  assert.equal(top([mega('alpha', 'medium', M / 2), mega('beta', 'medium', 2.5 * M)]), 'beta/medium 50% · alpha/medium 50%');
-  assert.equal(top([mega('alpha', 'low', M), mega('alpha', 'high', M)]), 'alpha/high 50% · alpha/low 50%');
-  // a key without an effort prints bare, and units with one key share one share
-  assert.equal(top([mega('alpha', '—', M), mega('alpha', '—', M)]), 'alpha 100%');
-  // a row without usage has no top models
-  assert.equal(top([bare({ provider: 'codex' })]), '—');
-  assert.equal(top([mega('alpha', 'low', 0)]), '—');
+  assert.deepEqual(sharesOf([mega('alpha', 'low', 0.605 * M), mega('alpha', 'high', 0.395 * M)]), ['alpha/low 61%', 'alpha/high 39%']);
+  // no priced key: token shares
+  assert.deepEqual(sharesOf([mega('mystery', 'medium', 30), mega('lost', 'medium', 10)]), ['mystery/medium 75%', 'lost/medium 25%']);
+  // zero priced total: shares unavailable
+  assert.deepEqual(sharesOf([mega('zero', 'high', 300), mega('zero', 'low', 100)]), ['zero/high —', 'zero/low —']);
 });
 
 test('cost coverage names each reason in Tokens by platform and in host and subagent stage rows', () => {
@@ -354,7 +347,7 @@ test('cost coverage names each reason in Tokens by platform and in host and suba
   assert.deepEqual(covAndNotes(platform(text, 'ttl')), ['delegates 1/1', 'cache TTL unknown']);
   assert.deepEqual(covAndNotes(platform(text, 'copilot')), ['delegates 0/1 no usage', 'no usage']);
   assert.deepEqual(covAndNotes(platform(text, 'transcript')), ['delegates 1/1 transcript unavailable', '—']);
-  assert.match(text, /priced 3 · unpriced 2$/m);
+  assert.match(text, /priced 3 · unpriced 2/m);
 
   const hosted = costRender([facts({ invocations: [], hostUsage: { platform: 'claude', rows: [
     { stage: 'plan', role: 'host', model: 'tiered', effort: null, input: 150_000, output: 0 },
@@ -387,13 +380,13 @@ test('cost folding folds the lowest-ranked Tokens by stage rows into one trailin
 
   const expected = totalOf(all);
   assert.equal(summaryCost(text), expected, 'the Summary total predates folding');
-  assert.equal(overviewCells(text)[0]![9], expected);
+  assert.equal(overviewCells(text)[0]!.at(-1), expected);
   assert.equal(tableCells(text, '### Tokens by platform')[0]![8], expected);
-  assert.ok(!overviewCells(text).flat().includes('smaller rows') && !tableCells(text, '### Tokens by platform').flat().some((cell) => /smaller rows/.test(cell)), 'later tables stay whole');
+  assert.ok(!tableCells(text, '### Tokens by platform').flat().some((cell) => /smaller rows/.test(cell)), 'later tables stay whole');
 });
 
-test('cost folding folds Overview phase rows for many review subjects and keeps the run total', () => {
-  const rows = Array.from({ length: 900 }, (_, index) => ({ ...sourceRow(index), key: `review-${index.toString(16).padStart(16, '0')}`, wallMs: 1000 * (index + 1) }));
+test('cost folding folds Phases rows for many review subjects and keeps the run total', () => {
+  const rows = Array.from({ length: 1800 }, (_, index) => ({ ...sourceRow(index), key: `review-${index.toString(16).padStart(16, '0')}`, wallMs: 1000 * (index + 1) }));
   const all: Source[] = rows.map(({ key, tokens, cost }) => ({ key, tokens, cost }));
   const run = facts({
     phases: rows.map((r) => ({ key: r.key, name: 'code review', outcome: 'complete', wallMs: r.wallMs })),
@@ -402,23 +395,20 @@ test('cost folding folds Overview phase rows for many review subjects and keeps 
   const text = renderDiagnostics([run], foldPricer).text;
 
   assert.ok(Buffer.byteLength(text) <= CAP);
-  assert.match(text, /## Appendix\n\nOmitted at the report size limit\./);
+  assert.match(text, /Omitted at the report size limit\./);
   const overview = overviewCells(text), subject = 'code review · subject ';
-  const everything = overview.find((cells) => cells[1] === 'all phases')!, folded = overview.at(-1)!;
-  const kept = overview.filter((cells) => cells[1]!.startsWith(subject));
-  assert.deepEqual([folded[0], folded[2]], ['—', '—'], 'dimension cells other than the count');
-  const rest = assertFolded(kept, folded.slice(1), (cells) => `review-${cells[1]!.slice(subject.length)}`, all, 4, 9);
-  assert.equal(folded[3], formatDuration(rows.filter((r) => rest.some((x) => x.key === r.key)).reduce((n, r) => n + r.wallMs, 0)));
-  assert.equal(folded[4], String(rest.length), 'Invocations sum');
-  assert.match(folded[11]!, /\d+%/, 'Top models covers the folded rows');
-  assert.equal(overview.filter((cells) => /smaller rows$/.test(cells[1]!)).length, 1);
+  const everything = overview.find((cells) => cells[0] === 'all phases')!, folded = overview.at(-1)!;
+  const kept = overview.filter((cells) => cells[0]!.startsWith(subject));
+  assert.equal(folded[1], '—', 'dimension cells other than the count');
+  const rest = assertFolded(kept, folded, (cells) => `review-${cells[0]!.slice(subject.length)}`, all, 4, 9);
+  assert.equal(folded[2], formatDuration(rows.filter((r) => rest.some((x) => x.key === r.key)).reduce((n, r) => n + r.wallMs, 0)));
+  assert.equal(folded[3], String(rest.length), 'Invocations sum');
+  assert.equal(overview.filter((cells) => /smaller rows$/.test(cells[0]!)).length, 1);
 
   const expected = totalOf(all);
-  assert.equal(everything[10], expected, 'the all phases row never folds and holds the run total');
+  assert.equal(everything[9], expected, 'the all phases row never folds and holds the run total');
   assert.equal(summaryCost(text), expected);
   assert.equal(tableCells(text, '### Tokens by platform')[0]![8], expected);
-  const stage = tableCells(text, '### Tokens by stage');
-  assert.deepEqual([stage.length, stage[0]![0], stage[0]![12]], [1, '4 smaller rows', expected], 'the earlier table folds to one row');
 });
 
 test('cost folding folds Tokens by platform rows last, after earlier tables fold to one row each', () => {
@@ -438,7 +428,7 @@ test('cost folding folds Tokens by platform rows last, after earlier tables fold
   assert.equal(summaryCost(text), expected);
   const stage = tableCells(text, '### Tokens by stage'), overview = overviewCells(text);
   assert.deepEqual([stage.length, stage[0]![0], stage[0]![12]], [1, '3000 smaller rows', expected]);
-  assert.deepEqual([overview.length, overview[0]![1], overview[0]![13]], [1, '1 smaller rows', expected]);
+  assert.deepEqual([overview.length, overview[0]![0], overview[0]!.at(-1)], [1, '1 smaller rows', expected]);
 });
 
 test('cost end to end: mixed-platform facts price in all four locations and survive an oversized report', () => {
@@ -467,7 +457,7 @@ test('cost end to end: mixed-platform facts price in all four locations and surv
   });
   const assertCosts = (text: string) => {
     assert.equal(summaryCost(text), '~$6.26');
-    assert.deepEqual(overviewCells(text).map((cells) => [cells[1], cells[9]]), [['plan', '~$3.06'], ['code review · review', '~$3.20'], ['all phases', '~$6.26']]);
+    assert.deepEqual(overviewCells(text).map((cells) => [cells[0], cells[8]]), [['plan', '~$3.06'], ['code review · review', '~$3.20'], ['all phases', '~$6.26']]);
     assert.deepEqual(tableCells(text, '### Tokens by platform').map((cells) => [cells[0], cells[8]]), [['claude', '~$3.06'], ['codex', '~$1.70'], ['opencode', '~$1.50']]);
     const stages = tableLines(text, '### Tokens by stage');
     const cost = (prefix: string, expected: string) => assert.ok(stages.some((line) => line.startsWith(prefix) && line.endsWith(` | ${expected} |`)), `${prefix} ${expected}\n${stages.join('\n')}`);
@@ -486,11 +476,11 @@ test('cost end to end: mixed-platform facts price in all four locations and surv
   const filler = Array.from({ length: 1500 }, () => mega(lmstudio, 'low', 1000, { provider: 'opencode', phase: 'review', usageSource: 'session', reportedModels: [lmstudio] }));
   const large = renderDiagnostics([run(filler)], endPricer).text;
   assert.ok(Buffer.byteLength(large) <= CAP);
-  assert.match(large, /## Appendix\n\nOmitted at the report size limit\./);
+  assert.match(large, /Omitted at the report size limit\./);
   assert.ok(!large.includes('smaller rows'));
-  assert.match(large, /^\| Host \| 200,000 \| ~\$0\.06 \|/m);
-  assert.match(large, /^\| Subagents \| 1,100,000 \| ~\$3\.00 \|/m);
-  assert.match(large, /^\| CLI delegates \| 5,800,000 \| ~\$3\.20 \|/m);
+  assert.match(large, /^\| Host \|[^|]+\| ~\$0\.06 \| 200,000 \|/m);
+  assert.match(large, /^\| Subagents \|[^|]+\| ~\$3\.00 \| 1,100,000 \|/m);
+  assert.match(large, /^\| CLI delegates \|[^|]+\| ~\$3\.20 \| 5,800,000 \|/m);
   assertCosts(large);
 });
 
@@ -512,9 +502,10 @@ test('apart reasoning counts once in every token total and token share', () => {
   });
   const text = costRender([run]);
   // opencode adds reasoning (150), claude does not (120) -> total 270
-  assert.match(text, /^- Provider CLI measured tokens: 270 \(input 200 · cache read — · cache write — · output 40 · reasoning 30\) · launch coverage 2\/2$/m);
+  assert.match(text, /^\| CLI delegates \|[^|]+\| — \| 270 \|/m);
   // token shares: 150/270 = 56%, 120/270 = 44%
-  assert.equal(phaseCost(text, 'code review')[1], 'mystery/low 56% · lost/low 44% (tokens) + unpriced');
+  assert.match(text, /mystery \(configured\).*56% \| 150/);
+  assert.match(text, /lost \(configured\).*44% \| 120/);
   // appendix Reasoning and Total columns: opencode 30/150, claude 30 (in output)/120
   assert.ok(text.includes('| 30 | 150 | ok |'), text);
   assert.ok(text.includes('| 30 (in output) | 120 | ok |'), text);
@@ -548,8 +539,9 @@ test('multi-host Summary lists every host and names the covered host thread', ()
 });
 
 test('Cost drivers ranks up to five groups with remainder summing to 100% and cache-hit ratio', () => {
-  const drivers = (text: string) => text.split('## Cost drivers')[1]!.split('## Overview')[0]!;
+  const drivers = (text: string) => text.split('## Cost drivers')[1]!.split('\n## ')[0]!;
   const rows = (text: string) => drivers(text).split('\n').filter((l) => l.startsWith('|')).slice(2).map((l) => l.slice(2, -2).split(' | '));
+  const shareNum = (cell: string) => Number(cell.split(' ').at(-1)!.replace('%', ''));
 
   // 7 priced groups -> top 5 + remainder, shares total 100%, cache-hit = 50%
   const pricedRun = facts({
@@ -566,9 +558,9 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
   const pricedRows = rows(costRender([pricedRun]));
   assert.equal(pricedRows.length, 6);
   assert.equal(pricedRows[0]![8], '50%');
-  assert.equal(pricedRows[1]![8], '0%');
+  assert.equal(pricedRows[1]![8], '—');
   assert.equal(pricedRows[5]![0], '2 more');
-  assert.equal(pricedRows.reduce((n, r) => n + Number(r[6]!.replace('%', '')), 0), 100);
+  assert.equal(pricedRows.reduce((n, r) => n + shareNum(r[6]!), 0), 100);
 
   // Priced + unpriced + remainder: 2 priced, 5 unpriced -> 5 listed (2 priced + 3 unpriced), 2 more (2 unpriced)
   const mixedRun = facts({
@@ -584,10 +576,10 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
   });
   const mixedRows = rows(costRender([mixedRun]));
   assert.equal(mixedRows.length, 6);
-  assert.deepEqual(mixedRows.slice(2, 5).map((r) => r[6]), ['unpriced', 'unpriced', 'unpriced']);
+  assert.deepEqual(mixedRows.slice(2, 5).map((r) => r[6]), ['—', '—', '—']);
   assert.equal(mixedRows[5]![0], '2 more (2 unpriced)');
-  assert.equal(mixedRows[5]![6], 'unpriced');
-  assert.equal(mixedRows.slice(0, 2).reduce((n, r) => n + Number(r[6]!.replace('%', '')), 0), 100);
+  assert.equal(mixedRows[5]![6], '—');
+  assert.equal(mixedRows.slice(0, 2).reduce((n, r) => n + shareNum(r[6]!), 0), 100);
 
   // Zero priced total with billed tokens -> distinguishes no priced unit vs $0 priced cost
   const unpricedText = costRender([facts({
@@ -596,9 +588,8 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
       mega('mystery', 'high', 100, { provider: 'codex' }),
     ],
   })]);
-  assert.match(drivers(unpricedText), /Share uses observed billed tokens\. No unit is priced\./);
   const unpricedRows = rows(unpricedText);
-  assert.deepEqual(unpricedRows.map((r) => r[6]), ['75%', '25%']);
+  assert.deepEqual(unpricedRows.map((r) => r[6]!.split(' ').at(-1)), ['75%', '25%']);
 
   const zeroPricedText = costRender([facts({
     invocations: [
@@ -606,10 +597,9 @@ test('Cost drivers ranks up to five groups with remainder summing to 100% and ca
       mega('mystery', 'low', 500, { provider: 'codex' }),
     ],
   })]);
-  assert.match(drivers(zeroPricedText), /Priced cost is zero\. Cost shares are unavailable\./);
   assert.deepEqual(rows(zeroPricedText).map((r) => [r[3], r[5], r[6]]), [
     ['zero (configured)', '~$0', '—'],
-    ['mystery (configured)', '—', 'unpriced'],
+    ['mystery (configured)', '—', '—'],
   ]);
 
   // Only usage-less launched units -> No priced cost or billed tokens, zero cache-hit denominator -> —
@@ -632,9 +622,9 @@ test('Role cost and usage coverage reconcile', () => {
     ],
   });
   const text = costRender([run]);
-  assert.match(text, /^\| Host \| 0 \| ~\$0 \| .*host threads unmeasured/m);
-  assert.match(text, /^\| Subagents \| — \| — \| .*unavailable/m);
-  assert.match(text, /^\| CLI delegates \| 1,000,005 \| ~\$2\.00 \| .*1 session.*1 stdout fallback.*1 unmeasured/m);
-  assert.match(text, /priced midpoint/);
+  assert.match(text, /^\| Host \| ░░░░░░░░░░ 0% \| ~\$0 \| 0 \| .*host threads unmeasured/m);
+  assert.match(text, /^\| Subagents \| — \| — \| — \| .*unavailable/m);
+  assert.match(text, /^\| CLI delegates \| ██████████ 100% \| ~\$2\.00 \| 1,000,005 \| .*1 session.*1 stdout fallback.*1 unmeasured/m);
+  assert.match(text, /cost-midpoint share/);
   assert.match(text, /1 observed unit unpriced/);
 });

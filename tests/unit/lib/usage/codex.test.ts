@@ -29,7 +29,7 @@ test('turns: codex counts resumed host and direct child usage row fields once by
     [rollout('00-07', 'guardian')]: lines(meta('host', 'guardian_review'), context, event(23)),
   };
   const result = codex.read({ ...query, budget: { remaining: 100000 } }, memoryFs(files));
-  assert.deepEqual(result.rows.map(row => row.turns), [1, 1, 1, undefined, undefined, undefined]);
+  assert.deepEqual(result.rows.map(row => row.turns), [1, 1, 1, 1, 1, 1]);
   assert.deepEqual(result.rows.map(row => [row.role, row.model, row.effort, row.depth, row.atMs, row.reasoningInOutput, row.input, row.output, row.cacheRead, row.reasoning]), [
     ['host', 'm', 'high', 0, 3000, true, 6, 5, 4, 2],
     ['host', 'm', 'high', 0, 4000, true, 3, 2, 1, undefined],
@@ -369,4 +369,65 @@ test('codex stdout usage subtracts cached tokens into uncached input', () => {
     provenance: 'codex.turn.completed',
     inputSemantics: 'uncached',
   });
+});
+
+test('codex real-shape rollout extracts tool calls and tool turns while omitting user turns without user_message', () => {
+  const host = rollout('00-01', 'host');
+  const child = rollout('00-02', 'child');
+  const fs = memoryFs({
+    [host]: lines(
+      { type: 'session_meta', timestamp: new Date(500).toISOString(), payload: { id: 'host', thread_source: 'cli' } },
+      { type: 'event_msg', timestamp: new Date(600).toISOString(), payload: { type: 'task_started' } },
+      context,
+      { type: 'response_item', timestamp: new Date(700).toISOString(), payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'AGENTS.md bootstrap prompt secret' }] } },
+      { type: 'response_item', timestamp: new Date(800).toISOString(), payload: { type: 'function_call', name: 'shell', arguments: '{"cmd":"secret"}' } },
+      { type: 'response_item', timestamp: new Date(900).toISOString(), payload: { type: 'custom_tool_call', name: 'apply_patch', input: 'secret' } },
+      event(10, 1000),
+      event(10, 1100), // duplicate total snapshot
+      { type: 'response_item', timestamp: new Date(2500).toISOString(), payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'done' }] } },
+      event(20, 3000),
+    ),
+    [child]: lines(
+      meta('host'),
+      context,
+      { type: 'response_item', timestamp: new Date(2600).toISOString(), payload: { type: 'custom_tool_call', name: 'read_file', input: 'x' } },
+      event(5, 2700),
+    ),
+  });
+  const result = codex.read({ ...query, budget: { remaining: 100000 } }, fs);
+  assert.equal(result.userTurns, undefined);
+  assert.equal(result.userTurnsByStage, undefined);
+  assert.deepEqual(result.rows.map(r => [r.role, r.turns, r.toolCalls, r.toolTurns]), [
+    ['host', 1, 2, 1],
+    ['host', 1, 0, 0],
+    ['subagent', 1, 1, 1],
+  ]);
+  assert.ok(!JSON.stringify(result).includes('secret'));
+});
+
+test('codex counts explicit event_msg user_message turns by stage', () => {
+  const host = rollout('00-01', 'host');
+  const child = rollout('00-02', 'child');
+  const fs = memoryFs({
+    [host]: lines(
+      context,
+      { type: 'event_msg', timestamp: new Date(500).toISOString(), payload: { type: 'user_message', message: 'first secret' } },
+      event(10, 1000),
+      { type: 'event_msg', timestamp: new Date(2500).toISOString(), payload: { type: 'user_message', message: 'second secret' } },
+      { type: 'event_msg', timestamp: new Date(3000).toISOString(), payload: { type: 'user_message', message: 'third secret' } },
+      event(20, 3500),
+    ),
+    [child]: lines(
+      meta('host'),
+      context,
+      { type: 'event_msg', timestamp: new Date(2600).toISOString(), payload: { type: 'user_message', message: 'child prompt' } },
+      event(5, 2700),
+    ),
+  });
+  const result = codex.read({ ...query, budget: { remaining: 100000 } }, fs);
+  assert.equal(result.userTurns, 3);
+  assert.deepEqual(result.userTurnsByStage, { spec: 1, plan: 2 });
+  assert.equal(result.rows[0]?.toolCalls, undefined);
+  assert.equal(result.rows[0]?.toolTurns, undefined);
+  assert.ok(!JSON.stringify(result).includes('secret'));
 });

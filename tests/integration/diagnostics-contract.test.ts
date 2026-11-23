@@ -36,10 +36,15 @@ test('diagnostics retain privacy and measurement guidance', () => {
   const human = read('references/readme/troubleshooting.md');
   const concepts = read('references/readme/concepts.md');
   const toolkit = read('references/toolkit.md').split('### diagnostics render')[1] ?? '';
-  for (const label of ['Observed billed tokens', 'Priced cost', 'Rate basis', 'Responses by agent', 'Input / matched response']) {
+  for (const label of ['Billed tokens', 'User turns', 'LLM turns', 'Tool calls (tool turns)', 'Rate basis', 'Uncached input / turn']) {
     assert.ok(toolkit.includes('`' + label + '`'), label);
   }
-  assert.ok(toolkit.includes('Review yield by kind, provider and model'));
+  assert.ok(toolkit.includes('### Spend & Turns by Role'));
+  assert.ok(toolkit.includes('### Spend & Turns by Stage'));
+  assert.ok(toolkit.includes('### Turns & context efficiency by agent'));
+  assert.ok(toolkit.includes('### Responder yield'));
+  assert.ok(toolkit.includes('## Review health'));
+  assert.ok(!toolkit.includes('Review CLI attempt spans'));
   assert.ok(!toolkit.includes('Review yield by slot'));
   assert.ok(concepts.includes('Captured CLI attempts retain reported provider usage'));
   assert.ok(concepts.includes('Native timing and usage'));
