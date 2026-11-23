@@ -1,6 +1,6 @@
 {
   "name": "dispatch-skills",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Dispatch turns the host agent into an end-to-end orchestrator across native subagents and cross-platform CLI delegates—catching flawed assumptions early and verifying delivery with minimal routine human coordination.",
   "license": "MIT",
   "type": "module",

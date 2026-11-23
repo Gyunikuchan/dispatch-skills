@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-11-23
+
+- Faster, source-backed checks: deduplicated `check run` cache with `--reuse`, blocking citation gate, canonical contracts, step hints, and unified payload input.
+- Clearer delegation readiness: provider probing reports delivery status before work starts, with refreshed model rates including Gemini 4 Neon.
+- More consistent reviews: streamlined plan and design rounds, explicit close versus defer handling, user decisions carried to reviewers, per-round workload and timing, grouped findings, and bounded fix-check briefs.
+- More reliable delivery: diagnostics usage coverage and efficiency reporting, verified diagnostics fixes, and resumed interrupted POSIX delivery.
+- Refreshed guides, overview pitch, banner, and consolidated agent rules around AX/DX/UX balance and governing document layers.
+
 ## [0.8.5] - 2026-11-16
 
 - Added runtime verification before test cleanup and the standalone verify verb.
