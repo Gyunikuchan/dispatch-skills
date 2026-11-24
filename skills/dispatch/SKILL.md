@@ -17,7 +17,7 @@ Read the phase first: [ask](references/verbs/ask.md), [design](references/verbs/
 
 Report the set level under [run level](references/spec-stage.md#run-level).
 
-Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>" --host <platform>` (`claude`, `agy`, `copilot`, `opencode`, `codex`); `session reactivate` needs `--host` too. Keep its session path and follow returned `instructions`; see [session commands](references/toolkit.md#session-commands).
+For `implement`, follow [session entry](references/verbs/implement.md) before initialization. Initialize new sessions with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>" --host <platform>` (`claude`, `agy`, `copilot`, `opencode`, `codex`); `session reactivate` needs `--host` too. Keep its session path and follow returned `instructions`; see [session commands](references/toolkit.md#session-commands).
 
 ## Tool loop
 

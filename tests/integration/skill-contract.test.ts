@@ -1319,10 +1319,11 @@ test('implement step 7 and 8 synchronize stale-test cleanup and shared testing b
   assert.ok(step7.length > 0 && step8.length > 0, 'implement steps 7 and 8 exist');
 
   // Fail-safe cleanup trigger: launches on Tests:, test/fixture/helper, source-code, or contract/spec diffs; skips only non-code/non-contract doc-only diffs.
-  assert.match(step7, /git diff --name-only <base>\.\.HEAD/);
+  assert.match(step7, /git diff --name-only --no-renames <base>\.\.HEAD/);
   assert.match(step7, /Tests:|test\/fixture\/helper|test, fixture, helper|source|contract|spec/i);
   assert.match(step7, /doc-only|non-code\/non-contract/i);
-  assert.match(step7, /test-cleanup:skip/);
+  assert.match(step7, /ledger append - --cleanup skip/);
+  assert.match(step7, /ledger append - --cleanup zero/);
 
   // Pre-review handling of cleanup-flagged concerns (test-only helpers and uncovered/Check-pinned tier downgrades).
   assert.match(step7, /test-only/i);

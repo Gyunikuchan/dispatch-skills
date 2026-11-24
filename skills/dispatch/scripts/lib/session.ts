@@ -106,10 +106,19 @@ function writeManifest(dir: string, manifest: Manifest): void {
   try { fs.renameSync(temp, target); } finally { fs.rmSync(temp, { force: true }); }
 }
 
-function matching(root: string, sessionId: string, repo: string): string[] {
+export class AmbiguousSessionIdentity extends Error {
+  readonly candidates: string[];
+
+  constructor(sessionId: string, matches: string[]) {
+    super(`Ambiguous session identity ${sessionId}`);
+    this.candidates = matches.map((dir) => path.basename(dir)).sort();
+  }
+}
+
+function matchingSession(root: string, sessionId: string, repo: string): string | undefined {
   let names: string[];
-  try { names = fs.readdirSync(root); } catch { return []; }
-  return names.filter((name) => FOLDER_NAME.test(name)).map((name) => path.join(root, name)).filter((dir) => {
+  try { names = fs.readdirSync(root); } catch { return undefined; }
+  const found = names.filter((name) => FOLDER_NAME.test(name)).map((name) => path.join(root, name)).filter((dir) => {
     try {
       const manifest = readManifest(dir);
       return manifest.sessionId === sessionId && manifest.repositoryRoot === repo;
@@ -117,6 +126,8 @@ function matching(root: string, sessionId: string, repo: string): string[] {
       return false;
     }
   });
+  if (found.length > 1) throw new AmbiguousSessionIdentity(sessionId, found);
+  return found[0];
 }
 
 // SECTION: Lifecycle
@@ -141,9 +152,8 @@ export function initializeSession(options: InitOptions): string {
 export function initSession(options: InitOptions): { path: string; reused: boolean } {
   const repo = canonicalRepositoryRoot(options.repositoryRoot);
   const root = workspaceSessionRoot(options.repositoryRoot);
-  const found = matching(root, options.sessionId, repo);
-  if (found.length > 1) throw new Error(`Ambiguous session identity ${options.sessionId}: ${found.join(', ')}`);
-  if (found[0] !== undefined) return { path: fs.realpathSync(found[0]), reused: true };
+  const found = matchingSession(root, options.sessionId, repo);
+  if (found !== undefined) return { path: fs.realpathSync(found), reused: true };
   const claim = path.join(root, `.claim-${safePathId(options.sessionId)}`);
   try { fs.mkdirSync(claim, { mode: 0o700 }); } catch (error) {
     if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
@@ -152,8 +162,8 @@ export function initSession(options: InitOptions): { path: string; reused: boole
     return appeared !== null ? { path: appeared, reused: true } : initSession(options);
   }
   try {
-    const raced = matching(root, options.sessionId, repo);
-    if (raced[0] !== undefined) return { path: fs.realpathSync(raced[0]), reused: true };
+    const raced = matchingSession(root, options.sessionId, repo);
+    if (raced !== undefined) return { path: fs.realpathSync(raced), reused: true };
     const baseTitle = safeTitle(options.sessionTitle);
     const baseName = folderName(options.now, baseTitle);
     for (let n = 0; ; n++) {
@@ -187,9 +197,8 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
   const deadline = Date.now() + waitMs;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
-    const found = matching(root, sessionId, repo);
-    if (found.length > 1) throw new Error(`Ambiguous session identity ${sessionId}: ${found.join(', ')}`);
-    if (found[0] !== undefined) return fs.realpathSync(found[0]);
+    const found = matchingSession(root, sessionId, repo);
+    if (found !== undefined) return fs.realpathSync(found);
     if (!fs.existsSync(claim)) return null;
     if (Date.now() >= deadline) throw new Error(`Session initialization is still claimed at ${claim}; inspect the path and retry.`);
     Atomics.wait(pause, 0, 0, 10);

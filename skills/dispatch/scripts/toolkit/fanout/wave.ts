@@ -558,6 +558,7 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
       }
       // CLI targets in consume.
       if (saved?.state === 'done' && input.validate(saved.text, slot.slot).ok) {
+        emit(slot,{kind:'slot',state:'done',replay:true});
         outcomes.set(slot.slot, saved);
         continue;
       }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseCommand, SESSION_ACTIONS, UsageError } from './lib/cli.ts';
 import { reprobeQuota } from './lib/quota-store.ts';
-import { findRepoRoot, initSession, platformSessionId, reactivateSession, recordHost } from './lib/session.ts';
+import { AmbiguousSessionIdentity, findRepoRoot, initSession, platformSessionId, reactivateSession, recordHost } from './lib/session.ts';
 import { H } from './policy/quota.ts';
 import { normalizeProvider } from './policy/roster.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
@@ -80,6 +80,19 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
     print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: session.path, reused: session.reused, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
     return 0;
   } catch (error) {
+    if (error instanceof AmbiguousSessionIdentity) {
+      const candidates: string[] = [];
+      for (const candidate of error.candidates.slice(0, 5)) {
+        if (Buffer.byteLength(JSON.stringify([...candidates, candidate])) > 1024) break;
+        candidates.push(candidate);
+      }
+      const candidateCount = error.candidates.length;
+      print({
+        ok: false, summary: capSummary(error.message), path: null, reason: 'fault', help: 'session reactivate',
+        candidates, candidateCount, omitted: candidateCount - candidates.length,
+      });
+      return 2;
+    }
     const usage = error instanceof UsageError;
     print({ ok: false, summary: capSummary(error instanceof Error ? error.message : String(error)), path: null, reason: usage ? 'usage' : 'fault', help: (SESSION_ACTIONS as readonly string[]).includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table' });
     return usage ? 1 : 2;

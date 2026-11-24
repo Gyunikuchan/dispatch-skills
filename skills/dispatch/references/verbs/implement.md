@@ -1,5 +1,15 @@
 # Implement
 
+## Session entry
+
+- If the user gives multiple retained session directories without selecting one, ask which to use before any session command. Reactivate a single explicit user selection with `session reactivate --session-dir <session> --host <platform>`. The explicit choice takes precedence over a remembered directory.
+- Otherwise reactivate a remembered session directory for this implementation. With only the same host identity, use `session init` to reuse its session. When the user asks to resume and neither the directory nor the retained host identity is available, ask for the retained session directory before continuing. For new work, use normal initialization.
+- On an ambiguous init fault, ask the user to select a retained session. Resolve a selected candidate folder name under the canonical repository's `.scratch/dispatch-skills` and reactivate that directory. If the list omits the intended session, ask for its retained directory. A bound plan alone cannot identify an implementation session.
+
+Use the returned session path for the implementation. On re-entry, follow the interruption recovery procedure below.
+
+## Procedure
+
 Resolve the [governing spec](../spec-stage.md#readers-and-document-layers) and plan, following Parent pins through a design when present. For an objective, author the [spec](../spec-stage.md) and [plan](plan.md) first. When authoring a design, follow the [design guide](design.md); for a supplied design, follow the [ordered increment loop](design.md#implement-an-approved-design) before this single-plan procedure. An assigned child targets its pinned increment plan in its seeded session, not the design route; at each checkpoint or gate return to the parent and wait for continuation. After approval, use this procedure and return the result after uncommitted delivery, report and cleanup. The [toolkit contract](../toolkit.md) owns tool arguments and result shapes.
 
 1. Follow the [scope round](../grounding.md#scope-round) rule. For a design increment whose plan this invocation authors, ground it first under [design increments](../grounding.md#design-increments). Lint the artifacts. Resolve outstanding plan findings and escalations; failed plan-review slots follow [failed-slot coverage](../review-coverage.md#failed-slot-coverage). If this invocation authors the plan, propose its level after lint; record it under [run level](../spec-stage.md#run-level) before the first review. A review or implementation may raise it under the same rule. Run a new plan review only when no completed plan review in the session covers the current spec and plan hashes, or when the user asks; a settled plan from `plan` is not re-reviewed. Bind spec, plan and optional design in the ledger with the applicable user approval tuple.
@@ -11,12 +21,12 @@ Resolve the [governing spec](../spec-stage.md#readers-and-document-layers) and p
    - Pass `--reuse` to `check run` only when gitignored files and external state (services, DBs, env, clock) have not changed since each reused command's source execution (`commands[]` in `.state/evidence/<hex>.json` or the active cache pointer `.state/evidence/commands/index/<cacheHex>.json` → `.state/evidence/commands/<execId>.json` `createdAt`, `command`, `tree`, even when no criterion evidence record was written yet); omit `--reuse` (run fresh) whenever unchanged external state cannot be established for every selected command's source execution, and pass `--fresh` to bypass within-run dedup when commands share mutable gitignored or external state.
 7. Apply [shared](../templates/quality-bar.md#shared) and [testing](../templates/quality-bar.md#testing) when scoping and adjudicating cleanup; its retention gates match code review's [testing](../templates/quality-bar.md#testing) bar.
    - Run the test cleanup after step 6 passes and before code review, at every run level.
-   - Launch test cleanup when `git diff --name-only <base>..HEAD` in the integration worktree touches any plan `Tests:` path, test/fixture/helper path, source-code path, or contract/spec path; skip only on purely non-code/non-contract doc-only diffs, appending a `note` keyed `test-cleanup:skip` naming the judged paths and committing nothing.
+   - Launch test cleanup when `git diff --name-only --no-renames <base>..HEAD` in the integration worktree touches any plan `Tests:` path, test/fixture/helper path, source-code path, or contract/spec path; skip only on purely non-code/non-contract doc-only diffs, then pipe `{head}` to `ledger append - --cleanup skip` with the judged HEAD.
    - To launch, render the [test-cleanup brief](../templates/test-cleanup-brief.md) with the [`brief test-cleanup`](../toolkit.md#brief-test-cleanup) action from a values file holding `base` and `integrationPath`; the action derives `planPath` from the bind record and refuses when no plan is bound.
    - Launch one utility subagent ([routing](../../SKILL.md#routing)) on the `brief test-cleanup` result; it runs only its edited test files.
-   - When it reports, check that the report ends with its JSON block, every `removed` ID is a plan criterion and the counts are non-negative integers; then copy the block to `<session>/.state/test-cleanup.json`.
-   - Commit with [worktree commit](../toolkit.md#worktree-commit) and `--test-cleanup <session>/.state/test-cleanup.json` whenever `removed` is non-empty or `deleted` or `merged` is non-zero.
-   - Use plain `worktree commit` only for `removed: []`, `deleted: 0` and `merged: 0` with rewrite changes; commit nothing when nothing changed.
+   - When it reports, check that the report ends with its JSON block, every `removed` ID is a plan criterion and the counts are non-negative integers. Match the reply to the live cleanup launch.
+   - Commit with [worktree commit](../toolkit.md#worktree-commit) and `--test-cleanup-json <json>` (or `--test-cleanup <file|->`) whenever `removed` is non-empty or `deleted` or `merged` is non-zero.
+   - Use plain `worktree commit` only for `removed: []`, `deleted: 0` and `merged: 0` with rewrite changes; commit nothing when nothing changed. Pipe `{head,report}` from that live result to `ledger append - --cleanup zero` after any rewrite commit, with the resulting HEAD. Use the retained file as evidence only.
    - When cleanup flags test-only production helpers or uncovered/`Check:`-pinned tier downgrades under concerns, resolve them before code review: route `Check:`-pinned plan edits through the living-plan procedure below, and remove verified test-only helpers via a writer or orchestrator edit committed with plain `worktree commit` before the post-cleanup `check run` and review.
    - After cleanup commits or skips, start all-criteria and contract [checks](../toolkit.md#check-run) (`check run`) as a background call, retain its handle, and start code review on the same integration HEAD together; wait for both before repairs.
    - A removed criterion keeps its recorded evidence-tree evidence and is not rerun.
@@ -39,7 +49,23 @@ Edit living plans and designs in place under [revision protocol](../spec-stage.m
 
 For conflicts, follow [continue](../toolkit.md#worktree-continue) or [abort](../toolkit.md#worktree-abort) as applicable. For a stopped writer use [abandon](../toolkit.md#worktree-abandon); to end retained integration use [close](../toolkit.md#worktree-close). Inspect both tasks' intent and resolve within their paths in the integration worktree, then continue integration. Discarding work follows the [user gate](../decision-frame.md#user-gate-boundaries). Record unresolved conflicts and retained candidates.
 
-After interruption, use status, inspect recorded launches and integration state, and reconcile live handles before relaunching. A relaunch acknowledges the old writer as stopped; do not run two writers against one worktree (a utility subagent under a writer is not a second writer: [role table](../../SKILL.md#routing)). Verification must follow the last relevant edit. Report completion only when criterion evidence is current, required reviews are resolved, and delivery and cleanup are accounted for.
+## Interruption recovery
+
+On re-entry, call `status show --resume` before starting implementation steps. Read only the indicated session-relative evidence.
+
+| Result | Action |
+| --- | --- |
+| `inspect/state-unreadable`, `inspect/gate-blocked` | Use detailed status and the existing refusal or escalation procedure. |
+| `inspect/outside-review` | Use detailed status to find the current implementation step. Before launching review, recover a matched live cleanup result or rerun cleanup when completion cannot be established. |
+| `inspect/native-pending` | Read `evidence` for the saved `slot`, `state`, `attempt` and `replyPath`. Reconcile the host handle or saved reply before native consume or failure handling. |
+| `inspect/arguments-unavailable` | Recover the legacy invocation from host context or ask the user to confirm its arguments. |
+| `adjudicate/findings-pending` | Read `evidence` and apply the ruling and fix rules. |
+| `continue/review-settled` | Continue at step 9. Refresh current checks when required. |
+| `review/*` | Run integration code review with the saved arguments. |
+
+For review and native continuation, read `round` for the recorded level and pins. Pass pins text as one `--pins` argument, omit the flag for null, and follow the legacy arguments procedure when the field is absent. Pass any status `resumeRef` as `--resume-ref` on the resumed review call. Review and delivery enforce their own gates. Cleanup proof is independent of review progress and current checks.
+
+Inspect recorded launches and integration state and reconcile live handles before relaunching. A relaunch acknowledges the old writer as stopped; do not run two writers against one worktree (a utility subagent under a writer is not a second writer: [role table](../../SKILL.md#routing)). Verification must follow the last relevant edit. Report completion only when criterion evidence is current, required reviews are resolved, and delivery and cleanup are accounted for.
 
 Before report completion, when plan Risk is `med` or `high`, record 3–5 `focus` bullets with evidence; Risk `low` does not require a record. When writers report shortcuts, record them as focus bullets at any Risk, with the session-relative writer report path as evidence; when bullets would exceed five, group shortcuts in one bullet that keeps each limit and trigger.
 

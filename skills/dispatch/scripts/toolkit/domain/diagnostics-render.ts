@@ -883,6 +883,27 @@ function appendix(runs: readonly RunFacts[]): string[] {
   return [...lines, '</details>', ''];
 }
 
+function recoveryLines(runs: readonly RunFacts[]): string[] {
+  const selections = runs.flatMap(run => run.recoverySelections ?? [])
+    .sort((a, b) => a.round - b.round || a.generation - b.generation || a.ref.localeCompare(b.ref));
+  if (!selections.length) return [];
+  const executions = new Map<string, NonNullable<RunFacts['recoveryExecutions']>>();
+  for (const execution of runs.flatMap(run => run.recoveryExecutions ?? [])) {
+    const group = executions.get(execution.ref) ?? [];
+    group.push(execution);
+    executions.set(execution.ref, group);
+  }
+  const lines = selections.slice(0, 5).map(({ref, round, generation}) => {
+    const observed = executions.get(ref) ?? [];
+    const count = (n: number | undefined) => n === undefined ? 'uncollected' : num(n);
+    const details = observed.slice(0, 3).map(({reused, launched, unresolved}) =>
+      `reused ${count(reused)}, launched ${count(launched)}, unresolved ${count(unresolved)}`).join(' · ');
+    return `  - Code integration R${round} g${generation} (${ref}) · ${details || 'Execution uncollected'}${observed.length > 3 ? ` · ${observed.length - 3} more calls` : ''}`;
+  });
+  if (selections.length > 5) lines.push(`  - ${selections.length - 5} more selections`);
+  return ['- Explicit review recovery (logical slots per call)', ...lines];
+}
+
 /** Renders the session report from every run's facts; compaction drops the Appendix, then lower-severity findings, then folds Tier-2 details before Tier-1 yield. */
 
 export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): { text: string; findings: number; top?: string } {
@@ -993,6 +1014,7 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     `- Estimated cost ${pricer ? formatCost(total) : 'not estimated (rate table unavailable)'}${total.priced && scope.partial ? ' (partial)' : ''} · priced ${priced} · unpriced ${unpriced} · Cache hit: ${cacheHitOf(allUnits, !hostTurnsComplete)}`,
     `- Turns: User ${num(userTurnsTotal)} · LLM ${qualify(num(llmTurnsTotal), !hostTurnsComplete, summaryLimited)} · Tool calls ${qualify(toolCell(toolCallsTotal, toolTurnsTotal), !hostTurnsComplete, summaryLimited)} · ${toolkitCallsText}`,
     `- Subagents: ${num(subagentCountTotal)} · max depth ${num(maxSubagentDepthTotal)}`,
+    ...recoveryLines(runs),
     `- Waste / recovery: ${wasteCostText} (${wasteShareText}) · extra ${recovery.extraLaunches ?? DASH} · superseded ${recovery.reworkLaunches ?? DASH} · nudge ${recovery.nudges ?? DASH} · wrap-up ${recovery.wrapUps ?? DASH} · writer relaunches ${recovery.writerRelaunches ?? DASH}`,
     ...warnings,
     '',

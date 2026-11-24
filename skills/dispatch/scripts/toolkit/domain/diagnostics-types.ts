@@ -2,6 +2,7 @@ import type { Bands } from '../../lib/usage/bands.ts';
 import type { CopilotActor, CopilotEvidence, Counters, HostUsageFacts, ResponseStage } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, DelegateResponse, FailureClass, UsageSource } from '../types.ts';
+import type { RecoverySelection } from '../status.ts';
 import type { ReviewKind } from './types.ts';
 
 
@@ -83,7 +84,13 @@ export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
   if (row.priorLaunches) current.priorLaunches = (current.priorLaunches ?? 0) + row.priorLaunches;
   if (row.fixInduced) current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
 }
+export type RecoveryExecution = { ref: string; reused?: number; launched?: number; unresolved?: number };
+
 export type RunFacts = {
+  recoverySelection?: RecoverySelection;
+  recoveryExecution?: RecoveryExecution;
+  recoverySelections?: (RecoverySelection & {ref: string})[];
+  recoveryExecutions?: RecoveryExecution[];
   hostUsage?: HostUsageFacts;
   startedAt?: string;
   hosts?: string[];

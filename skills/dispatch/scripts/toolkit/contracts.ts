@@ -10,15 +10,15 @@ export type ActionContract = {
 export type SessionAction = (typeof SESSION_ACTIONS)[number];
 
 export const CALL_TABLE_INTRO: readonly string[] = [
-  'Dispatched agents run no toolkit commands, except a subagent assigned a map may run `lint run` on that map only, without `--edit`. Briefs and descriptors return `model`, `effort` and `launchAs` for native launches. Initialize the session before calling tools. Resolve artifact paths from the repository root; resolve record and question files from the current directory.',
-  'Stdout is `{ok, summary, path, reason?}` (optional advisory `hint` <=240 B on `ok: true`): `summary` <=1024 B, `path` is a session JSON file (null on usage/write failure). Itemized summaries show counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 usage/invalid input, 2 fault, 3 held lock, 4 gate refusal or `native-pending`.',
-  'Use `node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` (no session, raw text, exit 0). Unknown/empty headings refuse `usage` with valid headings; unreadable `references/toolkit.md` refuses `fault`, exit 2. Refusals may add `help` (next heading); `native-pending` and `ok:true` omit it.',
-  'In the table, `\\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array; `help <kind>` gives field rules.',
+  'A subagent assigned a map may run `lint run` on that map only, without `--edit`. The host runs other tools. Native fields: `model`, `effort`, `launchAs`. Initialize first. Paths: artifact from repo root, record/question from cwd.',
+  'Stdout is `{ok, summary, path, reason?}` (advisory `hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.',
+  '`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` returns raw text, exit 0, without a session. Unknown/empty headings return `usage` and valid headings. Unreadable help returns `fault` (2). Refusals may include `help` (next heading), except `native-pending`.',
+  'In the table, `\\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array. `--cleanup` needs stdin. `help <kind>` lists fields.',
 ];
 
 export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
-  'ask run': { arguments: "ask run [<question-file|->] [--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]" },
-  'review run': { arguments: "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]" },
+  'ask run': { arguments: "ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]" },
+  'review run': { arguments: "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]" },
   'report render': { arguments: 'report render --session <session>' },
   'report complete': { arguments: 'report complete --session <session>' },
   'brief render': { arguments: 'brief render <task> --session <session> --host <platform>' },
@@ -37,10 +37,10 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
   'worktree abandon': { arguments: 'worktree abandon <task> --session <session> --reason <reason>' },
   'check run': { arguments: 'check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]' },
   'brief verifier': { arguments: 'brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>' },
-  'ledger append': { arguments: 'ledger append <record.json|-> --session <session>' },
+  'ledger append': { arguments: 'ledger append <record.json|-> --session <session> | ledger append - --cleanup <skip|zero> --session <session>' },
   'ledger query': { arguments: 'ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]' },
   'doctor run': { arguments: 'doctor run --session <session> --host <platform> [--level <level>] [--probe]' },
-  'status show': { arguments: 'status show --session <session>' },
+  'status show': { arguments: 'status show --session <session> [--resume]' },
   'lint run': { arguments: 'lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]' },
   'diagnostics render': { arguments: 'diagnostics render --session <session>' },
 };

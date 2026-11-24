@@ -1,8 +1,8 @@
 import { cleanupBinding, latestCleanup, criterionStatuses, eligibility } from './evidence.ts';
-import { currentHashes, foldLedger, gate, latest, type Fold } from './ledger.ts';
+import { containedSessionPath, currentHashes, foldLedger, gate, gitObjectId, hasCleanupCheckpoint, latest, levelGate, type Fold } from './ledger.ts';
 import fs from 'node:fs';
 import path from 'node:path';
-import type {CliDeps} from './cli.ts';
+import type {CliDeps, HandlerContext} from './cli.ts';
 import {parsePlan} from './domain/plan.ts';
 import {checks} from './plan-view.ts';
 import {writerStates} from './writers.ts';
@@ -13,6 +13,16 @@ import {contentReports, closingNotesFor, rerunNotesFor, rerunCoverSeq, coversRep
 import type {FindingsValue} from './findings.ts';
 import {applicableReviewIds} from './confirmations.ts';
 import {readManifest} from '../lib/session.ts';
+import {createHash} from 'node:crypto';
+import {captureReviewTarget} from './review-capture.ts';
+import {sameReviewCapture, reviewRulingSnapshot, type Round} from './review.ts';
+import {reviewIdentity} from './review-identity.ts';
+import {parsePinsFlag, type SlotOutcome} from './fanout.ts';
+import type {FanoutState} from './fanout/state.ts';
+import {LEVELS} from './types.ts';
+import {ToolError} from './output.ts';
+import {loadRejections} from './confirmations.ts';
+import {effectiveSeverity} from './domain/severity.ts';
 
 export async function statusReport(session: string, repositoryRoot: string, deps: CliDeps, fold: Fold = foldLedger(session)) {
   const level = latest(fold, 'level')?.data['level'] ?? 'medium';
@@ -148,4 +158,177 @@ export async function statusReport(session: string, repositoryRoot: string, deps
     testCleanup: (() => { const row = latestCleanup(fold); return row ? {from: row.data['from'], trees: row.data['trees'], removed: row.data['removed'], deleted: row.data['deleted'], merged: row.data['merged']} : null; })(),
     ...sections,
   };
+}
+
+const REVIEW = 'code-integration';
+const DIRECTORY = '.state/reviews/' + REVIEW;
+type ResumeView = {
+  next: 'inspect' | 'adjudicate' | 'continue' | 'review';
+  reason: 'state-unreadable' | 'gate-blocked' | 'outside-review' | 'native-pending' | 'arguments-unavailable' |
+    'findings-pending' | 'review-settled' | 'round-pending' | 'target-moved' | 'review-required';
+  evidence?: string;
+  round?: string;
+  cleanup?: 'checkpoint' | 'unbound';
+};
+export type RecoverySelection = {review: typeof REVIEW; targetHash: string; round: number; generation: number};
+export const recoveryTargetHash = ({base, head}: {base: string; head: string}): string =>
+  createHash('sha256').update(JSON.stringify({base, head})).digest('hex');
+
+function existingRecoveryPath(session: string, relative: string, kind: 'file' | 'directory' = 'file'): string | undefined {
+  try { fs.lstatSync(path.join(session, relative)); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const file = containedSessionPath(session, relative);
+  const info = fs.statSync(file);
+  if (Buffer.byteLength(JSON.stringify(relative)) > 512 || !(kind === 'directory' ? info.isDirectory() : info.isFile()))
+    throw new Error('Invalid recovery pointer');
+  return file;
+}
+
+function readOptional<T>(session: string, relative: string): T | undefined {
+  const file = existingRecoveryPath(session, relative);
+  return file ? JSON.parse(fs.readFileSync(file, 'utf8')) as T : undefined;
+}
+
+export async function resumeStatus(ctx: HandlerContext): Promise<{value: ResumeView; recoverySelection?: RecoverySelection; postFold?: Fold}> {
+  const {session, manifest, deps} = ctx;
+  let cleanup: ResumeView['cleanup'];
+  let postFold: Fold | undefined;
+  const result = (next: ResumeView['next'], reason: ResumeView['reason'], fields: Pick<ResumeView, 'round' | 'evidence'> = {}, recoverySelection?: RecoverySelection) =>
+    ({value: {next, reason, ...fields, ...(cleanup ? {cleanup} : {})}, ...(recoverySelection ? {recoverySelection} : {}), ...(postFold ? {postFold} : {})});
+  try {
+    // A missing ledger cannot support recovery, even though an empty fold is useful to other callers.
+    containedSessionPath(session, 'ledger.jsonl');
+    const fold = postFold = foldLedger(session);
+    if (fold.torn) return result('inspect', 'state-unreadable');
+    const opened = integrationRecord(fold);
+    if (!opened) return result('inspect', 'outside-review');
+    cleanup = 'unbound';
+    const delivered = fold.records.some(row => row.seq > opened.seq && row.kind === 'integrate' && ['closed', 'delivered'].includes(row.data['phase']));
+    if (delivered) return result('inspect', 'outside-review');
+    const cwd = containedSessionPath(session, opened.data['path']);
+    const head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
+    const base: unknown = opened.data['base'];
+    if (!gitObjectId(head) || !gitObjectId(base)) return result('inspect', 'state-unreadable');
+    if (await hasCleanupCheckpoint(session, fold, deps, cwd, head)) cleanup = 'checkpoint';
+
+    const directory = existingRecoveryPath(session, DIRECTORY, 'directory');
+    const numbers = directory ? fs.readdirSync(directory)
+      .flatMap(name => /^round-[1-9]\d*$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b) : [];
+    const last = numbers.at(-1);
+    if (last === undefined) {
+      const current = currentHashes(manifest.repositoryRoot, latest(fold, 'bind'));
+      return result('inspect', gate(fold, current).allowed ? 'outside-review' : 'gate-blocked');
+    }
+    const round = DIRECTORY + '/round-' + last + '/round.json';
+    const saved = readOptional<Round>(session, round);
+    if (!saved || !Number.isSafeInteger(last) || saved.round !== last ||
+        !Number.isSafeInteger(saved.generation) || saved.generation < 1 || !LEVELS.includes(saved.level) ||
+        !Number.isSafeInteger(saved.cap) || saved.cap < 0 || !Number.isSafeInteger(saved.startSeq) || saved.startSeq < 0 ||
+        typeof saved.scope !== 'string' || !saved.spec || typeof saved.spec.hash !== 'string' || typeof saved.spec.path !== 'string' ||
+        typeof saved.target !== 'object' || !saved.target || !gitObjectId(saved.target.base) || !gitObjectId(saved.target.head) ||
+        !Array.isArray(saved.roster) || !saved.roster.length ||
+        saved.roster.some(slot => !slot || typeof slot.slot !== 'string' || !/^[A-Za-z0-9_-]+\[\d+\]$/.test(slot.slot)))
+      return result('inspect', 'state-unreadable');
+    const legacy = !Object.hasOwn(saved, 'pins');
+    if (!legacy && saved.pins !== null && typeof saved.pins !== 'string') return result('inspect', 'state-unreadable');
+    parsePinsFlag(saved.pins);
+    const evidence = DIRECTORY + '/round-' + last + '/findings.json';
+    const findings = readOptional<FindingsValue>(session, evidence);
+    if (findings !== undefined && (!findings || !Array.isArray(findings.findings) || !Array.isArray(findings.failed) ||
+        findings.findings.some(finding => typeof finding?.id !== 'string'))) return result('inspect', 'state-unreadable');
+
+    const bind = latest(fold, 'bind');
+    const current = currentHashes(manifest.repositoryRoot, bind);
+    if (!bind?.data['plan'] || !current.plan || !current.spec || !gate(fold, current).allowed || !levelGate(fold, saved.level).allowed)
+      return result('inspect', 'gate-blocked');
+    const applies = applicableReviewIds(manifest, fold).get(REVIEW);
+    const {budget} = admission(session, fold, REVIEW, saved.cap, applies);
+    if (budget.coverage?.state === 'unreadable') return result('inspect', 'state-unreadable');
+    const rejections = loadRejections(session, fold, [REVIEW]);
+    if (rejections.some(state => state.state === 'escalated') || budget.state === 'escalation-open')
+      return result('inspect', 'gate-blocked');
+    const target = {base, head};
+    const capture = await captureReviewTarget(ctx, 'code', 'integration', 'integration', false, false);
+    if (JSON.stringify(capture.target) !== JSON.stringify(target)) return result('inspect', 'state-unreadable');
+    const prior = numbers.filter(n => n < last).flatMap(n => {
+      const prefix = DIRECTORY + '/round-' + n;
+      const pointer = prefix + '/findings.json';
+      const value = readOptional<FindingsValue>(session, pointer);
+      const metadata = value && readOptional<Round>(session, prefix + '/round.json');
+      return value && metadata ? [{value, metadata, pointer}] : [];
+    });
+    const rulingRows = fold.records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + REVIEW + ':'));
+    const moved = !sameReviewCapture(saved, capture) ||
+      (!findings && saved.rulingSnapshot !== undefined && saved.rulingSnapshot !== reviewRulingSnapshot(REVIEW, prior.map(row => row.value), rulingRows));
+    const incomplete = budget.nextRound === last;
+    const selection = (): RecoverySelection => ({
+      review: REVIEW, targetHash: recoveryTargetHash(target), round: budget.nextRound,
+      generation: incomplete ? saved.generation + (moved ? 1 : 0) : 1,
+    });
+
+    if (incomplete && !moved && budget.state === 'allowed') {
+      const generation = DIRECTORY + '/round-' + last + '/gen-' + saved.generation;
+      const slots = generation + '/slots';
+      const slotsDir = existingRecoveryPath(session, slots, 'directory');
+      if (slotsDir) {
+        const names = fs.readdirSync(slotsDir).sort();
+        for (const name of names) {
+          if (!/^[A-Za-z0-9_-]+\[\d+\]\.json$/.test(name)) continue;
+          const pointer = slots + '/' + name;
+          const slot = readOptional<SlotOutcome>(session, pointer);
+          if (!slot || slot.slot !== name.slice(0, -5) || !['native', 'done', 'failed'].includes(slot.state))
+            return result('inspect', 'state-unreadable');
+          if (slot.state !== 'native' || slot.cliFallback) continue;
+          const reply = typeof slot.replyPath === 'string' && path.isAbsolute(slot.replyPath) ?
+            path.relative(session, slot.replyPath).split(path.sep).join('/') : '';
+          const parent = generation + '/replies';
+          const attempt = typeof slot.attempt === 'string' ? /^([A-Za-z0-9_-]+\[\d+\])#([a-f0-9]{6})$/.exec(slot.attempt) : null;
+          const physical = saved.roster.find(entry => entry.slot === attempt?.[1]);
+          const logical = saved.roster.find(entry => entry.slot === slot.slot && !entry.reserve);
+          if (!attempt || !logical || !physical || physical.provider !== slot.provider ||
+              (physical !== logical && (physical !== saved.roster.find(entry => entry.reserve) ||
+                readOptional<FanoutState>(session, generation + '/fanout.json')?.reserveUsedBy !== slot.slot)) ||
+              path.posix.dirname(reply) !== parent || ![slot.slot + '.' + attempt[2] + '.md', slot.slot + '.md'].includes(path.posix.basename(reply)))
+            return result('inspect', 'state-unreadable');
+          containedSessionPath(session, parent);
+          existingRecoveryPath(session, reply);
+          return result('inspect', 'native-pending', {round, evidence: pointer}, legacy ? undefined : selection());
+        }
+      }
+    }
+
+    if ((!findings || moved) && legacy && budget.state === 'allowed')
+      return result('inspect', 'arguments-unavailable', {round});
+    const published = findings ? [...prior, {value: findings, metadata: saved, pointer: evidence}] : prior;
+    const pending = published.findLast(({value, metadata}) =>
+      applies?.(metadata) && metadata.spec.hash === current.spec && value.findings.some(finding => {
+        const history = rulingRows.filter(row => row.data['subject'] === 'review:' + REVIEW + ':' + finding.id);
+        const ruling = history.at(-1);
+        if (!ruling?.data['rationale']?.trim()) return true;
+        return metadata.round === last && !moved && ruling.data['ruling'] === 'accepted' &&
+          (finding.severity !== 'CONSIDER' || effectiveSeverity(finding, history) !== 'CONSIDER');
+      }));
+    if (pending) return result('adjudicate', 'findings-pending', {evidence: pending.pointer});
+
+
+    if (findings) {
+      try {
+        await reviewIdentity(ctx, fold, cwd, head, base);
+        return result('continue', 'review-settled');
+      } catch (error) {
+        if (!(error instanceof ToolError && error.reason === 'review-required')) throw error;
+      }
+    }
+
+    if (budget.state !== 'allowed') return result('inspect', 'gate-blocked');
+    if (legacy) return result('inspect', 'arguments-unavailable', {round});
+    return result('review', moved ? 'target-moved' : incomplete ? 'round-pending' : 'review-required', {round}, selection());
+  } catch (error) {
+    if (error instanceof ToolError && ['nothing-to-review', 'review-confirmation-required'].includes(error.reason))
+      return result('inspect', 'gate-blocked');
+    return result('inspect', 'state-unreadable');
+  }
 }

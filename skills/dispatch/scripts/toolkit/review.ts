@@ -6,7 +6,7 @@ import { atomic } from './fanout/state.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactKind } from './artifacts.ts';
-import { confirmGate, foldLedger, latest, levelGate, withLedger, type Fold, type Hashes } from './ledger.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, hasCleanupCheckpoint, type Fold, type Hashes } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
 import type { Underfill } from '../policy/roster.ts';
@@ -39,8 +39,8 @@ import { launches } from './writers.ts';
 
 export { generationLaunchedNative } from './review-checkout.ts';
 
-type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
-const same =(round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
+export type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; pins?: string | null; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
+export const sameReviewCapture =(round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
 const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
@@ -65,7 +65,7 @@ async function cleanupComplete(ctx: HandlerContext, records: Fold['records'], cw
   }
 }
 
-async function reviewWarning(ctx: HandlerContext, target: string, cwd: string): Promise<string> {
+async function reviewWarning(ctx: HandlerContext, target: string, cwd: string, head: string): Promise<string> {
   const fold = foldLedger(ctx.session);
   if (target === 'worktree' && latest(fold, 'bind')?.data['plan'] &&
       fold.records.some(row => row.kind === 'integrate' && row.data['phase'] === 'done'))
@@ -79,9 +79,18 @@ async function reviewWarning(ctx: HandlerContext, target: string, cwd: string): 
   if (!proof || proof.data['open'].length || records.some(row => row.seq > proof.seq && row.kind === 'ruling' &&
       row.data['subject'].startsWith('verification:') && row.data['ruling'] === 'accepted'))
     warnings.push('no current runtime verification recorded before integration review');
-  if (!(await cleanupComplete(ctx, fold.records, cwd)))
+  if (!(await cleanupComplete(ctx, fold.records, cwd)) &&
+      !(await hasCleanupCheckpoint(ctx.session, fold, ctx.deps, cwd, head)))
     warnings.push('no test cleanup recorded before integration review');
   return warnings.join('; ');
+}
+
+export function reviewRulingSnapshot(review: string, prior: FindingsValue[], rows: readonly LedgerRecord[]): string {
+  const matches = (row: LedgerRecord, id: string) => row.data['subject'] === 'review:' + review + ':' + id;
+  return JSON.stringify(prior.flatMap(value => value.findings.flatMap(finding => {
+    const history = rows.filter(row => matches(row, finding.id));
+    return effectiveSeverity(finding, history) === 'MUST' ? [[finding.id, history.at(-1)?.seq ?? 0]] : [];
+  })));
 }
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
@@ -172,7 +181,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     let round = read<Round>(roundFile);
     if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
     const warning = kind === 'code' && (requested === 'integration' || requested === 'worktree')
-      ? await reviewWarning(ctx, requested, current.cwd) : '';
+      ? await reviewWarning(ctx, requested, current.cwd, label(current.target)) : '';
     const warningPrefix = warning ? 'warning: ' + warning + '; ' : '';
     const warningValue = warning ? {warning} : {};
     const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {}, confirmationRounds:ConfirmationRound[]=[];
@@ -182,10 +191,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (value && metadata) {prior.push(value); priorTargets[i] = metadata.target;confirmationRounds.push({review,metadata,findings:value});}
     }
     const rulingRows = () => foldLedger(session).records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'));
-    const rulingSnapshot=()=>{
-      const rows=rulingRows();
-      return JSON.stringify(prior.flatMap(value=>value.findings.filter(finding=>effective(finding,rows)==='MUST').map(finding=>[finding.id,rows.findLast(row=>row.data['subject']==='review:'+review+':'+finding.id)?.seq ?? 0])));
-    };
+    const rulingSnapshot = () => reviewRulingSnapshot(review, prior, rulingRows());
     const settledRulings=rulingRows(),settledRejections=rejectionStates();
     const settled: Settled[] = prior.flatMap(value => value.findings.flatMap(finding => {
       const ruling = settledRulings.findLast(row => row.data['subject'] === 'review:' + review + ':' + finding.id);
@@ -283,7 +289,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // The fast path needs the captured identity the previous round reviewed; a
       // rerun, coverage grant, decisive ruling or moved target keeps the standard prompt.
       const confirmationOnlyRound = n > 1 && !rerun && !coverage && requests.length > 0 && !decisiveRound(latestSubstantive())
-        && previousRound !== undefined && same(previousRound.metadata as Round, captured);
+        && previousRound !== undefined && sameReviewCapture(previousRound.metadata as Round, captured);
       let scope = 'Full review', changedPaths = captured.changed; const changedHeadingsSince = (round: number): string[] => {const snapshot = path.join(directory, 'round-' + round, 'target.snapshot.md'); return kind !== 'code' && captured.source !== undefined && fs.existsSync(snapshot) ? changedHeadings(fs.readFileSync(snapshot, 'utf8'), captured.source) : [];};
       if (confirmationOnlyRound) {
         scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
@@ -321,7 +327,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         }
       }
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
-      const value: Round = {round: n, generation, cap: cap1, level, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{}),...(coverage?{coverage}:{}),...(admitted.coverage?.state==='readable'&&admitted.coverage.use?{coverageUse:admitted.coverage.use}:{})};
+      const value: Round = {round: n, generation, cap: cap1, level, pins: (ctx.values['pins'] as string | undefined) ?? null, roster: slots, requests,rulingSnapshot:rulingSnapshot(),scope, startSeq: foldLedger(session).lastSeq, spec: captured.spec, target: captured.target, turnTarget: turnTarget(turnPaths), ...(contextMapPath?{contextMapPath}:{}), ...(captured.artifactPath?{artifactPath:captured.artifactPath}:{}),...(captured.artifacts?{artifacts:captured.artifacts}:{}),...(roster.underfill?{underfill:roster.underfill}:{}),...(coverage?{coverage}:{}),...(admitted.coverage?.state==='readable'&&admitted.coverage.use?{coverageUse:admitted.coverage.use}:{})};
       if (!slots.some(entry => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
       // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
       if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) writeReviewerInput(directory, n, kind, captured.source);
@@ -365,7 +371,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (!hadPending) assertCitations(current.source);
       round = await start(1, current);
     }
-    else if (!same(round, current) || (round.rulingSnapshot!==undefined && round.rulingSnapshot!==rulingSnapshot())) {
+    else if (!sameReviewCapture(round, current) || (round.rulingSnapshot!==undefined && round.rulingSnapshot!==rulingSnapshot())) {
       await supersede(current);
       if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
     }
@@ -394,6 +400,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const bind = latest(foldLedger(session), 'bind');
       return findingUnits({kind, round: n, rounds, planPath: bind ? path.relative(manifest.repositoryRoot, path.resolve(manifest.repositoryRoot, String(bind.data['plan']))) : '', ruling: (id, seq) => rows.findLast(row => row.seq <= seq && row.data['subject'] === 'review:' + review + ':' + id)?.data['ruling'] as string | undefined});
     };
+    const fanoutDir = path.join(dir, 'gen-' + round.generation);
+    const observeRecovery = review === 'code-integration' && typeof round.target !== 'string' ? deps.recovery?.(
+      ctx.values['resume-ref'], {review, target: round.target, round: n, generation: round.generation}, fanoutDir,
+    ) : undefined;
     if (!pending) {
       const bind = latest(foldLedger(session), 'bind');
       const requestsBySlot=new Map<string,RejectionRequest[]>();
@@ -426,12 +436,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
       const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(dir, 'gen-' + round!.generation, 'attempts.json');
         atomic(file, [...(read<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
-      const fanoutDir = path.join(dir, 'gen-' + round.generation);
       const replies = await fanOutComplete({dir: fanoutDir, slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed,
         nativeFirstProviders: roster.nativeFirstProviders, nativeFailures,
         onIgnoredReport: attempt => { ignoredFailureReports.push(attempt); }}, deps);
+      observeRecovery?.(replies);
       const captured = await capture();
-      if (!same(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
+      if (!sameReviewCapture(round, captured) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(captured); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during fan-out');}
       // fanOut never returns a fallback marker, so every native here is launchable.
       const native = replies.filter((reply): reply is Extract<SlotOutcome, {state: 'native'}> => reply.state === 'native');
       if (native.length) {
@@ -540,7 +550,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     await withLedger(session, 'review finalize', deps, async tx => {for (const escalation of pending!.escalations) await tx.append(escalation);});
     await deps.hook?.('review:after-append');
     const finalCapture = await capture();
-    if (!same(round, finalCapture) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during finalization');}
+    if (!sameReviewCapture(round, finalCapture) || round.rulingSnapshot!==rulingSnapshot()) {await supersede(finalCapture); throw new ToolError(4, 'target-moved', 'Review target or ruling moved during finalization');}
     const relativeDir = path.relative(session, dir).split(path.sep).join('/');
     const findingsFile = relativeDir + '/findings.md', rulingsFile = relativeDir + '/rulings.json';
     nodeLinkFs.writeAtomic(path.join(session, findingsFile), renderFindingsFile(pending.findings));

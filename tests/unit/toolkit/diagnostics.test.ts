@@ -1481,3 +1481,11 @@ test('H11 emits non-review turn churn finding above threshold and stays silent o
   });
   assert.deepEqual(silent.filter(f => f.source === 'H11'), []);
 });
+
+test('keeps bounded recovery facts and strips raw text and locators', () => {
+  const ref = '01234567-89ab-4def-8123-0123456789ab';
+  const base = {phases: [], invocations: [], reviews: []};
+  const execution = {ref, reused: 0, launched: -1, unresolved: Number.MAX_SAFE_INTEGER, prompt: '/private/prompt'};
+  assert.deepEqual(sanitizeFacts({...base, recoveryExecution: execution}).recoveryExecution, {ref, reused: 0});
+  assert.equal(sanitizeFacts({...base, recoveryExecution: {...execution, ref: '../capture'}}).recoveryExecution, undefined);
+});

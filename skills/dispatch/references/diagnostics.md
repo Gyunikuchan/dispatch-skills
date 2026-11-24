@@ -1,6 +1,6 @@
 # Diagnostics
 
-If enabled, at each verb's final handoff, merge your terse notes into the JSON array at `<session>/.state/retro.json` yourself (unique ids, max 20 defects); investigating logs/chat follows the [context guard](../SKILL.md#context-guard) and may use a research explorer. Without notes, add nothing; if no file, write `[]`. Then run `diagnostics render` ([cost columns](toolkit.md#diagnostics-render)). `[]` is valid empty; missing, unreadable, malformed or non-array input is uncollected.
+If enabled, at each verb's final handoff, merge your terse notes into the JSON array at `<session>/.state/retro.json` yourself (unique ids, max 20 defects); investigating logs/chat follows the [context guard](../SKILL.md#context-guard) and may use a research explorer. Without notes, add nothing; if no file, write `[]`. Then run `diagnostics render` ([cost and recovery](toolkit.md#diagnostics-render)). `[]` is valid empty; missing, unreadable, malformed or non-array input is uncollected.
 
 Item: `{id,component,category,evidence,impact,proposedFix}`.
 - `id`: 1-48 A-Za-z0-9_- chars.

@@ -541,3 +541,36 @@ test('rejects --probe outside doctor run and surfaces probe-failed on doctor run
     assert.equal(reportText.includes('untrusted subprocess text'), false);
   } finally { f.cleanup(); }
 });
+
+test('cleanup checkpoint flags are scoped to ledger append', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    assert.equal(await main(['ledger', 'append', '-', '--cleanup', 'skip', '--session', f.session], {...f.deps, readStdin: () => '{"head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'}), 4);
+    assert.equal(await main(['status', 'show', '--cleanup', 'skip', '--session', f.session], f.deps), 1);
+    assert.equal(await main(['ledger', 'append', '-', '--resume', '--session', f.session], f.deps), 1);
+    assert.equal(await main(['ledger', 'append', 'receipt.json', '--cleanup', 'skip', '--session', f.session], f.deps), 1);
+    const note = {kind: 'note', by: 'tool', key: 'test-cleanup:skip:1:' + 'a'.repeat(40), data: {text: 'handwritten'}};
+    const append = (key: string) => main(['ledger', 'append', '-', '--session', f.session],
+      {...f.deps, readStdin: () => JSON.stringify({...note, key})});
+    assert.equal(await append(note.key), 1);
+    assert.equal(await append('test-cleanup:skip'), 0);
+  } finally { f.cleanup(); }
+});
+
+test('accepts optional correlation on review runs only', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const ref = '01234567-89ab-4def-8123-0123456789ab';
+    assert.equal(await main(['status', 'show', '--resume-ref', ref, '--session', f.session], f.deps), 1);
+    assert.match(f.output().summary, /--resume-ref is only for review run/);
+    const seen: unknown[] = [];
+    const deps = {...f.deps, handler: async (ctx: HandlerContext) => {
+      seen.push(ctx.values['resume-ref']);
+      return {ok: true, exit: 0, summary: 'ok', value: {}};
+    }};
+    const review = ['review', 'run', 'integration', '--host', 'codex', '--session', f.session];
+    assert.equal(await main(review, deps), 0);
+    assert.equal(await main([...review, '--resume-ref', ref], deps), 0);
+    assert.deepEqual(seen, [undefined, ref]);
+  } finally { f.cleanup(); }
+});

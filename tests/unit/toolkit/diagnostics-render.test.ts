@@ -670,3 +670,14 @@ test('round workload render rereads host usage for started rounds and flags over
 }
 });
 
+
+test('reports linked restart work and unavailable coverage beside retry metrics', () => {
+  const ref = '01234567-89ab-4def-8123-0123456789ab';
+  const facts = {phases: [], invocations: [], reviews: [],
+    recoverySelections: [{ref, review: 'code-integration' as const, targetHash: 'a'.repeat(64), round: 2, generation: 1}],
+    recoveryExecutions: [{ref, reused: 1, unresolved: 0}]};
+  const {text} = renderDiagnostics([facts]);
+  assert.match(text, /Explicit review recovery/);
+  assert.match(text, /Code integration R2.*reused 1.*launched uncollected.*unresolved 0/);
+  assert.match(renderDiagnostics([{...facts, recoveryExecutions: []}]).text, /Execution uncollected/);
+});

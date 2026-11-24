@@ -1,4 +1,10 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import type { CliDeps } from './cli.ts';
+import { atomic } from './fanout/state.ts';
+import { git, gitOk, gitPaths } from './git.ts';
+import { integrationRecord } from './integration.ts';
+import { safeRelativePath } from './domain/context.ts';
 import path from 'node:path';
 import { readManifest } from '../lib/session.ts';
 import { artifactHash, artifactKind, readArtifact, type ArtifactKind } from './artifacts.ts';
@@ -314,6 +320,8 @@ export async function appendRecords(session: string, input: unknown, deps: LockD
     const toWrite: LedgerRecord[] = [];
     for (const item of items) {
       const prepared = prepareRecord(session, working, item);
+      if (!('deduped' in prepared) && prepared.record.kind === 'note' && CLEANUP_KEY.test(prepared.key))
+        throw new ToolError(1, 'invalid-input', 'Use ledger append - --cleanup for a bound cleanup checkpoint');
       if ('deduped' in prepared) {
         results.push({ seq: prepared.seq, deduped: true });
         continue;
@@ -360,6 +368,92 @@ export async function withLedger<T>(session: string, tool: string, deps: LockDep
     });
     return fn({fold,append});
   });
+}
+
+const CLEANUP_REPORT = '.state/test-cleanup.json';
+const CLEANUP_KEY = /^test-cleanup:(skip|zero):(\d+):([a-f0-9]{40}|[a-f0-9]{64})$/;
+export const gitObjectId = (value: unknown): value is string =>
+  typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
+
+export function containedSessionPath(session: string, relative: string): string {
+  if (!safeRelativePath(relative) || relative !== path.posix.normalize(relative))
+    throw new Error('Invalid session-relative path');
+  const file = fs.realpathSync(path.resolve(session, relative));
+  const rest = path.relative(fs.realpathSync(session), file);
+  if (!rest || rest === '..' || rest.startsWith('..' + path.sep) || path.isAbsolute(rest))
+    throw new Error('Path escapes session');
+  return file;
+}
+
+const reportDigest = (bytes: Buffer): string => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+const zeroCleanup = (value: unknown): boolean => {
+  const report = value as Record<string, unknown> | null;
+  return !!report && typeof report === 'object' && Object.keys(report).sort().join() === 'deleted,merged,removed' &&
+    Array.isArray(report['removed']) && report['removed'].length === 0 && report['deleted'] === 0 && report['merged'] === 0;
+};
+const cleanupPaths = async (deps: CliDeps, cwd: string, base: string, head: string): Promise<string[]> =>
+  base === head ? [] : (await gitPaths(deps, cwd, ['diff', '--name-only', '--no-renames', '-z', base, head, '--'])).sort();
+const cleanCheckout = async (deps: CliDeps, cwd: string): Promise<boolean> =>
+  !(await gitOk(deps, cwd, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all']));
+
+export async function appendCleanupCheckpoint(session: string, mode: unknown, value: unknown, deps: CliDeps) {
+  const input = value as Record<string, unknown> | null;
+  if ((mode !== 'skip' && mode !== 'zero') || !input || typeof input !== 'object' ||
+      Object.keys(input).sort().join() !== (mode === 'skip' ? 'head' : 'head,report') ||
+      !gitObjectId(input['head']) || (mode === 'zero' && !zeroCleanup(input['report'])))
+    throw new ToolError(1, 'invalid-input', 'Cleanup requires skip {head} or zero {head,report} with zero counts');
+  return withLedger(session, 'ledger append', deps, async ({fold, append}) => {
+    const opened = integrationRecord(fold);
+    if (!opened || !gitObjectId(opened.data['base']) ||
+        fold.records.some(row => row.seq > opened.seq && row.kind === 'integrate' && ['closed', 'delivered'].includes(row.data['phase'])))
+      throw new ToolError(4, 'nothing-to-review', 'No open integration checkout');
+    const cwd = containedSessionPath(session, opened.data['path']);
+    const head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
+    if (head !== input['head'])
+      throw new ToolError(4, 'target-moved', 'Cleanup requires the current clean integration HEAD');
+    const tree = await gitOk(deps, cwd, ['rev-parse', head + '^{tree}']);
+    if (!gitObjectId(tree)) throw new ToolError(2, 'fault', 'Cannot establish the integration tree');
+    const paths = mode === 'skip' ? await cleanupPaths(deps, cwd, opened.data['base'], head) : undefined;
+    if (head !== await gitOk(deps, cwd, ['rev-parse', 'HEAD']) || !await cleanCheckout(deps, cwd))
+      throw new ToolError(4, 'target-moved', 'Cleanup requires the current clean integration HEAD');
+    let proof: {paths: string[]} | {reportDigest: string};
+    if (paths) proof = {paths};
+    else {
+      const report = path.join(containedSessionPath(session, '.state'), 'test-cleanup.json');
+      atomic(report, {removed: [], deleted: 0, merged: 0});
+      proof = {reportDigest: reportDigest(fs.readFileSync(report))};
+    }
+    const result = await append({kind: 'note', by: 'tool', key: `test-cleanup:${mode}:${opened.seq}:${head}`,
+      data: {text: JSON.stringify({openingSeq: opened.seq, head, tree, ...proof})}});
+    return {result, fold};
+  });
+}
+
+export async function hasCleanupCheckpoint(session: string, fold: Fold, deps: CliDeps, cwd: string, head: string): Promise<boolean> {
+  const opened = integrationRecord(fold);
+  if (!opened) return false;
+  try {
+    const row = fold.records.findLast(row => row.seq > opened.seq && row.by === 'tool' && (
+      row.kind === 'integrate' && row.data['phase'] === 'test-cleanup' &&
+        (row.data['removed'].length || row.data['deleted'] || row.data['merged']) ||
+      row.kind === 'note' && CLEANUP_KEY.exec(row.key)?.[2] === String(opened.seq)));
+    if (!row) return false;
+    const checkpoint = row.kind === 'note' ? CLEANUP_KEY.exec(row.key)?.[3] : row.data['to'];
+    if (!gitObjectId(checkpoint) || !gitObjectId(head) || !await cleanCheckout(deps, cwd) ||
+        (await git(deps, cwd, ['merge-base', '--is-ancestor', checkpoint, head])).exit !== 0) return false;
+    if (row.kind !== 'note') return true;
+    const proof = JSON.parse(row.data['text']);
+    if (proof?.openingSeq !== opened.seq || proof.head !== checkpoint || !gitObjectId(proof.tree) ||
+        proof.tree !== await gitOk(deps, cwd, ['rev-parse', checkpoint + '^{tree}'])) return false;
+    if (CLEANUP_KEY.exec(row.key)?.[1] === 'skip') {
+      return gitObjectId(opened.data['base']) && Array.isArray(proof.paths) &&
+        JSON.stringify(proof.paths) === JSON.stringify(await cleanupPaths(deps, cwd, opened.data['base'], checkpoint));
+    }
+    const bytes = fs.readFileSync(containedSessionPath(session, CLEANUP_REPORT));
+    return proof.reportDigest === reportDigest(bytes) && zeroCleanup(JSON.parse(bytes.toString('utf8')));
+  } catch {
+    return false;
+  }
 }
 
 export async function appendLintEdit(

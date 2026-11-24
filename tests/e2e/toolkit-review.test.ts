@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {spawnSync} from 'node:child_process';
 import {toolkitRepo as createToolkitRepo,planSource,setupTestSkill} from './helpers/toolkit-repo.ts';
-import {appendRecord,foldLedger} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import {appendRecord,currentHashes,foldLedger,latest} from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import {checkoutReportsFor} from '../../skills/dispatch/scripts/toolkit/findings.ts';
 import { CLEAN } from '../helpers/e2e.ts';
 import crypto from 'node:crypto';
@@ -2008,4 +2008,112 @@ test('inter-round diff holds governed text from real Git', async () => {
     assert.doesNotMatch(diff, /Review Findings & Resolutions|Budget \(/);
     assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).interRound.diff, '`' + path.join(roundDir, 'inter-round.diff') + '` (unified diff of the governed text)');
   } finally {f.cleanup();}
+});
+
+export async function stoppedIntegrationReview(historicalRounds = 0) {
+  const {f} = await coverageRepo(2);
+  try {
+    f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'recovery-skill', {'read-delegates': {
+      claude: {targets: [{low: {model: 'native-model'}}]},
+      agy: {targets: [{low: {model: 'cli-model'}}]},
+    }, phases: {'code-review': {targets: {low: 2}, rounds: {low: historicalRounds + 2}}}});
+    f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
+    f.deps.liveness = {claude: true, agy: true};
+    let cliCalls = 0;
+    f.deps.delegate = async provider => {
+      assert.equal(provider, 'agy');
+      cliCalls++;
+      return {outcome: {status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null}, invocations: []};
+    };
+    const head = () => f.git(['rev-parse', 'HEAD'], f.integration);
+    const checkpoint = async () => {
+      f.deps.readStdin = () => JSON.stringify({head: head(), report: {removed: [], deleted: 0, merged: 0}});
+      const receipt = await f.run(['ledger', 'append', '-', '--cleanup', 'zero']);
+      assert.equal(receipt.exit, 0, JSON.stringify(receipt.output));
+    };
+    const resume = async () => {
+      const status = await f.run(['status', 'show', '--resume']);
+      assert.equal(status.exit, 0, JSON.stringify(status.output));
+      return status.value;
+    };
+    const args = ['review', 'run', 'integration', '--kind', 'code', '--level', 'low', '--pins', '(claude,agy)'];
+    const run = () => f.run(args);
+    await checkpoint();
+    if (historicalRounds) {
+      const fold = foldLedger(f.session);
+      const artifacts = currentHashes(f.root, latest(fold, 'bind'));
+      const spec = {path: fs.realpathSync.native(path.join(f.root, 'work.spec.md')), hash: artifacts.spec};
+      const target = {base: fold.records.findLast(row => row.kind === 'integrate' && row.data['phase'] === 'opened')!.data['base'], head: head()};
+      const roster = ['claude', 'agy'].map(provider => ({slot: provider + '[0]', provider, index: 0, native: provider === 'claude', reserve: false}));
+      const save = (file: string, value: unknown) => fs.writeFileSync(file, JSON.stringify(value));
+      // Seed history for the byte replay. The active round below uses the actual review workflow.
+      for (let round = 1; round <= historicalRounds; round++) {
+        const dir = path.join(f.session, '.state/reviews/code-integration/round-' + round);
+        const slots = path.join(dir, 'gen-1/slots');
+        fs.mkdirSync(slots, {recursive: true});
+        save(path.join(dir, 'round.json'), {round, generation: 1, cap: historicalRounds + 2, level: 'low', pins: '(claude,agy)',
+          roster, scope: 'Full review', startSeq: fold.lastSeq, spec, target, artifacts, turnTarget: 8, rulingSnapshot: '[]'});
+        save(path.join(dir, 'findings.json'), {review: 'code-integration', round, failed: [], findings: []});
+        save(path.join(dir, 'gen-1/checkout-report.json'), {asOfSeq: fold.lastSeq,
+          repositoryChanges: [{cwd: f.integration, paths: ['docs/review-observation.md']}]});
+        for (const {slot} of roster) save(path.join(slots, slot + '.json'), {slot, state: 'done', text: JSON.stringify(CLEAN)});
+      }
+    }
+    const launched = await run();
+    assert.equal(launched.output.reason, 'native-pending', JSON.stringify(launched.output));
+    const stopped = await run();
+    assert.equal(stopped.output.reason, 'native-pending', JSON.stringify(stopped.output));
+    assert.equal(stopped.value.cliWave, 'done');
+    assert.equal(cliCalls, 1);
+    return {f, head, resume, run, stopped, cliCalls: () => cliCalls};
+  } catch (error) {
+    f.cleanup();
+    throw error;
+  }
+}
+
+test('implementation review recovery reuses saved work', async () => {
+  const {f, head, resume, run, stopped, cliCalls} = await stoppedIntegrationReview();
+  try {
+    const view = await resume();
+    assert.equal(view.next, 'inspect');
+    assert.equal(view.reason, 'native-pending');
+    assert.equal(view.cleanup, 'checkpoint');
+    const read = (file: string) => JSON.parse(fs.readFileSync(path.join(f.session, file), 'utf8'));
+    const before = read(view.round);
+    assert.equal(before.pins, '(claude,agy)');
+    assert.equal(before.level, 'low');
+    const slot = read(view.evidence);
+    assert.equal(slot.attempt, stopped.value.pending[0].attempt);
+    assert.equal(slot.replyPath, stopped.value.pending[0].replyPath);
+
+    const compatible = await run();
+    assert.equal(compatible.output.reason, 'native-pending');
+    assert.equal(compatible.value.pending[0].attempt, slot.attempt);
+    assert.equal(cliCalls(), 1);
+
+    fs.writeFileSync(path.join(f.integration, 'src/file.ts'), 'repaired\n');
+    assert.equal((await f.run(['worktree', 'commit', '--reason', 'record repair'])).exit, 0);
+    const moved = await resume();
+    assert.deepEqual(moved, {next: 'review', reason: 'target-moved', round: view.round, cleanup: 'checkpoint'});
+    const recaptured = await run();
+    assert.equal(recaptured.output.reason, 'native-pending', JSON.stringify(recaptured.output));
+    const after = read(view.round);
+    assert.equal(after.generation, before.generation + 1);
+    assert.equal(after.target.head, head());
+    assert.notEqual(recaptured.value.pending[0].attempt, slot.attempt);
+    assert.equal(cliCalls(), 1);
+
+    const wave = await run();
+    assert.equal(wave.output.reason, 'native-pending');
+    assert.equal(wave.value.cliWave, 'done');
+    fs.writeFileSync(wave.value.pending[0].replyPath, JSON.stringify(CLEAN));
+    const complete = await run();
+    assert.equal(complete.exit, 0, JSON.stringify(complete.output));
+    assert.equal(cliCalls(), 2);
+    assert.deepEqual(await resume(), {next: 'continue', reason: 'review-settled', cleanup: 'checkpoint'});
+    fs.writeFileSync(path.join(f.session, '.state/test-cleanup.json'), '{"removed":[],"deleted":0,"merged":0}');
+    await appendRecord(f.session, {kind: 'note', key: 'test-cleanup:skip', by: 'orchestrator', data: {text: 'Legacy skip receipt'}}, f.deps);
+    assert.deepEqual(await resume(), {next: 'continue', reason: 'review-settled', cleanup: 'unbound'});
+  } finally { f.cleanup(); }
 });

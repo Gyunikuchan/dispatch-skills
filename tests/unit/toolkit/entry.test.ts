@@ -114,6 +114,51 @@ test('session actions record the declared host, replace it and refuse a missing 
   } finally { f.cleanup(); }
 });
 
+test('ambiguous session identity exposes choices without changing retained work', async () => {
+  const f = sessionFixture();
+  try {
+    fs.mkdirSync(path.join(f.root, '.git'));
+    const deps = { ...f.deps, env: { CODEX_THREAD_ID: 'test' }, cwd: () => f.root };
+    const init = ['session', 'init', '--objective', 'Resume work', '--host', 'codex'];
+    assert.equal(await entry.main(init, deps), 0);
+    assert.equal(f.output().path, f.session);
+    f.lines.length = 0;
+
+    const root = path.dirname(f.session);
+    const manifest = readManifest(f.session);
+    const other = path.join(root, '20261022T0000Z-earlier');
+    fs.mkdirSync(other);
+    fs.writeFileSync(path.join(other, 'manifest.json'), JSON.stringify({ ...manifest, folderName: path.basename(other) }));
+    const files = [f.session, other].flatMap((dir) => {
+      const ledger = path.join(dir, 'ledger.jsonl');
+      fs.writeFileSync(ledger, 'retained evidence\n');
+      return [path.join(dir, 'manifest.json'), ledger];
+    });
+    const before = files.map((file) => fs.readFileSync(file, 'utf8'));
+    const entries = fs.readdirSync(root).sort();
+
+    assert.equal(await entry.main(init, deps), 2);
+    assert.deepEqual(fs.readdirSync(root).sort(), entries);
+    assert.deepEqual(files.map((file) => fs.readFileSync(file, 'utf8')), before);
+    const failure = f.output() as ReturnType<typeof f.output> & {
+      help?: string; candidates?: string[]; candidateCount?: number; omitted?: number;
+    };
+    assert.equal(failure.ok, false);
+    assert.equal(failure.reason, 'fault');
+    assert.equal(failure.path, null);
+    assert.equal(failure.help, 'session reactivate');
+    assert.deepEqual(failure.candidates, [path.basename(other), path.basename(f.session)]);
+    assert.equal(failure.candidateCount, 2);
+    assert.equal(failure.omitted, 0);
+
+    f.lines.length = 0;
+    const freshHost = { ...deps, env: { CODEX_THREAD_ID: 'fresh' } };
+    assert.equal(await entry.main(['session', 'reactivate', '--session-dir', other, '--host', 'codex'], freshHost), 0);
+    assert.equal(f.output().path, other);
+    assert.equal(readManifest(other).sessionId, 'test');
+  } finally { f.cleanup(); }
+});
+
 test('dispatch entry recognizes symlinked launch paths', () => {
   assert.equal(entry.isEntry('/linked/dispatch.ts', () => path.resolve('actual/dispatch.ts'), pathToFileURL(path.resolve('actual/dispatch.ts')).href), true);
   assert.equal(entry.isEntry('/other.ts', () => '/other.ts', 'file:///actual/dispatch.ts'), false);

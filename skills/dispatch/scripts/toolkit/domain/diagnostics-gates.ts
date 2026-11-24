@@ -5,7 +5,7 @@ import { baseCounters, count as safeCount, hasUsageTokens } from '../../lib/usag
 import { addCounters, HOST_ROLES, HOST_RESPONSE_BASES, MAX_RESPONSE_AGENTS, RESPONSE_COVERAGES, RESPONSE_STAGES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Counters, type HostResponseAggregate, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason } from '../types.ts';
-import { CATEGORIES, COMPONENTS, DASH, DIAGNOSTIC_LIMITS, PHASE_NAMES, type Category, type DelegateResponseFacts, type InvocationFacts, type ModelUsage, type RetroObservation, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
+import { CATEGORIES, COMPONENTS, DASH, DIAGNOSTIC_LIMITS, PHASE_NAMES, type Category, type DelegateResponseFacts, type InvocationFacts, type ModelUsage, type RecoveryExecution, type RetroObservation, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
 
 const MAX_REVIEW_ROUND_CAP = 1000;
 
@@ -399,7 +399,29 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
   };
 }
 
-/** Rebuilds facts from allowlisted fields only, so resume ids, session paths, and objectives never reach the report. */
+// Only the UUID v4 minted for a capture is eligible for correlation.
+export const recoveryRef = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+
+function recoverySelectionOf(value: unknown): RunFacts['recoverySelection'] {
+  if (!record(value)) return undefined;
+  const {review, targetHash, round, generation} = value;
+  if (review !== 'code-integration' || typeof targetHash !== 'string' || !/^[0-9a-f]{64}$/.test(targetHash) ||
+      !safeCount(round) || round < 1 || !safeCount(generation) || generation < 1) return undefined;
+  return {review, targetHash, round, generation};
+}
+
+function recoveryExecutionOf(value: unknown): RecoveryExecution | undefined {
+  if (!record(value) || !recoveryRef(value['ref'])) return undefined;
+  const result: RecoveryExecution = {ref: value['ref']};
+  for (const key of ['reused', 'launched', 'unresolved'] as const) {
+    const n = value[key];
+    if (safeCount(n) && n <= 1_000_000) result[key] = n;
+  }
+  return result;
+}
+
+/** Rebuilds facts from allowlisted fields only, excluding session paths and arbitrary text. */
 
 export function sanitizeFacts(run: RunFacts): RunFacts {
   const r: Record<string, unknown> = record(run) ? run : {};
@@ -409,6 +431,13 @@ export function sanitizeFacts(run: RunFacts): RunFacts {
   const fault = record(r['fault']) ? r['fault'] : undefined;
   const hosts = Array.isArray(r['hosts']) ? [...new Set(r['hosts'].map(token).filter((h): h is string => !!h))].slice(0, 32) : undefined;
   return {
+    ...opt('recoverySelection', recoverySelectionOf(r['recoverySelection'])),
+    ...opt('recoveryExecution', recoveryExecutionOf(r['recoveryExecution'])),
+    ...opt('recoverySelections', Array.isArray(r['recoverySelections']) ? r['recoverySelections'].slice(0, 1000).flatMap(value => {
+      const selection = recoverySelectionOf(value);
+      return selection && record(value) && recoveryRef(value['ref']) ? [{...selection, ref: value['ref']}] : [];
+    }) : undefined),
+    ...opt('recoveryExecutions', Array.isArray(r['recoveryExecutions']) ? r['recoveryExecutions'].slice(0, 1000).flatMap(value => recoveryExecutionOf(value) ?? []) : undefined),
     ...opt('hostUsage',hostUsageOf(r['hostUsage'])),
     ...opt('startedAt', isoDate(r['startedAt'])),
     ...opt('hosts', hosts?.length ? hosts : undefined),

@@ -18,6 +18,7 @@ import { sessionFixture } from './helpers/session.ts';
 import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import { recoveryTargetHash } from '../../../skills/dispatch/scripts/toolkit/status.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
 
 const writeJson = (file: string, value: unknown) => {
@@ -681,4 +682,83 @@ test('failed native reserve remains unmeasured after terminal failure', () => {
   assert.match(report,/codex\[0\] \| — \| —/); assert.doesNotMatch(report,/✓/);
   assert.match(report,/\| subject [a-f0-9]{16} \| 1\/1 \| 5s \(CLI only\) \|/);
  } finally {f.cleanup();}
+});
+
+test('links a completed explicit selection to observed logical slot work', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), {diagnostics: true});
+    f.deps.skillRoot = skill;
+    const target = {base: 'a'.repeat(40), head: 'b'.repeat(40)};
+    const actual = {review: 'code-integration' as const, target, round: 2, generation: 1};
+    const recoverySelection = {review: actual.review, targetHash: recoveryTargetHash(target), round: 2, generation: 1};
+    const outcome = {ok: true, exit: 0, summary: 'ok', value: {next: 'review', reason: 'round-pending'}, recoverySelection};
+    const observer = observeTool(f.session, 'status', 'show', undefined, f.deps)!;
+    const ref = observer.finish(outcome);
+    assert.match(ref!, /^[0-9a-f-]{36}$/);
+    const review = observeTool(f.session, 'review', 'run', 'code', {...f.deps, delegate: async () => ({
+      outcome: {status: 'ok', text: 'complete', resume: null, sessionId: null},
+      invocations: [{provider: 'claude', model: 'm', effort: null, mode: 'cli', launched: true, outcome: 'ok'}],
+    })})!;
+    const subject = path.join(f.session, '.state', 'reviews', 'code-integration', 'round-2', 'gen-1');
+    assert.equal(review.deps.recovery!(ref, {...actual, generation: 2}, subject), undefined);
+    assert.equal(review.deps.recovery!(ref, {...actual, target: {...target, head: target.base}}, subject), undefined);
+    const directory = path.join(f.session, '.state', 'diagnostics');
+    const capture = JSON.parse(fs.readFileSync(path.join(directory, ref + '.json'), 'utf8'));
+    const incomplete = crypto.randomUUID();
+    writeJson(path.join(directory, incomplete + '.json'), {...capture, capture: {state: 'opened', start: 0}});
+    assert.equal(review.deps.recovery!(incomplete, actual, subject), undefined);
+    const settled = review.deps.recovery!(ref, actual, subject)!;
+    review.deps.diagnostics!({kind: 'slot', subject, slot: 'codex[0]', attempt: 1, state: 'done', replay: true});
+    review.deps.diagnostics!({kind: 'slot', subject, slot: 'codex[0]', attempt: 2, state: 'done', replay: true});
+    const ordinary = observeTool(f.session, 'review', 'run', 'code', f.deps)!;
+    ordinary.deps.diagnostics!({kind: 'slot', subject, slot: 'codex[0]', attempt: 2, state: 'done', replay: true});
+    ordinary.finish({ok: true, exit: 0, summary: 'ok', value: {}});
+    await review.deps.delegate('claude', {logPath: path.join(subject, 'logs', 'claude[1].log'), targetSlot: 'opencode[0]'} as never, 'cli');
+    await review.deps.delegate('claude', {logPath: path.join(subject, 'logs', 'claude[2].log'), targetSlot: 'opencode[0]'} as never, 'cli');
+    review.deps.diagnostics!({kind: 'slot', subject, slot: 'opencode[0]', attempt: 1, state: 'done', replay: true});
+    settled([{slot: 'codex[0]', state: 'done'}, {slot: 'claude[0]', state: 'native'}, {slot: 'opencode[0]', state: 'done'}]);
+    review.finish({...outcome, ok: false, reason: 'native-pending'});
+    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
+    assert.deepEqual(facts.recoveryExecutions, [{ref, reused: 1, launched: 1, unresolved: 1}]);
+    assert.equal(facts.collection?.incomplete, 1);
+  } finally { f.cleanup(); }
+});
+
+test('status returns a recovery ref only after an enabled capture completes', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const skill = path.join(f.root, 'skill'), config = path.join(skill, 'config.jsonc');
+    const diagnosticDir = path.join(f.session, '.state', 'diagnostics');
+    const value = {next: 'review', reason: 'round-pending'};
+    const recoverySelection = {review: 'code-integration' as const, targetHash: 'a'.repeat(64), round: 1, generation: 1};
+    let result: unknown;
+    const deps = {...f.deps, skillRoot: skill,
+      handler: async () => ({ok: true, summary: JSON.stringify(value), exit: 0, value, recoverySelection}),
+      writeResult: (_session: string, _tool: string, _action: string, payload: unknown) => {
+        result = payload;
+        return path.join(f.session, 'result.json');
+      }};
+    const run = () => main(['status', 'show', '--resume', '--session', f.session], deps);
+    writeJson(config, {diagnostics: false});
+    assert.equal(await run(), 0);
+    assert.deepEqual(result, value);
+    assert.equal(fs.existsSync(diagnosticDir), false);
+
+    writeJson(config, {diagnostics: true});
+    fs.mkdirSync(path.dirname(diagnosticDir), {recursive: true});
+    fs.writeFileSync(diagnosticDir, 'occupied');
+    assert.equal(await run(), 0);
+    assert.deepEqual(result, value);
+
+    fs.unlinkSync(diagnosticDir);
+    assert.equal(await run(), 0);
+    const {resumeRef} = result as typeof value & {resumeRef: string};
+    const capture = JSON.parse(fs.readFileSync(path.join(diagnosticDir, resumeRef + '.json'), 'utf8'));
+    assert.deepEqual(capture.recoverySelection, recoverySelection);
+    assert.equal(capture.capture.state, 'completed');
+    assert.deepEqual(result, {...value, resumeRef});
+  } finally { f.cleanup(); }
 });

@@ -504,19 +504,32 @@ test('coverage round failure evidence is written before the failed slot file, in
   }finally{f.cleanup();}
 });
 
-test('native-first launch order keeps cli silent until the wave', async () => {
+test('native-first launch defers CLI work and consume replays its saved result', async () => {
   const {fanOut} = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({memory:true}); try {
     f.deps.orchestrator = {platform: 'claude', model: null};
     f.script('claude','good','answer'); f.script('agy','good','cli answer');
     const dir = path.join(f.session,'launch-order');
     const slots = [slot('claude'), slot('agy')];
-    const first = await fanOut({dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']} as never, f.deps);
+    const replayed: string[] = [];
+    f.deps.diagnostics = event => {
+      if (event.kind === 'slot' && event.state === 'done' && event.replay) replayed.push(event.slot);
+    };
+    const input = {dir, slots, prompt:'question', validate, quota, sessionRoot: f.session, nativeFirstProviders:['claude']};
+    const first = await fanOut(input, f.deps);
     assert.equal(f.launches.length, 0);
     const native = first.filter(outcome => outcome.state === 'native');
     assert.equal(native.length, 1);
     assert.equal(native[0]!.slot, 'claude[0]');
     assert.ok(JSON.parse(fs.readFileSync(path.join(dir,'fanout.json'),'utf8')).nativeFirst);
+    await fanOut(input, f.deps);
+    assert.deepEqual(f.launches.map(launch => launch.provider), ['agy']);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(dir,'fanout.json'),'utf8')).cliWaveDone);
+    replayed.length = 0;
+    const resumed = await fanOut(input, f.deps);
+    assert.deepEqual(resumed.map(outcome => [outcome.slot, outcome.state]), [['claude[0]', 'native'], ['agy[0]', 'done']]);
+    assert.deepEqual(f.launches.map(launch => launch.provider), ['agy']);
+    assert.deepEqual(replayed, ['agy[0]']);
   } finally {f.cleanup();}
 });
 

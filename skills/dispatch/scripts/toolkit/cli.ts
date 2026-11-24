@@ -25,13 +25,13 @@ import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import { ACTION_CONTRACTS } from './contracts.ts';
 import { lintArtifact } from './lint.ts';
-import { appendLintEdit, appendRecords, currentHashes, foldLedger, latest, queryLedger, type Fold } from './ledger.ts';
+import { appendCleanupCheckpoint, appendLintEdit, appendRecords, currentHashes, foldLedger, latest, queryLedger, type Fold } from './ledger.ts';
 import { readJsonPayload } from './input.ts';
 import { isHintExcludedAction, stepHint } from './hints.ts';
 import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
 import { doctorReport, doctorReportWithProbe } from './doctor.ts';
 import { nodeProbeSpawn, type ProbeDeps } from '../providers/probe.ts';
-import { statusReport } from './status.ts';
+import { resumeStatus, statusReport, type RecoverySelection } from './status.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
@@ -41,13 +41,15 @@ import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 import { validateRecord } from './records.ts';
 import { reviewId } from './confirmations.ts';
 
-export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold };
+export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold; recoverySelection?: RecoverySelection };
 export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
   probe?: ProbeDeps;
   readStdin?: () => string;
   hostUsageFs?: HostUsageFs;
   diagnostics?: (event: DiagnosticEvent) => void;
+  recovery?: (ref: unknown, actual: Omit<RecoverySelection, 'targetHash'> & {target: {base: string; head: string}}, subject: string) =>
+    ((replies: readonly {slot: string; state: string}[]) => void) | undefined;
   delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
   modes: (provider: ProviderId) => readonly ModeId[];
   orchestrator: Orchestrator | null;
@@ -179,9 +181,10 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree submit': submit,
   'worktree abandon': abandon,
   'check run': checkRun,
-  'ledger append': async ({ session, manifest, args, deps }) => {
+  'ledger append': async ({ session, manifest, args, values, deps }) => {
     if (args.length !== 1) throw new ToolError(1, 'invalid-input', 'ledger append takes one record file or -: ledger append <record.json|-> --session <session>');
     const stdin = args[0] === '-';
+    if (values['cleanup'] !== undefined && !stdin) throw new ToolError(1, 'invalid-input', '--cleanup requires stdin');
     const file = stdin ? '' : path.resolve(args[0]!);
     let text: string;
     try {text = stdin ? deps.readStdin!() : fs.readFileSync(file, 'utf8');}
@@ -189,6 +192,10 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     let input: unknown;
     try {input = JSON.parse(stripBom(text));}
     catch (error) {throw new ToolError(1, 'invalid-input', (stdin ? 'Records from stdin are not valid JSON: ' : 'Record file ' + file + ' is not valid JSON: ') + (error as SyntaxError).message);}
+    if (values['cleanup'] !== undefined) {
+      const {result: value, fold: postFold} = await appendCleanupCheckpoint(session, values['cleanup'], input, deps);
+      return {ok: true, value, summary: 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended'), exit: 0, postFold};
+    }
     let findingsSection: ReturnType<typeof refreshFindingsSection> | null = null;
     let findingsSectionReason: string | undefined;
     let postFold: Fold | undefined;
@@ -243,8 +250,13 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     const value = values['probe'] ? await doctorReportWithProbe(...reportArgs, deps.probe) : doctorReport(...reportArgs);
     return { ok: value.ok, value, summary: JSON.stringify(value), exit: 0, ...(value.reason ? { reason: value.reason } : {}), ...(fold ? { postFold: fold } : {}) };
   },
-  'status show': async ({ session, manifest, args, deps }) => {
+  'status show': async (ctx) => {
+    const {session, manifest, args, deps} = ctx;
     if (args.length) throw new ToolError(1, 'invalid-input', 'status takes no arguments');
+    if (ctx.values['resume']) {
+      const result = await resumeStatus(ctx);
+      return {ok: true, ...result, summary: JSON.stringify(result.value), exit: 0};
+    }
     const fold = foldLedger(session);
     const value = await statusReport(session, manifest.repositoryRoot, deps, fold);
     return { ok: true, value, summary: JSON.stringify(value), exit: 0, postFold: fold };
@@ -292,11 +304,14 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
       json: { type: 'string' }, text: { type: 'string' }, message: { type: 'string' }, base: { type: 'string' }, 'integration-path': { type: 'string' },
       'review-fix-json': { type: 'string' }, 'test-cleanup-json': { type: 'string' },
-      reuse: { type: 'boolean' }, fresh: { type: 'boolean' }, probe: { type: 'boolean' },
+      reuse: { type: 'boolean' }, fresh: { type: 'boolean' }, probe: { type: 'boolean' }, resume: { type: 'boolean' }, 'resume-ref': { type: 'string' }, cleanup: { type: 'string' },
     } });
     [tool = '', action = ''] = parsed.positionals;
     const fullAction = tool + ' ' + action;
     if (parsed.values['probe'] !== undefined && fullAction !== 'doctor run') throw new ToolError(1, 'invalid-input', '--probe is only for doctor run');
+    if (parsed.values['resume-ref'] !== undefined && fullAction !== 'review run') throw new ToolError(1, 'invalid-input', '--resume-ref is only for review run');
+    if (parsed.values['resume'] !== undefined && fullAction !== 'status show') throw new ToolError(1, 'invalid-input', '--resume is only for status show');
+    if (parsed.values['cleanup'] !== undefined && fullAction !== 'ledger append') throw new ToolError(1, 'invalid-input', '--cleanup is only for ledger append');
     if (!handlers[fullAction]) throw new Error('Unknown tool or action');
     if (parsed.values['reuse'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--reuse is only for check run');
     if (parsed.values['fresh'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--fresh is only for check run');
@@ -377,7 +392,12 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     const fault = error instanceof ToolError ? error : new ToolError(2, 'fault', error instanceof Error ? error.message : String(error));
     outcome = { ok: false, summary: fault.message, reason: fault.reason, exit: fault.exit, value: { reason: fault.reason, message: fault.message } };
   }
-  observation?.finish(outcome);
+  const resumeRef = observation?.finish(outcome);
+  if (resumeRef && tool === 'status' && action === 'show' && parsed.values['resume']) {
+    const value = {...outcome.value as object, resumeRef};
+    const summary = JSON.stringify(value);
+    if (Buffer.byteLength(summary) <= 2048) outcome = {...outcome, value, summary};
+  }
   try {
     const resultPath = (deps.writeResult ?? writeResult)(session, tool, action, outcome.value);
     const reason = outcome.reason ?? (outcome.ok && (tool === 'ask' || tool === 'review') ? 'complete' : undefined);

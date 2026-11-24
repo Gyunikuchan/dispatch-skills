@@ -17,7 +17,8 @@ test('toolkit stays within the structural size budgets', () => {
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
   // NOTE: 21960 covers bounded Copilot receipts, exact qualified models, physical effort, actor/billing reporting, and saved native projection/terminal state.
-  const driverLocBudget = 21960;
+  // NOTE: 22399 also covers durable status, cleanup, and opt-in review recovery correlation, including saved CLI replies in native consume.
+  const driverLocBudget = 22399;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
@@ -55,8 +56,8 @@ test('toolkit split modules own declarations behind bounded entry files', () => 
   }
 
   const review = readModule('review.ts');
-  // NOTE: 590 lines retain the ordered admission, generation, fan-out and finalization lifecycle.
-  assert.ok(lineCount(review) <= 590, 'review.ts exceeds 590 lines');
+  // NOTE: The ordered lifecycle includes argument capture and optional recovery observation at fan-out.
+  assert.ok(lineCount(review) <= 600, 'review.ts exceeds 600 lines');
   const reviewOwners = {
     'review-capture.ts': ['writeSpecSnapshot', 'writeReviewerInput'],
     'review-notices.ts': ['blockedEntries', 'blockersFor', 'blockedNotice', 'hotUnitsNotice'],
@@ -104,8 +105,9 @@ test('verb steps stay within the per-step byte budgets', () => {
   for (const guide of GUIDES) {
     const rel = `references/verbs/${guide}.md`;
     const text = fs.readFileSync(path.join(root, 'skills/dispatch', rel), 'utf8');
-    assert.ok(text.includes('## Step reads'), `${rel} states its step table`);
-    const rows = text.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Step') && !line.startsWith('| ---'));
+    const stepTable = text.split(/^## Step reads\s*$/m)[1]?.split(/^## /m)[0];
+    assert.ok(stepTable, `${rel} states its step table`);
+    const rows = stepTable.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Step') && !line.startsWith('| ---'));
     assert.ok(rows.length > 0, `${rel} has step rows`);
     const guideBytes = fs.statSync(path.join(root, 'skills/dispatch', rel)).size;
     for (const row of rows) {

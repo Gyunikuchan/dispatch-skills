@@ -9,7 +9,8 @@ import { readErrorReason } from '../lib/usage/read.ts';
 import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
 import type { ProviderKey } from '../lib/platform.ts';
 import { addYield, billedTokens, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
-import { foldLedger, latest, type Fold } from './ledger.ts';
+import { recoveryRef } from './domain/diagnostics-gates.ts';
+import { containedSessionPath, foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
@@ -18,6 +19,7 @@ import { loadConfig } from '../lib/config.ts';
 import { loadPricing, type Pricer } from '../lib/pricing.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
+import { recoveryTargetHash } from './status.ts';
 
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
 type SlotOutcome =
@@ -446,6 +448,8 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   rounds.sort((a,b)=>a.review.localeCompare(b.review)||a.round-b.round);
   const measured: RunFacts[]=[];
   const storageFailures=new Map<string,number>();
+  const recoverySelections: NonNullable<RunFacts['recoverySelections']> = [];
+  const recoveryExecutions: NonNullable<RunFacts['recoveryExecutions']> = [];
   const directory=path.join(session,'.state','diagnostics');
   for(const entry of entries(directory).filter(e=>e.isFile()&&e.name.endsWith('.json'))) {
     const raw=read(path.join(directory,entry.name));
@@ -459,7 +463,13 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     if(!object(raw)||!Array.isArray(raw['phases'])||!Array.isArray(raw['invocations'])||!Array.isArray(raw['reviews'])){issue('corrupt');continue;}
     const capture=sanitizeFacts(raw as RunFacts); measured.push(capture);
     if(!capture.capture || capture.capture.state!=='completed' || capture.capture.end===undefined)issue('incomplete');
-    else issue('completed');
+    else {
+      issue('completed');
+      const ref = entry.name.slice(0, -5);
+      if (capture.recoverySelection && recoveryRef(ref) && capture.phases.some(p => p.key === 'status-show' && p.outcome === 'ok'))
+        recoverySelections.push({...capture.recoverySelection, ref});
+      if (capture.recoveryExecution) recoveryExecutions.push(capture.recoveryExecution);
+    }
     storageFailures.set(entry.name,Math.max(storageFailures.get(entry.name)??0,capture.capture?.storageFailed??0));
   }
   // Capture filenames are random; order by capture clock so a retry's later attempt wins, then by content for determinism.
@@ -620,6 +630,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     reviews:rounds.flatMap(round=>{const row=reviewFacts(round,fold);return row?[{...row,phase:reviewKeys.get(round.review)!}]:[];}),
     ...(slotYield.length?{slotYield}:{}),...(roundTiming.length?{roundTiming}:{}),...(roundWorkload.length?{roundWorkload}:{}),...(hostUsage?{hostUsage}:{}),
     ...retro,collection,provenance:[...provenance.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,v])=>v),
+    ...(recoverySelections.length ? {recoverySelections} : {}), ...(recoveryExecutions.length ? {recoveryExecutions} : {}),
     rejectedTools:measured.flatMap(row=>row.rejectedTools??[]),relaunches,
   };
 }
@@ -668,7 +679,7 @@ export function diagnosticInstructions(skillRoot: string): {instructions?: strin
 }
 
 /** Captures runner facts before semantic slot persistence, so retries and reserve calls survive recovery. */
-export function observeTool(session: string, tool: string, action: string, kind: string | undefined, deps: CliDeps): {deps: CliDeps; finish: (outcome: HandlerResult) => void} | undefined {
+export function observeTool(session: string, tool: string, action: string, kind: string | undefined, deps: CliDeps): {deps: CliDeps; finish: (outcome: HandlerResult) => string | undefined} | undefined {
   try {
   if (!diagnosticsEnabled(deps.skillRoot)) return undefined;
   const started = deps.clock();
@@ -677,7 +688,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
   const hostThread = hostThreadId(deps.orchestrator?.platform ?? null, deps.env, session);
   const facts: RunFacts = {os:process.platform,...(deps.orchestrator ? {host:deps.orchestrator.platform} : {}),...(hostThread ? {hostThread} : {}),phases:[],invocations:[],reviews:[]};
   const directory = path.join(session,'.state','diagnostics');
-  const file = path.join(directory,crypto.randomUUID()+'.json');
+  const ref = crypto.randomUUID();
+  const file = path.join(directory,ref+'.json');
   facts.capture={state:'opened',start:started};
   try {
     const version=readVersion(deps.skillRoot);
@@ -708,6 +720,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
   const subjectOf=(directory:string)=>crypto.createHash('sha256').update(directory).digest('hex').slice(0,16);
   const attempts=new Map<string,number>();
   const seen=new WeakSet<object>();
+  let recoverySubject: string | undefined;
+  const reused = new Set<string>(), launched = new Set<string>();
   const collect=(rows: unknown, request: Parameters<CliDeps['delegate']>[1])=>{
     try {
       if(!Array.isArray(rows))return;
@@ -730,6 +744,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
         }) : undefined;
         facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??(i.provider==='copilot'?'unavailable':'default'),mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
           ...(i.configuredEffort ? { configuredEffort: i.configuredEffort } : {}),...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{}),...(i.wrapUp===true?{wrapUp:true as const}:{})});
+        const logical = request.targetSlot ?? slot;
+        if (i.launched && logical && recoverySubject === path.dirname(path.dirname(request.logPath))) launched.add(logical);
         seen.add(i);added=true;
       }
       if(added||pendingPersistence)persist();
@@ -737,8 +753,31 @@ export function observeTool(session: string, tool: string, action: string, kind:
   };
   persist();
   return {
-    deps:{...deps, diagnostics(event) {
+    deps:{...deps, recovery(candidate, actual, subject) {
+      if (!recoveryRef(candidate)) return undefined;
       try {
+        const relative = '.state/diagnostics/' + candidate + '.json';
+        const stat = fs.lstatSync(path.join(session, relative));
+        if (!stat.isFile() || stat.size > 128 * 1024) return undefined;
+        const saved = readJson<RunFacts>(containedSessionPath(session, relative));
+        if (!saved) return undefined;
+        const capture = sanitizeFacts(saved), selection = capture.recoverySelection;
+        if (capture.capture?.state !== 'completed' || capture.capture.end === undefined ||
+            !capture.phases.some(p => p.key === 'status-show' && p.outcome === 'ok') ||
+            !selection || selection.review !== actual.review || selection.round !== actual.round ||
+            selection.generation !== actual.generation || selection.targetHash !== recoveryTargetHash(actual.target)) return undefined;
+        recoverySubject = subject;
+        const execution: NonNullable<RunFacts['recoveryExecution']> = {ref: candidate};
+        facts.recoveryExecution = execution;
+        return replies => {
+          execution.unresolved = new Set(replies.filter(reply => reply.state !== 'done').map(reply => reply.slot)).size;
+        };
+      } catch { return undefined; }
+    }, diagnostics(event) {
+      try {
+        if (event.subject === recoverySubject &&
+            ((event.kind === 'slot' && event.state === 'done') || (event.kind === 'native' && event.state === 'completed')) && event.replay)
+          reused.add(event.targetSlot ?? event.slot);
         const subject=subjectOf(event.subject);
         const base={phase,subject,slot:event.slot,attempt:event.attempt,...(event.targetSlot?{targetSlot:event.targetSlot}:{}),provider:event.provider??'unavailable',model:event.model??'unavailable',launched:false};
         if(event.kind==='validation'&&event.surface==='cli') {
@@ -775,8 +814,20 @@ export function observeTool(session: string, tool: string, action: string, kind:
       try {
         facts.phases=[{key:phase,name,outcome:outcome.ok?'ok':outcome.reason??'fault',wallMs:Math.max(0,deps.clock()-started)}];
         facts.capture={...facts.capture!,state:'completed',end:deps.clock()};
+        if (tool === 'status' && action === 'show' && outcome.ok && outcome.recoverySelection) {
+          const selection = sanitizeFacts({...facts, recoverySelection: outcome.recoverySelection}).recoverySelection;
+          if (selection) facts.recoverySelection = selection;
+        }
+        const execution = facts.recoveryExecution;
+        if (execution) {
+          // A second fan-out wave can replay slots launched earlier in this call.
+          const saved = [...reused].filter(slot => !launched.has(slot)).length;
+          if (saved) execution.reused = saved;
+          if (launched.size) execution.launched = launched.size;
+        }
         if(!outcome.ok&&['invalid-input','invalid-record','approval-stale','key-conflict','user-only'].includes(outcome.reason??''))facts.rejectedTools=[{tool,action,cls:outcome.reason!}];
         persist();
+        if (!pendingPersistence && facts.recoverySelection) return ref;
       }catch{}
     },
   };

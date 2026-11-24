@@ -240,3 +240,200 @@ test('statusReport reflects latest strict criterion evidence across pass-fail-pa
     assert.deepEqual(await readStatus(), { state: 'verified', needsCheck: false });
   } finally { f.cleanup(); }
 });
+
+test('compact status reports the recovery boundary before integration starts', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    assert.equal(await main(['status', 'show', '--resume', '--session', f.session], f.deps), 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')), {next: 'inspect', reason: 'state-unreadable'});
+    f.lines.length = 0;
+    await appendRecord(f.session, {kind: 'note', key: 'retained', by: 'tool', data: {text: 'Session retained'}}, f.deps);
+    assert.equal(await main(['status', 'show', '--resume', '--session', f.session], f.deps), 0);
+    const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    assert.deepEqual(value, {next: 'inspect', reason: 'outside-review'});
+  } finally { f.cleanup(); }
+});
+
+test('cleanup checkpoints bind to their opening and require a clean descendant and intact proof', async () => {
+  const f = sessionFixture({memory: true});
+  try {
+    const relative = '.state/worktrees/integration';
+    fs.mkdirSync(path.join(f.session, relative), {recursive: true});
+    const base = 'a'.repeat(40), first = 'b'.repeat(40), second = 'c'.repeat(40), tree = 'd'.repeat(40);
+    const dest = {path: f.root, branch: 'main'};
+    const open = (key: string) => appendRecord(f.session, {kind: 'integrate', key, by: 'tool',
+      data: {phase: 'opened', path: relative, branch: 'integration', base, dest}}, f.deps);
+    const opening = await open('opened-first');
+    let head = first, dirty = false, diverged = false;
+    f.deps.run = async ([, ...args]) => {
+      let stdout = '';
+      let exit = 0;
+      if (args[0] === 'rev-parse') stdout = args[1] === 'HEAD' ? head : tree;
+      else if (args[0] === 'diff') stdout = args.includes('--no-renames') ? 'src/former.ts\0docs/renamed.md\0' : 'docs/renamed.md\0';
+      else if (args[0] === 'merge-base') exit = diverged ? 1 : 0;
+      else if (args[0] === '--no-optional-locks') stdout = dirty ? '?? dirty.md\n' : '';
+      else assert.fail(JSON.stringify(args));
+      return {exit, stdout, stderr: ''};
+    };
+    const status = async () => {
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', '--resume', '--session', f.session], f.deps), 0);
+      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).cleanup;
+    };
+    const checkpoint = async (mode: string, value: object, exit = 0) => {
+      f.lines.length = 0;
+      assert.equal(await main(['ledger', 'append', '-', '--cleanup', mode, '--session', f.session],
+        {...f.deps, readStdin: () => JSON.stringify(value)}), exit);
+    };
+    assert.equal(await status(), 'unbound');
+    await checkpoint('skip', {head: first});
+    const skip = latest(foldLedger(f.session), 'note')!;
+    assert.equal(skip.key, `test-cleanup:skip:${opening.seq}:${first}`);
+    assert.deepEqual(JSON.parse(skip.data['text']), {openingSeq: opening.seq, head: first, tree, paths: ['docs/renamed.md', 'src/former.ts']});
+    assert.equal(await status(), 'checkpoint');
+
+    head = second;
+    assert.equal(await status(), 'checkpoint');
+    await checkpoint('skip', {head: first}, 4);
+    dirty = true;
+    assert.equal(await status(), 'unbound');
+    await checkpoint('skip', {head: second}, 4);
+    dirty = false;
+    diverged = true;
+    assert.equal(await status(), 'unbound');
+    diverged = false;
+
+    await checkpoint('skip', {head: second});
+    assert.equal(latest(foldLedger(f.session), 'note')!.key, `test-cleanup:skip:${opening.seq}:${second}`);
+    const report = {removed: [], deleted: 0, merged: 0};
+    await checkpoint('zero', {head, report: {...report, merged: 1}}, 1);
+    await checkpoint('zero', {head, report});
+    assert.equal(await status(), 'checkpoint');
+    fs.appendFileSync(path.join(f.session, '.state/test-cleanup.json'), ' ');
+    assert.equal(await status(), 'unbound');
+    await open('opened-next');
+    assert.equal(await status(), 'unbound');
+    head = base;
+    await checkpoint('skip', {head: base});
+    assert.deepEqual(JSON.parse(latest(foldLedger(f.session), 'note')!.data['text']).paths, []);
+    assert.equal(await status(), 'checkpoint');
+  } finally { f.cleanup(); }
+});
+
+test('compact status points to the active round as history grows and rejects unreadable pointers', async t => {
+  const f = sessionFixture();
+  try {
+    const base = 'a'.repeat(40), head = 'b'.repeat(40);
+    const specPath = f.artifact('mission.spec.md', '# Mission');
+    f.artifact('work.plan.md', PLAN);
+    const append = (kind: string, key: string, data: object, by = 'tool') =>
+      appendRecord(f.session, {kind, key, by, data, ...(by === 'user' ? {quote: 'confirmed'} : {})}, f.deps);
+    await append('bind', 'bind', {spec: 'mission.spec.md', plan: 'work.plan.md'});
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+    await append('level', 'level', {level: 'low'});
+    await append('confirm', 'confirm', {spec: hashes.spec}, 'user');
+    const relative = '.state/worktrees/integration';
+    fs.mkdirSync(path.join(f.session, relative), {recursive: true});
+    await append('integrate', 'opened', {phase: 'opened', path: relative, branch: 'integration', base, dest: {path: f.root, branch: 'main'}});
+    await append('integrate', 'done', {phase: 'done', task: 'T1', commit: head});
+    f.deps.run = async ([, ...args]) => ({
+      exit: 0, stdout: args[0] === 'diff' && args[1] === '--name-only' ? 'src/file.ts\0' : args[0] === 'rev-parse' ? head : '', stderr: '',
+    });
+    const series = '.state/reviews/code-integration';
+    const write = (relative: string, value: unknown) => {
+      const file = path.join(f.session, relative);
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(file, JSON.stringify(value));
+      return file;
+    };
+    const status = async (compact: boolean) => {
+      f.lines.length = 0;
+      assert.equal(await main(['status', 'show', ...(compact ? ['--resume'] : []), '--session', f.session], f.deps), 0);
+      const bytes = fs.readFileSync(f.output().path!);
+      return {bytes: bytes.length, value: JSON.parse(bytes.toString('utf8'))};
+    };
+    const slot = 'codex[0]';
+    let roundFile = '', prefix = '';
+    const metadata = {round: 0, generation: 1, cap: 40, level: 'low', pins: null, startSeq: 0, scope: 'Full review',
+      spec: {path: specPath, hash: hashes.spec}, artifacts: hashes, target: {base, head},
+      roster: [
+        {slot, provider: 'codex', index: 0, native: true, reserve: false},
+        {slot: 'agy[0]', provider: 'agy', index: 0, native: false, reserve: false},
+        {slot: 'claude[0]', provider: 'claude', index: 0, native: true, reserve: true},
+      ]};
+    const sizes: {rounds: number; compact: number; detailed: number}[] = [];
+    for (let number = 1; number <= 20; number++) {
+      if (number > 1) write(prefix + '/findings.json', {review: 'code-integration', round: number - 1, findings: [], failed: []});
+      prefix = series + '/round-' + number;
+      roundFile = prefix + '/round.json';
+      write(roundFile, {...metadata, round: number});
+      write(prefix + '/gen-1/checkout-report.json', {asOfSeq: 5,
+        repositoryChanges: [{cwd: f.root, paths: ['a-path-changed-during-review.md']}]});
+      if (![1, 5, 20].includes(number)) continue;
+      const compact = await status(true), details = await status(false);
+      assert.deepEqual(compact.value, {next: 'review', reason: 'round-pending', round: roundFile, cleanup: 'unbound'});
+      assert.ok(compact.bytes <= 2048);
+      sizes.push({rounds: number, compact: compact.bytes, detailed: details.bytes});
+    }
+    assert.ok(sizes[2]!.compact < sizes[2]!.detailed, JSON.stringify(sizes));
+    const prefixBytes = sizes.map(({rounds, compact, detailed}) => `${rounds}: ${compact}/${detailed}`).join(', ');
+    assert.ok(sizes[0]!.detailed < sizes[2]!.detailed, prefixBytes);
+    t.diagnostic('Round count and compact/detailed UTF-8 bytes — ' + prefixBytes);
+
+    const nativePath = prefix + '/gen-1/slots/' + slot + '.json';
+    const reply = path.join(f.session, prefix, 'gen-1/replies', slot + '.abcdef.md');
+    fs.mkdirSync(path.dirname(reply), {recursive: true});
+    const pending = {slot, state: 'native', provider: 'codex', attempt: slot + '#abcdef', replyPath: reply};
+    write(nativePath, pending);
+    assert.deepEqual((await status(true)).value, {next: 'inspect', reason: 'native-pending', round: roundFile, evidence: nativePath, cleanup: 'unbound'});
+    const unreadable = {next: 'inspect', reason: 'state-unreadable', cleanup: 'unbound'};
+    write(nativePath, {...pending, provider: 'agy', attempt: 'agy[0]#abcdef'});
+    assert.deepEqual((await status(true)).value, unreadable);
+    const reserve = {...pending, provider: 'claude', attempt: 'claude[0]#abcdef'};
+    write(nativePath, reserve);
+    assert.deepEqual((await status(true)).value, unreadable);
+    write(prefix + '/gen-1/fanout.json', {reserveUsedBy: slot});
+    assert.equal((await status(true)).value.reason, 'native-pending');
+    write(nativePath, {...pending, replyPath: path.join(f.root, 'outside.md')});
+    assert.deepEqual((await status(true)).value, unreadable);
+    fs.unlinkSync(path.join(f.session, nativePath));
+    const slotsDir = path.dirname(path.join(f.session, nativePath));
+    fs.rmdirSync(slotsDir);
+    const externalSlots = path.join(f.root, 'external-slots');
+    fs.mkdirSync(externalSlots);
+    fs.symlinkSync(externalSlots, slotsDir, 'junction');
+    fs.rmdirSync(externalSlots);
+    assert.deepEqual((await status(true)).value, unreadable);
+    fs.unlinkSync(slotsDir);
+    const olderFindings = series + '/round-19/findings.json';
+    write(olderFindings, {review: 'code-integration', round: 19, failed: [], findings: [{id: 'R19-F001', severity: 'SHOULD'}]});
+    assert.deepEqual((await status(true)).value,
+      {next: 'adjudicate', reason: 'findings-pending', evidence: olderFindings, cleanup: 'unbound'});
+    write(olderFindings, {review: 'code-integration', round: 19, failed: [], findings: []});
+
+    write(roundFile, {...metadata, round: 20, level: 'xhigh'});
+    assert.deepEqual((await status(true)).value, {next: 'inspect', reason: 'gate-blocked', cleanup: 'unbound'});
+    write(roundFile, {...metadata, round: 20});
+
+    const findingsFile = prefix + '/findings.json';
+    write(findingsFile, {review: 'code-integration', round: 20, failed: ['agy[0]'], findings: []});
+    write(nativePath, {slot, state: 'done', text: '{"status":"CLEAN","findings":[]}'});
+    write(prefix + '/gen-1/slots/agy[0].json', {slot: 'agy[0]', state: 'failed', cls: 'timeout', reason: 'slow'});
+    write(prefix + '/gen-1/attempts.json', [{slot: 'agy[0]', seq: 5, wholeTarget: true, outcome: 'timeout'}]);
+    assert.deepEqual((await status(true)).value, {next: 'review', reason: 'review-required', round: roundFile, cleanup: 'unbound'});
+    fs.unlinkSync(path.join(f.session, findingsFile));
+
+    write(roundFile, {...metadata, round: 20, pins: undefined});
+    assert.deepEqual((await status(true)).value, {next: 'inspect', reason: 'arguments-unavailable', round: roundFile, cleanup: 'unbound'});
+    write(roundFile, {...metadata, round: 20, pins: ['codex']});
+    assert.deepEqual((await status(true)).value, unreadable);
+    fs.writeFileSync(path.join(f.session, roundFile), '{invalid');
+    assert.deepEqual((await status(true)).value, unreadable);
+    fs.rmSync(path.join(f.session, prefix), {recursive: true});
+    const outside = path.join(f.root, 'outside-round');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'round.json'), JSON.stringify({...metadata, round: 20}));
+    fs.symlinkSync(outside, path.join(f.session, prefix), 'junction');
+    assert.deepEqual((await status(true)).value, unreadable);
+  } finally { f.cleanup(); }
+});
