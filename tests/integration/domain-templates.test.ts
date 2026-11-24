@@ -189,7 +189,7 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
       const stripped = text.split('\n').filter((line) => !/^\s*<!--\s*for:\s*[^>]+?-->\s*$/.test(line)).join('\n');
       assert.ok(!/<!--/.test(stripped), `${name} contains non-audience <!--`);
       for (const line of text.split('\n').filter((line) => line.includes('<!--'))) {
-        assert.match(line, /^\s*<!--\s*for:\s*(code|plan|design|writer|cleanup|explorer|all|author)(,\s*(code|plan|design|writer|cleanup|explorer|all|author))*\s*-->\s*$/, `${name}: invalid audience tag ${line.trim()}`);
+        assert.match(line, /^\s*<!--\s*for:\s*(code|plan|design|writer|cleanup|verifier|explorer|all|author)(,\s*(code|plan|design|writer|cleanup|verifier|explorer|all|author))*\s*-->\s*$/, `${name}: invalid audience tag ${line.trim()}`);
       }
       text = stripped;
     }

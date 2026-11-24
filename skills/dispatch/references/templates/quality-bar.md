@@ -9,8 +9,8 @@ Authors read the same sections through their author frame. Keep judging criteria
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
 <!-- for: all -->
 - Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent. Host rules may tighten, never widen, scope, write boundaries, verification and safety.
-<!-- for: writer,cleanup -->
-- Report host-rule/brief conflicts under concerns.
+<!-- for: writer,cleanup,verifier -->
+- Report host-rule/brief conflicts under concerns or limits.
 <!-- for: code,plan,design -->
 - Exclude host-rule/brief conflicts from findings.
 <!-- for: all -->
@@ -65,17 +65,17 @@ Reject decorative or stale visuals and visuals that duplicate visible prose, tab
 
 ## testing
 
-- **testing** — Proof tests drive TDD and fail RED for the right reason. Retain a regression-spec test only if it passes every gate:
-  1. Contract: behaviour observable at the unit's interface by any consumer, internal ones included (returns, errors, readable or persisted state, emitted payloads, required or prohibited effects, invariants), traced to a REQ, DEC, documentation or past defect.
-  2. Defect: a named plausible regression, severe (contract breakage, state corruption, data loss, security-boundary violation, broken protocol transition) or non-obvious (a past defect or surprise missed by review).
-  3. Oracle: requirement-derived and discriminating; exact for deterministic output, else a property, invariant, relation or tolerance; fails on broken behaviour, passes a behaviour-preserving refactor.
-  4. Unique kill: no other retained test or configured static check catches that regression; static checks never prove runtime authorization or state transitions.
-- Shape: one case per equivalence class and boundary; one layer per distinct failure, the lowest that observes it; merge only within one consumer scenario; tabulating is not merging. Prefer FIRST tests with diagnostic failures. When mocks, fixtures or infrastructure outweigh regression risk, use the closest executable or review evidence and record the limit.
+- **testing** — Proof tests drive TDD and fail RED for the right reason. A durable regression-spec test changes only with intended behaviour, fails only on a real regression, and meets four gates:
+  1. Contract: observable unit interface behaviour (returns, errors, persisted state, payloads, required or prohibited effects, invariants) for any consumer, internal included, traced to a REQ, DEC, doc or past defect.
+  2. Defect: named plausible regression, severe (contract breakage, state corruption, data loss, security-boundary violation, broken protocol transition) or non-obvious (past defect or review-missed surprise).
+  3. Oracle: requirement-derived and discriminating; exact for deterministic output, else a property, invariant, relation or tolerance; fails on broken behaviour, passes behaviour-preserving refactors.
+  4. Unique kill: no other retained test or configured static check catches it; static checks never prove runtime authorization or state transitions.
+- Shape: one case per equivalence class and boundary; place each distinct failure at the lowest/cheapest observing layer (unit over integration over e2e); merge only within one consumer scenario; tabulating is not merging. Prefer FIRST tests with diagnostic failures. When mocks, fixtures or infrastructure outweigh regression risk, use closest executable or review evidence and record the limit.
 <!-- for: writer -->
-- Writer focus (task writers only; ignored by reviewers and test-cleanup): author failing RED proof tests first, implement to GREEN, and write durable regression-spec tests that pass the four gates above; leave suite-wide test pruning to the post-integration test-cleanup pass.
+- Writer focus (task writers only; ignored by reviewers and test-cleanup): author failing RED proof tests first, implement to GREEN, and take free reign to author any tests helpful for TDD, exploration, or proving behaviour, deferring pruning, merging, and tier downgrades to post-integration test cleanup.
 <!-- for: code,plan,design,cleanup -->
-- Prune: delete or merge gate failures by category: static-enforced or trivial; coverage padding; redundant; implementation-coupled (private state, call order, mock counts, or wording and structure outside the contract; text stating a required or prohibited effect is contract); tautological (self-derived expectations, source restatements, test-created data); no required contract. Rewrite weak oracles (truthy, no-throw, shape-only) guarding retained contracts. Flag required contracts, failure modes and seams lacking a spec test. Keep a test while required-contract doubt remains.
-- Naming: name tests, describe blocks, files, comments, section headers and fixtures for behaviour; never cite plan artifacts (criterion, task or finding IDs, plan or session paths).
+- Prune: default-delete or downgrade unless a test positively passes all four gates at the cheapest layer (keep on doubt only if an undocumented external contract would lose its sole proof). Downgrade over-tiered tests in plan review, cleanup and code review. Delete or merge: **the past** (stale tests for removed/moved/superseded specs or code); **nothing** (runtime/framework/type guarantees, self-mocked/self-derived/source-restated assertions, padding, duplicates); **the implementation** (mirrored logic, private state, call order, mock counts, non-contract wording); and dedicated tests for straight-line/lightly-branching glue or wrappers lacking nested control flow, compound booleans, regexes, parsers, math/date formulas or simplicity-floor boundaries (security, auth, trust boundaries, persistence/atomicity, protocol transitions). Rewrite weak oracles (truthy, no-throw, shape-only) on retained contracts; flag uncovered contracts, failure modes and seams for coverage; flag unused test-only production helpers for removal. Code review enforces this bar and never reverses bar-compliant pruning or downgrades.
+- Naming: name tests, describe blocks, files, comments, headers and fixtures for behaviour; never cite plan artifacts (criterion, task or finding IDs, plan or session paths).
 
 ## plan
 

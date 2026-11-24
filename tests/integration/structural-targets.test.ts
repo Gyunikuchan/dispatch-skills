@@ -136,9 +136,9 @@ test('rendered packs stay within the per-actor byte budgets', () => {
     planPath: 'None', taskSummary: 't', scope: 's', turnTarget: 1, round: 1,
   }));
   // NOTE: Pack budgets enforce totals and current component limits.
-  // NOTE: Reviewer prompt ceilings reflect consolidated prompts.
-  assert.ok(promptBytes('code') <= 14333, `code reviewer prompt exceeds 14333 budget`);
-  assert.ok(promptBytes('plan') <= 16690, `plan reviewer prompt exceeds 16690 budget`);
+  // NOTE: Code and plan ceilings (14899, 17256) reflect default-delete pruning, past/nothing/implementation buckets, qualitative low-complexity cutoff, cheapest-layer downgrades, test-only helper flagging, and code-review alignment in quality-bar.md#testing.
+  assert.ok(promptBytes('code') <= 14899, `code reviewer prompt exceeds 14899 budget`);
+  assert.ok(promptBytes('plan') <= 17256, `plan reviewer prompt exceeds 17256 budget`);
   // NOTE: 12734 covers the design altitude, severity, and advisory grounding-lead rules after consolidation.
   assert.ok(promptBytes('design') <= 12734, `design reviewer prompt exceeds 12734 budget`);
   const writer = templateBytes('writer-brief.md') + qualityBytes('writer');
@@ -150,12 +150,20 @@ test('rendered packs stay within the per-actor byte budgets', () => {
   const explorer = explorerBrief + templateBytes('context-map.md') + qualityBytes('explorer');
   assert.ok(explorer <= 12638, `explorer pack ${explorer} exceeds 12638 budget`);
   const cleanupQuality = qualityBytes('cleanup');
-  assert.ok(cleanupQuality <= 7653, `test-cleanup rendered quality ${cleanupQuality} exceeds 7653 budget`);
-  assert.ok(templateBytes('verifier-brief.md') <= 4096, 'verifier brief exceeds 4096 bytes');
+  // NOTE: 7961 covers the expanded default-delete testing bar and conflict-reporting wording in quality-bar.md.
+  assert.ok(cleanupQuality <= 7961, `test-cleanup rendered quality ${cleanupQuality} exceeds 7961 budget`);
+  const verifierBrief = templateBytes('verifier-brief.md');
+  assert.ok(verifierBrief <= 4096, 'verifier brief exceeds 4096 bytes');
+  // NOTE: 6751 and 10033 record the baseline for the dedicated verifier quality consumer (shared + testing without Prune or Writer focus) and combined verifier pack.
+  const verifierQuality = qualityBytes('verifier');
+  assert.ok(verifierQuality <= 6751, `verifier rendered quality ${verifierQuality} exceeds 6751 budget`);
+  const verifier = verifierBrief + verifierQuality;
+  assert.ok(verifier <= 10033, `verifier pack ${verifier} exceeds 10033 budget`);
   const cleanupBrief = templateBytes('test-cleanup-brief.md');
-  assert.ok(cleanupBrief <= 1870, `test-cleanup brief template ${cleanupBrief} exceeds 1870 budget`);
+  // NOTE: 2243 and 10204 add stale-test sweeps across untouched files, tier-downgrade preconditions, and test-only helper flagging.
+  assert.ok(cleanupBrief <= 2243, `test-cleanup brief template ${cleanupBrief} exceeds 2243 budget`);
   const cleanup = cleanupBrief + cleanupQuality;
-  assert.ok(cleanup <= 9523, `test-cleanup pack ${cleanup} exceeds 9523 budget`);
+  assert.ok(cleanup <= 10204, `test-cleanup pack ${cleanup} exceeds 10204 budget`);
   // NOTE: The hand-filled brief needs its own budget for the child authority and reply contract.
   const incrementBrief = templateBytes('increment-orchestrator-brief.md');
   assert.ok(incrementBrief <= 4096, `increment orchestrator brief ${incrementBrief} exceeds 4096 bytes`);

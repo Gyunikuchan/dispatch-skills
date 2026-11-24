@@ -330,7 +330,7 @@ test('quality selection: every review contains each selected rule once and exclu
 });
 
 test('quality selection and audience filtering fail closed', () => {
-  const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'], cleanup: ['shared', 'testing'], explorer: ['shared'] };
+  const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'], cleanup: ['shared', 'testing'], verifier: ['shared', 'testing'], explorer: ['shared'] };
   assert.deepEqual(qualitySections, expected);
   const bar = compliantBar();
   for (const [consumer] of Object.entries(expected)) {
@@ -359,7 +359,7 @@ test('quality selection and audience filtering fail closed', () => {
   assert.throws(() => qualityCriteria('## shared\n- shared without layers link\n## code\n- Code.\n## testing\n- Testing.', 'code', 0, specStage), /document layers|Tagged bullet count/);
   const noLayers = criteriaBar.replace('[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.', 'document layers missing.');
   assert.throws(() => qualityCriteria(noLayers, 'code', 0, specStage), /document layers/);
-  const dangling = criteriaBar.replace('<!-- for: writer,cleanup -->\n- Report host-rule/brief conflicts under concerns.', '<!-- for: writer,cleanup -->');
+  const dangling = criteriaBar.replace('<!-- for: writer,cleanup,verifier -->\n- Report host-rule/brief conflicts under concerns or limits.', '<!-- for: writer,cleanup,verifier -->');
   assert.throws(() => qualityCriteria(dangling, 'writer', 0, specStage), /Audience tag|Tagged bullet count|Empty quality section/);
   assert.throws(() => qualityCriteria(criteriaBar.replace('<!-- for: code,plan,design,cleanup -->\n- Prune: prune.', '- Prune: prune.'), 'code', 0, specStage), /Tagged bullet count/);
   assert.throws(() => qualityCriteria(criteriaBar.replace('<!-- for: all -->\n- Evidence: evidence.', '- Evidence: evidence.'), 'explorer', 0, specStage), /Tagged bullet count/);
@@ -367,14 +367,14 @@ test('quality selection and audience filtering fail closed', () => {
 
 test('audience tags select bullets per consumer and hide tags and author text', () => {
   const bar = compliantBar();
-  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'explorer'] as const) {
+  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'verifier', 'explorer'] as const) {
     const criteria = qualityCriteria(bar, consumer, 0, specStage);
     assert.doesNotMatch(criteria, /<!--/, `${consumer}: no tag comment leaks`);
     assert.doesNotMatch(criteria, /for:/, `${consumer}: no tag text leaks`);
     assert.doesNotMatch(criteria, /Author-only/, `${consumer}: author text never renders`);
   }
   const writer = qualityCriteria(bar, 'writer', 0, specStage);
-  assert.ok(writer.includes('Report host-rule/brief conflicts under concerns.'), 'writer report clause');
+  assert.ok(writer.includes('Report host-rule/brief conflicts under concerns or limits.'), 'writer report clause');
   assert.ok(writer.includes('Run no Git write commands'), 'writer git rule');
   assert.ok(writer.includes('Writer focus'), 'writer focus');
   assert.doesNotMatch(writer, /Exclude host-rule\/brief conflicts from findings\./, 'writer no reviewer clause');
@@ -382,12 +382,18 @@ test('audience tags select bullets per consumer and hide tags and author text', 
   for (const consumer of ['code', 'plan', 'design'] as const) {
     const criteria = qualityCriteria(bar, consumer, 0, specStage);
     assert.ok(criteria.includes('Exclude host-rule/brief conflicts from findings.'), `${consumer} reviewer clause`);
-    assert.doesNotMatch(criteria, /Report host-rule\/brief conflicts under concerns\./, `${consumer} no writer clause`);
+    assert.doesNotMatch(criteria, /Report host-rule\/brief conflicts under concerns or limits\./, `${consumer} no writer clause`);
   }
   assert.ok(qualityCriteria(bar, 'code', 0, specStage).includes('Prune:'), 'code prune');
   assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Run no Git write commands'), 'cleanup git rule');
   assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Prune:'), 'cleanup prune');
-  assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Report host-rule/brief conflicts under concerns.'), 'cleanup report clause');
+  assert.ok(qualityCriteria(bar, 'cleanup', 0, specStage).includes('Report host-rule/brief conflicts under concerns or limits.'), 'cleanup report clause');
+  const verifier = qualityCriteria(bar, 'verifier', 0, specStage);
+  assert.ok(verifier.includes('Report host-rule/brief conflicts under concerns or limits.'), 'verifier report clause');
+  assert.doesNotMatch(verifier, /Run no Git write commands/, 'verifier no git rule');
+  assert.doesNotMatch(verifier, /Writer focus/, 'verifier no writer focus');
+  assert.doesNotMatch(verifier, /^- Prune:/m, 'verifier no prune');
+  assert.ok(verifier.includes('Untagged testing.'), 'verifier testing');
   const explorer = qualityCriteria(bar, 'explorer', 0, specStage);
   assert.ok(explorer.includes('Host rule files'), 'explorer host rules');
   assert.ok(explorer.includes('Precedence'), 'explorer precedence');
@@ -396,7 +402,7 @@ test('audience tags select bullets per consumer and hide tags and author text', 
   assert.doesNotMatch(explorer, /Report host-rule/, 'explorer drops writer clause');
   assert.doesNotMatch(explorer, /Exclude host-rule/, 'explorer drops reviewer clause');
   const realBar = read(templates, 'quality-bar.md');
-  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'explorer'] as const) {
+  for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'verifier', 'explorer'] as const) {
     assert.doesNotMatch(qualityCriteria(realBar, consumer, 0, specStage), /<!--/, `${consumer}: real bar hides tags`);
   }
   assert.ok(qualityCriteria(realBar, 'writer', 0, specStage).includes('Run no Git write commands'), 'real writer git');
@@ -412,8 +418,8 @@ function compliantBar(): string {
     '- Precedence: precedence.',
     '<!-- for: all -->',
     '- Evidence: evidence.',
-    '<!-- for: writer,cleanup -->',
-    '- Report host-rule/brief conflicts under concerns.',
+    '<!-- for: writer,cleanup,verifier -->',
+    '- Report host-rule/brief conflicts under concerns or limits.',
     '<!-- for: code,plan,design -->',
     '- Exclude host-rule/brief conflicts from findings.',
     '<!-- for: writer,cleanup -->',
@@ -476,8 +482,8 @@ function fencedBar(): string {
     '- Precedence: precedence.',
     '<!-- for: all -->',
     '- Evidence: evidence.',
-    '<!-- for: writer,cleanup -->',
-    '- Report host-rule/brief conflicts under concerns.',
+    '<!-- for: writer,cleanup,verifier -->',
+    '- Report host-rule/brief conflicts under concerns or limits.',
     '<!-- for: code,plan,design -->',
     '- Exclude host-rule/brief conflicts from findings.',
     '<!-- for: writer,cleanup -->',
@@ -559,12 +565,52 @@ test('writer quality criteria omit prune directive while code and plan keep it',
   assert.ok(writer.includes('Shape:'), 'writer: Shape');
   assert.ok(writer.includes('Naming:'), 'writer: Naming');
   assert.ok(writer.includes('Writer focus'), 'writer: Writer focus');
+  assert.match(writer, /free reign/i, 'writer: explicit free reign');
+  assert.match(writer, /defer[^.\n]*pruning[^.\n]*downgrades/i, 'writer: defers pruning/downgrades to cleanup');
+  const writerBeforeFocus = writer.split('- Writer focus')[0]!;
+  const writerTestingLead = writerBeforeFocus.split('- **testing** —')[1]!;
+  assert.doesNotMatch(writerTestingLead, /Retain a regression-spec test only|default-delete|downgrade/i, 'writer untagged testing has no retain/prune/downgrade mandate');
   assert.doesNotMatch(writer, /^- Prune:/m);
   assert.doesNotMatch(writer, /disposable/);
-  for (const consumer of ['code', 'plan'] as const) {
+
+  const verifier = qualityCriteria(bar, 'verifier', 0, specStage);
+  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:']) assert.ok(verifier.includes(gate), `verifier: ${gate}`);
+  assert.ok(verifier.includes('Shape:'), 'verifier: Shape');
+  assert.ok(verifier.includes('Naming:'), 'verifier: Naming');
+  assert.ok(verifier.includes('Report host-rule/brief conflicts under concerns or limits.'), 'verifier: conflicts under concerns or limits');
+  assert.doesNotMatch(verifier, /^- Prune:/m, 'verifier omits Prune');
+  assert.doesNotMatch(verifier, /Writer focus/, 'verifier omits Writer focus');
+  assert.doesNotMatch(verifier, /Run no Git write commands/, 'verifier omits non-verifier Git-write bullet');
+
+  for (const consumer of ['code', 'plan', 'cleanup'] as const) {
     const criteria = qualityCriteria(bar, consumer, 0, specStage);
     assert.match(criteria, /^- Prune:/m, `${consumer}: Prune`);
     assert.doesNotMatch(criteria, /Writer focus/, `${consumer}: Writer focus`);
+    const pruneLine = criteria.split('\n').find((line) => line.startsWith('- Prune:'))!;
+    for (const pattern of [
+      /default-delete|default to deleting/i,
+      /downgrade/i,
+      /over-tiered/i,
+      /undocumented external contract/i,
+      /the past/i,
+      /nothing/i,
+      /the implementation/i,
+      /straight-line|lightly-branching/i,
+      /nested control flow/i,
+      /compound boolean/i,
+      /regex/i,
+      /parser/i,
+      /formula/i,
+      /simplicity-floor/i,
+      /cheapest|lowest/i,
+      /test-only.*helper/i,
+      /code review/i,
+    ]) {
+      assert.match(pruneLine, pattern, `${consumer} Prune missing ${pattern}`);
+    }
+  }
+  for (const forbidden of ['cccc', 'prune-tests', 'caldoai']) {
+    assert.ok(!bar.toLowerCase().includes(forbidden), `quality-bar omits ${forbidden}`);
   }
   assert.match(cleanup, /executing `- Prune:` and ignoring `- Writer focus`/);
 });
@@ -606,7 +652,7 @@ test('extractDocumentLayers inlines spec-stage layers and qualityCriteria filter
   }
   {
     const writer = qualityCriteria(bar, 'writer', 0, specStage);
-    assert.ok(writer.includes('Report host-rule/brief conflicts under concerns.'), 'writer filter');
+    assert.ok(writer.includes('Report host-rule/brief conflicts under concerns or limits.'), 'writer filter');
     assert.ok(writer.includes(`document layers (${layers})`), 'writer inlined layers');
     assert.doesNotMatch(writer, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/, 'writer no settled text');
   }

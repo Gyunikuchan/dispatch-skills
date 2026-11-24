@@ -1,7 +1,5 @@
-// Deterministic test-suite inventory for the optimise-tests skill.
-// Usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--units <id,...>]
-// Runs the selected test files once via `node --test` with timing-reporter.ts, then writes
-// <dir>/inventory.json and one <dir>/packets/<id>.json per unit packet. Test failures are recorded, not fatal.
+// Zero-config test-suite inventory and before/after delta measurement for optimise-tests.
+// Usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--paths <dir,...>] [--compare <before-inventory.json>]
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,30 +8,31 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { EventLine, TestLine } from './timing-reporter.ts';
 
-// SECTION: Types
+// SECTION: Defaults & types
 
-export interface Config {
-  units: string[];
-  packetLineBudget: number;
-  slowTestMs: number;
-  maxParallelWriters: number;
-  coverageInclude: string[];
-  excludeFromWriters: string[];
-}
+export const COVERAGE_INCLUDE = ['skills/**/*.ts', 'scripts/**/*.ts', '.agents/skills/**/scripts/**'] as const;
+export const EXCLUDE_FROM_WRITERS = ['tests/helpers/**', 'tests/fixtures/**', 'tests/unit/*/fixtures/**'] as const;
+export const SLOW_TEST_MS = 100;
+export const BUDGET_OVERRUN_THRESHOLD_MS = 800;
+export const DENSE_FILE_TEST_THRESHOLD = 15;
+const SLOW_TEST_LIMIT = 20;
+
 export interface TestEntry { name: string; durationMs: number; line: number }
-export interface FileEntry { path: string; unit: string; tests: TestEntry[]; durationMs: number; lines: number; imports: string[] }
+export interface FileEntry { path: string; tests: TestEntry[]; durationMs: number; lines: number; imports: string[] }
 export interface Failure { file: string; name: string; line: number }
 export interface DuplicateTitle { name: string; files: { path: string; line: number }[] }
 export interface SharedImports { imports: string[]; files: string[] }
 export interface MergeCluster { file: string; prefix: string; tests: { name: string; line: number }[] }
 export interface BudgetOverrun { path: string; durationMs: number }
 export interface DenseFile { path: string; testCount: number }
+export interface SlowTest { file: string; name: string; line: number; durationMs: number }
 export interface Candidates {
   duplicateTitles: DuplicateTitle[];
   sharedImports: SharedImports[];
-  mergeClusters?: MergeCluster[];
-  budgetOverruns?: BudgetOverrun[];
-  denseFiles?: DenseFile[];
+  mergeClusters: MergeCluster[];
+  budgetOverruns: BudgetOverrun[];
+  denseFiles: DenseFile[];
+  slowestTests: SlowTest[];
 }
 export interface Inventory {
   totals: { files: number; tests: number; durationMs: number };
@@ -42,46 +41,82 @@ export interface Inventory {
   candidates: Candidates;
   failures: Failure[];
 }
-export interface SlowTest { file: string; name: string; line: number; durationMs: number }
-export interface Packet {
-  id: string;
-  unit: string;
-  lines: number;
-  files: { path: string; lines: number; tests: number; durationMs: number }[];
-  slowestTests: SlowTest[];
-  // Baseline failures in this packet's files; writers leave them unchanged unless the ledger justifies it.
-  failures: Failure[];
-  candidates: Candidates;
-}
-
-// SECTION: Config
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SKILL_DIR = path.dirname(SCRIPT_DIR);
-export const REPO_ROOT = path.resolve(SKILL_DIR, '../../..');
-export const CONFIG: Config = JSON.parse(fs.readFileSync(path.join(SKILL_DIR, 'config.json'), 'utf8')) as Config;
-const SLOW_TEST_LIMIT = 20;
-const BUDGET_OVERRUN_THRESHOLD_MS = 800;
-const DENSE_FILE_TEST_THRESHOLD = 15;
+export const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../../..');
 const toPosix = (file: string) => file.replace(/\\/g, '/');
+const lexicalCompare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
-// SECTION: Pure analysis
+// SECTION: Discovery
 
-// Longest configured folder that contains the path wins, so nested units never shadow each other.
-export function unitOf(file: string, units: readonly string[] = CONFIG.units): string | undefined {
-  const posix = toPosix(file);
-  return units.filter((unit) => posix.startsWith(`${unit.replace(/\/+$/, '')}/`)).sort((a, b) => b.length - a.length)[0];
+const EXCLUDE_PATTERNS = EXCLUDE_FROM_WRITERS.map((glob) => {
+  const escaped = glob
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\u0000/g, '.*');
+  return new RegExp(`^${escaped}$`);
+});
+
+const isExcluded = (relPosix: string): boolean => EXCLUDE_PATTERNS.some((re) => re.test(relPosix));
+
+/** Recursively discovers `*.test.ts` files under `tests/` or `paths`, excluding shared helpers and fixtures. */
+export function discoverTestFiles(root: string, paths?: readonly string[]): string[] {
+  const targets = paths?.length ? paths : ['tests'];
+  const out = new Set<string>();
+  const walk = (dir: string) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        walk(path.join(dir, entry.name));
+      } else if (entry.name.endsWith('.test.ts')) {
+        const rel = toPosix(path.relative(root, path.join(dir, entry.name)));
+        if (!isExcluded(rel)) out.add(rel);
+      }
+    }
+  };
+  for (const raw of targets) {
+    const clean = toPosix(raw.trim()).replace(/\/+$/, '');
+    if (!clean) continue;
+    const resolved = path.isAbsolute(clean) ? clean : path.resolve(root, clean);
+    if (!fs.existsSync(resolved)) continue;
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) walk(resolved);
+    else if (stat.isFile() && resolved.endsWith('.test.ts')) {
+      const rel = toPosix(path.relative(root, resolved));
+      if (!rel.startsWith('..') && !isExcluded(rel)) out.add(rel);
+    }
+  }
+  return [...out].sort(lexicalCompare);
 }
+
+// SECTION: Analysis
 
 const importSet = (file: FileEntry) => [...new Set(file.imports)].sort();
 
-export function findCandidates(files: readonly FileEntry[]): Candidates {
+function clusterPrefixOf(name: string): string | undefined {
+  const trimmed = name.trim();
+  const colon = trimmed.indexOf(':');
+  if (colon > 0 && colon < 30) {
+    const head = trimmed.slice(0, colon).trim().toLowerCase();
+    const words = trimmed.slice(colon + 1).trim().split(/\s+/).filter(Boolean);
+    if (words.length >= 2) return `${head}: ${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}`;
+    if (words[0]) return `${head}: ${words[0]!.toLowerCase()}`;
+    return head;
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  return words.length >= 2 ? `${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}` : undefined;
+}
+
+export function findCandidates(files: readonly FileEntry[], slowTestMs: number = SLOW_TEST_MS): Candidates {
   const titles = new Map<string, { path: string; line: number }[]>();
   for (const file of files) {
     for (const test of file.tests) titles.set(test.name, [...(titles.get(test.name) ?? []), { path: file.path, line: test.line }]);
   }
   const duplicateTitles = [...titles].filter(([, at]) => at.length > 1).map(([name, at]) => ({ name, files: at }))
     .sort((a, b) => a.name.localeCompare(b.name));
+
   const groups = new Map<string, SharedImports>();
   for (const file of files) {
     const imports = importSet(file);
@@ -95,20 +130,6 @@ export function findCandidates(files: readonly FileEntry[]): Candidates {
     .sort((a, b) => (a.files[0] ?? '').localeCompare(b.files[0] ?? ''));
 
   const mergeClusters: MergeCluster[] = [];
-  const clusterPrefixOf = (name: string): string | undefined => {
-    const trimmed = name.trim();
-    const colon = trimmed.indexOf(':');
-    if (colon > 0 && colon < 30) {
-      const head = trimmed.slice(0, colon).trim().toLowerCase();
-      const words = trimmed.slice(colon + 1).trim().split(/\s+/).filter(Boolean);
-      if (words.length >= 2) return `${head}: ${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}`;
-      if (words[0]) return `${head}: ${words[0]!.toLowerCase()}`;
-      return head;
-    }
-    const words = trimmed.split(/\s+/).filter(Boolean);
-    return words.length >= 2 ? `${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}` : undefined;
-  };
-
   for (const file of files) {
     const byPrefix = new Map<string, { name: string; line: number }[]>();
     for (const test of file.tests) {
@@ -119,9 +140,7 @@ export function findCandidates(files: readonly FileEntry[]): Candidates {
       byPrefix.set(prefix, list);
     }
     for (const [prefix, clusterTests] of byPrefix) {
-      if (clusterTests.length >= 3) {
-        mergeClusters.push({ file: file.path, prefix, tests: clusterTests });
-      }
+      if (clusterTests.length >= 3) mergeClusters.push({ file: file.path, prefix, tests: clusterTests });
     }
   }
   mergeClusters.sort((a, b) => a.file.localeCompare(b.file) || a.prefix.localeCompare(b.prefix));
@@ -136,81 +155,20 @@ export function findCandidates(files: readonly FileEntry[]): Candidates {
     .map((file) => ({ path: file.path, testCount: file.tests.length }))
     .sort((a, b) => b.testCount - a.testCount || a.path.localeCompare(b.path));
 
-  return { duplicateTitles, sharedImports, mergeClusters, budgetOverruns, denseFiles };
-}
+  const slowestTests: SlowTest[] = files
+    .flatMap((file) => file.tests.map((test) => ({ file: file.path, ...test })))
+    .filter((test) => test.durationMs >= slowTestMs)
+    .sort((a, b) => b.durationMs - a.durationMs || a.file.localeCompare(b.file) || a.line - b.line)
+    .slice(0, SLOW_TEST_LIMIT);
 
-const prefixOf = (file: string) => path.posix.basename(file).replace(/\.test\.ts$/, '').split('-')[0] ?? '';
-const slug = (unit: string) => unit.replace(/[\\/]+/g, '-');
-
-function scopeCandidates(candidates: Candidates, paths: ReadonlySet<string>): Candidates {
-  return {
-    duplicateTitles: candidates.duplicateTitles.filter((entry) => entry.files.some((file) => paths.has(file.path))),
-    sharedImports: candidates.sharedImports.filter((entry) => entry.files.some((file) => paths.has(file))),
-    mergeClusters: (candidates.mergeClusters ?? []).filter((entry) => paths.has(entry.file)),
-    budgetOverruns: (candidates.budgetOverruns ?? []).filter((entry) => paths.has(entry.path)),
-    denseFiles: (candidates.denseFiles ?? []).filter((entry) => paths.has(entry.path)),
-  };
-}
-
-// Splits a unit over the line budget into packets of whole file-name prefix clusters (e.g. effects-*),
-// so related files stay together; a cluster over the budget alone is split by file.
-export function packetize(inventory: Inventory, budget: number, slowTestMs: number = CONFIG.slowTestMs): Packet[] {
-  const byUnit = new Map<string, FileEntry[]>();
-  for (const file of inventory.files) byUnit.set(file.unit, [...(byUnit.get(file.unit) ?? []), file]);
-  const packets: Packet[] = [];
-  for (const [unit, files] of byUnit) {
-    const groups: FileEntry[][] = [];
-    const total = files.reduce((sum, file) => sum + file.lines, 0);
-    if (total <= budget) groups.push(files);
-    else {
-      const clusters = new Map<string, FileEntry[]>();
-      for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
-        clusters.set(prefixOf(file.path), [...(clusters.get(prefixOf(file.path)) ?? []), file]);
-      }
-      let current: FileEntry[] = [];
-      let size = 0;
-      const flush = () => { if (current.length) groups.push(current); current = []; size = 0; };
-      for (const cluster of clusters.values()) {
-        const lines = cluster.reduce((sum, file) => sum + file.lines, 0);
-        if (lines > budget) {
-          flush();
-          for (const file of cluster) {
-            if (size + file.lines > budget) flush();
-            current.push(file);
-            size += file.lines;
-          }
-          flush();
-          continue;
-        }
-        if (size + lines > budget) flush();
-        current.push(...cluster);
-        size += lines;
-      }
-      flush();
-    }
-    groups.forEach((group, index) => {
-      const paths = new Set(group.map((file) => file.path));
-      const slowestTests = group.flatMap((file) => file.tests.map((test) => ({ file: file.path, ...test })))
-        .filter((test) => test.durationMs >= slowTestMs).sort((a, b) => b.durationMs - a.durationMs).slice(0, SLOW_TEST_LIMIT);
-      packets.push({
-        id: groups.length > 1 ? `${slug(unit)}-${index + 1}` : slug(unit),
-        unit,
-        lines: group.reduce((sum, file) => sum + file.lines, 0),
-        files: group.map((file) => ({ path: file.path, lines: file.lines, tests: file.tests.length, durationMs: file.durationMs })),
-        slowestTests,
-        failures: inventory.failures.filter((failure) => paths.has(failure.file)),
-        candidates: scopeCandidates(inventory.candidates, paths),
-      });
-    });
-  }
-  return packets;
+  return { duplicateTitles, sharedImports, mergeClusters, budgetOverruns, denseFiles, slowestTests };
 }
 
 // SECTION: Collection
 
 const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
 
-// Production modules a test imports: relative specifiers that resolve outside tests/.
+/** Extracts production modules a test imports: relative specifiers resolving outside `tests/`. */
 export function productionImports(file: string, text: string): string[] {
   const found = new Set<string>();
   for (const match of text.matchAll(IMPORT_RE)) {
@@ -220,20 +178,6 @@ export function productionImports(file: string, text: string): string[] {
     if (!resolved.startsWith('tests/') && !resolved.startsWith('../')) found.add(resolved);
   }
   return [...found].sort();
-}
-
-function listTestFiles(root: string, units: readonly string[]): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    if (!fs.existsSync(dir)) return;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.test.ts')) out.push(toPosix(path.relative(root, full)));
-    }
-  };
-  for (const unit of units) walk(path.join(root, unit));
-  return [...new Set(out)].filter((file) => unitOf(file, units) !== undefined).sort();
 }
 
 // Failed leaf tests, plus failed suites with no failed descendant leaf (e.g. a suite hook that fails after its tests pass).
@@ -253,13 +197,13 @@ export function collectFailures(tests: readonly TestLine[], rel: (file: string) 
   return failed.map((event) => ({ file: rel(event.file), name: event.name, line: event.line }));
 }
 
-// A nonzero test-run exit with no recorded failure still fails the snapshot, so compare.ts cannot pass it.
+// A nonzero test-run exit with no recorded failure still marks the snapshot failed.
 export function withExitStatus(failures: readonly Failure[], status: number | null, signal: string | null = null): Failure[] {
   if (status === 0 || failures.length) return [...failures];
   return [{ file: '', name: `node --test exited ${status ?? signal ?? 'abnormally'}`, line: 0 }];
 }
 
-export function buildInventory(root: string, testFiles: readonly string[], events: readonly EventLine[], units: readonly string[]): Inventory {
+export function buildInventory(root: string, testFiles: readonly string[], events: readonly EventLine[]): Inventory {
   const rel = (file: string) => toPosix(path.isAbsolute(file) ? path.relative(root, file) : file);
   const tests = events.filter((event): event is TestLine => event.kind === 'test');
   const files: FileEntry[] = testFiles.map((file) => {
@@ -267,7 +211,6 @@ export function buildInventory(root: string, testFiles: readonly string[], event
     const own = tests.filter((event) => rel(event.file) === file);
     return {
       path: file,
-      unit: unitOf(file, units) ?? '',
       tests: own.filter((event) => !event.suite).map(({ name, durationMs, line }) => ({ name, durationMs, line })),
       // NOTE: a file's top-level tests run serially, so their summed durations approximate its wall time.
       durationMs: own.filter((event) => event.nesting === 0).reduce((sum, event) => sum + event.durationMs, 0),
@@ -290,35 +233,118 @@ export function buildInventory(root: string, testFiles: readonly string[], event
   };
 }
 
+// SECTION: Delta formatting
+
+const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
+const cell = (before: number, after: number) => `${before} → ${after} (${signed(after - before)})`;
+const failureKey = (failure: Failure) => `${failure.file}\u0000${failure.name}`;
+const formatFailure = (failure: Failure) => `- ${failure.file ? `${failure.file}:${failure.line}` : '(run)'} ${failure.name}`;
+
+/** Formats measured before/after inventory totals, file changes, failures, and informational coverage changes. */
+export function formatDelta(before: Inventory, after: Inventory): string {
+  const lines = [
+    '| Scope | Files | Tests | Duration (ms) |',
+    '| --- | --- | --- | --- |',
+    `| total (wall-clock) | ${cell(before.totals.files, after.totals.files)} | ${cell(before.totals.tests, after.totals.tests)} | ${cell(Math.round(before.totals.durationMs), Math.round(after.totals.durationMs))} |`,
+  ];
+
+  const beforeFiles = new Map(before.files.map((file) => [file.path, file]));
+  const afterFiles = new Map(after.files.map((file) => [file.path, file]));
+  const allPaths = [...new Set([...beforeFiles.keys(), ...afterFiles.keys()])].sort(lexicalCompare);
+  const fileChanges: string[] = [];
+  for (const filePath of allPaths) {
+    const prev = beforeFiles.get(filePath);
+    const next = afterFiles.get(filePath);
+    if (prev && !next) {
+      fileChanges.push(`- ${filePath}: ${prev.tests.length} → 0 tests (-${prev.tests.length}), ${Math.round(prev.durationMs)} → 0 ms (-${Math.round(prev.durationMs)})`);
+    } else if (!prev && next) {
+      fileChanges.push(`+ ${filePath}: 0 → ${next.tests.length} tests (+${next.tests.length}), 0 → ${Math.round(next.durationMs)} ms (+${Math.round(next.durationMs)})`);
+    } else if (prev && next) {
+      const prevMs = Math.round(prev.durationMs);
+      const nextMs = Math.round(next.durationMs);
+      if (prev.tests.length !== next.tests.length || prev.lines !== next.lines || prevMs !== nextMs) {
+        fileChanges.push(`~ ${filePath}: tests ${cell(prev.tests.length, next.tests.length)}, lines ${cell(prev.lines, next.lines)}, duration ${cell(prevMs, nextMs)} ms`);
+      }
+    }
+  }
+  lines.push('', '## File changes', ...(fileChanges.length ? fileChanges : ['None.']));
+
+  const beforeFailKeys = new Set(before.failures.map(failureKey));
+  const afterFailKeys = new Set(after.failures.map(failureKey));
+  const newRegressions = after.failures.filter((failure) => !beforeFailKeys.has(failureKey(failure)));
+  const resolved = before.failures.filter((failure) => !afterFailKeys.has(failureKey(failure)));
+  const persisting = after.failures.filter((failure) => beforeFailKeys.has(failureKey(failure)));
+
+  lines.push(
+    '',
+    '## Failures',
+    `Baseline failures (${before.failures.length}):`,
+    ...(before.failures.length ? before.failures.map(formatFailure) : ['None.']),
+    `After failures (${after.failures.length}):`,
+    ...(after.failures.length ? after.failures.map(formatFailure) : ['None.']),
+    `New regressions (${newRegressions.length}):`,
+    ...(newRegressions.length ? newRegressions.map(formatFailure) : ['None.']),
+    `Resolved baseline failures (${resolved.length}):`,
+    ...(resolved.length ? resolved.map(formatFailure) : ['None.']),
+    `Persisting baseline failures (${persisting.length}):`,
+    ...(persisting.length ? persisting.map(formatFailure) : ['None.']),
+  );
+
+  const covPaths = [...new Set([...Object.keys(before.coverage), ...Object.keys(after.coverage)])].sort(lexicalCompare);
+  if (covPaths.length) {
+    const covChanges = covPaths.flatMap((filePath) => {
+      const prev = before.coverage[filePath]?.covered ?? 0;
+      const next = after.coverage[filePath]?.covered ?? 0;
+      return prev === next ? [] : [`- ${filePath}: ${prev} → ${next} (${signed(next - prev)})`];
+    });
+    lines.push('', '## Coverage (informational)', ...(covChanges.length ? covChanges : ['Unchanged.']));
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
 // SECTION: CLI
 
-const USAGE = 'usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--units <id,...>]';
+const USAGE = 'usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--paths <dir,...>] [--compare <before-inventory.json>]';
 
-function main(argv: string[]): number {
-  let values: { out?: string | undefined; coverage?: boolean | undefined; units?: string | undefined };
+export function main(argv: string[]): number {
+  let values: { out?: string | undefined; coverage?: boolean | undefined; paths?: string | undefined; compare?: string | undefined };
   try {
-    ({ values } = parseArgs({ args: argv, options: { out: { type: 'string' }, coverage: { type: 'boolean' }, units: { type: 'string' } }, strict: true }));
+    ({ values } = parseArgs({
+      args: argv,
+      options: { out: { type: 'string' }, coverage: { type: 'boolean' }, paths: { type: 'string' }, compare: { type: 'string' } },
+      strict: true,
+    }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n${USAGE}\n`);
     return 1;
   }
   if (!values.out) { process.stderr.write(`missing --out\n${USAGE}\n`); return 1; }
-  const selected = values.units ? values.units.split(',').map((unit) => toPosix(unit.trim()).replace(/\/+$/, '')).filter(Boolean) : CONFIG.units;
-  const unknown = selected.filter((unit) => !CONFIG.units.includes(unit));
-  if (unknown.length) { process.stderr.write(`unknown unit(s): ${unknown.join(', ')}; configured: ${CONFIG.units.join(', ')}\n`); return 1; }
+
+  let beforeInventory: Inventory | undefined;
+  if (values.compare) {
+    try {
+      beforeInventory = JSON.parse(fs.readFileSync(path.resolve(values.compare), 'utf8')) as Inventory;
+    } catch (error) {
+      process.stderr.write(`unreadable --compare ${values.compare}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
+
+  const selectedPaths = values.paths ? values.paths.split(',').map((item) => item.trim()).filter(Boolean) : undefined;
+  const testFiles = discoverTestFiles(REPO_ROOT, selectedPaths);
+  if (!testFiles.length) { process.stderr.write(`no test files found\n`); return 1; }
 
   const out = path.resolve(values.out);
   const eventsPath = path.join(out, 'events.jsonl');
   fs.mkdirSync(out, { recursive: true });
   fs.rmSync(eventsPath, { force: true });
-  const testFiles = listTestFiles(REPO_ROOT, selected);
-  if (!testFiles.length) { process.stderr.write(`no test files in: ${selected.join(', ')}\n`); return 1; }
 
   const args = [
     '--test', '--test-concurrency=8',
     '--import=./tests/helpers/isolated-temp.ts', '--import=./tests/helpers/block-spawn.ts',
     `--test-reporter=./${toPosix(path.relative(REPO_ROOT, path.join(SCRIPT_DIR, 'timing-reporter.ts')))}`,
-    ...(values.coverage ? ['--experimental-test-coverage', ...CONFIG.coverageInclude.map((glob) => `--test-coverage-include=${glob}`)] : []),
+    ...(values.coverage ? ['--experimental-test-coverage', ...COVERAGE_INCLUDE.map((glob) => `--test-coverage-include=${glob}`)] : []),
     ...testFiles,
   ];
   // NOTE: a nonzero exit is recorded as a failure, not fatal; the events file records which tests failed.
@@ -328,16 +354,26 @@ function main(argv: string[]): number {
     return 1;
   }
   const events = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as EventLine);
-  const inventory = buildInventory(REPO_ROOT, testFiles, events, selected);
+  const inventory = buildInventory(REPO_ROOT, testFiles, events);
   inventory.failures = withExitStatus(inventory.failures, run.status, run.signal);
   fs.writeFileSync(path.join(out, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`);
-  const packetDir = path.join(out, 'packets');
-  fs.rmSync(packetDir, { recursive: true, force: true });
-  fs.mkdirSync(packetDir, { recursive: true });
-  const packets = packetize(inventory, CONFIG.packetLineBudget);
-  for (const packet of packets) fs.writeFileSync(path.join(packetDir, `${packet.id}.json`), `${JSON.stringify(packet, null, 2)}\n`);
-  process.stdout.write(`inventory: ${inventory.totals.files} files, ${inventory.totals.tests} tests, ${inventory.failures.length} failures, `
-    + `${Object.keys(inventory.coverage).length} covered files, ${packets.length} packets -> ${toPosix(path.relative(process.cwd(), out)) || '.'}\n`);
+
+  process.stdout.write(
+    `inventory: ${inventory.totals.files} files, ${inventory.totals.tests} tests, ${inventory.failures.length} failures, `
+    + `${Object.keys(inventory.coverage).length} covered files -> ${toPosix(path.relative(process.cwd(), out)) || '.'}\n`,
+  );
+
+  if (beforeInventory) {
+    const delta = formatDelta(beforeInventory, inventory);
+    const deltaPath = path.join(out, 'delta.md');
+    fs.writeFileSync(deltaPath, delta);
+    process.stdout.write(
+      `delta: files ${cell(beforeInventory.totals.files, inventory.totals.files)}, `
+      + `tests ${cell(beforeInventory.totals.tests, inventory.totals.tests)}, `
+      + `duration ${cell(Math.round(beforeInventory.totals.durationMs), Math.round(inventory.totals.durationMs))} ms, `
+      + `failures ${cell(beforeInventory.failures.length, inventory.failures.length)} -> ${toPosix(path.relative(process.cwd(), deltaPath))}\n`,
+    );
+  }
   return 0;
 }
 

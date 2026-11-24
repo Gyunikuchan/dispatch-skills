@@ -275,7 +275,7 @@ describe('writer brief', () => {
       assert.ok(writerQuality.includes('Writer focus'));
       assert.doesNotMatch(writerQuality, /^- Prune:/m);
       assert.ok(writerQuality.includes('document layers ('));
-      assert.ok(writerQuality.includes('Report host-rule/brief conflicts under concerns.'));
+      assert.ok(writerQuality.includes('Report host-rule/brief conflicts under concerns or limits.'));
       assert.doesNotMatch(writerQuality, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/);
       const codeBody = quality.split('## code\n')[1]!.split('\n## ')[0]!.trim();
       assert.ok(writerQuality.includes(codeBody));
@@ -1057,7 +1057,54 @@ test('rendered briefs state the git-write rule once and carry one host-rule prec
       assert.equal(brief.split('Applicable host rule files govern first.').length - 1, 1, `${name}: single govern-first sentence`);
     }
     for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief]] as const) {
-      assert.equal(brief.split('Report host-rule/brief conflicts under concerns.').length - 1, 1, `${name}: single conflict-reporting rule`);
+      assert.equal(brief.split('Report host-rule/brief conflicts under concerns or limits.').length - 1, 1, `${name}: single conflict-reporting rule`);
     }
+  } finally { f.cleanup(); }
+});
+
+test('brief test-cleanup and verifier render updated pruning and gap-filling guidance', async () => {
+  const f = await fixture();
+  try {
+    await f.approve();
+    const cleanupValues = path.join(f.session, 'cleanup-guidance-values.json');
+    fs.writeFileSync(cleanupValues, JSON.stringify({base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration'}));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    const cleanupBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+
+    assert.match(cleanupBrief, /executing `- Prune:` and ignoring `- Writer focus`/);
+    assert.match(cleanupBrief, /untouched test files/i);
+    assert.match(cleanupBrief, /changed symbols/i);
+    assert.match(cleanupBrief, /modified.*requirements|spec requirements/i);
+    assert.match(cleanupBrief, /swept/i);
+    assert.match(cleanupBrief, /downgrade/i);
+    assert.match(cleanupBrief, /every retained criterion's `Check:` still runs at least one test/i);
+    assert.match(cleanupBrief, /replacement test path is already executed by an existing non-removed/i);
+    assert.match(cleanupBrief, /flag[^.\n]*under concerns/i);
+    assert.match(cleanupBrief, /test-only[^.\n]*helper/i);
+    assert.match(cleanupBrief, /`removed`[^.\n]*exclud|replaced by a cheaper test/i);
+
+    const verifierValues = path.join(f.session, 'verifier-guidance-values.json');
+    fs.writeFileSync(verifierValues, JSON.stringify({
+      checkoutPath: 'checkout',
+      base: 'b'.repeat(40),
+      specPath: 'spec.md',
+      focus: 'Cycle 1. Verify runtime behavior. test edits permitted.',
+    }));
+    f.lines.length = 0;
+    assert.equal(await main(['brief', 'verifier', verifierValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    const verifierBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+
+    for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:', 'Shape:', 'Naming:']) {
+      assert.ok(verifierBrief.includes(gate), `verifier brief includes ${gate}`);
+    }
+    assert.ok(verifierBrief.includes('Report host-rule/brief conflicts under concerns or limits.'));
+    assert.doesNotMatch(verifierBrief, /^- Prune:/m);
+    assert.doesNotMatch(verifierBrief, /Writer focus/);
+    const verifierQuality = verifierBrief.split('## Quality')[1]!.split('## Report')[0]!;
+    assert.doesNotMatch(verifierQuality, /Run no Git write commands/);
+    assert.match(verifierBrief, /missed high-signal tests/i);
+    assert.match(verifierBrief, /cheapest observing layer/i);
+    assert.match(verifierBrief, /post-integration test cleanup/i);
   } finally { f.cleanup(); }
 });

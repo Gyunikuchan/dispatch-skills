@@ -139,13 +139,14 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
   return { variables, sections };
 }
 
-export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer' | 'cleanup' | 'explorer';
+export type QualityConsumer = 'code' | 'plan' | 'design' | 'writer' | 'cleanup' | 'verifier' | 'explorer';
 export const qualitySections = {
   code: ['shared', 'code', 'testing'],
   writer: ['shared', 'code', 'testing'],
   plan: ['shared', 'spec', 'plan', 'testing'],
   design: ['shared', 'spec', 'design'],
   cleanup: ['shared', 'testing'],
+  verifier: ['shared', 'testing'],
   explorer: ['shared'],
 } as const satisfies Record<QualityConsumer, readonly string[]>;
 
@@ -155,10 +156,10 @@ const REQUIRED_TAGGED = {
   plan: 5,
   design: 4,
   cleanup: 6,
+  verifier: 4,
   explorer: 3,
 } as const satisfies Record<QualityConsumer, number>;
 
-const KNOWN_AUDIENCES = new Set(['code', 'plan', 'design', 'writer', 'cleanup', 'explorer', 'all', 'author']);
 const FOR_TAG_PATTERN = /^\s*<!--\s*for:\s*([^>]+?)\s*-->\s*$/;
 const DOCUMENT_LAYERS_LINK = '[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.';
 
@@ -224,7 +225,7 @@ function filterSection(body: string, consumer: QualityConsumer, _section: string
     if (FOR_TAG_PATTERN.test(line)) {
       const tags = parseAudienceTag(line);
       for (const tag of tags) {
-        if (!KNOWN_AUDIENCES.has(tag)) throw new Error(`Unknown audience tag: ${tag}`);
+        if (!Object.hasOwn(qualitySections, tag) && tag !== 'all' && tag !== 'author') throw new Error(`Unknown audience tag: ${tag}`);
       }
       if (!tags.length) throw new Error(`Audience tag names no consumer: ${line.trim()}`);
       if (pending) throw new Error(`Audience tag without target: ${line.trim()}`);

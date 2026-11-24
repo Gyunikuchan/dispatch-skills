@@ -4,7 +4,7 @@ Work in `{{checkoutPath}}` against base `{{base}}` and governing spec `{{specPat
 
 ## Objective
 
-Make a best-effort proof that delivered behaviour works at runtime. Choose proportionate methods, such as API calls for a backend or browser checks for a frontend. Rerunning passing tests alone is not proof. Do not build substantial new tooling or applications; stop when further proof adds little confidence. Apply the testing bar below to any tests; ignore `- Prune:` and writer focus.
+Make a best-effort proof that delivered behaviour works at runtime. Choose proportionate methods, such as API calls for a backend or browser checks for a frontend. Rerunning passing tests alone is not proof. Do not build substantial new tooling or applications; stop when further proof adds little confidence. When `test edits permitted`, apply the embedded testing bar to add missed high-signal tests at the cheapest observing layer that give confidence in the verified solution, leaving suite pruning to post-integration test cleanup.
 
 Discover and apply host rule files. Unless `{{focus}}` says `checks passed`, find the repository's own test command from host rule files and repository conventions, run it, and report the result as a baseline row; a failure is an issue, and finding none is a limit. Report missing capabilities as limits; do not install tooling.
 

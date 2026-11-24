@@ -1311,3 +1311,28 @@ test('checks passed condition has one home in brief verifier', () => {
     assert.doesNotMatch(guide, /executed > 0|no bound integration is targeted|zero.command runs|zero commands ran|executed-command condition/);
   }
 });
+
+test('implement step 7 and 8 synchronize stale-test cleanup and shared testing bar', () => {
+  const implement = read(root + 'references/verbs/implement.md');
+  const step7 = implement.split('7. Apply [shared]')[1]?.split('8. Review')[0] ?? '';
+  const step8 = implement.split('8. Review')[1]?.split('9. When')[0] ?? '';
+  assert.ok(step7.length > 0 && step8.length > 0, 'implement steps 7 and 8 exist');
+
+  // Fail-safe cleanup trigger: launches on Tests:, test/fixture/helper, source-code, or contract/spec diffs; skips only non-code/non-contract doc-only diffs.
+  assert.match(step7, /git diff --name-only <base>\.\.HEAD/);
+  assert.match(step7, /Tests:|test\/fixture\/helper|test, fixture, helper|source|contract|spec/i);
+  assert.match(step7, /doc-only|non-code\/non-contract/i);
+  assert.match(step7, /test-cleanup:skip/);
+
+  // Pre-review handling of cleanup-flagged concerns (test-only helpers and uncovered/Check-pinned tier downgrades).
+  assert.match(step7, /test-only/i);
+  assert.match(step7, /downgrade/i);
+  assert.match(step7, /worktree commit/);
+  assert.match(step7, /living-plan|revision protocol|line 38|step below/i);
+
+  // Code review enforces the identical testing bar and rejects restoration of bar-compliant pruning/downgrades.
+  assert.match(step8, /identical|same/i);
+  assert.match(step8, /over-tiered|stale/i);
+  assert.match(step8, /downgrade/i);
+  assert.match(step8, /restor/i);
+});

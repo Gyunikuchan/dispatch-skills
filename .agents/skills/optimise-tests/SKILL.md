@@ -1,6 +1,6 @@
 ---
 name: optimise-tests
-description: Measure this repository's test suite, refactor it unit by unit with parallel scoped writers, and report measured runtime and leaf-test reductions under the high-value test bar.
+description: Measure this repository's test suite, run dynamic recon scouts and scoped writers against Dispatch's testing bar, and report measured deltas.
 disable-model-invocation: true
 metadata:
   internal: true
@@ -8,101 +8,108 @@ metadata:
 
 # Optimise Tests
 
-You, the lead, make the `tests/` suite faster and higher-signal while preserving required behavior and baseline failures. Deterministic scripts measure; native writers refactor one unit each and provide positive retention and action evidence; you own the baseline, scheduling, checks, the move pass, the gate and the handoff.
+You, the lead, reduce reported leaf tests and suite wall time while maintaining a green suite where every surviving test earns its keep under Dispatch's [testing quality bar](../../../skills/dispatch/references/templates/quality-bar.md#testing).
 
-**Objective**: fewer reported leaf tests and lower suite wall time, with a green suite and durable tests that meet the [high-value bar](../../../skills/dispatch/references/templates/quality-bar.md#testing). Coverage is informational implementation feedback. Report measured leaf-test and suite-duration deltas separately from ledger-derived scenario, case, and setup savings. Report unmet objectives explicitly.
-
-Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start; `<work>` is `.scratch/optimise-tests/<run>`. `<skill>` is the directory holding this `SKILL.md`:
-
-| Host | `<skill>` | Unit writers |
-|---|---|---|
-| Antigravity | `.agents/skills/optimise-tests` | parallel subagents |
-| Claude Code | `.claude/skills/optimise-tests` | `Agent` tool, one call per packet |
-| Copilot | `.github/skills/optimise-tests` | sequential, in your own context |
-| OpenCode | `.opencode/skill/optimise-tests` | `task` tool, one call per packet |
-| Codex | `.agents/skills/optimise-tests` | native subagents, one per packet |
-
-[config.json](config.json) holds the units (test folders, in run order), `packetLineBudget`, `slowTestMs`, `maxParallelWriters`, `coverageInclude` and `excludeFromWriters`. A unit id is its folder path (for example `tests/unit/policy`) and is the value `--units` accepts.
-
-**Ownership**: each writer owns the files of one packet, inside one unit folder. Paths matching `excludeFromWriters` (shared helpers and fixtures) and every other folder are lead-owned; writers report needed changes there to the lead. Writers never run git write commands.
+Fix `<run>` once at the start as local `yyyy-mm-dd-hhmm`; `<work>` is `.scratch/optimise-tests/<run>`. Keep shared helpers and fixtures (`tests/helpers/**`, `tests/fixtures/**`, `tests/unit/*/fixtures/**`), cross-file moves/tier downgrades, and production files (including test-only production helpers) strictly lead-owned. Coverage is informational feedback only.
 
 ## 1. Baseline
 
-Check that `git status --porcelain` lists no changes under `tests/`, `skills/`, `scripts/` or `<skill>/scripts/`; a dirty tree makes the deltas unattributable, so ask the user to commit or stash first. Save `git status --porcelain` to `<work>/baseline-status.txt`; check 1 in step 3 preserves every path it lists. Then run the full suite once:
+Verify `git status --porcelain` shows a clean tree under `tests/`, `skills/`, `scripts/`, and `.agents/skills/optimise-tests/scripts/`; if dirty, stop and ask the user to commit or stash first so deltas stay attributable.
+
+Create `<work>/before`, save `git status --porcelain` to `<work>/baseline-status.txt`, capture `npm test` output and exit code immediately before running `inventory.ts`, and take the starting test inventory.
+
+`bash` / `zsh`:
 
 ```bash
-node <skill>/scripts/inventory.ts --out <work>/before --coverage
+mkdir -p <work>/before
+git status --porcelain > <work>/baseline-status.txt
+npm test > <work>/before/npm-test.log 2>&1; echo "npm-test-exit=$?" >> <work>/before/npm-test.log
+node .agents/skills/optimise-tests/scripts/inventory.ts --out <work>/before --coverage
 ```
 
-It writes `<work>/before/inventory.json` (`totals`, `files`, `coverage`, `candidates`, `failures`), `<work>/before/events.jsonl`, and one packet per unit at `<work>/before/packets/<id>.json`. The id is the unit path with `/` replaced by `-` (`tests-unit-policy`); a unit over `packetLineBudget` splits into `<id>-1`, `<id>-2`, … by file-name prefix cluster. Packet candidates surface duplicate titles, shared imports, merge clusters, budget overruns (`budgetOverruns`), and dense files (`denseFiles`). Recorded `failures` are a red baseline: note each one and leave those tests unchanged; report any proposed action on them as a blocker for lead review.
+PowerShell:
 
-**Done when:** `inventory.json` exists with nonzero `totals.tests`, a nonempty `coverage` map, and a packet for every configured unit.
+```powershell
+New-Item -ItemType Directory -Force -Path <work>/before | Out-Null
+git status --porcelain | Out-File -Encoding utf8 <work>/baseline-status.txt
+$LASTEXITCODE = -1; npm test 2>&1 | Out-File -Encoding utf8 <work>/before/npm-test.log; Add-Content -Encoding utf8 <work>/before/npm-test.log "npm-test-exit=$LASTEXITCODE"
+node .agents/skills/optimise-tests/scripts/inventory.ts --out <work>/before --coverage
+```
 
-## 2. Run unit writers
+Use `<work>/before/npm-test.log` (covering typecheck, maintain, hashes, terms, and config checks) alongside `inventory.json` `failures` to separate all pre-existing baseline failures from new regressions. Keep baseline-failing tests untouched during writer edits unless resolved by lead or user disposition.
 
-Resolve models once per run, with `<platform>` the canonical host (`claude`, `agy`, `copilot`, `opencode`, `codex`):
+**Done when:** `<work>/baseline-status.txt`, `<work>/before/npm-test.log` (ending with `npm-test-exit=<code>`), and `<work>/before/inventory.json` (with nonzero `totals.tests`) exist and every baseline failure is recorded.
+
+## 2. Resolve Dispatch utility models and concurrency
+
+Initialize a Dispatch session and resolve utility launch parameters dynamically for your `<platform>` (`claude`, `agy`, `copilot`, `opencode`, `codex`, or any Dispatch-configured host):
 
 ```bash
-node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "optimise-tests <run>" --host <platform>
-node <skills-dir>/dispatch/scripts/dispatch.ts doctor run --session <session> --host <platform> --level medium
+node skills/dispatch/scripts/dispatch.ts session init --objective "optimise-tests <run>" --host <platform>
+node skills/dispatch/scripts/dispatch.ts doctor run --session <session> --host <platform>
 ```
 
-Read the result file at the printed `path`. Apply the rules of [Dispatch routing](../../../skills/dispatch/SKILL.md#routing) and [launch and continue](../../../skills/dispatch/SKILL.md#launch-and-continue): `ok` false stops the run; no entry for the host means inline work, recorded as a coverage gap; an entry the host cannot launch is a blocker. Unit writers use the `utility` entry.
+Read the result JSON at the printed `path` and inspect `ok` and `reason` first:
 
-Launch one native writer per packet, in parallel, at most `maxParallelWriters` at once; queue the rest and start the next as each returns. When no `utility` entry resolves for the host, process packets one at a time yourself. Brief each writer:
+- If `ok` is `false` (for example `config-invalid` or `integrity-drift`), stop and report the blocker with `reason` and `problems`.
+- If `ok` is `true`, read `utility[<platform>]` (`models`, `effort`, `contextLimit`, `launchAs`) and `writeConcurrency` unchanged (defaults to `1` when omitted). Follow `utility[<platform>].launchAs` from [Dispatch routing](../../../skills/dispatch/SKILL.md#routing) and [launch and continue](../../../skills/dispatch/SKILL.md#launch-and-continue) when launching scouts and cleanup subagents; unlike Dispatch task worktrees, parallel cleanup subagents here run in utility write mode on strictly disjoint file scopes. Fall back to sequential inline execution in your own context only when `ok` is `true` and your host lacks a subagent launch tool.
 
+**Done when:** `doctor run` returned `ok: true` and `utility[<platform>].launchAs` plus `writeConcurrency` are resolved.
+
+## 3. Recon scouts and scope partitioning
+
+Launch parallel read-only recon scouts using `utility[<platform>].launchAs` (or run sequentially inline only under the step-2 fallback). Give each scout a slice of `<work>/before/inventory.json` (`files` and `candidates`: `budgetOverruns`, `denseFiles`, `slowestTests`, `duplicateTitles`, `sharedImports`, `mergeClusters`) and instruct it to scan test and source files for:
+
+- **Stale tests** guarding removed, moved, or superseded specs or code (*the past*).
+- **Over-tiered tests** observable at a cheaper layer (unit over integration over e2e).
+- **Low-signal or trivial tests** (*nothing*, *the implementation*, or straight-line/lightly-branching glue without complex logic or simplicity-floor boundaries per [testing quality bar](../../../skills/dispatch/references/templates/quality-bar.md#testing)).
+- **Slow or test-dense files** needing splitting, rewriting, or consolidation.
+- **Test-only production helpers** referenced only by deleted or candidate tests.
+
+Partition scout targets into disjoint writer scopes (explicit test file lists per writer), keeping `tests/helpers/**`, `tests/fixtures/**`, `tests/unit/*/fixtures/**`, cross-file moves/downgrades, and production files outside every writer's scope.
+
+**Done when:** every scout has reported and disjoint writer file scopes are assigned.
+
+## 4. Parallel cleanup writers
+
+Launch up to `writeConcurrency` cleanup subagents in parallel using `utility[<platform>].launchAs` (queuing remaining disjoint scopes until a slot frees, or running sequentially inline only when `ok` is `true` and the host has no launch tool). Pass each subagent its in-scope baseline failure list combining identifiable failing tests from `<work>/before/inventory.json` and `<work>/before/npm-test.log` (reconciling any unidentifiable baseline failure before assigning its scope; pass `none` when none apply) and brief it:
+
+```text
+Optimise these test files: <assigned test file paths>.
+Baseline failures in scope (preserve untouched pending lead/user disposition): <file:test-title list from <work>/before/inventory.json and <work>/before/npm-test.log, or none>.
+Standard: read skills/dispatch/references/templates/quality-bar.md#testing and aggressively delete, merge, rewrite, or downgrade in-scope tests (including stale tests) under its four retention gates and - Prune: rules.
+Boundaries: edit only your assigned test files; keep listed baseline-failing tests and lead-owned exclusions (tests/helpers/**, tests/fixtures/**, tests/unit/*/fixtures/**) untouched; run no Git write commands and no Dispatch toolkit commands.
+Verify: run the focused Node test command from AGENTS.md § Verification Details over your surviving assigned test files (account for any whole-file deletions in the report).
+Report: changed and deleted paths, deleted/merged/rewritten counts, test pass/fail output, and any proposed cross-file moves, cross-layer tier downgrades, shared helper/fixture edits, or test-only production helpers for the lead.
 ```
-Optimise packet <id> of the dispatch-skills test suite. Read <skill>/references/criteria.md and follow it.
-Mandate: aggressively prune low-signal tests under the high-value test bar. Challenge every test's right to exist. Delete or merge any test that cannot defend a plausible severe defect distinct from static types or adjacent tests.
-Packet: <work>/before/packets/<id>.json. Inspect candidate telemetry (budgetOverruns, denseFiles, slowestTests) to target slow and test-dense files for pruning, consolidation, or splitting.
-Scope: you own only the packet's files in <unit>. <new-files>
-Verify: the focused Node test command from AGENTS.md § Verification Details over the files you own.
-Ledger: append complete action and retained-scenario JSON records to <work>/ledger/<id>.jsonl. Classify every baseline test. The lead owns optional savings records after the full after snapshot.
-Never run git write commands. Return only completion (ledger path, verify result, any lead-owned request) or a blocker.
-```
 
-Set `<new-files>` to "Single-packet unit: you may add new test files in <unit> to split dense or slow files in-place." when the unit has one packet. When a unit is split into several packets, set it to "Multi-packet unit: do not create files; propose required `move` or `split` actions with explicit before and intended after references in the ledger for the lead." so parallel writers never pick the same new path.
+**Done when:** every writer has returned verified edits or a blocker.
 
-Pass the packet only; leave your own suspicions out so each writer judges its tests from the evidence. Writer questions about intent (a test may be the only evidence of a documented contract) go to the user; keep the other writers running meanwhile.
+## 5. Lead verification, moves, and helper removal
 
-**Done when:** every packet's writer has returned completion or a blocker, and every blocker is resolved or recorded for the handoff.
+Compare `git status --porcelain` against `<work>/baseline-status.txt` and assigned scopes; inspect any unexpected edit outside assigned scopes, retain it untouched, and escalate to the user for disposition rather than reverting automatically. Run the focused Node test command (`AGENTS.md` § Verification Details) over all surviving modified and replacement test files, accounting for whole-file deletions via the diff and full-suite verification, and resolving or reverting only verified writer regressions.
 
-## 3. Check each unit
+Execute lead-owned work serially:
 
-As each writer returns, run checks 2 and 3a for its packet. Run check 3b for a unit once all of its writers have returned, and check 1 once every writer has returned, so no in-flight writer's edits are judged:
+- Apply cross-file moves, splits, and cross-layer tier downgrades (re-home e2e/integration tests down to cheaper unit/integration layers and delete superseded upper-tier tests).
+- Apply required updates in `tests/helpers/**`, `tests/fixtures/**`, and `tests/unit/*/fixtures/**`.
+- Remove verified test-only production helpers after confirming zero remaining production or retained-test callers, then verify affected tests.
 
-1. Compare `git status --porcelain` against the union of all packets' owned paths (packet files, plus new files created in single-packet units). Ignore paths listed in `<work>/baseline-status.txt` and under `.scratch/`. Revert a remaining changed path under `tests/` that no packet owns, and record it as a rejected edit. Report any other remaining changed path to the user instead of reverting it, since a shared tree gives no per-writer attribution; never revert another packet's owned path.
-2. Check its evidence against [criteria.md](references/criteria.md): every baseline test has an action or positive retain record; records are structurally complete; and duplicate or hollow deletion claims have the required evidence. Check same-defect claims against the named surviving tests. Resolve after references against the full after inventory in step 5. Return incomplete or unsupported evidence to the writer. An uncertain required contract stays unchanged and remains a blocker outside the gate ledger.
-3. Run the focused command from `AGENTS.md` § Verification Details:
-   a. Over the returning packet's owned files (including any in-place split files created by single-packet writers). If red, send the failing output back to that writer once; if still red, restore only that packet's failing files and record the gap.
-   b. Over the whole unit, after all its writers return. If red, attribute each failing file to its owning packet and handle it as in 3a.
+**Done when:** all lead-owned moves, downgrades, fixture updates, and helper removals are applied and focused runs over touched test files show zero new regressions (accounting for any preserved baseline failures).
 
-**Done when:** every unit's 3b run is green, and every rejected or restored change is recorded.
+## 6. After measurement, audit, and handoff
 
-## 4. Move pass
-
-After all units pass step 3, apply ledger `move` actions and multi-packet `split` actions serially as lead-owned work. Move or split tests to match their after references, update imports, and remove superseded source tests. Single-packet writers already split files directly in Step 2; multi-packet writers propose moves and splits in their ledger while leaving files in place. Apply helper and fixture requests as lead-owned work. Run the focused command over every file touched, then confirm each after reference against the final inventory.
-
-**Done when:** every `move`, multi-packet `split`, and lead-owned request is applied or declined with a recorded reason, its evidence matches the resulting tests, and the touched files are green.
-
-## 5. Gate
-
-Run the full suite again; a partial `--units` run cannot serve as the after snapshot, because files it skips read as zero covered lines:
+Run the after snapshot with delta comparison and full verification after the last change:
 
 ```bash
-node <skill>/scripts/inventory.ts --out <work>/after --coverage
-node <skill>/scripts/compare.ts <work>/before/inventory.json <work>/after/inventory.json --ledger <work>/ledger > <work>/compare.md
+node .agents/skills/optimise-tests/scripts/inventory.ts --out <work>/after --coverage --compare <work>/before/inventory.json
 npm test
 ```
 
-The comparison validates complete action and retention evidence and reports after-run failures. Review retained scenarios against the high-value bar and check same-defect claims against the named survivors. Coverage changes, including zero or missing metrics, are informational and require no disposition, digest binding or approval. Missing classifications, malformed records, unknown kinds and invalid evidence fail the gate even when coverage holds.
+Run `npm run test:e2e` as well when e2e tests, toolkit, Git, or subprocess behavior changed.
 
-The report measures reported leaf-test counts and suite wall-clock duration. Add at most one optional `savings` record for ledger-derived scenarios, cases, cosmetic table merges, or reduced repeated setup calls, with concrete evidence. `compare.md` labels these separately from measured totals; unreported quantities remain unmeasured. A table merge that retains all cases is cosmetic, not removed work. Preserve configured concurrency and timing budgets.
+Completion requires a green `npm test` (and `npm run test:e2e` when applicable) after the last edit with zero new regressions; if any pre-existing failure blocks those required completion commands, report the run incomplete/blocked until resolved, while preserving and accounting for unrelated baseline failures outside the required suite in the handoff.
 
-**Done when:** `compare.ts` exits 0 and `npm test` passes, both after the last change.
+Audit the final diff against [testing quality bar](../../../skills/dispatch/references/templates/quality-bar.md#testing) to verify deletions, downgrades, and surviving tests satisfy the bar. Hand off in `AGENTS.md` § Long-Running Work and Handoff format, linking `<work>/after/delta.md` with measured leaf-test, file-count, and wall-clock duration deltas, baseline vs. after failure status, informational coverage changes, removed test-only helpers, and any unmet objective or blocker.
 
-## 6. Hand off
-
-Reply in the handoff format of `AGENTS.md` § Long-Running Work and Handoff. Report measured leaf-test and suite-duration deltas against the baseline; if an objective was not met, say so. Keep these results separate from ledger-derived scenario, case, cosmetic-merge, and setup claims. Include `<work>/compare.md`, ledger paths, counts of deleted, merged, moved, and restored tests, informational coverage changes, plus every rejected edit and unresolved blocker.
-
-**Done when:** the reply is sent.
+**Done when:** the final green verification, audit, and handoff are complete.

@@ -32,11 +32,14 @@ test('doctor report resolves writers and level and reports integrity and config 
     assert.equal(report.ok, true);
     assert.equal(report.level, 'medium');
     assert.equal(report.config.path, config);
-    assert.deepEqual(report.writers, { codex: { models: ['first', 'second'], effort: 'low' }, claude: { models: ['other'], effort: null } });
+    assert.deepEqual(report.writers, {
+      codex: { models: ['first', 'second'], effort: 'low', launchAs: 'launch: model first, effort low, else second' },
+      claude: { models: ['other'], effort: null, launchAs: 'launch: model other, no effort set' },
+    });
     await appendRecord(f.session, { kind: 'level', by: 'orchestrator', key: 'level', data: { level: 'high' } }, f.deps);
     report = await run();
     assert.equal(report.level, 'high');
-    assert.deepEqual(report.writers.codex, { models: ['large'], effort: 'max' });
+    assert.deepEqual(report.writers.codex, { models: ['large'], effort: 'max', launchAs: 'launch: model large, effort max' });
     assert.equal((await run(['--level', 'low'])).level, 'low');
     fs.writeFileSync(path.join(skill, 'SKILL.md'), 'drift');
     report = await run();
@@ -80,7 +83,7 @@ test('doctor utility entry resolves contextLimit, reports missing host entry, an
     const report = await run();
     assert.equal(report.ok, true);
     assert.equal(report.explorers, undefined);
-    assert.deepEqual(report.utility.codex, { models: ['fast-explorer'], effort: 'low', contextLimit: 300000 });
+    assert.deepEqual(report.utility.codex, { models: ['fast-explorer'], effort: 'low', contextLimit: 300000, launchAs: 'launch: model fast-explorer, effort low' });
 
     // Missing host entry: config has utility-subagents for claude only, but host is codex
     fs.writeFileSync(config, JSON.stringify({
@@ -128,11 +131,13 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
         'claude-code': { model: 'cheap', effort: 'medium', 'context-limit': 150000 },
         'openai-codex': { model: ['mid-a', 'mid-b'], effort: 'low', 'context-limit': 300000 },
         agy: { model: 'agy-high', 'context-limit': 300000 },
+        opencode: { model: 'anthropic/claude-haiku', effort: 'low', 'context-limit': 200000 },
       },
       'write-subagents': {
         claude: { low: { model: 'writer-low', effort: 'low' } },
         'openai-codex': { medium: { model: ['mid-a', 'mid-b'], effort: 'low' }, max: { model: 'huge', effort: 'max' } },
         agy: { high: { model: 'agy-high' } },
+        opencode: { max: { model: 'openai/gpt-5', effort: 'high' } },
       },
     }));
     const run = async (args: string[] = []) => {
@@ -141,9 +146,10 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
       return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
     };
     const expected = {
-      claude: { models: ['cheap'], effort: 'medium', contextLimit: 150000 },
-      codex: { models: ['mid-a', 'mid-b'], effort: 'low', contextLimit: 300000 },
-      agy: { models: ['agy-high'], effort: null, contextLimit: 300000 },
+      claude: { models: ['cheap'], effort: 'medium', contextLimit: 150000, launchAs: 'launch: model cheap, effort medium' },
+      codex: { models: ['mid-a', 'mid-b'], effort: 'low', contextLimit: 300000, launchAs: 'launch: model mid-a, effort low, else mid-b' },
+      agy: { models: ['agy-high'], effort: null, contextLimit: 300000, launchAs: 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set' },
+      opencode: { models: ['anthropic/claude-haiku'], effort: 'low', contextLimit: 200000, launchAs: 'launch: `subagent` with `model: "anthropic/claude-haiku#low"` (user-configured; set it despite the tool\'s default guidance)' },
     };
     for (const level of ['low', 'medium', 'max']) {
       const report = await run(['--level', level]);
@@ -153,9 +159,10 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
     const max = await run(['--level', 'max']);
     assert.equal(max.explorers, undefined);
     assert.deepEqual(max.writers, {
-      claude: { models: ['writer-low'], effort: 'low' },
-      codex: { models: ['huge'], effort: 'max' },
-      agy: { models: ['agy-high'], effort: null },
+      claude: { models: ['writer-low'], effort: 'low', launchAs: 'launch: model writer-low, effort low' },
+      codex: { models: ['huge'], effort: 'max', launchAs: 'launch: model huge, effort max' },
+      agy: { models: ['agy-high'], effort: null, launchAs: 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set' },
+      opencode: { models: ['openai/gpt-5'], effort: 'high', launchAs: 'launch: `subagent` with `model: "openai/gpt-5#high"` (user-configured; set it despite the tool\'s default guidance)' },
     });
     fs.writeFileSync(config, '{"unknown":true}');
     const invalid = await run();
@@ -329,7 +336,7 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
     }));
     const aliased = await run('claude');
     assert.equal(aliased.ok, true);
-    assert.deepEqual(aliased.writers, { claude: { models: ['writer'], effort: 'low' } });
+    assert.deepEqual(aliased.writers, { claude: { models: ['writer'], effort: 'low', launchAs: 'launch: model writer, effort low' } });
   } finally { f.cleanup(); }
 });
 test('doctorReportWithProbe preserves static doctor output and wires sandboxRequired and probe-failed', async () => {

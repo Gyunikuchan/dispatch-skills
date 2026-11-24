@@ -379,7 +379,7 @@ export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerR
   const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
   const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
   const evidenceDir = path.join(ctx.session, 'verification');
-  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: qualityCriteria(bar, 'cleanup', 0, specStage)});
+  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: qualityCriteria(bar, 'verifier', 0, specStage)});
   assertFilled('verifier', text);
   const directory = path.join(ctx.session, '.state', 'briefs');
   fs.mkdirSync(directory, {recursive: true});
