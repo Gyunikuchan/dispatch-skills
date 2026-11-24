@@ -144,6 +144,8 @@ function io(fx: Fixture, stdout: string[], stderr: string[]) {
   return { cwd: fx.root, home: fx.root, env: fx.env, stdout: (text: string) => stdout.push(text), stderr: (text: string) => stderr.push(text) };
 }
 
+// SECTION: core — measureRuns/measureSides unit behaviour (no CLI, no --out).
+
 test('round turns: measures rounds and per-round calls, host tokens and host turns for completed rounds only', () => {
   const fx = fixture();
   try {
@@ -230,41 +232,25 @@ test('fails the run naming the side when the session folder is missing or the ma
   }
 });
 
-test('measures a session given through an alias of its canonical folder', (t) => {
-  const fx = fixture();
-  try {
-    const session = makeSession(fx);
-    const alias = aliasOf(fx, session);
-    if (!alias) {
-      t.skip('no alias path can be created on this host');
-      return;
+test('alias path forms: measures through an alias and records canonical or as-given', (t) => {
+  for (const form of ['canonical', 'as-given'] as const) {
+    const fx = fixture();
+    try {
+      const session = makeSession(fx);
+      const alias = aliasOf(fx, session);
+      if (!alias) {
+        t.skip('no alias path can be created on this host');
+        return;
+      }
+      writeRoundFixture(session, form === 'as-given' ? alias : session);
+      const side = measureOne(fx, { session: alias, host: 'claude' });
+      assert.equal(side.window.pathForm, form, form);
+      assert.equal(side.perRound[0]?.calls, 2, form);
+      if (form === 'canonical') assert.equal(side.session, session);
+      else assert.equal(side.perRound[0]?.review, reviewKey(alias));
+    } finally {
+      fx.cleanup();
     }
-    writeRoundFixture(session);
-    const side = measureOne(fx, { session: alias, host: 'claude' });
-    assert.equal(side.session, session);
-    assert.equal(side.window.pathForm, 'canonical');
-    assert.equal(side.perRound[0]?.calls, 2);
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('retries with the path as given when the captures recorded that path form', (t) => {
-  const fx = fixture();
-  try {
-    const session = makeSession(fx);
-    const alias = aliasOf(fx, session);
-    if (!alias) {
-      t.skip('no alias path can be created on this host');
-      return;
-    }
-    writeRoundFixture(session, alias);
-    const side = measureOne(fx, { session: alias, host: 'claude' });
-    assert.equal(side.window.pathForm, 'as-given');
-    assert.equal(side.perRound[0]?.calls, 2);
-    assert.equal(side.perRound[0]?.review, reviewKey(alias));
-  } finally {
-    fx.cleanup();
   }
 });
 
@@ -351,6 +337,8 @@ test('prices every host and reviewer unit from the given pricing table and ignor
     fx.cleanup();
   }
 });
+
+// SECTION: efficiency — cost scope, efficiency denominators, verification, and comparison limits.
 
 test('Matched comparisons disclose cost scope and basis', async () => {
   const fx = fixture();
@@ -460,6 +448,8 @@ test('a priced delegate unit with transcript-unavailable coverage marks cost par
     fx.cleanup();
   }
 });
+
+// SECTION: cli — runMeasureRuns, --out guards, and comparison artifacts.
 
 test('a missing pricing file fails the run naming the file', () => {
   const fx = fixture();

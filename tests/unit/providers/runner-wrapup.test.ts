@@ -291,83 +291,84 @@ test('wrap-up stop: Codex thread event stops and resumes with wrap-up inside fiv
   assert.equal(done.outcome.status, 'ok');
 });
 
-test('wrap-up stop: unstoppable runs never stop early', async () => {
-  { // launch without a nameable session runs to the deadline kill
-    const h = harness(posix);
-    const run = runDelegate(codex, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
-    await flush();
-    h.fs.writeText('/r/log', '');
-    for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
-    assert.deepEqual(h.signals, []);
-    assert.ok((h.launches[0]?.argv ?? []).join('\n').includes('[DEADLINE]:'));
-    h.clock.advance(300_000);
-    await flush();
-    assert.ok(h.signals.length > 0);
-    h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
-    const done = await run;
-    assert.equal(h.launches.length, 1);
-    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  }
-  { // run under ten minutes never stops early
-    const h = harness(posix);
-    const run = runDelegate(codex, { ...req, timeoutMs: 9 * 60_000 }, 'cli', h.ports);
-    await flush();
-    h.fs.writeText('/r/log', '{"type":"thread.started","thread_id":"thread-abc123"}');
-    for (let t = 0; t < 4 * 60_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
-    assert.deepEqual(h.signals, []);
-    const shortPrompt = (h.launches[0]?.argv ?? []).join('\n');
-    assert.ok(shortPrompt.includes(`[DEADLINE]: ${new Date(9 * 60_000).toISOString()} (9m remaining)`));
-    assert.ok(!shortPrompt.includes('wrap-up at'), 'short run under floor must omit wrap-up timestamp');
-    h.clock.advance(5 * 60_000);
-    await flush();
-    h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
-    const done = await run;
-    assert.equal(h.launches.length, 1);
-    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  }
-  { // Antigravity fresh launch never stops early
-    const h = harness(posix);
-    const run = runDelegate(agy, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
-    await flush();
-    h.fs.writeText('/r/log', '');
-    h.clock.advance(1_500_000);
-    await flush();
-    assert.deepEqual(h.signals, []);
-    assert.ok(String(h.launches[0]?.argv[2] ?? h.launches[0]?.argv.join(' ') ?? '').includes('[DEADLINE]:'));
-    h.clock.advance(300_000);
-    await flush();
-    h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
-    const done = await run;
-    assert.equal(h.launches.length, 1);
-    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  }
-  { // stall-resumed Antigravity is never stopped for wrap-up
-    const h = harness(posix);
-    let calls = 0;
-    const spec: any = {
-      ...agy,
-      attemptSession: () => (calls++ === 0 ? 'conv-stall-1' : null),
-      parse: (out: ProcessResult) => out.stdout.includes('FINAL')
-        ? { status: 'ok' as const, text: 'FINAL', sessionId: 'c', resume: null }
-        : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
-      argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
-    };
-    const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
-    await flush();
-    h.finish(ok({ exit: 1, stdout: 'empty one' }));
-    await flush(); await flush();
-    assert.equal(h.launches.length, 2);
-    h.fs.writeText('/r/log', '');
-    h.clock.advance(1_500_000 - h.clock.now());
-    await flush();
-    assert.deepEqual(h.signals, []);
-    h.clock.advance(300_000);
-    await flush();
-    h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
-    const finished = await run;
-    assert.equal(h.launches.length, 2);
-    assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
-  }
+test('wrap-up stop: a run without a nameable session runs to the deadline kill', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '');
+  for (let t = 0; t < 1_500_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, []);
+  assert.ok((h.launches[0]?.argv ?? []).join('\n').includes('[DEADLINE]:'));
+  h.clock.advance(300_000);
+  await flush();
+  assert.ok(h.signals.length > 0);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: a run under ten minutes never stops early', async () => {
+  const h = harness(posix);
+  const run = runDelegate(codex, { ...req, timeoutMs: 9 * 60_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '{"type":"thread.started","thread_id":"thread-abc123"}');
+  for (let t = 0; t < 4 * 60_000; t += 60_000) { h.clock.advance(60_000); h.activity(); await flush(); }
+  assert.deepEqual(h.signals, []);
+  const shortPrompt = (h.launches[0]?.argv ?? []).join('\n');
+  assert.ok(shortPrompt.includes(`[DEADLINE]: ${new Date(9 * 60_000).toISOString()} (9m remaining)`));
+  assert.ok(!shortPrompt.includes('wrap-up at'), 'short run under floor must omit wrap-up timestamp');
+  h.clock.advance(5 * 60_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: a fresh Antigravity launch never stops early', async () => {
+  const h = harness(posix);
+  const run = runDelegate(agy, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.fs.writeText('/r/log', '');
+  h.clock.advance(1_500_000);
+  await flush();
+  assert.deepEqual(h.signals, []);
+  assert.ok(String(h.launches[0]?.argv[2] ?? h.launches[0]?.argv.join(' ') ?? '').includes('[DEADLINE]:'));
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const done = await run;
+  assert.equal(h.launches.length, 1);
+  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
+});
+
+test('wrap-up stop: a stall-resumed Antigravity run is never stopped for wrap-up', async () => {
+  const h = harness(posix);
+  let calls = 0;
+  const spec: unknown = {
+    ...agy,
+    attemptSession: () => (calls++ === 0 ? 'conv-stall-1' : null),
+    parse: (out: ProcessResult) => out.stdout.includes('FINAL')
+      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'c', resume: null }
+      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
+    argv: (r: { resume?: string | null; prompt: string; cwd: string }) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
+  };
+  const run = runDelegate(spec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stdout: 'empty one' }));
+  await flush(); await flush();
+  assert.equal(h.launches.length, 2);
+  h.fs.writeText('/r/log', '');
+  h.clock.advance(1_500_000 - h.clock.now());
+  await flush();
+  assert.deepEqual(h.signals, []);
+  h.clock.advance(300_000);
+  await flush();
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
+  const finished = await run;
+  assert.equal(h.launches.length, 2);
+  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
 });
 
 test('wrap-up stop: stall-resumed launch reuses resume id when partial log names no session', async () => {
@@ -444,45 +445,46 @@ test('wrap-up budget: wrap-up after three stall resumes records nudge and wrapUp
   assert.equal((done.invocations[4] as any)?.wrapUp, true);
 });
 
-test('wrap-up fallback: failed wrap-up resume launch returns timeout with partial path', async () => {
-  const h = harness(posix);
-  const spec: any = {
-    ...claude,
-    parse: (out: ProcessResult, r: any) => r.resume
-      ? { status: 'fail' as const, cls: 'empty-output' as const, detail: 'resume empty' }
-      : { status: 'fail' as const, cls: 'config' as const, detail: 'first config' },
-    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
-    attemptSession: () => 'sess1',
-  };
-  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
-  await flush();
-  h.clock.advance(1_500_000);
-  await flush();
-  h.finish(ok({ exit: 1, stdout: 'first config' }));
-  await flush(); await flush();
-  assert.equal(h.launches.length, 2);
-  h.finish(ok({ exit: 1, stdout: 'resume empty' }));
-  const done = await run;
-  assert.equal(h.launches.length, 2);
-  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at/);
-  { // wrap-up resume argv build failure also returns timeout with partial path
-    const argvBoom = harness(posix);
-    const argvSpec: any = {
+test('wrap-up fallback failures return timeout with the partial path', async () => {
+  for (const reachesDeadline of [false, true]) {
+    const h = harness(posix);
+    const spec: unknown = {
       ...claude,
-      parse: () => ({ status: 'fail' as const, cls: 'config' as const, detail: 'first config' }),
-      argv: (r: any) => { if (r.resume) throw new Error('argv boom'); return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }; },
+      parse: (out: ProcessResult, r: { resume?: string | null }) => r.resume
+        ? { status: 'fail' as const, cls: 'empty-output' as const, detail: 'resume empty' }
+        : { status: 'fail' as const, cls: 'config' as const, detail: 'first config' },
+      argv: (r: { resume?: string | null; prompt: string; cwd: string }) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
       attemptSession: () => 'sess1',
     };
-    const argvRun = runDelegate(argvSpec, { ...req, timeoutMs: 1_800_000 }, 'cli', argvBoom.ports);
+    const run = runDelegate(spec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
     await flush();
-    argvBoom.clock.advance(1_500_000);
+    h.clock.advance(1_500_000);
     await flush();
-    argvBoom.finish(ok({ exit: 1, stdout: 'first config' }));
-    const argvDone = await argvRun;
-    assert.equal(argvDone.outcome.status === 'fail' && argvDone.outcome.cls, 'timeout');
-    assert.match(argvDone.outcome.status === 'fail' ? argvDone.outcome.detail : '', /partial output at/);
+    h.finish(ok({ exit: 1, stdout: 'first config' }));
+    await flush(); await flush();
+    assert.equal(h.launches.length, 2, String(reachesDeadline));
+    if (reachesDeadline) { h.clock.advance(300_000); await flush(); }
+    h.finish(ok(reachesDeadline ? { exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true } : { exit: 1, stdout: 'resume empty' }));
+    const done = await run;
+    assert.equal(h.launches.length, 2, String(reachesDeadline));
+    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout', String(reachesDeadline));
+    assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at/, String(reachesDeadline));
   }
+  const argvBoom = harness(posix);
+  const argvSpec: unknown = {
+    ...claude,
+    parse: () => ({ status: 'fail' as const, cls: 'config' as const, detail: 'first config' }),
+    argv: (r: { resume?: string | null; prompt: string; cwd: string }) => { if (r.resume) throw new Error('argv boom'); return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }; },
+    attemptSession: () => 'sess1',
+  };
+  const argvRun = runDelegate(argvSpec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', argvBoom.ports);
+  await flush();
+  argvBoom.clock.advance(1_500_000);
+  await flush();
+  argvBoom.finish(ok({ exit: 1, stdout: 'first config' }));
+  const argvDone = await argvRun;
+  assert.equal(argvDone.outcome.status === 'fail' && argvDone.outcome.cls, 'timeout');
+  assert.match(argvDone.outcome.status === 'fail' ? argvDone.outcome.detail : '', /partial output at/);
 });
 
 test('wrap-up stop: Copilot with streamed output stops and resumes with wrap-up', async () => {
@@ -543,31 +545,7 @@ test('wrap-up stop: OpenCode session event stops and resumes with wrap-up', asyn
   assert.equal(finished.outcome.status, 'ok');
 });
 
-test('wrap-up fallback: wrap-up resume that reaches the deadline returns timeout', async () => {
-  const h = harness(posix);
-  const spec: any = {
-    ...claude,
-    parse: (out: ProcessResult, r: any) => r.resume
-      ? { status: 'fail' as const, cls: 'empty-output' as const, detail: 'resume empty' }
-      : { status: 'fail' as const, cls: 'config' as const, detail: 'first config' },
-    argv: (r: any) => ({ argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd }),
-    attemptSession: () => 'sess1',
-  };
-  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
-  await flush();
-  h.clock.advance(1_500_000);
-  await flush();
-  h.finish(ok({ exit: 1, stdout: 'first config' }));
-  await flush(); await flush();
-  assert.equal(h.launches.length, 2);
-  h.clock.advance(300_000);
-  await flush();
-  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial', timedOut: true }));
-  const finished = await run;
-  assert.equal(h.launches.length, 2);
-  assert.equal(finished.outcome.status === 'fail' && finished.outcome.cls, 'timeout');
-  assert.match(finished.outcome.status === 'fail' ? finished.outcome.detail : '', /partial output at/);
-});
+
 
 test('wrap-up stop: failed tree kill keeps the deadline kill and returns timeout with no resume', async () => {
   const h = harness(posix);

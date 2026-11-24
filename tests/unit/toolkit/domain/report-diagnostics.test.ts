@@ -11,7 +11,6 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
-
 const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
 const failure = (text: string, truncated = false) => {
@@ -24,15 +23,6 @@ const parseDetail = (text: string) => {
   return result.ok ? null : result.failure.detail;
 };
 
-
-
-
-
-
-
-
-
-
 const MARK = 'unresolved-locus: ';
 const planLocus = '§ Work';
 const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
@@ -40,13 +30,6 @@ const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
   assert.ok(result.ok);
   return result.findings.map(item => item.locus);
 };
-
-
-
-
-
-
-
 
 // SECTION: Unknown tag recovery
 
@@ -58,10 +41,6 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   assert.ok(result.ok, result.ok ? '' : result.failure.detail);
   return result.findings;
 };
-
-
-
-
 
 // SECTION: Diagnostics reports
 
@@ -110,36 +89,12 @@ function assertShape(finding: Finding | undefined, category: keyof typeof CATEGO
 
 // SECTION: Layout, durations, and token columns
 
-
-
 // SECTION: Heuristics, severity, and model attribution
-
-
 
 const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('</details>')[0]!.split('\n').filter((line) => line.startsWith('|'));
-
-
-
-
-
-
 
 // SECTION: Scope gate and redaction
 
@@ -150,27 +105,10 @@ const LEAKS = [
 ];
 const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
 
-
-
-
-
-
-
-
-
-
-
 // SECTION: Finding origin
 
 const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
 const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
-
-
-
-
-
-
-
 
 test('diagnostics config renders utility-subagents and redacts read-command locators', () => {
   const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300000 } } };
@@ -523,149 +461,81 @@ test('diagnostics report names each lifecycle step outcome and keeps raw details
   assert.doesNotMatch(text, /prepare failed|home\/me|opencode/);
 });
 
-test('key bound: sanitize bounds 40 model keys to 32 largest plus other', () => {
-  const models: Record<string, { input: number; output: number }> = {};
-  for (let i = 0; i < 40; i++) {
-    models[`m${String(i).padStart(2, '0')}#high`] = { input: (i + 1) * 10, output: 1 };
-  }
-  const clean = sanitizeFacts(facts({ invocations: [invocation({ usage: { input: 8200, output: 40, models } })] }));
-  const kept = Object.keys(clean.invocations[0]?.usage?.models ?? {});
-  assert.equal(kept.length, 33);
-  assert.ok(kept.includes('other'));
-  assert.equal('m00#high' in (clean.invocations[0]?.usage?.models ?? {}), false);
-  assert.equal('m08#high' in (clean.invocations[0]?.usage?.models ?? {}), true);
-});
-
-test('banded facts: round-trips valid bands, split, reasoningInOutput and phase, and drops invalid bands or over-total split', () => {
-  const valid = sanitizeFacts(facts({
-    hostUsage: {
-      platform: 'claude',
-      rows: [{
-        stage: 'plan', phase: 'plan', role: 'host', model: 'm', effort: 'high',
-        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: true,
-        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
-      } as never],
-    },
-    invocations: [invocation({
-      usage: {
-        input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8, reasoningInOutput: false,
-        bands: { le100k: { input: 100, output: 10, cacheWrite: 20, cacheWrite5m: 12, cacheWrite1h: 8 } },
-      } as never,
-    })],
-  }));
-  const hRow = valid.hostUsage?.rows[0] as Record<string, unknown>;
-  assert.equal(hRow['phase'], 'plan');
-  assert.equal(hRow['cacheWrite5m'], 12);
-  assert.equal(hRow['cacheWrite1h'], 8);
-  assert.equal(hRow['reasoningInOutput'], true);
-  assert.ok(hRow['bands']);
-  const uRow = valid.invocations[0]?.usage as Record<string, unknown>;
-  assert.equal(uRow['cacheWrite5m'], 12);
-  assert.equal(uRow['cacheWrite1h'], 8);
-  assert.equal(uRow['reasoningInOutput'], false);
-  assert.ok(uRow['bands']);
-
-  const invalid = sanitizeFacts(facts({
-    invocations: [invocation({
-      usage: {
-        input: 100, output: 10, cacheWrite: 10, cacheWrite5m: 8, cacheWrite1h: 5,
-        bands: { le100k: { input: 99, output: 10 }, bogus: { input: 1, output: 0 } },
-      } as never,
-    })],
-  }));
-  const badU = invalid.invocations[0]?.usage as Record<string, unknown>;
-  assert.equal('bands' in badU, false);
-  assert.equal('cacheWrite5m' in badU, false);
-  assert.equal('cacheWrite1h' in badU, false);
-});
-
-test('coverage list: sanitizes legacy string and renders reasons on measured and unmeasured invocations', () => {
-  const { usage: _u, ...unmeasuredCopilot } = invocation({ provider: 'copilot', coverage: 'no usage output' } as unknown as Partial<InvocationFacts>);
-  const legacy = sanitizeFacts(facts({ invocations: [unmeasuredCopilot] }));
-  assert.deepEqual(legacy.invocations[0]?.coverage, ['no usage']);
-
-  const text = render([facts({
-    invocations: [
-      unmeasuredCopilot,
-      invocation({ provider: 'claude', usage: { input: 50, output: 5 }, coverage: ['transcript unavailable'] }),
-    ],
-  })]);
-  assert.match(text, /\| claude \| 50 \| — \| — \| 5 \| — \| delegates 1\/1 transcript unavailable \|/);
-  assert.match(text, /\| copilot \| — \| — \| — \| — \| — \| delegates 0\/1 no usage \|/);
-  assert.match(text, /\| code review \| claude \| delegate \| .* \| 50 \| — \| — \| 5 \| — \| 1\/1 transcript unavailable \|/);
-  assert.match(text, /\| code review \| copilot \| delegate \| .* \| — \| — \| — \| — \| — \| 0\/1 no usage \|/);
-});
-
-test('review timing preserves unknown slots and limits CLI spans to launched attempts', () => {
- const timing=[{review:'review-1234567890abcdef',round:1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:100}]},{slot:'claude[0]',attempts:[{startMs:90,endMs:110}]}]}];
- const text=render([facts({roundTiming:timing} as never)]);
- assert.match(text,/subject 1234567890abcdef/);
- assert.match(text,/claude\[0\].*✓/);
- const unknown=render([facts({roundTiming:[{...timing[0],slots:[...timing[0]!.slots,{slot:'native[0]',attempts:[]}]}]} as never)]);
- assert.doesNotMatch(unknown,/✓/);
- const review='review-1234567890abcdef';
- const cli=(startMs:number,endMs?:number)=>({surface:'cli' as const,startMs,...(endMs===undefined?{}:{endMs})});
- const native={surface:'native' as const};
- const empty={slot:'empty[0]',attempts:[]};
- const nativeOnly={slot:'native[0]',attempts:[native]};
- const prior={slot:'codex[0]',attempts:[cli(1000,2500),native]};
- const last={slot:'native[1]',attempts:[cli(6000,8000)]};
- const cliText=render([facts({roundTiming:[
+test('review timing renders attempts, gaps and compaction without leaking names', () => {
+// review timing preserves unknown slots and limits CLI spans to launched attempts
+{
+   const timing=[{review:'review-1234567890abcdef',round:1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:100}]},{slot:'claude[0]',attempts:[{startMs:90,endMs:110}]}]}];
+   const text=render([facts({roundTiming:timing} as never)]);
+   assert.match(text,/subject 1234567890abcdef/);
+   assert.match(text,/claude\[0\].*✓/);
+   const unknown=render([facts({roundTiming:[{...timing[0],slots:[...timing[0]!.slots,{slot:'native[0]',attempts:[]}]}]} as never)]);
+   assert.doesNotMatch(unknown,/✓/);
+   const review='review-1234567890abcdef';
+   const cli=(startMs:number,endMs?:number)=>({surface:'cli' as const,startMs,...(endMs===undefined?{}:{endMs})});
+   const native={surface:'native' as const};
+   const empty={slot:'empty[0]',attempts:[]};
+   const nativeOnly={slot:'native[0]',attempts:[native]};
+   const prior={slot:'codex[0]',attempts:[cli(1000,2500),native]};
+   const last={slot:'native[1]',attempts:[cli(6000,8000)]};
+   const cliText=render([facts({roundTiming:[
   {review,round:1,slots:[prior,empty,nativeOnly,last]},
   {review,round:2,slots:[prior,{...last,attempts:[cli(6000)]}]},
   {review,round:3,slots:[empty,nativeOnly]},
   {review,round:4,slots:[prior,{...last,attempts:[{startMs:6000,endMs:8000}]}]},
-]} as never)]);
- const health=cliText.split('## Review health')[1]!;
- assert.match(health,/\| subject 1234567890abcdef \| 1\/4 \| 7s \(CLI only\) \|/);
- assert.match(cliText,/\| 1 \| codex\[0\] \| — \| — \|/);
-});
+  ]} as never)]);
+   const health=cliText.split('## Review health')[1]!;
+   assert.match(health,/\| subject 1234567890abcdef \| 1\/4 \| 7s \(CLI only\) \|/);
+   assert.match(cliText,/\| 1 \| codex\[0\] \| — \| — \|/);
+}
 
-test('review timing includes retry gaps, ties and invalid endpoints', () => {
- const slot=(slot:string,...attempts:unknown[])=>({slot,attempts});
- const rounds=[
+// review timing includes retry gaps, ties and invalid endpoints
+{
+   const slot=(slot:string,...attempts:unknown[])=>({slot,attempts});
+   const rounds=[
   {review:'review-1234567890abcdef',round:1,slots:[slot('a[0]',{startMs:0,endMs:1000},{startMs:3000,endMs:5000}),slot('b[0]',{startMs:4000,endMs:5000})]},
   {review:'review-1234567890abcdef',round:2,slots:[slot('a[0]',{startMs:0,endMs:1000},{startMs:3000,endMs:2000}),slot('b[0]',{startMs:0,endMs:5000})]},
   {review:'review-1234567890abcdef',round:3,slots:[slot('native[0]'),slot('a[0]',{startMs:1})]},
- ];
- const text=render([facts({roundTiming:rounds} as never)]);
- assert.match(text,/\| subject 1234567890abcdef \| 1 \| a\[0\] \| 5s \| ✓ \|/);
- assert.match(text,/\| subject 1234567890abcdef \| 1 \| b\[0\] \| 1s \| — \|/);
- assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
- assert.match(text,/\| subject 1234567890abcdef \| 3 \| native\[0\] \| — \| — \|/);
- assert.equal((text.match(/✓/g)??[]).length,1);
- assert.doesNotMatch(text,/slot removal|remove.*slot/i);
+   ];
+   const text=render([facts({roundTiming:rounds} as never)]);
+   assert.match(text,/\| subject 1234567890abcdef \| 1 \| a\[0\] \| 5s \| ✓ \|/);
+   assert.match(text,/\| subject 1234567890abcdef \| 1 \| b\[0\] \| 1s \| — \|/);
+   assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
+   assert.match(text,/\| subject 1234567890abcdef \| 3 \| native\[0\] \| — \| — \|/);
+   assert.equal((text.match(/✓/g)??[]).length,1);
+   assert.doesNotMatch(text,/slot removal|remove.*slot/i);
+}
+
+// review timing compaction omits complete rounds and retains the omission count
+{
+   const rounds=Array.from({length:3000},(_,i)=>({review:'review-1234567890abcdef',round:i+1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:1000}]}]}));
+   const text=render([facts({roundTiming:rounds} as never)]);
+   assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
+   const count=Number(/(\d+) review round rows omitted\./.exec(text)?.[1]);
+   assert.ok(count>1);
+   assert.match(text,/\d+ review timing rounds omitted/);
+   const kept=3000-count;
+   assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept}/3000 \\|`));
+   assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept+1}/3000 \\|`));
+   const next=text.replace(`\n\n${count} review round rows omitted.`, `\n| subject 1234567890abcdef | ${kept+1}/3000 | — | — | — | — | — | — |\n\n${count-1} review round rows omitted.`);
+   assert.ok(Buffer.byteLength(next)>DIAGNOSTIC_LIMITS.reportBytes, 'another complete round exceeds the cap');
+}
+
+// review timing rejects nonopaque identities and invalid endpoints
+{
+   const text=render([facts({roundTiming:[{review:'private/path',round:1,slots:[{slot:'a[0]',attempts:[{startMs:0,endMs:1}]}]},{review:'review-1234567890abcdef',round:2,slots:[{slot:'a[0]',attempts:[{startMs:-1,endMs:5}]}]}]} as never)]);
+   assert.doesNotMatch(text,/private\/path/);
+   assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
+}
+
+// malformed timing slots and attempts stay unknown without leaking names
+{
+   const text=render([facts({roundTiming:[{review:'review-1234567890abcdef',round:1,slots:[{slot:'private/path',attempts:[{startMs:0,endMs:3}]},{slot:'a[0]',attempts:[{startMs:0,endMs:4},null]},null,{slot:'b[0]',attempts:[{startMs:0,endMs:5}]}]}]} as never)]);
+   assert.doesNotMatch(text,/private\/path|✓/);
+   const timing=text.split('### Review round timing')[1]!.split('### Review yield')[0]!;
+   assert.equal((timing.match(/\| — \| — \| — \|/g)??[]).length,2);
+   assert.match(text,/\| a\[0\] \| — \| — \|/);
+}
 });
-
-test('review timing compaction omits complete rounds and retains the omission count', () => {
- const rounds=Array.from({length:3000},(_,i)=>({review:'review-1234567890abcdef',round:i+1,slots:[{slot:'codex[0]',attempts:[{startMs:0,endMs:1000}]}]}));
- const text=render([facts({roundTiming:rounds} as never)]);
- assert.ok(Buffer.byteLength(text)<=DIAGNOSTIC_LIMITS.reportBytes);
- const count=Number(/(\d+) review round rows omitted\./.exec(text)?.[1]);
- assert.ok(count>1);
- assert.match(text,/\d+ review timing rounds omitted/);
- const kept=3000-count;
- assert.match(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept}/3000 \\|`));
- assert.doesNotMatch(text,new RegExp(`\\| subject 1234567890abcdef \\| ${kept+1}/3000 \\|`));
- const next=text.replace(`\n\n${count} review round rows omitted.`, `\n| subject 1234567890abcdef | ${kept+1}/3000 | — | — | — | — | — | — |\n\n${count-1} review round rows omitted.`);
- assert.ok(Buffer.byteLength(next)>DIAGNOSTIC_LIMITS.reportBytes, 'another complete round exceeds the cap');
-});
-
-
-test('review timing rejects nonopaque identities and invalid endpoints', () => {
- const text=render([facts({roundTiming:[{review:'private/path',round:1,slots:[{slot:'a[0]',attempts:[{startMs:0,endMs:1}]}]},{review:'review-1234567890abcdef',round:2,slots:[{slot:'a[0]',attempts:[{startMs:-1,endMs:5}]}]}]} as never)]);
- assert.doesNotMatch(text,/private\/path/);
- assert.match(text,/\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
-});
-
-test('malformed timing slots and attempts stay unknown without leaking names', () => {
- const text=render([facts({roundTiming:[{review:'review-1234567890abcdef',round:1,slots:[{slot:'private/path',attempts:[{startMs:0,endMs:3}]},{slot:'a[0]',attempts:[{startMs:0,endMs:4},null]},null,{slot:'b[0]',attempts:[{startMs:0,endMs:5}]}]}]} as never)]);
- assert.doesNotMatch(text,/private\/path|✓/);
- const timing=text.split('### Review round timing')[1]!.split('### Review yield')[0]!;
- assert.equal((timing.match(/\| — \| — \| — \|/g)??[]).length,2);
- assert.match(text,/\| a\[0\] \| — \| — \|/);
-});
-
 test('round workload renders observed calls, dashes for unavailable cells, and the not-counted note', () => {
  const review='review-1234567890abcdef';
  const text=render([facts({roundWorkload:[

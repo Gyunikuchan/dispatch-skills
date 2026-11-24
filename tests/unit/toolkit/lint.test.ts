@@ -59,7 +59,9 @@ test('lint run unknown edit field names allowed fields', async () => {
 });
 
 describe('lint severity', () => {
-  test('lint results carry only kind hash errors and warnings', async () => {
+    test('lint results carry severity, refuse critical defects and preserve structure as warnings', async () => {
+  // lint results carry only kind hash errors and warnings
+  {
     const a = await lint('a.plan.md', PLAN + '\n## Review Findings & Resolutions\nold\n');
     const b = await lint('b.plan.md', PLAN + '\n## Review Findings & Resolutions\nnew\n');
     const spec = await lint('shape.spec.md', SPEC);
@@ -80,22 +82,28 @@ describe('lint severity', () => {
     assert.equal(context.exit, 0);
     assert.deepEqual(context.result.errors, []);
     assert.deepEqual(context.result.warnings, []);
-  });
-  test('parse critical plan defects refuse lint', async () => {
+  }
+
+  // parse critical plan defects refuse lint
+  {
     const refused = await lint('bad.plan.md', PLAN.replace('- [SC1]', '- [SCx]'));
     assert.equal(refused.exit, 4);
     assert.equal(refused.output.reason, 'lint-errors');
     assert.ok(refused.result.errors.length);
-  });
-  test('requirements block while decision heading defects warn', async () => {
+  }
+
+  // requirements block while decision heading defects warn
+  {
     assert.equal((await lint('a.spec.md', SPEC.replace('REQ-1', 'REQ-x'))).exit, 4);
     const missing = parseSpec(SPEC.replace('## Requirements', '## Other'));
     assert.equal(missing.ok, false);
     const r = await lint('a.spec.md', SPEC.replace('DEC-1', 'DEC-x'));
     assert.equal(r.exit, 0);
     assert.ok(r.result.warnings.some((x: { code: string }) => x.code === 'malformed-id'));
-  });
-  test('design graph defects preserve partial structure as warnings', async () => {
+  }
+
+  // design graph defects preserve partial structure as warnings
+  {
     const graph = '# Design\n## Increment Dependency Graph\n';
     scoped.artifact('a.design.context.md', CONTEXT_MAP);
     const envelope = await lint('a.design.md', graph);
@@ -111,7 +119,9 @@ describe('lint severity', () => {
       assert.equal(r.design.increments.length, count);
       assert.ok(r.warnings.some(x => x.code === code));
     }
+  }
   });
+
 });
 
 test('lintArtifact reports broken-citation while loadPlan stays immune', async t => {

@@ -109,11 +109,6 @@ const writeJson = (file: string, value: unknown) => {
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
 
-
-
-
-
-
 const rosterSlot = (slot: string, provider: string, options: {native?: boolean; reserve?: boolean; model?: string} = {}) => ({
   slot, provider, index: 0, native: options.native ?? false, reserve: options.reserve ?? false, model: options.model ?? 'model-a',
 });
@@ -178,26 +173,6 @@ function saveRound(input: {
     });
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 const hostTest_HEAD = 'a'.repeat(40);
 const hostTest_TREE = 'b'.repeat(40);
@@ -299,14 +274,6 @@ async function hostTest_deliver(f: ReturnType<typeof sessionFixture>, head: stri
   });
 }
 
-
-
-
-
-
-
-
-
 function encodeVarint(val: number | bigint): number[] {
   const bytes: number[] = [];
   let n = BigInt(val);
@@ -352,7 +319,9 @@ function buildGenMetadataBlob(options: {
   return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
 
-test('diagnostics render writes the session report when enabled and reports off when disabled', async () => {
+test('diagnostics render honors the enabled toggle across render, cost, failure and retro paths', async t => {
+// diagnostics render writes the session report when enabled and reports off when disabled
+{
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
@@ -391,9 +360,10 @@ test('diagnostics render writes the session report when enabled and reports off 
     assert.match(priced, /^\| CLI delegates \| ██████████ 100% \| ~\$3\.00 \| 1,000,000 \| — \| — \| — \| — \| 1 stdout fallback, transcript unavailable \|$/m);
     assert.match(priced, /1 qualified, 0 wildcard, 0 generic/);
   } finally { f.cleanup(); }
-});
+}
 
-test('cost cells render from the skill rate table and fall back to not estimated without a host or table', () => {
+// cost cells render from the skill rate table and fall back to not estimated without a host or table
+{
   const f = sessionFixture({ memory: true });
   try {
     captureRuns(f.session, [
@@ -424,9 +394,10 @@ test('cost cells render from the skill rate table and fall back to not estimated
     writeJson(path.join(skill, 'config.local.jsonc'), { pricing: { 'claude-sonnet-5-5': { rates: { input: 1, output: 1 } }, bad: 'x' } });
     assert.match(render(true), /^- Estimated cost ~\$1\.00/m, 'override replaces the shipped rate and a malformed entry is ignored');
   } finally { f.cleanup(); }
-});
+}
 
-test('diagnostics render keeps an older report when the write fails', async t => {
+// diagnostics render keeps an older report when the write fails
+{
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
@@ -446,9 +417,10 @@ test('diagnostics render keeps an older report when the write fails', async t =>
     assert.equal(JSON.parse(fs.readFileSync(output.path!, 'utf8')).path ?? null, null);
     assert.equal(fs.readFileSync(file, 'utf8'), 'older report\n');
   } finally { t.mock.restoreAll(); f.cleanup(); }
-});
+}
 
-test('diagnostics render reads host usage only while enabled', async () => {
+// diagnostics render reads host usage only while enabled
+{
   const f=sessionFixture({memory:true});
   try {
     const skill=path.join(f.root,'skill'); fs.mkdirSync(skill); const config=path.join(skill,'config.local.jsonc'); f.deps.skillRoot=skill;
@@ -472,9 +444,10 @@ test('diagnostics render reads host usage only while enabled', async () => {
     assert.equal(await main(['diagnostics','render','--session',f.session],f.deps),0);
     assert.equal(reads,1); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: invalid session start/);
   } finally { f.cleanup(); }
-});
+}
 
-test('report render and complete collect host usage without gating outcomes', async () => {
+// report render and complete collect host usage without gating outcomes
+{
   const f = await hostTest_fixture();
   try {
     const manifestPath=path.join(f.session,'manifest.json'); const manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')); manifest.createdAt=new Date(1000).toISOString(); fs.writeFileSync(manifestPath,JSON.stringify(manifest));
@@ -491,9 +464,10 @@ test('report render and complete collect host usage without gating outcomes', as
     assert.equal((await hostTest_invoke(f,'report','render')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
     assert.equal((await hostTest_invoke(f,'report','complete')).exit,0); assert.match(fs.readFileSync(path.join(f.session,'diagnostics.md'),'utf8'),/host unavailable: read-error:EACCES/);
   } finally { f.cleanup(); }
-});
+}
 
-test('diagnostics render warns on missing host retro only when enabled', async () => {
+// diagnostics render warns on missing host retro only when enabled
+{
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
@@ -523,6 +497,7 @@ test('diagnostics render warns on missing host retro only when enabled', async (
   } finally {
     f.cleanup();
   }
+}
 });
 
 const groundingItem = {
@@ -544,8 +519,8 @@ const retroWarningCases = [
   {name: 'research only', setup: (file: string) => writeJson(file, []), kind: 'research'},
 ];
 
-for (const {name, setup, kind, warning} of retroWarningCases) {
-  test('retro warning handles ' + name, async () => {
+test('retro warning handles malformed, missing-grounding and clean retros', async () => {
+  for (const {name, setup, kind, warning} of retroWarningCases) {
     const f = sessionFixture({ memory: true });
     try {
       f.deps.skillRoot = path.join(f.root, 'skill');
@@ -555,22 +530,22 @@ for (const {name, setup, kind, warning} of retroWarningCases) {
       setup(path.join(state, 'retro.json'));
       if (kind) writeJson(path.join(state, 'results', 'brief-explorer-0001.json'), {kind});
 
-      assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
+      assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0, name);
       const output = f.output();
-      assert.equal(output.ok, true);
+      assert.equal(output.ok, true, name);
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as {warning?: string};
       if (!warning) {
-        assert.equal(value.warning, undefined);
+        assert.equal(value.warning, undefined, name);
       } else {
-        assert.ok(value.warning, 'expected a non-blocking retro warning');
+        assert.ok(value.warning, `${name}: expected a non-blocking retro warning`);
         assert.ok(value.warning.includes('.state/retro.json'));
         assert.ok(value.warning.includes(warning === 'array' ? '[{id,component,category,evidence,impact,proposedFix}]' : 'grounding-<phase>'));
         assert.ok(Buffer.byteLength(value.warning) <= 240);
         assert.ok(output.summary.includes(value.warning));
       }
     } finally { f.cleanup(); }
-  });
-}
+  }
+});
 
 test('Overview lists each zero-invocation phase without folding', () => {
   const f = sessionFixture({ memory: true });
@@ -624,7 +599,9 @@ test('legend defines symbols and units, and empty Grounding and Top findings are
   }
 });
 
-test('round workload render reads host usage again only for rounds with a start', async () => {
+test('round workload render rereads host usage for started rounds and flags over-budget turns', async () => {
+// round workload render reads host usage again only for rounds with a start
+{
   const f = sessionFixture({memory: true});
   try {
     const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill); f.deps.skillRoot = skill;
@@ -655,9 +632,10 @@ test('round workload render reads host usage again only for rounds with a start'
     assert.equal(reads, 3);
     assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), new RegExp(`\\| subject ${label} \\| 1 \\| 1: review-run-plan 1 \\| 15 \\| 1 \\|`));
   } finally { f.cleanup(); }
-});
+}
 
-test('round turns: renders observed turns and flags only plan and design rounds over budget', () => {
+// round turns: renders observed turns and flags only plan and design rounds over budget
+{
   const f = sessionFixture({memory: true});
   try {
     const text = fs.readFileSync(writeDiagnostics(f.session, {
@@ -676,9 +654,10 @@ test('round turns: renders observed turns and flags only plan and design rounds 
     const budget = text.split('\n').find(line => line.startsWith('Advisory budget'));
     assert.equal(budget, 'Advisory budget (lightweight fix review): <=6 toolkit calls, <=25 host turns; over: subject aaaaaaaaaaaaaaaa round 1');
   } finally { f.cleanup(); }
-});
+}
 
-test('round turns: renders code review workloads without the advisory budget', () => {
+// round turns: renders code review workloads without the advisory budget
+{
   const f = sessionFixture({memory: true});
   try {
     const text = fs.readFileSync(writeDiagnostics(f.session, {
@@ -688,4 +667,6 @@ test('round turns: renders code review workloads without the advisory budget', (
     assert.match(text, /\| subject cccccccccccccccc \| 1 \| 7 \| — \| 30 \|/);
     assert.doesNotMatch(text, /Advisory budget per round/);
   } finally { f.cleanup(); }
+}
 });
+

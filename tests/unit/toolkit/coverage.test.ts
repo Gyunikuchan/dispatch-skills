@@ -187,7 +187,9 @@ test('coverage override ignores records that are not a quoted user decision', ()
 
 const budgetOf = (t: ReturnType<typeof tree>, ...records: LedgerRecord[]) => admission(t.session, fold(...records), REVIEW, 0).budget;
 
-test('coverage admission allows a rerun within the cap without using the coverage round', () => {
+test('coverage admission resolves rounds across caps, reruns and user decisions', () => {
+  const cases: {name: string; run: () => void}[] = [
+    {name: 'allows a rerun within the cap', run: () => {
   withTree(t => {
     t.put({n: 1, roster: [A, B], done: [B], failed: [A], cap: 3});
     const budget = budgetOf(t);
@@ -195,21 +197,21 @@ test('coverage admission allows a rerun within the cap without using the coverag
     assert.deepEqual(budget.coverage, {state: 'readable', open: [A], decision: 'rerun'});
     assert.match(renderBudget(budget), /coverage rerun, open: codex\[0\]/);
   });
+    }},
+    {name: 'carries no coverage key when nothing is open', run: () => {
   // No open slot and no round in flight: the budget carries no coverage key.
   withTree(t => {
     t.put({n: 1, roster: [A, B], done: [A, B], cap: 3});
     assert.equal('coverage' in budgetOf(t), false);
   });
-});
-
-test('coverage admission stops at a user decision within the cap', () => withTree(t => {
+    }},
+    {name: 'stops at a user decision within the cap', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B, C, D], done: [C, D], failed: [A, B], cap: 3});
   t.put({n: 2, roster: [A, B], failed: [A, B], coverage: 'open', cap: 3});
   const stopped = budgetOf(t);
   assert.deepEqual([stopped.nextRound, stopped.state, stopped.coverage], [3, 'requires-coverage-decision', {state: 'readable', open: [A, B], decision: 'user'}]);
-}));
-
-test('coverage admission admits one past-cap round and refuses a second', () => withTree(t => {
+})},
+    {name: 'admits one past-cap round and refuses a second', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B, C], done: [B, C], failed: [A], cap: 1});
   const free = budgetOf(t);
   assert.deepEqual([free.nextRound, free.state, free.coverage], [2, 'allowed', {state: 'readable', open: [A], decision: 'rerun', use: 'free'}]);
@@ -217,9 +219,8 @@ test('coverage admission admits one past-cap round and refuses a second', () => 
   t.put({n: 2, roster: [A], failed: [A], coverage: 'open', coverageUse: 'free', cap: 1});
   const second = budgetOf(t);
   assert.deepEqual([second.nextRound, second.state, second.coverage], [3, 'requires-continuation', {state: 'readable', open: [A], decision: 'majority'}]);
-}));
-
-test('coverage admission requires a decision for a rerun after the coverage round was used', () => withTree(t => {
+})},
+    {name: 'requires a decision for a rerun after the coverage round was used', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B, C], done: [B, C], failed: [A], cap: 1});
   t.put({n: 2, roster: [A], done: [A], coverage: 'open', coverageUse: 'free', cap: 1});
   // A different slot fails for the first time in a later full-roster round; a granted ceiling keeps the round in range.
@@ -230,9 +231,14 @@ test('coverage admission requires a decision for a rerun after the coverage roun
   ] satisfies LedgerRecord[];
   const budget = admission(t.session, fold(...ceiling), REVIEW, 0).budget;
   assert.deepEqual([budget.nextRound, budget.ceiling, budget.state, budget.coverage], [4, 5, 'requires-coverage-decision', {state: 'readable', open: [B], decision: 'rerun'}]);
-}));
+})},
+  ];
+  for (const item of cases) item.run();
+});
 
-test('coverage admission consumes one grant per granted round and stays within the ceiling', () => {
+test('coverage admission grants, reuses grants and reports state problems', () => {
+  const cases: {name: string; run: () => void}[] = [
+    {name: 'consumes one grant per granted round', run: () => {
   // Cap 2, ceiling 4: each granted round consumes one grant record.
   withTree(t => {
     t.put({n: 1, roster: [A, B, C, D], done: [C, D], failed: [A, B], cap: 2});
@@ -246,6 +252,8 @@ test('coverage admission consumes one grant per granted round and stays within t
     t.put({n: 4, roster: [A, B], failed: [A, B], coverage: 'open', coverageUse: 'grant', cap: 2});
     assert.deepEqual(use(user(5, 'grant: restored'), user(6, 'grant: again'), user(7, 'grant: third')), [5, 'requires-coverage-decision', undefined]);
   });
+    }},
+    {name: 'keeps an early grant usable after the free round', run: () => {
   // A grant recorded before the free round stays usable afterwards.
   withTree(t => {
     const early = user(1, 'grant: restored');
@@ -258,35 +266,31 @@ test('coverage admission consumes one grant per granted round and stays within t
     t.put({n: 3, roster: [A, B], failed: [A, B], coverage: 'open', coverageUse: 'grant', cap: 1});
     assert.deepEqual([budgetOf(t, early).nextRound, budgetOf(t, early).ceiling, budgetOf(t, early).state], [4, 3, 'requires-coverage-decision']);
   });
-});
-
-test('coverage admission gives an accepted MUST its normal continuation', () => withTree(t => {
+    }},
+    {name: 'gives an accepted MUST its normal continuation', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B, C, D], done: [C, D], failed: [A, B], cap: 1});
   t.put({n: 2, roster: [A, B], failed: [A, B], coverage: 'open', coverageUse: 'free', cap: 1, findings: [{id: 'R2-F001', severity: 'MUST', sources: []}]});
   const ruling: LedgerRecord = {seq: 2, key: 'ruling', at: 't', kind: 'ruling', by: 'orchestrator', data: {subject: 'review:' + REVIEW + ':R2-F001', ruling: 'accepted', rationale: 'fix'}};
   assert.equal(budgetOf(t).state, 'requires-coverage-decision');
   const accepted = budgetOf(t, ruling);
   assert.deepEqual([accepted.state, accepted.coverage], ['allowed', {state: 'readable', open: [A, B], decision: 'user'}]);
-}));
-
-test('coverage admission resumes a started round under its saved use when the decision becomes user', () => withTree(t => {
+})},
+    {name: 'resumes a started round under its saved use', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B, C, D], done: [D], failed: [A, B, C], cap: 1});
   t.put({n: 2, roster: [A, B, C], failed: [A, B], native: [C], coverage: 'open', coverageUse: 'free', cap: 1, unfinished: true});
   const before = budgetOf(t);
   assert.deepEqual([before.nextRound, before.state, before.coverage], [2, 'allowed', {state: 'readable', open: [A, B, C], decision: 'rerun', use: 'free'}]);
   const resumed = budgetOf(t, user(20, `accept: ${C}`));
   assert.deepEqual([resumed.state, resumed.coverage], ['allowed', {state: 'readable', open: [A, B], decision: 'rerun', use: 'free'}]);
-}));
-
-test('coverage admission reports unreadable state without throwing', () => withTree(t => {
+})},
+    {name: 'reports unreadable state without throwing', run: () => withTree(t => {
   t.put({n: 1, roster: [A, B], done: [B], failed: [A], cap: 1});
   fs.rmSync(path.join(t.session, '.state/reviews', REVIEW, 'round-1/gen-1/attempts.json'));
   const budget = budgetOf(t);
   assert.deepEqual([budget.state, budget.coverage], ['requires-continuation', {state: 'unreadable'}]);
   assert.match(renderBudget(budget), /coverage unreadable/);
-}));
-
-test('coverage admission leaves plan and design budgets unchanged', () => withTree(t => {
+})},
+    {name: 'leaves plan and design budgets unchanged', run: () => withTree(t => {
   for (const review of ['plan-work.plan', 'design-work.design']) {
     const dir = path.join(t.session, '.state/reviews', review, 'round-1');
     t.write(path.join(dir, 'round.json'), {round: 1, cap: 1, startSeq: 0});
@@ -295,7 +299,10 @@ test('coverage admission leaves plan and design budgets unchanged', () => withTr
     t.write(path.join(dir, 'findings.json'), {review, round: 1, cap: 1, findings: []});
     assert.deepEqual(admission(t.session, fold(), review, 0).budget, {cap: 1, ceiling: 3, nextRound: 2, asOfSeq: 0, state: 'requires-continuation'});
   }
-}));
+})},
+  ];
+  for (const item of cases) item.run();
+});
 
 test('coverage decision stays rerun while a round is in flight, even with a majority', () => withTree(t => {
   t.put({n: 1, roster: [A, B, C, D], done: [B, C, D], failed: [A]});

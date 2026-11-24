@@ -291,7 +291,9 @@ const coverage = (overrides: Record<string, unknown> = {}) => ({
 });
 const findings = (rendered: string) => section(rendered, '## Review Findings & Resolutions', '## Appendix');
 
-test('walkthrough reports coverage open slots, majority reduction, overrides with quotes and coverage rounds', () => {
+test('walkthrough reports coverage open slots, overrides, rounds, unreadable and clean states', () => {
+// walkthrough reports coverage open slots, majority reduction, overrides with quotes and coverage rounds
+{
   const majority = findings(renderWalkthrough(view({
     reviewRounds: [{ review: 'code-integration', round: 1, findings: 0, path: '.state/reviews/code-integration/round-1/findings.json' }],
     coverage: coverage({
@@ -309,13 +311,15 @@ test('walkthrough reports coverage open slots, majority reduction, overrides wit
   assert.match(overridden, /^- Open coverage slots: agy\[3\]$/m);
   assert.doesNotMatch(overridden, /majority/);
   assert.match(overridden, /^- Coverage override: codex\[0\] at seq 9; user quote: ship it \| &lt;!-- x --&gt;$/m);
-});
+}
 
-test('walkthrough reports coverage unreadable state and nothing when no slot failed', () => {
+// walkthrough reports coverage unreadable state and nothing when no slot failed
+{
   assert.match(findings(renderWalkthrough(view({ coverage: 'unreadable' }))), /^- Coverage state unreadable$/m);
   const plain = renderWalkthrough(view());
   assert.equal(renderWalkthrough(view({ coverage: coverage() })), plain);
   assert.doesNotMatch(plain, /overage/);
+}
 });
 
 const linkFixture = () => view({

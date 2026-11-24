@@ -101,7 +101,7 @@ const correct = (f: Awaited<ReturnType<typeof fixture>>, id: string, to: keyof t
 const findingsDelegate = (severity: 'MUST' | 'SHOULD', counter: {step: number}): CliDeps['delegate'] => async () =>
   ({outcome: {status: 'ok', text: report('§ Work', 'Defect ' + counter.step, severity), resume: null, sessionId: null}, invocations: []});
 
-test('corrected finding: a MUST downgraded to CONSIDER narrows the next roster, with or without a later plain ruling', async () => {
+test('corrected finding severity governs roster, continuation, snapshot and confirmation', async () => {
   for (const plainRulingAfter of [false, true]) {
     const f = await fixture();
     try {
@@ -115,9 +115,8 @@ test('corrected finding: a MUST downgraded to CONSIDER narrows the next roster, 
       assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
     } finally {f.cleanup();}
   }
-});
-
-test('corrected finding: corrected severity governs continuation and roster past the round cap', async () => {
+  // corrected severity governs continuation and roster past the round cap
+  {
   // MUST downgraded to SHOULD earns no continuation past cap
   {
     const f = await fixture();
@@ -153,9 +152,9 @@ test('corrected finding: corrected severity governs continuation and roster past
       assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
     } finally {f.cleanup();}
   }
-});
-
-test('corrected finding: the ruling snapshot lists a SHOULD raised to MUST and omits a MUST lowered to SHOULD', async () => {
+  }
+  // the ruling snapshot lists a raised severity and omits a lowered one
+  {
   for (const [stored, to] of [['SHOULD', 'must'], ['MUST', 'should']] as const) {
     const f = await fixture();
     try {
@@ -167,9 +166,9 @@ test('corrected finding: the ruling snapshot lists a SHOULD raised to MUST and o
       assert.equal(f.read(2, 'round.json').rulingSnapshot, stored === 'SHOULD' ? JSON.stringify([['R1-F001', ruling.seq]]) : '[]');
     } finally {f.cleanup();}
   }
-});
-
-test('corrected finding: settled rows hide a rejected SHOULD that was raised to MUST until it is confirmed', async () => {
+  }
+  // settled rows hide a rejected SHOULD raised to MUST until confirmed
+  {
   const run = async (raise: boolean) => {
     const f = await fixture();
     try {
@@ -191,9 +190,10 @@ test('corrected finding: settled rows hide a rejected SHOULD that was raised to 
   };
   assert.equal(await run(false), true);
   assert.equal(await run(true), false);
-});
-
-// SECTION: Rejection confirmation after corrections
+  }
+  // rejection confirmation follows the higher of the stored and corrected severities
+  {
+  // SECTION: Rejection confirmation after corrections (helpers stay with this case)
 
 const rejectionStatesFor = (stored: 'MUST' | 'SHOULD', chain: readonly ('must' | 'should' | 'rejected')[]) => {
   const finding = {id: 'R1-F001', severity: stored, sources: ['reviewer'], defect: 'Defect', locus: '§ Work', requiredChange: 'Fix'};
@@ -209,12 +209,12 @@ const rejectionStatesFor = (stored: 'MUST' | 'SHOULD', chain: readonly ('must' |
   return rejectionState([round], rulings as never, []);
 };
 
-test('corrected finding: rejection confirmation follows the higher of the stored and latest corrected severities', () => {
   assert.equal(rejectionStatesFor('MUST', ['should', 'rejected']).length, 1);
   assert.equal(rejectionStatesFor('SHOULD', ['must', 'rejected']).length, 1);
   assert.equal(rejectionStatesFor('SHOULD', ['must', 'should', 'rejected']).length, 0);
   assert.equal(rejectionStatesFor('SHOULD', ['rejected']).length, 0);
   assert.equal(rejectionStatesFor('MUST', ['rejected']).length, 1);
+  }
 });
 
 // SECTION: Review budget boundaries
@@ -241,7 +241,7 @@ const replyOf = (...items: readonly (readonly [string, string, string])[]) => JS
 const oneReviewerDelegate = (text: string): CliDeps['delegate'] => async provider =>
   ({outcome: {status: 'ok', text: provider === 'agy' ? text : CLEAN, resume: null, sessionId: null}, invocations: []});
 
-test('round keeps a loose-locus finding: plan and code rounds finish done, list it first and count it', async () => {
+test('round keeps loose-locus findings listed, counted and unlinked', async () => {
   for (const kind of ['plan', 'code'] as const) {
     const f = await fixture();
     try {
@@ -262,9 +262,8 @@ test('round keeps a loose-locus finding: plan and code rounds finish done, list 
       for (const {slot} of roster.filter(entry => !entry.reserve)) assert.equal(JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/slots', slot + '.json'), 'utf8')).state, 'done', slot);
     } finally {f.cleanup();}
   }
-});
-
-test('round keeps a loose-locus finding: the result lists all six past the summary bound', async () => {
+  // all six past the summary bound
+  {
   const f = await fixture();
   try {
     f.deps.delegate = oneReviewerDelegate(replyOf(...Array.from({length: 6}, (_, index) => ['loose ' + index, 'Defect number ' + index, 'SHOULD'] as const)));
@@ -274,9 +273,9 @@ test('round keeps a loose-locus finding: the result lists all six past the summa
     assert.match(result.output.summary, /, 6 unresolved loci/);
     assert.match(result.output.summary, /\+1 more in result/);
   } finally {f.cleanup();}
-});
-
-test('round keeps a loose-locus finding: a repeat in a later round links to no earlier finding', async () => {
+  }
+  // a repeat in a later round links to no earlier finding
+  {
   const f = await fixture();
   try {
     f.deps.delegate = oneReviewerDelegate(replyOf([LOOSE, 'Writes get lost', 'SHOULD']));
@@ -289,6 +288,7 @@ test('round keeps a loose-locus finding: a repeat in a later round links to no e
     assert.equal(finding.recurrence, undefined);
     assert.equal(finding.unresolved, undefined);
   } finally {f.cleanup();}
+  }
 });
 
 // SECTION: Inter-round information
@@ -316,7 +316,7 @@ const blockBody = (lines: string[]) => lines.join('\n');
 const since = (diff: string, accepted: readonly string[]) => blockBody([SINCE, 'Inter-round diff: ' + diff, ...(accepted.length ? ['Check these accepted-finding loci and their interactions first:', ...accepted.map(entry => '- ' + entry)] : [NO_ACCEPTED])]);
 const sinceStandard = (diff: string) => blockBody([SINCE, 'Inter-round diff: ' + diff]);
 
-test('standard re-review prompt omits the accepted id list, and round 1 renders none', async () => {
+test('inter-round diff, rerun labels and unavailable inputs carry the accepted list', async () => {
   const f = await fixture();
   try {
     diffGit(f, {exit: 1, stdout: DIFF});
@@ -341,9 +341,8 @@ test('standard re-review prompt omits the accepted id list, and round 1 renders 
     assert.deepEqual(f.read(2, 'round.json').interRound, {diff, accepted: [{id: 'R1-F001', locus: '§ Work'}]});
     assert.equal(f.read(1, 'round.json').interRound, undefined);
   } finally {f.cleanup();}
-});
-
-test('inter-round: a code round 2 names the head range and a round with equal heads states no change', async () => {
+  // a code round names the head range and equal heads state no change
+  {
   const f = await fixture();
   try {
     roomy(f);
@@ -364,9 +363,9 @@ test('inter-round: a code round 2 names the head range and a round with equal he
     assert.equal(third.exit, 0, JSON.stringify(third.output));
     assert.equal(roundOf(3).interRound.diff, UNCHANGED_TARGET);
   } finally {f.cleanup();}
-});
-
-test('confirmation-only prompt keeps the accepted id list, and the window moves only when a round reviews the target', async () => {
+  }
+  // the confirmation-only prompt keeps the accepted list and the window moves on review
+  {
   const f = await fixture();
   try {
     roomy(f);
@@ -400,9 +399,9 @@ test('confirmation-only prompt keeps the accepted id list, and the window moves 
     assert.deepEqual(f.read(4, 'round.json').interRound, {diff: UNCHANGED_TEXT, accepted: []});
     assert.ok(promptsOf(f).slice(before).every(prompt => prompt.includes(sinceStandard(UNCHANGED_TEXT))));
   } finally {f.cleanup();}
-});
-
-test('inter-round: a rerun round keeps its label and receives the block', async () => {
+  }
+  // a rerun round keeps its label and receives the block
+  {
   const f = await fixture();
   try {
     script(f, () => CLEAN);
@@ -418,9 +417,9 @@ test('inter-round: a rerun round keeps its label and receives the block', async 
     assert.deepEqual(round.interRound, {diff: UNCHANGED_TEXT, accepted: []});
     for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes(round.scope) && prompt.includes(sinceStandard(UNCHANGED_TEXT)), prompt);
   } finally {f.cleanup();}
-});
-
-test('inter-round: a rerun after an all-failed round diffs against that round', async () => {
+  }
+  // a rerun after an all-failed round diffs against that round
+  {
   const f = await fixture();
   try {
     diffGit(f, {exit: 1, stdout: DIFF});
@@ -437,9 +436,9 @@ test('inter-round: a rerun after an all-failed round diffs against that round', 
     assert.deepEqual(f.read(2, 'round.json').interRound, {diff: '`' + file + '` (unified diff of the governed text)', accepted: []});
     assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
   } finally {f.cleanup();}
-});
-
-test('inter-round: a failed diff or a missing governed input leaves the round running as unavailable', async () => {
+  }
+  // a failed diff or missing input leaves the round unavailable
+  {
   const cases: [string, (f: RoundFixture) => void][] = [
     ['spawn failure', () => {}],
     ['git error', f => diffGit(f, {exit: 128, stdout: ''})],
@@ -460,6 +459,7 @@ test('inter-round: a failed diff or a missing governed input leaves the round ru
       for (const prompt of promptsOf(f).slice(before)) assert.ok(prompt.includes('Inter-round diff: unavailable.'), name);
     } finally {f.cleanup();}
   }
+  }
 });
 
 // SECTION: User decisions
@@ -471,7 +471,7 @@ const decisionLine = (id: string, summary: string, quote: string) => `- ${id} �
 const decisionLines = (prompt: string) => prompt.split('\n').filter(line => line.includes(' — user decision: '));
 const DECISION_CLOSED = 'Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided.';
 
-test('user decision: a later full round lists each user-resolved escalation of the same review with its summary and quote', async () => {
+test('accepted findings and user decisions persist across rounds', async () => {
   const f = await fixture();
   try {
     script(f, () => report());
@@ -502,9 +502,8 @@ test('user decision: a later full round lists each user-resolved escalation of t
     assert.ok(prompts.length > 0);
     for (const prompt of prompts) assert.deepEqual(decisionLines(prompt), expected);
   } finally {f.cleanup();}
-});
-
-test('user decision: a confirmation-only round lists the decisions with the closed sentence', async () => {
+  // a confirmation-only round lists the decisions with the closed sentence
+  {
   const f = await fixture();
   try {
     let phase = 'finding';
@@ -527,9 +526,9 @@ test('user decision: a confirmation-only round lists the decisions with the clos
       assert.ok(prompt.includes(DECISION_CLOSED), prompt);
     }
   } finally {f.cleanup();}
-});
-
-test('user decision: a re-entered round keeps the decisions recorded before its start', async () => {
+  }
+  // a re-entered round keeps the decisions recorded before its start
+  {
   const f = await fixture();
   try {
     script(f, () => report());
@@ -549,6 +548,7 @@ test('user decision: a re-entered round keeps the decisions recorded before its 
     assert.ok(prompts.length > 0);
     for (const prompt of prompts) assert.deepEqual(decisionLines(prompt), [decisionLine('recurrence:plan-work.plan:R1-F002:g1', 'Keep the recurrence closed', 'keep')]);
   } finally {f.cleanup();}
+  }
 });
 
 // SECTION: Finding origin
@@ -625,7 +625,7 @@ const acceptAll = async (f: RoundFixture, ids: readonly string[]) => {
 };
 const itemsOf = (f: RoundFixture, round: number) => (f.read(round, 'findings.json').findings as {id: string; severity: string; defect: string}[]).map(finding => `${finding.id} ${finding.severity}: ${finding.defect}`);
 
-test('hot unit: the summary names each hot unit with its streak and byte delta before the items', async () => {
+test('hot units are named with streak and byte delta within the bound', async () => {
   const f = await fixture();
   try {
     fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n### T2 — Other\nOriginal.\n## Review Findings & Resolutions\n');
@@ -640,9 +640,8 @@ test('hot unit: the summary names each hot unit with its streak and byte delta b
     assert.ok(t1.delta! > 0 && t2.delta! > 0, JSON.stringify(units));
     assert.ok(second.output.summary.includes(`; 2 hot units: T1 ×1 +${t1.delta} B, T2 ×1 +${t2.delta} B; first 2: ${itemsOf(f, 2).join('; ')}`), second.output.summary);
   } finally {f.cleanup();}
-});
-
-test('hot unit: a spec unit has no byte size, so its streak alone is named', async () => {
+  // a spec unit names its streak alone
+  {
   const f = await fixture();
   try {
     f.deps.delegate = oneReviewerDelegate(replyOf(['§ REQ-1', 'Spec gap', 'SHOULD']));
@@ -654,9 +653,9 @@ test('hot unit: a spec unit has no byte size, so its streak alone is named', asy
     assert.ok(second.output.summary.includes(`; 1 hot unit: spec:REQ-1 ×1; first 1: ${itemsOf(f, 2).join('; ')}`), second.output.summary);
     assert.equal((f.read(2, 'findings.json').units as {unit: string; delta?: number}[]).find(entry => entry.unit === 'spec:REQ-1')!.delta, undefined);
   } finally {f.cleanup();}
-});
-
-test('hot unit: six hot units with long names are all named within the bound, and items drop first', async () => {
+  }
+  // six long-named units are all named and items drop first
+  {
   const f = await fixture();
   try {
     const titles = Array.from({length: 6}, (_, i) => `Unit ${i + 1} of six with a long descriptive heading that the summary clips`);
@@ -673,9 +672,10 @@ test('hot unit: six hot units with long names are all named within the bound, an
     assert.ok(Buffer.byteLength(summary) <= 1024, summary);
     assert.ok(summary.includes(' more in result'), summary);
   } finally {f.cleanup();}
+  }
 });
 
-test('hot unit: a hot list over the bound names the units that fit and points to findings.json', async () => {
+test('hot-unit summary truncation, pointers and absence stay within the bound', async () => {
   const f = await fixture();
   try {
     const titles = Array.from({length: 25}, (_, i) => `Unit ${i + 1} of many with a long descriptive heading`);
@@ -693,9 +693,8 @@ test('hot unit: a hot list over the bound names the units that fit and points to
     assert.ok(named.length >= 1 && named.length + Number(match[2]) === 25, summary);
     assert.ok(Buffer.byteLength(summary) <= 1024, summary);
   } finally {f.cleanup();}
-});
-
-test('hot unit: a near-1,024-byte base head keeps the count and pointer before the repository suffix', async () => {
+  // a near-bound base head keeps the count and pointer before the repository suffix
+  {
   const f = await fixture();
   try {
     fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n## Review Findings & Resolutions\n');
@@ -719,9 +718,9 @@ test('hot unit: a near-1,024-byte base head keeps the count and pointer before t
     const pointer = summary.indexOf('; 1 hot unit: +1 more in findings.json units');
     assert.ok(pointer >= 0 && pointer < summary.indexOf(', repository changes: '), summary);
   } finally {f.cleanup();}
-});
-
-test('hot unit: a round with no hot unit adds no hot-unit text to the summary', async () => {
+  }
+  // a round with no hot unit adds no hot-unit text
+  {
   const f = await fixture();
   try {
     fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n### T2 — Other\nOriginal.\n## Review Findings & Resolutions\n');
@@ -734,6 +733,7 @@ test('hot unit: a round with no hot unit adds no hot-unit text to the summary', 
     assert.doesNotMatch(second.output.summary, /hot unit/);
     assert.ok(second.output.summary.endsWith('; first 1: R2-F001 SHOULD: Other defect'), second.output.summary);
   } finally {f.cleanup();}
+  }
 });
 
 // SECTION: Reviewed spec snapshot

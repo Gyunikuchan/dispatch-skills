@@ -9,16 +9,15 @@ import { confirmationPrompt, reviewPrompt } from '../../../../skills/dispatch/sc
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
 import {settledSection, type Settled} from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 
-test('rejected MUST prompt context settles only confirmed rejections',()=>{
- const pending={id:'R1-F001',locus:'§ Work',defect:'Unbounded writes',ruling:'rejected',reason:'Writes have a bound',severity:'MUST'};
- assert.equal(settledSection([pending]),'');
- assert.match(settledSection([{...pending,rejectionConfirmed:true}]),/Settled in earlier rounds/);
- assert.match(settledSection([{...pending,severity:'SHOULD'}]),/R1-F001/);
-});
-
 const settledRows = (section: string) => section.split('\n').filter((line) => line.startsWith('- '));
 
-test('settled accepted rows show the ruling rationale; settled accepted rows since the previous round are marked new', () => {
+test('settled rows render accepted, duplicate, rejected and unconfirmed rulings',()=>{
+  const pending={id:'R1-F001',locus:'§ Work',defect:'Unbounded writes',ruling:'rejected',reason:'Writes have a bound',severity:'MUST'};
+  assert.equal(settledSection([pending]),'');
+  assert.match(settledSection([{...pending,rejectionConfirmed:true}]),/Settled in earlier rounds/);
+  assert.match(settledSection([{...pending,severity:'SHOULD'}]),/R1-F001/);
+
+  // Accepted rows show the ruling rationale; rows accepted since the previous round are marked new.
   const accepted = {id: 'R3-F001', locus: '§ Tasks', defect: 'First line of the defect.\nSecond line elaborates.', ruling: 'accepted', reason: 'Applied the fix in the reworked section.'};
   assert.deepEqual(settledRows(settledSection([accepted])), ['- R3-F001 § Tasks: First line of the defect. — accepted: Applied the fix in the reworked section.']);
   const clipped = {...accepted, id: 'R3-F002', defect: `${'x'.repeat(130)}\nmore`};
@@ -44,30 +43,27 @@ test('settled accepted rows show the ruling rationale; settled accepted rows sin
   assert.ok(prompt.includes('- R2-F001 § Tasks: Step order skips lint — accepted (new): Fixed now\n'));
   assert.ok(prompt.includes('### Since the previous round\nInter-round diff: inter-round.diff\n'));
   assert.doesNotMatch(prompt, /Check these accepted-finding loci/);
-});
 
-test('settled duplicate rows resolve the original finding id or keep the reason', () => {
+  // Duplicate rows resolve the original finding id or keep the reason.
   const duplicate = {id: 'R4-F002', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'Duplicate of R1-F004.'};
   assert.deepEqual(settledRows(settledSection([duplicate])), ['- R4-F002 § Tasks — duplicate of R1-F004']);
-  const ownFirst = settledRows(settledSection([{id: 'R4-F004', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `R4-F004 repeats the point. ${'z'.repeat(130)} R1-F004`}]))[0]!;
-  assert.equal(ownFirst, '- R4-F004 § Tasks — duplicate of R1-F004');
-  const labeled = settledRows(settledSection([{id: 'R4-F005', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `${'z'.repeat(130)} Duplicate of R1-F006`}]))[0]!;
-  assert.equal(labeled, '- R4-F005 § Tasks — duplicate of R1-F006');
-  const visible = settledRows(settledSection([{id: 'R4-F007', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F004. ${'z'.repeat(130)} R2-F005`}]))[0]!;
-  assert.equal(visible, '- R4-F007 § Tasks — duplicate of R1-F004');
-  assert.doesNotMatch(visible, /R2-F005/);
-  const labeledOwn = settledRows(settledSection([{id: 'R4-F008', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R4-F008. ${'z'.repeat(130)} R1-F006`}]))[0]!;
-  assert.equal(labeledOwn, '- R4-F008 § Tasks — duplicate of R1-F006');
-  const nearCutoff = settledRows(settledSection([{id: 'R4-F009', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: `Duplicate of R1-F001 ${'z'.repeat(110)} R2-F009`}]))[0]!;
-  assert.equal(nearCutoff, '- R4-F009 § Tasks — duplicate of R1-F001');
-  assert.doesNotMatch(nearCutoff, /R2-F009/);
+  for (const [id, reason, expected, absent] of [
+    ['R4-F004', `R4-F004 repeats the point. ${'z'.repeat(130)} R1-F004`, '- R4-F004 § Tasks — duplicate of R1-F004', undefined],
+    ['R4-F005', `${'z'.repeat(130)} Duplicate of R1-F006`, '- R4-F005 § Tasks — duplicate of R1-F006', undefined],
+    ['R4-F007', `Duplicate of R1-F004. ${'z'.repeat(130)} R2-F005`, '- R4-F007 § Tasks — duplicate of R1-F004', /R2-F005/],
+    ['R4-F008', `Duplicate of R4-F008. ${'z'.repeat(130)} R1-F006`, '- R4-F008 § Tasks — duplicate of R1-F006', undefined],
+    ['R4-F009', `Duplicate of R1-F001 ${'z'.repeat(110)} R2-F009`, '- R4-F009 § Tasks — duplicate of R1-F001', /R2-F009/],
+  ] as const) {
+    const row = settledRows(settledSection([{id, locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason}]))[0]!;
+    assert.equal(row, expected, id);
+    if (absent) assert.doesNotMatch(row, absent, id);
+  }
 
   assert.deepEqual(settledRows(settledSection([{id: 'R4-F006', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'No original id.'}])), ['- R4-F006 § Tasks — duplicate: No original id.']);
   assert.deepEqual(settledRows(settledSection([{id: 'R4-F003', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'z'.repeat(140)}])), [`- R4-F003 § Tasks — duplicate: ${'z'.repeat(119)}…`]);
   assert.deepEqual(settledRows(settledSection([{id: 'R4-F010', locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason: 'Duplicate of R4-F010.'}])), ['- R4-F010 § Tasks — duplicate: Duplicate of R4-F010.']);
-});
 
-test('settled rejected rows keep full rationale', () => {
+  // Rejected and deferred rows keep the full rationale text.
   const rejected = {id: 'R1-F003', locus: '§ T2', defect: 'Full defect text\nwith a second line.', ruling: 'rejected', reason: 'Full rationale that explains the rejection.'};
   const deferred = {...rejected, id: 'R1-F004', defect: 'Deferred defect.', ruling: 'deferred', reason: 'Deferred as a follow-up.'};
   const section = settledSection([rejected, deferred]);
@@ -295,7 +291,7 @@ test('review prompts: every kind grounds findings and reports a defective local 
 
 const ruleText = (kind: QualityConsumer) => qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage).replace(/\s+/g, ' ');
 
-test('quality selection: reuse applies to every consumer and code tooling applies to code and plan', () => {
+test('quality selection covers every consumer and includes each selected rule once', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
     assert.ok(flat(kind).includes('search the repository by name and behaviour for an existing equivalent'));
     assert.equal(flat(kind).includes('skip issues that configured linters, formatters, or type checkers enforce.'), kind !== 'design');
@@ -305,11 +301,6 @@ test('quality selection: reuse applies to every consumer and code tooling applie
   for (const kind of ['code', 'plan'] as const) {
     for (const term of ['N+1', 'unpaginated reads', 'index new filter or sort columns', 'object ownership', 'sensitive data in logs']) assert.ok(ruleText(kind).includes(term), `${kind}: ${term}`);
   }
-});
-
-// SECTION: Quality bar and host-rule precedence
-
-test('quality selection: every review contains each selected rule once and excludes other sections', () => {
   const bar = read(templates, 'quality-bar.md');
   const sectionMarkers = [
     ['shared', 'gold-plating'],
@@ -329,7 +320,9 @@ test('quality selection: every review contains each selected rule once and exclu
   }
 });
 
-test('quality selection and audience filtering fail closed', () => {
+// SECTION: Quality bar and host-rule precedence
+
+test('quality selection and audience filtering fail closed and hide tags', () => {
   const expected = { code: ['shared', 'code', 'testing'], writer: ['shared', 'code', 'testing'], plan: ['shared', 'spec', 'plan', 'testing'], design: ['shared', 'spec', 'design'], cleanup: ['shared', 'testing'], verifier: ['shared', 'testing'], explorer: ['shared'] };
   assert.deepEqual(qualitySections, expected);
   const bar = compliantBar();
@@ -363,10 +356,8 @@ test('quality selection and audience filtering fail closed', () => {
   assert.throws(() => qualityCriteria(dangling, 'writer', 0, specStage), /Audience tag|Tagged bullet count|Empty quality section/);
   assert.throws(() => qualityCriteria(criteriaBar.replace('<!-- for: code,plan,design,cleanup -->\n- Prune: prune.', '- Prune: prune.'), 'code', 0, specStage), /Tagged bullet count/);
   assert.throws(() => qualityCriteria(criteriaBar.replace('<!-- for: all -->\n- Evidence: evidence.', '- Evidence: evidence.'), 'explorer', 0, specStage), /Tagged bullet count/);
-});
 
-test('audience tags select bullets per consumer and hide tags and author text', () => {
-  const bar = compliantBar();
+  // Audience tags select bullets per consumer and hide tags and author text.
   for (const consumer of ['code', 'writer', 'plan', 'design', 'cleanup', 'verifier', 'explorer'] as const) {
     const criteria = qualityCriteria(bar, consumer, 0, specStage);
     assert.doesNotMatch(criteria, /<!--/, `${consumer}: no tag comment leaks`);

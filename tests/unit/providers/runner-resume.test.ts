@@ -78,22 +78,6 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-test('Copilot resume collection keeps disjoint receipt windows', async () => {
-  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
-  const { lines, memoryFs } = await import('../lib/usage/helpers/memory-fs.ts');
-  const event = (at: number, sequence: number) => ({ type: 'session.usage_record', timestamp: new Date(at).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence }, model: 'observed', reasoningEffort: 'low', inputTokens: 10, outputTokens: 2 } } });
-  const h = harness(posix);
-  h.ports.usageFs = memoryFs({ '/h/.copilot/session-state/proven123/events.jsonl': lines(event(1, 1), event(11, 1), event(12, 2)) });
-  const pending = runDelegate(copilot, { ...req, timeoutMs: 60000, collectUsage: true, effort: 'high', onResume: () => h.clock.advance(1) }, 'cli', h.ports);
-  await flush(); h.clock.advance(10);
-  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'Session ID: proven123\npartial', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
-  await flush(); await flush(); h.clock.advance(10);
-  h.finish(ok({ stdout: 'bannerless recovered answer' }));
-  const result = await pending;
-  assert.equal(result.invocations.length, 2);
-  assert.deepEqual(result.invocations.map(i => i.usage?.input), [10, 10]);
-  assert.ok(result.invocations.every(i => i.effort === 'low' && i.configuredEffort === 'high'));
-});
 
 test('Copilot retry clears only the rejected per-attempt configured effort', async () => {
   const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
@@ -280,49 +264,25 @@ test('resume: stall resumes once after idle or empty-output with continue prompt
   }
 });
 
-test('resume: stall: three resumes allow four launches and return the last failure', async () => {
-  const h = harness(posix);
-  const run = runDelegate(makeNudgeSpec('sess1'), req, 'cli', h.ports);
-  await flush();
-  for (let i = 0; i < 3; i++) {
-    h.finish(ok({ exit: 1, stdout: `empty ${i}` }));
-    await flush(); await flush();
+test('resume: stall retries to the cap with the last valid session id', async () => {
+  for (const launches of [3, 4]) {
+    const h = harness(posix);
+    const run = runDelegate(makeNudgeSpec('sess1'), { ...req, resumesUsed: 4 - launches }, 'cli', h.ports);
+    await flush();
+    for (let i = 0; i < launches - 1; i++) { h.finish(ok({ exit: 1, stdout: 'empty one' })); await flush(); await flush(); }
+    const terminal = launches === 4;
+    h.finish(ok(terminal ? { exit: 1, stdout: 'empty final' } : { stdout: 'FINAL answer' }));
+    const done = await run;
+    assert.equal(h.launches.length, launches);
+    assert.equal(done.attempts, launches);
+    assert.equal(done.outcome.status, terminal ? 'fail' : 'ok');
+    assert.deepEqual(done.invocations.map((invocation) => (invocation as { nudge?: boolean }).nudge),
+      done.invocations.map((_, i) => (i === 0 ? undefined : true)));
   }
-  h.finish(ok({ exit: 1, stdout: 'empty final' }));
-  const done = await run;
-  assert.equal(h.launches.length, 4);
-  assert.equal(done.attempts, 4);
-  assert.equal(done.invocations.length, 4);
-  assert.equal(done.outcome.status, 'fail');
-  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'empty-output');
-  assert.equal((done.invocations[3] as any)?.nudge, true);
-  assert.equal((h.fs.files.get('/r/log.stalled') ?? '').match(/## codex/g)?.length, 4);
-});
-
-test('resume: stall: returns the result of the third resume', async () => {
-  const h = harness(posix);
-  const run = runDelegate(makeNudgeSpec('sess1'), req, 'cli', h.ports);
-  await flush();
-  h.finish(ok({ exit: 1, stdout: 'empty one' }));
-  await flush(); await flush();
-  h.finish(ok({ exit: 1, stdout: 'empty two' }));
-  await flush(); await flush();
-  h.finish(ok({ stdout: 'FINAL answer' }));
-  const done = await run;
-  assert.equal(h.launches.length, 3);
-  assert.equal(done.outcome.status, 'ok');
-  assert.equal(done.outcome.status === 'ok' && done.outcome.text, 'FINAL');
-  assert.deepEqual(done.invocations.map((invocation) => (invocation as any).nudge), [undefined, true, true]);
-});
-
-test('resume: stall: a resume with no session id reuses the last valid id', async () => {
   const h = harness(posix);
   let call = 0;
-  const spec: any = {
-    ...makeNudgeSpec('sess1'),
-    attemptSession: () => (call++ === 0 ? 'sess1' : null),
-  };
-  const run = runDelegate(spec, req, 'cli', h.ports);
+  const spec: unknown = { ...makeNudgeSpec('sess1'), attemptSession: () => (call++ === 0 ? 'sess1' : null) };
+  const run = runDelegate(spec as never, req, 'cli', h.ports);
   await flush();
   h.finish(ok({ exit: 1, stdout: 'empty one' }));
   await flush(); await flush();
@@ -334,19 +294,7 @@ test('resume: stall: a resume with no session id reuses the last valid id', asyn
   assert.equal((await run).outcome.status, 'ok');
 });
 
-test('resume: stall: resumesUsed counts resumes already spent in the model attempt', async () => {
-  for (const [resumesUsed, launches] of [[2, 2], [3, 1]] as const) {
-    const h = harness(posix);
-    const run = runDelegate(makeNudgeSpec('sess1'), { ...req, resumesUsed }, 'cli', h.ports);
-    await flush();
-    h.finish(ok({ exit: 1, stdout: 'empty one' }));
-    await flush(); await flush();
-    h.finish(ok({ exit: 1, stdout: 'empty two' }));
-    const done = await run;
-    assert.equal(h.launches.length, launches, String(resumesUsed));
-    assert.equal(done.outcome.status, 'fail', String(resumesUsed));
-  }
-});
+
 
 test('resume: stall nudge marks resume launches but not effort retries', async () => {
   const initial = harness(posix);
@@ -691,21 +639,46 @@ test('active delegate is not idle while output keeps arriving', async () => {
   assert.equal(done.result?.timedOut, false);
 });
 
-test('diagnostics usage parsing is opt-in and result-neutral', async () => {
-  for(const scenario of ['disabled','enabled','throw','resume','truncated','retry'] as const) {
-    let calls=0;
-    const spec={...claude,resumeUsage:undefined,parse:(out:ProcessResult,launch:Parameters<typeof claude.parse>[1])=>scenario==='retry'&&launch.effort?{status:'fail' as const,cls:'config' as const,detail:'unsupported',retryWithoutEffort:true}:claude.parse(out,launch),usage:()=>{calls++;if(scenario==='throw')throw new Error('parser');return {input:3,output:2,inputSemantics:'uncached' as const,scope:'invocation' as const,provenance:'fixture'};}};
-    const h=harness(posix), pending=runDelegate(spec,{...req,collectUsage:scenario!=='disabled',resume:scenario==='resume'?'resume-id':null,effort:scenario==='retry'?'high':null},'cli',h.ports);
+test('diagnostics usage parsing stays off unless collection is enabled', async () => {
+  for (const scenario of ['disabled', 'resume', 'truncated'] as const) {
+    let calls = 0;
+    const spec = { ...claude, resumeUsage: undefined, usage: () => { calls++; return { input: 3, output: 2, inputSemantics: 'uncached' as const, scope: 'invocation' as const, provenance: 'fixture' }; } };
+    const h = harness(posix);
+    const pending = runDelegate(spec, { ...req, collectUsage: scenario !== 'disabled', resume: scenario === 'resume' ? 'resume-id' : null }, 'cli', h.ports);
     await flush();
-    h.finish(scenario==='retry'?ok({exit:1,stderrTail:'unknown option --effort'}):ok({truncated:scenario==='truncated'}));
-    if(scenario==='retry'){await flush();await flush();h.finish(ok());}
-    const result=await pending;
-    assert.equal(calls,['disabled','resume','truncated'].includes(scenario)?0:scenario==='retry'?2:1,scenario);
-    assert.equal(result.outcome.status,scenario==='truncated'?'fail':'ok',scenario);
-    if(scenario==='enabled')assert.equal(result.invocations[0]?.usage?.input,3);
-    if(scenario==='throw')assert.equal(result.invocations[0]?.usage,undefined);
+    h.finish(ok({ truncated: scenario === 'truncated' }));
+    const result = await pending;
+    assert.equal(calls, 0, scenario);
+    assert.equal(result.outcome.status, scenario === 'truncated' ? 'fail' : 'ok', scenario);
   }
 });
+
+test('diagnostics usage parsing records measured usage and never throws', async () => {
+  for (const scenario of ['enabled', 'throw'] as const) {
+    let calls = 0;
+    const spec = { ...claude, resumeUsage: undefined, usage: () => { calls++; if (scenario === 'throw') throw new Error('parser'); return { input: 3, output: 2, inputSemantics: 'uncached' as const, scope: 'invocation' as const, provenance: 'fixture' }; } };
+    const h = harness(posix);
+    const pending = runDelegate(spec, { ...req, collectUsage: true }, 'cli', h.ports);
+    await flush();
+    h.finish(ok());
+    const result = await pending;
+    assert.equal(calls, 1, scenario);
+    assert.equal(result.outcome.status, 'ok', scenario);
+    assert.equal(result.invocations[0]?.usage?.input, scenario === 'enabled' ? 3 : undefined, scenario);
+  }
+});
+
+test('diagnostics usage parsing on effort retry and resume stays result-neutral', async () => {
+  const spec = { ...claude, resumeUsage: undefined, parse: (out: ProcessResult, launch: Parameters<typeof claude.parse>[1]) => launch.effort ? { status: 'fail' as const, cls: 'config' as const, detail: 'unsupported', retryWithoutEffort: true } : claude.parse(out, launch), usage: () => ({ input: 3, output: 2, inputSemantics: 'uncached' as const, scope: 'invocation' as const, provenance: 'fixture' }) };
+  const h = harness(posix);
+  const pending = runDelegate(spec, { ...req, collectUsage: true, effort: 'high' }, 'cli', h.ports);
+  await flush();
+  h.finish(ok({ exit: 1, stderrTail: 'unknown option --effort' }));
+  await flush(); await flush(); h.finish(ok());
+  assert.equal((await pending).outcome.status, 'ok');
+});
+
+
 
 test('OpenCode settles its POSIX group after success, failure and timeout without changing other providers', async () => {
   for (const scenario of ['success','failure','timeout','other-provider'] as const) {

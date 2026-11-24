@@ -145,6 +145,15 @@ function captureData(command: string): { data: { command: string; cwd: string; l
   };
 }
 
+/** Shared completeness properties for a rendered brief file: byte count, no placeholders, summary names the path. */
+function assertCompleteBrief(brief: string, value: { bytes: number; briefPath: string }, summary: string, texts: string[]) {
+  assert.equal(value.bytes, Buffer.byteLength(brief));
+  assert.doesNotMatch(brief, /\{\{\w+\}\}/);
+  assert.doesNotMatch(brief, /]\(/);
+  for (const text of texts) assert.ok(brief.includes(text), text);
+  assert.ok(summary.includes(value.briefPath));
+}
+
 describe('writer brief', () => {
   test('approval chain and open launch govern rendering without Git', async () => {
     const f = await fixture();
@@ -462,7 +471,7 @@ function limitSkill(skill: string, skillRoot: string): string {
 }
 
 describe('explorer brief', () => {
-  test('renders complete with no unfilled placeholder', async () => {
+  test('explorer map brief renders complete with no unfilled placeholder', async () => {
     const f = await fixture();
     try {
       await f.approve();
@@ -476,13 +485,9 @@ describe('explorer brief', () => {
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
       assert.ok(value.briefPath);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
-      assert.equal(value.bytes, Buffer.byteLength(brief));
-      assert.doesNotMatch(brief, /\{\{\w+\}\}/);
-      assert.doesNotMatch(brief, /]\(/);
-      for (const text of [values.objective, values.questions, values.outputPath, 'lint run', 'dispatch.ts', '16,384', '# Context map:', '## Not covered', 'Host rule files:']) assert.ok(brief.includes(text), text);
+      assertCompleteBrief(brief, value, output.summary, [values.objective, values.questions, values.outputPath, 'lint run', 'dispatch.ts', '16,384', '# Context map:', '## Not covered', 'Host rule files:']);
       assert.match(brief, /^- callers and impacted tests of each changed shared helper$/m);
       assert.ok(!brief.includes('Writer focus (task writers only'), 'explorer quality carries no writer directive');
-      assert.ok(output.summary.includes(value.briefPath));
     } finally { f.cleanup(); }
   });
 
@@ -683,7 +688,7 @@ describe('explorer brief', () => {
 });
 
 describe('test-cleanup brief', () => {
-  test('renders complete with no unfilled placeholder', async () => {
+  test('test-cleanup brief renders complete with no unfilled placeholder', async () => {
     const f = await fixture();
     try {
       await f.approve();
@@ -698,15 +703,11 @@ describe('test-cleanup brief', () => {
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
       assert.ok(value.briefPath);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
-      assert.equal(value.bytes, Buffer.byteLength(brief));
-      assert.doesNotMatch(brief, /\{\{\w+\}\}/);
-      assert.doesNotMatch(brief, /]\(/);
-      for (const text of [base, integrationPath, 'work.plan.md', 'Run no Git write commands', '- Prune:', '{"removed": ["SC1"], "deleted": 0, "merged": 0}']) assert.ok(brief.includes(text), text);
+      assertCompleteBrief(brief, value, output.summary, [base, integrationPath, 'work.plan.md', 'Run no Git write commands', '- Prune:', '{"removed": ["SC1"], "deleted": 0, "merged": 0}']);
       assert.ok(!brief.includes('Writer focus (task writers only'), 'cleanup quality carries no writer directive');
       const match = /`([^`]*work\.plan\.md)`/.exec(brief);
       assert.ok(match, 'bound plan path');
       assert.equal(fs.readFileSync(path.resolve(match[1]!), 'utf8'), fs.readFileSync(f.planPath, 'utf8'));
-      assert.ok(output.summary.includes(value.briefPath));
     } finally { f.cleanup(); }
   });
 

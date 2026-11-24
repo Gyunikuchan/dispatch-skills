@@ -36,7 +36,7 @@ describe('evidence eligibility', () => {
     assert.deepEqual(observe([good, { ...good, after: 'other' }]).status, { criterion: 'SC1', state: 'missing' });
   });
 
-  test('criterion statuses', async () => {
+  test('criterion statuses resolve manual, waiver and contract precedence over stale evidence', async () => {
     const { criterionStatuses } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const checks: Check[] = [
       { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified', evidenceClass: 'check' },

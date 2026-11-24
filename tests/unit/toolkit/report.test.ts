@@ -114,7 +114,9 @@ test('report render writes every missing criterion without Git and rewrites the 
   } finally { f.cleanup(); }
 });
 
-test('report deferral: renders only the latest deferred escalations as follow-ups', async () => {
+test('report deferral renders only the latest ceiling deferrals as follow-ups', async () => {
+// report deferral: renders only the latest deferred escalations as follow-ups
+{
   const f = await fixture();
   try {
     const deferId = 'ceiling:plan-report.plan:1';
@@ -139,9 +141,10 @@ test('report deferral: renders only the latest deferred escalations as follow-up
       `- Follow-up: deferred escalation ${deferId}: defer: revisit next release`,
     ]);
   } finally { f.cleanup(); }
-});
+}
 
-test('report deferral: excludes non-ceiling defer escalations', async () => {
+// report deferral: excludes non-ceiling defer escalations
+{
   const f = await fixture();
   try {
     const id = 'review-readiness';
@@ -154,6 +157,7 @@ test('report deferral: excludes non-ceiling defer escalations', async () => {
     const walkthrough = fs.readFileSync(path.join(f.session, 'report.walkthrough.md'), 'utf8');
     assert.doesNotMatch(walkthrough, /^- Follow-up: deferred escalation /m);
   } finally { f.cleanup(); }
+}
 });
 
 test('report edit scope: reports the bound plan and spec edits when plans share a hash', async () => {

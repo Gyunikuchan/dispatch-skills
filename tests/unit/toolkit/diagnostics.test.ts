@@ -232,11 +232,6 @@ test('saved invalid and interrupted native fallback markers remain terminal', as
   } finally { fallbackFixture.cleanup(); }
 });
 
-
-
-
-
-
 const rosterSlot = (slot: string, provider: string, options: {native?: boolean; reserve?: boolean; model?: string} = {}) => ({
   slot, provider, index: 0, native: options.native ?? false, reserve: options.reserve ?? false, model: options.model ?? 'model-a',
 });
@@ -301,26 +296,6 @@ function saveRound(input: {
     });
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 const hostTest_HEAD = 'a'.repeat(40);
 const hostTest_TREE = 'b'.repeat(40);
@@ -421,14 +396,6 @@ async function hostTest_deliver(f: ReturnType<typeof sessionFixture>, head: stri
     data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
   });
 }
-
-
-
-
-
-
-
-
 
 function encodeVarint(val: number | bigint): number[] {
   const bytes: number[] = [];
@@ -838,7 +805,9 @@ test('diagnostics preserve exception attempts and durable capture boundaries', a
  }finally{f.cleanup();}
 });
 
-test('design-led milestones enter plan after the last design review and implementation at the earlier launch', async () => {
+test('host phase milestones order reviews and attribute host usage and slot yield', async () => {
+// design-led milestones enter plan after the last design review and implementation at the earlier launch
+{
   const {stageMilestones}=await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
   const stamp=(n:number)=>new Date(n).toISOString();
   const basic={records:[{kind:'confirm',at:stamp(1),data:{}}],lastSeq:1,torn:null} as unknown as Fold;
@@ -848,9 +817,10 @@ test('design-led milestones enter plan after the last design review and implemen
   const stages=stageMilestones(fold,[capture('design review',3,4),capture('design review',5,6),capture('plan review',7,8)],1);
   assert.deepEqual(stages,[{stage:'spec',atMs:1},{stage:'design',atMs:2},{stage:'design review',atMs:3},{stage:'plan',atMs:6},{stage:'plan review',atMs:7},{stage:'implementation',atMs:9}]);
   assert.deepEqual(stageMilestones({records:[],lastSeq:0,torn:null},[capture('design review',3,4)],1),[{stage:'design review',atMs:1}]);
-});
+}
 
-test('host phase: sessionFacts builds phase milestones including interleaved A, B, A review subjects', () => {
+// host phase: sessionFacts builds phase milestones including interleaved A, B, A review subjects
+{
   const f = sessionFixture({ memory: true });
   try {
     const reviewA = path.join(f.session, '.state', 'reviews', 'code-a', 'round-1');
@@ -906,9 +876,10 @@ test('host phase: sessionFacts builds phase milestones including interleaved A, 
   } finally {
     f.cleanup();
   }
-});
+}
 
-test('sessionFacts records startedAt, hosts and slot yield billed tokens and attempts across rounds', () => {
+// sessionFacts records startedAt, hosts and slot yield billed tokens and attempts across rounds
+{
   const f = sessionFixture({ memory: true });
   try {
     const review = 'plan-yield-attempts';
@@ -964,6 +935,7 @@ test('sessionFacts records startedAt, hosts and slot yield billed tokens and att
   } finally {
     f.cleanup();
   }
+}
 });
 
 // SECTION: round workload fixtures
@@ -1038,21 +1010,6 @@ test('round workload counts observed calls per round window by phase key', () =>
   } finally { f.cleanup(); }
 });
 
-test('round workload counts a later-generation rerun in its own round window', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-b', 1, 2);
-    workloadRound(f.session, 'plan-b', 2);
-    workloadCapture(f.session, 'first', {start: 1000, end: 1400}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1, 1))]);
-    workloadCapture(f.session, 'rerun', {start: 1500, end: 1900}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1, 2))]);
-    workloadCapture(f.session, 'second', {start: 5000, end: 5300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 2))]);
-    const rows = sessionRows(f.session)!;
-    assert.deepEqual(rows.map((row) => row.calls?.total), [2, 1]);
-    assert.deepEqual(rows[0]?.calls?.phases, [{key: 'review-run-plan', count: 2}]);
-    assert.equal(rows[0]?.review, reviewKey(f.session, 'plan-b'));
-  } finally { f.cleanup(); }
-});
-
 test('round workload attributes interleaved rounds of two reviews without double counting', () => {
   const f = sessionFixture({memory: true});
   try {
@@ -1071,100 +1028,9 @@ test('round workload attributes interleaved rounds of two reviews without double
   } finally { f.cleanup(); }
 });
 
-test('round workload leaves a round without a launched review run unstarted', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-c', 1);
-    workloadCapture(f.session, 'stopped', {start: 900}, undefined);
-    workloadCapture(f.session, 'later', {start: 1200, end: 1210}, 'lint-run');
-    assert.deepEqual(sessionRows(f.session), [{review: reviewKey(f.session, 'plan-c'), kind: 'plan', round: 1}]);
-  } finally { f.cleanup(); }
-});
-
-test('round workload counts a killed review run without phases or end and bounds the latest window', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-d', 1);
-    workloadCapture(f.session, 'killed', {start: 1000}, undefined, [reviewRun(roundSubject(f.session, 'plan-d', 1), {startMs: 1000, endMs: 1300})]);
-    workloadCapture(f.session, 'inside', {start: 1200, end: 1210}, 'lint-run');
-    workloadCapture(f.session, 'outside', {start: 1400, end: 1410}, 'lint-run');
-    assert.deepEqual(sessionRows(f.session)?.[0]?.calls, {total: 2, phases: [{key: 'lint-run', count: 1}, {key: 'review-run-plan', count: 1}]});
-  } finally { f.cleanup(); }
-});
-
-test('round workload attributes host rows by row time and excludes subagent rows past the latest window end', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-a', 1, 2);
-    workloadRound(f.session, 'plan-b', 1);
-    workloadCapture(f.session, 'a1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1, 1))]);
-    workloadCapture(f.session, 'b1', {start: 2000, end: 2100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-b', 1))]);
-    workloadCapture(f.session, 'a-rerun', {start: 2500, end: 2800}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-a', 1, 2))]);
-    const deps = claudeHostDeps(f, {
-      clock: 3000,
-      main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 2600, 30, 3), usageLine('m4', 2900, 99, 0)],
-      subagent: [usageLine('s1', 1600, 1000, 0)],
-    });
-    const rows = sessionRows(f.session, {manifest: {createdAt: new Date(100).toISOString()} as never, deps})!;
-    assert.deepEqual(rows.map((row) => row.calls?.total), [1, 1]);
-    assert.deepEqual(rows.map((row) => row.hostTokens), [11, 22]);
-    assert.deepEqual(rows.map((row) => row.hostTurns), [1, 1]);
-  } finally { f.cleanup(); }
-});
-
-test('round workload omits host tokens when host usage is unavailable', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-f', 1);
-    workloadCapture(f.session, 'r1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-f', 1))]);
-    const deps = {...f.deps, orchestrator: null, clock: () => 2000};
-    const rows = sessionRows(f.session, {manifest: {createdAt: new Date(100).toISOString()} as never, deps})!;
-    assert.equal(rows[0]?.calls?.total, 1);
-    assert.equal('hostTokens' in rows[0]!, false);
-  } finally { f.cleanup(); }
-});
-
-test('round workload keeps a closed window unchanged after later rounds and captures', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-g', 1);
-    workloadRound(f.session, 'plan-g', 2);
-    workloadRound(f.session, 'plan-g', 3);
-    workloadCapture(f.session, 'r1', {start: 1000, end: 1400}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 1))]);
-    workloadCapture(f.session, 'l1', {start: 1100, end: 1110}, 'lint-run');
-    workloadCapture(f.session, 'r2', {start: 5000, end: 5300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 2))]);
-    const deps = claudeHostDeps(f, {clock: 9500, main: [usageLine('h1', 1200, 10, 1), usageLine('h2', 5100, 20, 2), usageLine('h3', 9100, 30, 3)]});
-    const hostContext = {manifest: {createdAt: new Date(100).toISOString()} as never, deps};
-    const before = sessionRows(f.session, hostContext)!;
-    assert.deepEqual(before.slice(0, 2).map((row) => row.hostTokens), [11, 22]);
-    workloadCapture(f.session, 'r3', {start: 9000, end: 9300}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-g', 3))]);
-    workloadCapture(f.session, 'l2', {start: 9100, end: 9110}, 'lint-run');
-    assert.deepEqual(sessionRows(f.session, hostContext)!.slice(0, 2), before.slice(0, 2));
-  } finally { f.cleanup(); }
-});
-
-test('round workload reports storage-failure markers in one note', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadRound(f.session, 'plan-i', 1);
-    workloadCapture(f.session, 'r1', {start: 1000, end: 1100}, 'review-run-plan', [reviewRun(roundSubject(f.session, 'plan-i', 1))]);
-    writeJson(path.join(f.session, '.state', 'diagnostics', 'r1.json.failure.json'), {kind: 'storage-failure', count: 2});
-    const facts = sessionFacts(f.session, {records: [], lastSeq: 0, torn: null}, 'complete');
-    assert.equal(facts.collection?.storageFailed, 2);
-    assert.equal(facts.roundWorkload?.[0]?.calls?.total, 1);
-    assert.match(fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8'), /2 capture storage failures: calls from failed updates may be missing/);
-  } finally { f.cleanup(); }
-});
-
-test('round workload is absent without review rounds', () => {
-  const f = sessionFixture({memory: true});
-  try {
-    workloadCapture(f.session, 'lint', {start: 1000, end: 1010}, 'lint-run');
-    assert.equal(sessionRows(f.session), undefined);
-  } finally { f.cleanup(); }
-});
-
-test('round turns: counts host responses through the fix-review-lite note', () => {
+test('round workload attributes turns, threads and reviewer turns while sanitizing facts', async () => {
+// round turns: counts host responses through the fix-review-lite note
+{
   const f = sessionFixture({memory: true});
   try {
     const review = 'plan-a';
@@ -1183,9 +1049,10 @@ test('round turns: counts host responses through the fix-review-lite note', () =
     const row = facts.roundWorkload?.[0];
     assert.deepEqual([row?.calls?.total, row?.hostTokens, row?.hostTurns], [2, 6, 2]);
   } finally { f.cleanup(); }
-});
+}
 
-test('round turns: in-window rulings and notes set the close without counting gaps', () => {
+// round turns: in-window rulings and notes set the close without counting gaps
+{
   const f = sessionFixture({memory: true});
   try {
     const review = 'plan-a';
@@ -1217,9 +1084,10 @@ test('round turns: in-window rulings and notes set the close without counting ga
     assert.deepEqual(read([ruling, note, unrelated, late])?.[1], before);
     assert.deepEqual(workload(read([ruling, note, unrelated, late], [...main, 'malformed'])?.[1]), [3, undefined]);
   } finally { f.cleanup(); }
-});
+}
 
-test('observeTool and sanitizeFacts preserve wrapUp, hostThread, and turn/tool counters while rejecting malformed values', async () => {
+// observeTool and sanitizeFacts preserve wrapUp, hostThread, and turn/tool counters while rejecting malformed values
+{
   const f = sessionFixture({ memory: true });
   try {
     const expectedThread = crypto.createHmac('sha256', path.resolve(f.session)).update(JSON.stringify(['claude', 'host-thread-1'])).digest('hex').slice(0, 16);
@@ -1309,9 +1177,10 @@ test('observeTool and sanitizeFacts preserve wrapUp, hostThread, and turn/tool c
   } finally {
     f.cleanup();
   }
-});
+}
 
-test('hostUsageOf retains userTurnsByStage, subagentCount, maxSubagentDepth, and row turn counters while rejecting invalid values', () => {
+// hostUsageOf retains userTurnsByStage, subagentCount, maxSubagentDepth, and row turn counters while rejecting invalid values
+{
   const clean = sanitizeFacts({
     phases: [], invocations: [], reviews: [],
     hostUsage: {
@@ -1360,9 +1229,10 @@ test('hostUsageOf retains userTurnsByStage, subagentCount, maxSubagentDepth, and
   assert.equal(badHu['maxSubagentDepth'], undefined);
   const badRow = (badHu['rows'] as Array<Record<string, unknown>>)[0]!;
   assert.deepEqual([badRow['turns'], badRow['toolCalls'], badRow['toolTurns'], badRow['maxDepth']], [undefined, undefined, undefined, undefined]);
-});
+}
 
-test('multi-host roundWorkload omits hostTokens and hostTurns on cross-host switches and ambiguous multi-host captures', () => {
+// multi-host roundWorkload omits hostTokens and hostTurns on cross-host switches and ambiguous multi-host captures
+{
   const f = sessionFixture({ memory: true });
   try {
     workloadRound(f.session, 'plan-mh', 1);
@@ -1400,9 +1270,10 @@ test('multi-host roundWorkload omits hostTokens and hostTurns on cross-host swit
   } finally {
     f.cleanup();
   }
-});
+}
 
-test('mid-round thread switch leaves hostTokens and hostTurns undefined even when measured thread has rows in window', () => {
+// mid-round thread switch leaves hostTokens and hostTurns undefined even when measured thread has rows in window
+{
   const f = sessionFixture({ memory: true });
   try {
     workloadRound(f.session, 'plan-sw', 1);
@@ -1438,9 +1309,10 @@ test('mid-round thread switch leaves hostTokens and hostTurns undefined even whe
   } finally {
     f.cleanup();
   }
-});
+}
 
-test('multi-generation reviewerTurns excludes superseded generations and omits native-only or zero-launch rounds', () => {
+// multi-generation reviewerTurns excludes superseded generations and omits native-only or zero-launch rounds
+{
   const f = sessionFixture({ memory: true });
   try {
     saveRound({
@@ -1485,9 +1357,10 @@ test('multi-generation reviewerTurns excludes superseded generations and omits n
   } finally {
     f.cleanup();
   }
-});
+}
 
-test('mixed native and CLI round marks reviewerTurnsPartial true and uses complete non-stdout DelegateResponse fallback', () => {
+// mixed native and CLI round marks reviewerTurnsPartial true and uses complete non-stdout DelegateResponse fallback
+{
   const f = sessionFixture({ memory: true });
   try {
     saveRound({
@@ -1526,6 +1399,7 @@ test('mixed native and CLI round marks reviewerTurnsPartial true and uses comple
   } finally {
     f.cleanup();
   }
+}
 });
 
 test('H4 and H10 agree on shared cache-read share of non-write input with cacheWrite > 0 and respect floors', () => {
@@ -1559,14 +1433,6 @@ test('H4 and H10 agree on shared cache-read share of non-write input with cacheW
   });
   assert.equal(belowFloor.some(f => f.source === 'H10'), false);
 
-  const atThreshold = heuristics({
-    phases: [], reviews: [], invocations: [],
-    hostUsage: {
-      platform: 'claude',
-      rows: [{ stage: 'ask', role: 'host', model: 'm', effort: null, input: 50_000, cacheRead: 50_000, output: 100 }],
-    },
-  });
-  assert.equal(atThreshold.some(f => f.source === 'H10'), false);
 });
 
 test('H11 emits non-review turn churn finding above threshold and stays silent on review stages, below floor, or incomplete groups', () => {

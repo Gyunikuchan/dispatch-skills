@@ -75,7 +75,9 @@ test('review rename retry: fan-out atomic write persists its value', async () =>
   }
 });
 
-test('review run lists blocked slot reasons and orders them before findings in summary', async () => {
+test('blocked reasons list distinctly, carry failures and survive sanitizing', async () => {
+  const cases: {name: string; run: () => Promise<void>}[] = [
+    {name: 'lists and orders before findings', run: async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Cannot read the session artifact') : report('§ Work', 'A defect', 'SHOULD'));
@@ -86,9 +88,8 @@ test('review run lists blocked slot reasons and orders them before findings in s
     const summary = result.output.summary;
     assert.ok(summary.indexOf('blocked claude[0]:') < summary.indexOf('R1-F001'), summary);
   } finally { f.cleanup(); }
-});
-
-test('all blocked review-failed carries reasons', async () => {
+    }},
+    {name: 'all blocked carries reasons', run: async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(blockedReport(provider + ' cannot read the artifact'));
@@ -97,9 +98,8 @@ test('all blocked review-failed carries reasons', async () => {
     assert.equal(result.output.reason, 'review-failed');
     assert.match(result.output.summary, /^blocked claude\[0\]: claude cannot read the artifact; blocked agy\[0\]: agy cannot read the artifact; Every review slot failed/);
   } finally { f.cleanup(); }
-});
-
-test('blocked reasons with shared prefix stay distinct', async () => {
+    }},
+    {name: 'shared prefix stays distinct', run: async () => {
   const f = await fixture();
   try {
     configure(f, {'read-delegates': {claude: {targets: [{low: {model: ['a', 'b', 'ok']}}]}, agy: {targets: [{low: {model: 'fake'}}]}}});
@@ -111,9 +111,8 @@ test('blocked reasons with shared prefix stay distinct', async () => {
     assert.equal(result.exit, 0, JSON.stringify(result));
     assert.deepEqual(result.value.blocked.map((entry: {model: string; reason: string}) => [entry.model, entry.reason]), [['a', 'p'.repeat(200)], ['b', 'p'.repeat(200)]]);
   } finally { f.cleanup(); }
-});
-
-test('sanitized-empty blocked reasons stay distinct', async () => {
+    }},
+    {name: 'sanitized-empty stays distinct', run: async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('<invoke name="alpha">') : report());
@@ -126,9 +125,14 @@ test('sanitized-empty blocked reasons stay distinct', async () => {
     assert.equal(second.value.blocked[0].reason, '(reason removed by sanitizer)');
     assert.equal(second.value.blockers, undefined);
   } finally { f.cleanup(); }
+    }},
+  ];
+  for (const item of cases) await item.run();
 });
 
-test('native pending lists blocked reasons', async () => {
+test('blocked slots, blockers and pending keep their notice', async () => {
+  const cases: {name: string; run: () => Promise<void>}[] = [
+    {name: 'native pending lists blocked', run: async () => {
   const f = await fixture();
   try {
     configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, codex: {nativeSubagentsOnly: true, targets: [{low: {model: 'native'}}]}}});
@@ -145,9 +149,8 @@ test('native pending lists blocked reasons', async () => {
     assert.equal(done.exit, 0, JSON.stringify(done));
     assert.deepEqual(done.value.blocked, pending.value.blocked);
   } finally { f.cleanup(); }
-});
-
-test('native pending summary states the launch order without an immediate rerun', async () => {
+    }},
+    {name: 'native pending summary order', run: async () => {
   const f = await fixture();
   try {
     f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
@@ -165,9 +168,8 @@ test('native pending summary states the launch order without an immediate rerun'
     assert.doesNotMatch(waved.output.summary, /at once/i);
     assert.doesNotMatch(waved.output.summary, /launch them now/i);
   } finally { f.cleanup(); }
-});
-
-test('many blocked reasons keep blocker notice', async () => {
+    }},
+    {name: 'many blocked keep notice', run: async () => {
   const f = await fixture();
   try {
     const models = Array.from({length: 10}, (_, index) => 'm' + index);
@@ -187,9 +189,8 @@ test('many blocked reasons keep blocker notice', async () => {
     assert.match(second.output.summary, /\+\d+ more blocked/);
     assert.ok(Buffer.byteLength(second.output.summary, 'utf8') <= 1024);
   } finally { f.cleanup(); }
-});
-
-test('repeated blocked reason becomes blocker and survives interruption across rounds', async () => {
+    }},
+    {name: 'repeated becomes blocker and survives interruption', run: async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : report());
@@ -206,9 +207,8 @@ test('repeated blocked reason becomes blocker and survives interruption across r
     assert.deepEqual(resumed.value.blockers, [{slot: 'claude[0]', reason: 'Artifact denied by the guard', rounds: [1, 2]}]);
     assert.match(resumed.output.summary, /orchestrator blocker claude\[0\]: Artifact denied by the guard \(rounds 1-2\)/);
   } finally { f.cleanup(); }
-});
-
-test('all blocked repeat round names blocker', async () => {
+    }},
+    {name: 'all blocked names blocker', run: async () => {
   const f = await fixture();
   try {
     f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : report());
@@ -222,9 +222,8 @@ test('all blocked repeat round names blocker', async () => {
     assert.match(failed.output.summary, /^orchestrator blocker claude\[0\]: Artifact denied by the guard \(rounds 1-2\)/);
     assert.match(failed.output.summary, /blocked agy\[0\]: Second blocker/);
   } finally { f.cleanup(); }
-});
-
-test('blocker compares last round with findings', async () => {
+    }},
+    {name: 'blocker compares last round', run: async () => {
   const f = await fixture();
   try {
     configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}}}, 3);
@@ -238,9 +237,8 @@ test('blocker compares last round with findings', async () => {
     assert.equal(result.exit, 0, JSON.stringify(result));
     assert.deepEqual(result.value.blockers, [{slot: 'claude[0]', reason: 'First blocker', rounds: [1, 3]}]);
   } finally { f.cleanup(); }
-});
-
-test('raw blocked reason absent from slot and findings files', async () => {
+    }},
+    {name: 'raw absent from files', run: async () => {
   const f = await fixture();
   try {
     const {createHash} = await import('node:crypto');
@@ -257,6 +255,9 @@ test('raw blocked reason absent from slot and findings files', async () => {
     assert.equal(slot.blocked[0].reason, ('Denied because ' + 'x'.repeat(300)).slice(0, 200));
     assert.equal(slot.blocked[0].reasonHash, createHash('sha256').update(raw.trim()).digest('hex'));
   } finally { f.cleanup(); }
+    }},
+  ];
+  for (const item of cases) await item.run();
 });
 
 test('report failure class names a missing report and keeps refusal wording', async () => {
@@ -399,110 +400,204 @@ const codeAccepted = async (f: ReviewFixture, step: number, review?: string) => 
   return result;
 };
 
-test('review ceiling refuses and opens escalation after accepted must and pending rejection', async () => {
-  for (const ruling of ['accepted', 'rejected'] as const) {
-    const f = await fixture();
-    try {
-      await seedAcceptedCeiling(f);
-      if (ruling === 'rejected') await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
-      const launches = f.launches.length;
-      const result = await f.call();
-      assert.equal(result.exit, 4);
-      assert.equal(result.output.reason, 'review-ceiling');
-      assert.match(result.output.summary, /ceiling 4/);
-      assert.equal(f.launches.length, launches);
+test('review ceiling admission grants rounds by resolution and refuses otherwise', async () => {
+  const viaPlan = async (f: ReviewFixture) => {
+    const result = await f.call();
+    return {exit: result.exit, reason: result.output.reason as string | undefined};
+  };
+  const viaLow = async (f: ReviewFixture) => {
+    f.lines.length = 0;
+    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
+    return {exit, reason: f.output().reason as string | undefined};
+  };
+  const rows: {name: string; seed: (f: ReviewFixture) => Promise<unknown>; invoke?: 'low'; run?: (f: ReviewFixture, ctx: unknown) => Promise<{exit: number; reason?: string}>; exit: number; reason?: string; check?: (f: ReviewFixture, ctx: unknown) => unknown}[] = [
+    {name: 'accepted MUST past the ceiling opens an escalation', seed: async f => { await seedAcceptedCeiling(f); }, exit: 4, reason: 'review-ceiling', check: f => {
+      assert.equal(f.launches.length, 0);
       assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
       const escalation = foldLedger(f.session).records.at(-1)!;
       assert.equal(escalation.kind, 'escalation');
       assert.equal(escalation.key, ceilingId(PLAN_REVIEW, 4));
       assert.equal(escalation.data['id'], ceilingId(PLAN_REVIEW, 4));
       assert.equal(escalation.data['state'], 'open');
+    }},
+    {name: 'rejected MUST past the ceiling opens an escalation', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken'});
+    }, exit: 4, reason: 'review-ceiling', check: f => {
+      assert.equal(f.launches.length, 0);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
+      assert.equal(foldLedger(f.session).records.at(-1)!.data['state'], 'open');
+    }},
+    {name: 'duplicate ruling past the ceiling stays round-cap', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'duplicate', rationale: 'Same original claim'});
+    }, exit: 4, reason: 'round-cap', check: f => {
+      assert.equal(openCeilingRows(f).length, 0);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
+    }},
+    {name: 'open ceiling blocks review at any level', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await openCeiling(f, PLAN_REVIEW, 4);
+      return {launches: f.launches.length, seq: foldLedger(f.session).lastSeq};
+    }, exit: 4, reason: 'escalation-open', check: async (f, ctx) => {
+      const base = ctx as {launches: number; seq: number};
+      assert.equal(f.launches.length, base.launches);
+      assert.equal(foldLedger(f.session).lastSeq, base.seq);
+      f.lines.length = 0;
+      const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
+      assert.equal(exit, 4);
+      assert.equal(f.output().reason, 'escalation-open');
+    }},
+    {name: 'zero round level opens the saved ceiling', seed: seedAcceptedCeiling, invoke: 'low', exit: 4, reason: 'review-ceiling', check: f => {
+      assert.deepEqual(openCeilingRows(f), [[ceilingId(PLAN_REVIEW, 4), 'open']]);
+    }},
+    {name: 'zero round level refuses a saved round cap', seed: async f => {
+      seedCompletedRound(f, 2, [seededFinding('R2-F001', 'SHOULD')]);
+    }, invoke: 'low', exit: 4, reason: 'round-cap', check: f => {
+      assert.match(f.output().summary, /round cap 2/);
+      assert.ok(!fs.existsSync(path.join(f.directory, 'round-3')));
+    }},
+    {name: 'zero round level runs a pending rejection confirmation', seed: async f => {
+      seedCompletedRound(f, 2, [seededFinding('R2-F001', 'MUST')]);
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R2-F001', ruling: 'rejected', rationale: 'Still broken'});
+      confirmDelegate(f);
+    }, invoke: 'low', exit: 0, check: f => {
+      assert.ok(fs.existsSync(path.join(f.directory, 'round-3', 'findings.json')));
+    }},
+    {name: 'zero round level reuses an incomplete saved round', seed: async f => {
+      await seedAcceptedCeiling(f);
+      seedRound(f, 5);
+      planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
+    }, invoke: 'low', exit: 0, check: f => {
+      assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
+      assert.equal(openCeilingRows(f).length, 0);
+    }},
+    {name: 'zero round level reuses a staffed reviewer on a moved round', seed: async f => {
+      seedCompletedRound(f, 1, []);
+      seedRound(f, 2);
+      fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
+      planDelegate(f, CLEAN);
+    }, invoke: 'low', exit: 0, check: f => {
+      assert.ok(fs.existsSync(path.join(f.directory, 'round-2/findings.json')));
+    }},
+    {name: 'resolved ceiling grants two rounds', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await grantCeiling(f);
+    }, run: async f => {
+      await planAccepted(f, 5);
+      const sixth = await planAccepted(f, 6);
+      assert.match(sixth.output.summary, /round 6\/2/);
+      return {exit: sixth.exit};
+    }, exit: 0, check: f => {
+      assert.equal(f.read(5, 'round.json').cap, 2);
+      assert.equal(f.read(6, 'round.json').cap, 2);
+      assert.ok(fs.existsSync(path.join(f.directory, 'round-6/findings.json')));
+    }},
+    {name: 'deferred ceiling grants no rounds', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await deferCeiling(f);
+    }, exit: 4, reason: 'round-cap', check: async f => {
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
+      assert.equal(openCeilingRows(f).length, 0);
+      await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'deferred', rationale: 'Follow-up'});
+      const second = await f.call();
+      assert.equal(second.exit, 4);
+      assert.equal(second.output.reason, 'round-cap');
+      assert.equal(openCeilingRows(f).length, 0);
+    }},
+    {name: 'closed ceiling grants no rounds', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await openCeiling(f, PLAN_REVIEW, 4);
+      await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
+    }, exit: 4, reason: 'round-cap', check: f => {
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
+      assert.equal(openCeilingRows(f).length, 0);
+    }},
+    {name: 'closed ceiling runs full review for mixed MUSTs', seed: async f => {
+      singlePlanTarget(f);
+      const rejected = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken'});
+      const accepted = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R4-F002', ruling: 'accepted', rationale: 'Fixed'});
+      const findings = [seededFinding('R4-F001', 'MUST'), seededFinding('R4-F002', 'MUST')];
+      seedCompletedRound(f, 4, findings, JSON.stringify([['R4-F001', rejected.seq], ['R4-F002', accepted.seq]]));
+      await openCeiling(f, PLAN_REVIEW, 4);
+      await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
+      confirmDelegate(f);
+    }, exit: 0, check: f => {
+      const round = f.read(5, 'round.json');
+      assert.match(round.scope, /^Re-review round 5 \(full\)/);
+      assert.equal(round.requests.length, 1);
+      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+    }},
+    {name: 'accepted MUST after a granted ceiling opens an escalation', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await grantCeiling(f);
+      await seedAcceptedRound(f, 5);
+      await seedAcceptedRound(f, 6);
+    }, exit: 4, reason: 'review-ceiling', check: f => {
+      assert.deepEqual(foldLedger(f.session).records.at(-1)!.data, {id: ceilingId(PLAN_REVIEW, 6), state: 'open', summary: 'ceiling 6 reached'});
+    }},
+    {name: 'code review defer grants nothing', seed: async f => {
+      worktreeRun(f);
+      const file = path.join(f.deps.skillRoot, 'config.jsonc');
+      const config = JSON.parse(fs.readFileSync(file, 'utf8')) as {phases: Record<string, {targets: Record<string, number>; rounds: Record<string, number>}>};
+      config.phases['code-review']!.targets['low'] = 1;
+      config.phases['code-review']!.rounds['low'] = 1;
+      fs.writeFileSync(file, JSON.stringify(config));
+      const first = await codeAccepted(f, 1);
+      await openCeiling(f, first.value.review, 3);
+      return {review: first.value.review};
+    }, run: async (f, ctx) => {
+      const review = (ctx as {review: string}).review;
+      const launches = f.launches.length;
+      await assert.rejects(resolveCeiling(f, review, 3, 'defer: accept as follow-up'), {reason: 'invalid-record'});
+      const blocked = await f.call('code', 'worktree');
+      assert.equal(f.launches.length, launches);
+      return {exit: blocked.exit, reason: blocked.output.reason as string};
+    }, exit: 4, reason: 'escalation-open'},
+    {name: 'cap past without a ceiling starts a round', seed: async f => {
+      singlePlanTarget(f);
+      const ruling = await f.add('ruling', {subject: 'review:' + PLAN_REVIEW + ':R2-F001', ruling: 'accepted', rationale: 'Resolution'});
+      seedCompletedRound(f, 2, [seededFinding('R2-F001', 'MUST')], JSON.stringify([['R2-F001', ruling.seq]]));
+    }, run: async f => {
+      const result = await planAccepted(f, 3);
+      assert.match(result.output.summary, /round 3\/2/);
+      return {exit: result.exit};
+    }, exit: 0, check: f => {
+      assert.equal(f.read(3, 'round.json').cap, 2);
+    }},
+    {name: 'granted clean round then launch stays round-cap', seed: async f => {
+      await seedAcceptedCeiling(f);
+      await grantCeiling(f);
+      seedCompletedRound(f, 5, [], '[]', foldLedger(f.session).lastSeq);
+    }, exit: 4, reason: 'round-cap', check: f => {
+      assert.equal(f.launches.length, 0);
+    }},
+    {name: 'incomplete round above the ceiling is reused', seed: async f => {
+      await seedAcceptedCeiling(f);
+      seedRound(f, 5);
+      await openCeiling(f, PLAN_REVIEW, 4);
+      planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
+    }, exit: 0, check: f => {
+      assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
+    }},
+    {name: 'incomplete round past the cap without a MUST stays round-cap', seed: async f => {
+      seedCompletedRound(f, 2, [seededFinding('R2-F001', 'SHOULD')]);
+      seedRound(f, 3);
+    }, exit: 4, reason: 'round-cap', check: f => {
+      assert.equal(f.launches.length, 0);
+      assert.equal(fs.existsSync(path.join(f.directory, 'round-3/findings.json')), false);
+    }},
+  ];
+  for (const row of rows) {
+    const f = await fixture();
+    try {
+      const ctx = await row.seed(f);
+      const outcome = row.run ? await row.run(f, ctx) : row.invoke === 'low' ? await viaLow(f) : await viaPlan(f);
+      assert.equal(outcome.exit, row.exit, row.name);
+      if (row.reason !== undefined) assert.equal(outcome.reason, row.reason, row.name);
+      await row.check?.(f, ctx);
     } finally { f.cleanup(); }
   }
-});
-
-test('review past ceiling without must stays round-cap', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'duplicate', rationale: 'Same original claim' });
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'round-cap');
-    assert.equal(openCeilingRows(f).length, 0);
-    assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false);
-  } finally { f.cleanup(); }
-});
-
-test('open ceiling blocks review across configured and zero round levels', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await openCeiling(f, PLAN_REVIEW, 4);
-    const launches = f.launches.length, seq = foldLedger(f.session).lastSeq;
-    const blocked = await f.call();
-    assert.equal(blocked.exit, 4);
-    assert.equal(blocked.output.reason, 'escalation-open');
-    assert.equal(f.launches.length, launches);
-    assert.equal(foldLedger(f.session).lastSeq, seq);
-
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 4);
-    assert.equal(f.output().reason, 'escalation-open');
-  } finally { f.cleanup(); }
-});
-
-test('zero round level opens the saved ceiling', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 4);
-    assert.equal(f.output().reason, 'review-ceiling');
-    assert.deepEqual(openCeilingRows(f), [[ceilingId(PLAN_REVIEW, 4), 'open']]);
-  } finally { f.cleanup(); }
-});
-
-test('zero round level refuses a saved round cap without continuation', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 2, [seededFinding('R2-F001', 'SHOULD')]);
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 4);
-    assert.equal(f.output().reason, 'round-cap');
-    assert.match(f.output().summary, /round cap 2/);
-    assert.ok(!fs.existsSync(path.join(f.directory, 'round-3')));
-  } finally { f.cleanup(); }
-});
-
-test('zero round level runs a pending rejection confirmation', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 2, [seededFinding('R2-F001', 'MUST')]);
-    await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R2-F001', ruling: 'rejected', rationale: 'Still broken' });
-    confirmDelegate(f);
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 0, JSON.stringify(f.output()));
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-3', 'findings.json')));
-  } finally { f.cleanup(); }
-});
-
-test('zero round level reuses an incomplete saved round', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    seedRound(f, 5);
-    planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 0, JSON.stringify(f.output()));
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
-    assert.equal(openCeilingRows(f).length, 0);
-  } finally { f.cleanup(); }
 });
 
 test('moved incomplete round is refused without replacing pending state', async () => {
@@ -560,63 +655,6 @@ test('moved incomplete round is refused without replacing pending state', async 
   }
 });
 
-test('zero round level reuses a staffed previous reviewer on a moved round', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 1, []);
-    seedRound(f, 2);
-    fs.appendFileSync(f.plan, '\n## Moved\nChanged.\n');
-    planDelegate(f, CLEAN);
-    f.lines.length = 0;
-    const exit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'], f.deps);
-    assert.equal(exit, 0, JSON.stringify(f.output()));
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-2/findings.json')));
-  } finally { f.cleanup(); }
-});
-
-test('resolved ceiling escalation grants two rounds', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await grantCeiling(f);
-    await planAccepted(f, 5);
-    const sixth = await planAccepted(f, 6);
-    assert.match(sixth.output.summary, /round 6\/2/);
-    assert.equal(f.read(5, 'round.json').cap, 2);
-    assert.equal(f.read(6, 'round.json').cap, 2);
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-6/findings.json')));
-  } finally { f.cleanup(); }
-});
-
-test('deferred and closed ceiling resolutions grant no rounds and enforce round-cap', async () => {
-  for (const resolution of ['defer', 'close'] as const) {
-    const f = await fixture();
-    try {
-      await seedAcceptedCeiling(f);
-      if (resolution === 'defer') await deferCeiling(f);
-      else {
-        await openCeiling(f, PLAN_REVIEW, 4);
-        await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
-      }
-      const launches = f.launches.length;
-      const result = await f.call();
-      assert.equal(result.exit, 4, resolution);
-      assert.equal(result.output.reason, 'round-cap', resolution);
-      assert.equal(f.launches.length, launches, resolution);
-      assert.equal(fs.existsSync(path.join(f.directory, 'round-5')), false, resolution);
-      assert.equal(openCeilingRows(f).length, 0, resolution);
-
-      if (resolution === 'defer') {
-        // Explicit deferred ruling on the finding also ends at round-cap
-        await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'deferred', rationale: 'Follow-up' });
-        const second = await f.call();
-        assert.equal(second.exit, 4);
-        assert.equal(second.output.reason, 'round-cap');
-        assert.equal(openCeilingRows(f).length, 0);
-      }
-    } finally { f.cleanup(); }
-  }
-});
 
 test('zero-round ceiling resolutions run required review for pending rejections', async () => {
   // Case 1: Rejection ruled before defer
@@ -688,61 +726,6 @@ test('zero-round ceiling resolutions run required review for pending rejections'
   }
 });
 
-test('closed ceiling runs full review for mixed accepted and rejected MUSTs', async () => {
-  const f = await fixture();
-  try {
-    singlePlanTarget(f);
-    const rejected = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F001', ruling: 'rejected', rationale: 'Still broken' });
-    const accepted = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R4-F002', ruling: 'accepted', rationale: 'Fixed' });
-    const findings = [seededFinding('R4-F001', 'MUST'), seededFinding('R4-F002', 'MUST')];
-    const rulings = [['R4-F001', rejected.seq], ['R4-F002', accepted.seq]];
-    seedCompletedRound(f, 4, findings, JSON.stringify(rulings));
-    await openCeiling(f, PLAN_REVIEW, 4);
-    await resolveCeiling(f, PLAN_REVIEW, 4, 'close: proceed with fixes');
-    confirmDelegate(f);
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    const round = f.read(5, 'round.json');
-    assert.match(round.scope, /^Re-review round 5 \(full\)/);
-    assert.equal(round.requests.length, 1);
-    assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
-  } finally { f.cleanup(); }
-});
-
-test('accepted must after granted ceiling opens escalation', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await grantCeiling(f);
-    await seedAcceptedRound(f, 5);
-    await seedAcceptedRound(f, 6);
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'review-ceiling');
-    assert.deepEqual(foldLedger(f.session).records.at(-1)!.data, { id: ceilingId(PLAN_REVIEW, 6), state: 'open', summary: 'ceiling 6 reached' });
-  } finally { f.cleanup(); }
-});
-
-test('code review defer grants nothing', async () => {
-  const f = await fixture();
-  try {
-    worktreeRun(f);
-    const file = path.join(f.deps.skillRoot, 'config.jsonc');
-    const config = JSON.parse(fs.readFileSync(file, 'utf8')) as { phases: Record<string, { targets: Record<string, number>; rounds: Record<string, number> }> };
-    config.phases['code-review']!.targets['low'] = 1;
-    config.phases['code-review']!.rounds['low'] = 1;
-    fs.writeFileSync(file, JSON.stringify(config));
-    const first = await codeAccepted(f, 1);
-    const review = first.value.review;
-    await openCeiling(f, review, 3);
-    const launches = f.launches.length;
-    await assert.rejects(resolveCeiling(f, review, 3, 'defer: accept as follow-up'), { reason: 'invalid-record' });
-    const blocked = await f.call('code', 'worktree');
-    assert.equal(blocked.exit, 4);
-    assert.equal(blocked.output.reason, 'escalation-open');
-    assert.equal(f.launches.length, launches);
-  } finally { f.cleanup(); }
-});
 
 test('first round saves current cap', async () => {
   const f = await fixture();
@@ -789,17 +772,6 @@ test('ceiling resolution grants once through the matching open key', async () =>
   }
 });
 
-test('cap past without ceiling starts round', async () => {
-  const f = await fixture();
-  try {
-    singlePlanTarget(f);
-    const ruling = await f.add('ruling', { subject: 'review:' + PLAN_REVIEW + ':R2-F001', ruling: 'accepted', rationale: 'Resolution' });
-    seedCompletedRound(f, 2, [seededFinding('R2-F001', 'MUST')], JSON.stringify([['R2-F001', ruling.seq]]));
-    const result = await planAccepted(f, 3);
-    assert.match(result.output.summary, /round 3\/2/);
-    assert.equal(f.read(3, 'round.json').cap, 2);
-  } finally { f.cleanup(); }
-});
 
 test('saved ceiling and round cap ignore subsequent level cap raises', async () => {
   // Saved ceiling ignores later level cap
@@ -836,46 +808,6 @@ test('saved ceiling and round cap ignore subsequent level cap raises', async () 
   }
 });
 
-test('granted clean round then launch stays round-cap', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    await grantCeiling(f);
-    seedCompletedRound(f, 5, [], '[]', foldLedger(f.session).lastSeq);
-    const launches = f.launches.length;
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'round-cap');
-    assert.equal(f.launches.length, launches);
-  } finally { f.cleanup(); }
-});
-
-test('incomplete round above ceiling is reused even when ceiling escalation is open', async () => {
-  const f = await fixture();
-  try {
-    await seedAcceptedCeiling(f);
-    seedRound(f, 5);
-    await openCeiling(f, PLAN_REVIEW, 4);
-    planDelegate(f, report('§ Work', 'Defect 5', 'MUST'));
-    const result = await f.call();
-    assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.ok(fs.existsSync(path.join(f.directory, 'round-5/findings.json')));
-  } finally { f.cleanup(); }
-});
-
-test('incomplete round past cap without must stays round-cap', async () => {
-  const f = await fixture();
-  try {
-    seedCompletedRound(f, 2, [seededFinding('R2-F001', 'SHOULD')]);
-    seedRound(f, 3);
-    const launches = f.launches.length;
-    const result = await f.call();
-    assert.equal(result.exit, 4);
-    assert.equal(result.output.reason, 'round-cap');
-    assert.equal(f.launches.length, launches);
-    assert.equal(fs.existsSync(path.join(f.directory, 'round-3/findings.json')), false);
-  } finally { f.cleanup(); }
-});
 
 // SECTION: Advisory review budget
 const statusBudget = async (f: ReviewFixture) => {
@@ -1369,26 +1301,6 @@ test('review run refuses with host-sandboxed under sandboxed claude host', async
       assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
     } finally { f.cleanup(); }
   }
-  // A native-first-only roster still refuses once --native-failed marks the slot failed.
-  {
-    const f = await fixture();
-    try {
-      configure(f, {'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}}});
-      f.deps.orchestrator = {platform: 'claude', model: null} as typeof f.deps.orchestrator;
-      f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
-      const nativeOnly = await f.call();
-      assert.equal(nativeOnly.exit, 4);
-      assert.equal(nativeOnly.output.reason, 'native-pending');
-      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), true);
-
-      fs.rmSync(path.join(f.session, '.state', 'reviews'), {recursive: true, force: true});
-      f.lines.length = 0;
-      const refusedExit = await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'claude', '--native-failed', 'claude[0]=failed'], f.deps);
-      assert.equal(refusedExit, 4);
-      assert.equal(f.output().reason, 'host-sandboxed');
-      assert.equal(fs.existsSync(path.join(f.session, '.state', 'reviews')), false);
-    } finally { f.cleanup(); }
-  }
 });
 
 
@@ -1427,17 +1339,6 @@ function assertReviewWarning(f: ReviewFixture, result: Awaited<ReturnType<Review
   assert.ok(Buffer.byteLength(result.output.summary, 'utf8') <= 1024);
 }
 
-for (const integrated of [true, false]) {
-  test('review warning: ' + (integrated ? 'worktree after task integration' : 'standalone worktree has none'), async () => {
-    const f = await fixture();
-    try {
-      worktreeRun(f);
-      if (integrated) await openReviewIntegration(f);
-      const result = await f.call('code', 'worktree', 'low');
-      assertReviewWarning(f, result, integrated ? WRONG_REVIEW_TARGET : undefined);
-    } finally { f.cleanup(); }
-  });
-}
 
 const integrationWarningCases: {
   name: string;
@@ -1488,53 +1389,73 @@ const integrationWarningCases: {
   }},
 ];
 
-for (const item of integrationWarningCases) {
+const reviewWarningCases: {
+  name: string;
+  target: 'worktree' | 'integration';
+  integrate?: boolean;
+  prepare?: (f: ReviewFixture) => unknown;
+  arrange?: (f: ReviewFixture) => unknown;
+  warning?: string;
+  dirty?: boolean;
+  cleanupCommit?: boolean;
+  rerun?: boolean;
+}[] = [
+  {name: 'worktree after task integration', target: 'worktree', integrate: true, warning: WRONG_REVIEW_TARGET},
+  {name: 'standalone worktree has none', target: 'worktree'},
+  ...integrationWarningCases.map(item => ({...item, target: 'integration' as const})),
+  {name: 're-review reports missing verification ahead of long repository-change paths', target: 'integration', warning: NO_VERIFICATION, rerun: true},
+];
+
+for (const item of reviewWarningCases) {
   test('review warning: ' + item.name, async () => {
     const f = await fixture();
     try {
-      fs.writeFileSync(f.plan, VALID_TASK_PLAN);
-      await item.prepare?.(f);
-      await openReviewIntegration(f);
-      await item.arrange?.(f);
-      f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
-        argv[1] === 'rev-parse' ? (item.cleanupCommit ? CLEANUP_HEAD : INTEGRATION_HEAD)
-          : argv[1] === 'diff' ? 'src/file.ts\0'
-            : argv.includes('status') && item.dirty ? ' M src/file.ts\0' : ''});
-      const result = await f.call('code', 'integration', 'low');
-      assertReviewWarning(f, result, item.warning);
+      if (item.target === 'worktree') {
+        worktreeRun(f);
+        if (item.integrate) await openReviewIntegration(f);
+        const result = await f.call('code', 'worktree', 'low');
+        assertReviewWarning(f, result, item.warning);
+      } else if (item.rerun) {
+        fs.writeFileSync(f.plan, VALID_TASK_PLAN);
+        await openReviewIntegration(f);
+        await recordReviewVerification(f);
+        await recordCleanupSkip(f);
+        let head = INTEGRATION_HEAD;
+        f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
+          argv[1] === 'rev-parse' ? head : argv[1] === 'diff' ? 'src/file.ts\0' : ''});
+        const first = await f.call('code', 'integration', 'low');
+        assert.equal(first.exit, 0, JSON.stringify(first));
+        const findings = JSON.parse(fs.readFileSync(first.value.path, 'utf8')).findings;
+        for (const finding of findings) {
+          await f.add('ruling', {subject: 'review:code-integration:' + finding.id, ruling: 'accepted', rationale: 'Fixed'});
+        }
+        await recordReviewVerification(f, ['1:V1']);
+        head = CLEANUP_HEAD;
+        const fanout = path.join(f.session, '.state/reviews/code-integration/round-2/gen-1');
+        fs.mkdirSync(fanout, {recursive: true});
+        const removedPaths = Object.fromEntries(Array.from({length: 12}, (_, i) => ['src/' + 'a'.repeat(115) + i + '.ts', '? removed - old-hash']));
+        fs.writeFileSync(path.join(fanout, 'checkout-baseline.json'), JSON.stringify({checkouts: [{cwd: path.join(f.session, integrationPath), head, entries: removedPaths}]}));
+        planDelegate(f, CLEAN);
+        const second = await f.call('code', 'integration', 'low');
+        assertReviewWarning(f, second, item.warning);
+        assert.equal(second.value.round, 2);
+        assert.match(second.output.summary, /repository changes: .*…$/);
+      } else {
+        fs.writeFileSync(f.plan, VALID_TASK_PLAN);
+        await item.prepare?.(f);
+        await openReviewIntegration(f);
+        await item.arrange?.(f);
+        f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
+          argv[1] === 'rev-parse' ? (item.cleanupCommit ? CLEANUP_HEAD : INTEGRATION_HEAD)
+            : argv[1] === 'diff' ? 'src/file.ts\0'
+              : argv.includes('status') && item.dirty ? ' M src/file.ts\0' : ''});
+        const result = await f.call('code', 'integration', 'low');
+        assertReviewWarning(f, result, item.warning);
+      }
     } finally { f.cleanup(); }
   });
 }
 
-test('review warning: re-review reports missing verification ahead of long repository-change paths', async () => {
-  const f = await fixture();
-  try {
-    fs.writeFileSync(f.plan, VALID_TASK_PLAN);
-    await openReviewIntegration(f);
-    await recordReviewVerification(f);
-    await recordCleanupSkip(f);
-    let head = INTEGRATION_HEAD;
-    f.deps.run = async argv => ({exit: 0, stderr: '', stdout:
-      argv[1] === 'rev-parse' ? head : argv[1] === 'diff' ? 'src/file.ts\0' : ''});
-    const first = await f.call('code', 'integration', 'low');
-    assert.equal(first.exit, 0, JSON.stringify(first));
-    const findings = JSON.parse(fs.readFileSync(first.value.path, 'utf8')).findings;
-    for (const finding of findings) {
-      await f.add('ruling', {subject: 'review:code-integration:' + finding.id, ruling: 'accepted', rationale: 'Fixed'});
-    }
-    await recordReviewVerification(f, ['1:V1']);
-    head = CLEANUP_HEAD;
-    const fanout = path.join(f.session, '.state/reviews/code-integration/round-2/gen-1');
-    fs.mkdirSync(fanout, {recursive: true});
-    const removedPaths = Object.fromEntries(Array.from({length: 12}, (_, i) => ['src/' + 'a'.repeat(115) + i + '.ts', '? removed - old-hash']));
-    fs.writeFileSync(path.join(fanout, 'checkout-baseline.json'), JSON.stringify({checkouts: [{cwd: path.join(f.session, integrationPath), head, entries: removedPaths}]}));
-    planDelegate(f, CLEAN);
-    const second = await f.call('code', 'integration', 'low');
-    assertReviewWarning(f, second, NO_VERIFICATION);
-    assert.equal(second.value.round, 2);
-    assert.match(second.output.summary, /repository changes: .*…$/);
-  } finally { f.cleanup(); }
-});
 
 test('reviewRun refuses broken-citation on new and superseded rounds but not native-pending resume', async () => {
   // 1. New round start refuses broken citation in plan and design without creating round.json or launching reviewers.

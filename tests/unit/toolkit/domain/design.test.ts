@@ -100,24 +100,39 @@ test('design increments parse behaviour bullets and warn on missing or file-coun
   assert.ok(!accepted.warnings.some((item) => item.code === 'increment-behaviour'));
 });
 
-test('design increments accept optional grounding leads and warn on filler', () => {
+test('design presentation findings warn without blocking', () => {
+  // Optional grounding leads parse; filler leads warn.
   assert.deepEqual(designResult.warnings, []);
   assert.equal(design.details['I01']?.['Grounding leads'], undefined);
-
   const lead = 'Can the importer reuse the existing CSV reader?';
   const withLead = DESIGN.replace('</details>', `- Grounding leads: ${lead}\n</details>`);
   const result = parseDesign(withLead);
   assert.ok(result.ok, JSON.stringify(result));
   assert.deepEqual(result.warnings, []);
   assert.equal(result.design.details['I01']?.['Grounding leads'], lead);
-
   assert.deepEqual(codes(withLead.replace(lead, 'n/a')), ['filler-note']);
-});
 
-test('design presentation findings are warnings', () => {
-  const result = parseDesign(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3').replace('REQ-1 strategy', 'Importer strategy'));
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.warnings.map(item => item.code).sort(), ['missing-requirement-ref', 'summary-label']);
+  // Presentation findings are warnings.
+  const presented = parseDesign(DESIGN.replace('> **Increments:** 2', '> **Increments:** 3').replace('REQ-1 strategy', 'Importer strategy'));
+  assert.ok(presented.ok, JSON.stringify(presented));
+  assert.deepEqual(presented.warnings.map(item => item.code).sort(), ['missing-requirement-ref', 'summary-label']);
+
+  // At a Glance is required first and long paragraphs warn.
+  const glance = '## At a Glance\n- Stage the importer.\n\n';
+  const missing = parseDesign(DESIGN.replace(glance, ''));
+  assert.ok(missing.ok);
+  assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
+  const moved = parseDesign(DESIGN.replace(glance, '').replace('## Approach', glance + '## Approach'));
+  assert.ok(moved.ok);
+  assert.ok(moved.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
+  const source = DESIGN.replace('What.', '\n' + Array(61).fill('word').join(' '));
+  const long = parseDesign(source);
+  assert.ok(long.ok);
+  assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
+  assert.deepEqual(long.design.increments, design.increments);
+  assert.ok(long.design.governedText.includes(glance.trim()));
+  assert.ok(!long.design.governedText.includes('## Execution Status'));
+  assert.ok(!long.design.governedText.includes('## Review Findings & Resolutions'));
 });
 
 test('design: parses graph, details, and Execution Status', () => {
@@ -278,23 +293,4 @@ test('requirement references reject unknown requirements and report unsatisfied 
   const defects = validateApproachRequirements({ approachRequirements: ['REQ-1', 'REQ-9'] } as never, requirements);
   assert.deepEqual(defects.map(item => [item.code, item.severity]), [['unknown-requirement', 'warning']]);
   assert.match(defects[0]!.message, /REQ-9/);
-});
-
-
-test('design human layout: At a Glance is required first and long paragraphs warn', () => {
-  const glance = '## At a Glance\n- Stage the importer.\n\n';
-  const missing = parseDesign(DESIGN.replace(glance, ''));
-  assert.ok(missing.ok);
-  assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
-  const moved = parseDesign(DESIGN.replace(glance, '').replace('## Approach', glance + '## Approach'));
-  assert.ok(moved.ok);
-  assert.ok(moved.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
-  const source = DESIGN.replace('What.', '\n' + Array(61).fill('word').join(' '));
-  const long = parseDesign(source);
-  assert.ok(long.ok);
-  assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
-  assert.deepEqual(long.design.increments, design.increments);
-  assert.ok(long.design.governedText.includes(glance.trim()));
-  assert.ok(!long.design.governedText.includes('## Execution Status'));
-  assert.ok(!long.design.governedText.includes('## Review Findings & Resolutions'));
 });

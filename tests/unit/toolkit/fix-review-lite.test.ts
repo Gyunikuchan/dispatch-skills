@@ -143,7 +143,9 @@ test('fix-review-lite brief: launch values come from the utility entry of the ho
   } finally { f.cleanup(); }
 });
 
-test('fix-review-lite selection: picks the latest round of this artifact when a same-basename artifact has a later round', async () => {
+test('fix-review-lite selection resolves the reviewed round across artifacts', async () => {
+// fix-review-lite selection: picks the latest round of this artifact when a same-basename artifact has a later round
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -156,9 +158,10 @@ test('fix-review-lite selection: picks the latest round of this artifact when a 
     assert.equal(exit, 0);
     assert.equal(value!['round'], 1);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite selection: an artifact outside the repository renders and collides with no repository review', async () => {
+// fix-review-lite selection: an artifact outside the repository renders and collides with no repository review
+{
   const f = await fixture();
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-review-lite-outside-'));
   try {
@@ -176,9 +179,10 @@ test('fix-review-lite selection: an artifact outside the repository renders and 
     fs.rmSync(outsideDir, {recursive: true, force: true});
     f.cleanup();
   }
-});
+}
 
-test('fix-review-lite selection: works with no bind record', async () => {
+// fix-review-lite selection: works with no bind record
+{
   const f = await fixture(false);
   try {
     assert.equal(await main(['review', 'run', f.plan, '--kind', 'plan', '--level', 'medium', '--session', f.session, '--host', 'opencode', '--spec', f.spec], f.deps), 0);
@@ -190,9 +194,12 @@ test('fix-review-lite selection: works with no bind record', async () => {
     assert.equal(exit, 0);
     assert.equal(value!['round'], 1);
   } finally { f.cleanup(); }
+}
 });
 
-test('fix-review-lite refusals: a round without artifactPath, an unreviewed artifact and a code-review artifact refuse without files', async () => {
+test('fix-review-lite refusals leave no file without reviewable accepted changes', async () => {
+// fix-review-lite refusals: a round without artifactPath, an unreviewed artifact and a code-review artifact refuse without files
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -216,9 +223,10 @@ test('fix-review-lite refusals: a round without artifactPath, an unreviewed arti
     assert.equal(code.exit, 1);
     assert.equal(code.output.reason, 'invalid-input');
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite refusals: no accepted finding refuses', async () => {
+// fix-review-lite refusals: no accepted finding refuses
+{
   const f = await fixture();
   try {
     assert.equal((await f.call()).exit, 0);
@@ -230,9 +238,10 @@ test('fix-review-lite refusals: no accepted finding refuses', async () => {
     assert.equal(output.reason, 'nothing-to-review');
     assert.deepEqual(briefFiles(f), []);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite refusals: no change since the round input refuses and leaves no file', async () => {
+// fix-review-lite refusals: no change since the round input refuses and leaves no file
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -243,9 +252,10 @@ test('fix-review-lite refusals: no change since the round input refuses and leav
     assert.equal(output.reason, 'nothing-to-review');
     assert.deepEqual(briefFiles(f), []);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite refusals: an unexpected diff exit is a fault and leaves no file', async () => {
+// fix-review-lite refusals: an unexpected diff exit is a fault and leaves no file
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -256,9 +266,10 @@ test('fix-review-lite refusals: an unexpected diff exit is a fault and leaves no
     assert.equal(output.reason, 'fault');
     assert.deepEqual(briefFiles(f), []);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite refusals: an unreadable spec refuses', async () => {
+// fix-review-lite refusals: an unreadable spec refuses
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -269,9 +280,12 @@ test('fix-review-lite refusals: an unreadable spec refuses', async () => {
     assert.equal(exit, 1);
     assert.equal(output.reason, 'invalid-input');
   } finally { f.cleanup(); }
+}
 });
 
-test('fix-review-lite spec: an unchanged spec names one governing path and no snapshot', async () => {
+test('fix-review-lite spec states the reviewed text or its unavailability', async () => {
+// fix-review-lite spec: an unchanged spec names one governing path and no snapshot
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -281,9 +295,10 @@ test('fix-review-lite spec: an unchanged spec names one governing path and no sn
     assert.ok(text.includes(fs.realpathSync(f.spec)));
     assert.doesNotMatch(text, /unavailable/);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite spec: drift names the reviewed snapshot as the reviewed text', async () => {
+// fix-review-lite spec: drift names the reviewed snapshot as the reviewed text
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -295,9 +310,10 @@ test('fix-review-lite spec: drift names the reviewed snapshot as the reviewed te
     assert.ok(text.includes(path.join(f.directory, 'round-1', 'spec.snapshot.md')));
     assert.doesNotMatch(text, /unavailable/);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite spec: drift without a snapshot states the reviewed spec text is unavailable', async () => {
+// fix-review-lite spec: drift without a snapshot states the reviewed spec text is unavailable
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -309,6 +325,23 @@ test('fix-review-lite spec: drift without a snapshot states the reviewed spec te
     assert.equal(exit, 0);
     assert.match(text, /reviewed spec text is unavailable/);
   } finally { f.cleanup(); }
+}
+
+// fix-review-lite spec: a rewritten snapshot that no longer matches the round hash is unavailable
+{
+  const f = await fixture();
+  try {
+    await reviewed(f);
+    fs.appendFileSync(f.spec, '\n### REQ-2 — Added later\n');
+    fs.writeFileSync(path.join(f.directory, 'round-1', 'spec.snapshot.md'), '# Rewritten\n');
+    put(f, 'skills/writer.ts');
+    gitStub(f, ['skills/writer.ts']);
+    const {exit, text} = await brief(f);
+    assert.equal(exit, 0);
+    assert.match(text, /reviewed spec text is unavailable/);
+    assert.ok(!text.includes(path.join(f.directory, 'round-1', 'spec.snapshot.md')));
+  } finally { f.cleanup(); }
+}
 });
 
 test('fix-review-lite withholding: sensitive, outside, session and unlisted citations are withheld with reasons', async () => {
@@ -363,22 +396,22 @@ const citationCases = [
   {name: 'tracked deleted match is unresolved', cited: 'deleted.ts', files: [], deleted: 'lib/deleted.ts', expected: '- `deleted.ts`: no match', counts: [0, 1, 0]},
 ];
 
-for (const {name, cited, files, deleted, expected, counts} of citationCases) {
-  test(`fix-review-lite citation resolution: ${name}`, async () => {
+test(`fix-review-lite citation resolution resolves, lists, withholds and unresolves matches`, async () => {
+  for (const {name, cited, files, deleted, expected, counts} of citationCases) {
     const f = await fixture();
     try {
       await reviewed(f);
       for (const file of files) put(f, file);
       gitStub(f, deleted ? [...files, deleted] : files, () => ({exit: 1, stderr: '', stdout: '+Cites `' + cited + ':1-3`.\n'}));
       const {exit, value, text} = await brief(f);
-      assert.equal(exit, 0);
+      assert.equal(exit, 0, name);
       const section = counts[0] ? 'Citations from' : counts[1] ? 'Unresolved citations' : 'Withheld paths';
       const body = text.split('- ' + section)[1]?.split('\n\n')[1];
       assert.ok(body?.split('\n').includes(expected), body);
-      assert.deepEqual([value!['citations'], value!['unresolved'], value!['withheld']], counts);
+      assert.deepEqual([value!['citations'], value!['unresolved'], value!['withheld']], counts, name);
     } finally { f.cleanup(); }
-  });
-}
+  }
+});
 
 for (const aliases of [['writer.ts', 'lib/writer.ts'], ['lib/writer.ts', 'writer.ts']]) {
   test(`fix-review-lite citation resolution: keeps one span when ${aliases[0]} appears first`, async () => {
@@ -396,7 +429,9 @@ for (const aliases of [['writer.ts', 'lib/writer.ts'], ['lib/writer.ts', 'writer
   });
 }
 
-test('fix-review-lite consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs', async () => {
+test('fix-review-lite consumer search excludes sessions roots and unlisted paths', async () => {
+// fix-review-lite consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -416,39 +451,10 @@ test('fix-review-lite consumer search: excludes the sessions root and each flagg
     assert.ok(text.includes('`weird secret.txt`: sensitive'));
     assert.match(text, /add `-w` before `-e`/);
   } finally { f.cleanup(); }
-});
+}
 
-test('fix-review-lite citations: a leading ./ normalizes to the repository path, so one citation is kept once', async () => {
-  const f = await fixture();
-  try {
-    await reviewed(f);
-    put(f, 'skills/writer.ts');
-    const diff = ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,3 @@', ' # Work', '+Cites `./skills/writer.ts:12` and `skills/writer.ts:12`.'].join('\n') + '\n';
-    gitStub(f, ['skills/writer.ts'], () => ({exit: 1, stdout: diff, stderr: ''}));
-    const {exit, value, text} = await brief(f);
-    assert.equal(exit, 0);
-    assert.ok(!text.includes('./skills'), 'no unnormalized path');
-    assert.equal(text.split('`skills/writer.ts:12`').length - 1, 1);
-    assert.equal(value!['citations'], 1);
-  } finally { f.cleanup(); }
-});
-
-test('fix-review-lite spec: a rewritten snapshot that no longer matches the round hash is unavailable', async () => {
-  const f = await fixture();
-  try {
-    await reviewed(f);
-    fs.appendFileSync(f.spec, '\n### REQ-2 — Added later\n');
-    fs.writeFileSync(path.join(f.directory, 'round-1', 'spec.snapshot.md'), '# Rewritten\n');
-    put(f, 'skills/writer.ts');
-    gitStub(f, ['skills/writer.ts']);
-    const {exit, text} = await brief(f);
-    assert.equal(exit, 0);
-    assert.match(text, /reviewed spec text is unavailable/);
-    assert.ok(!text.includes(path.join(f.directory, 'round-1', 'spec.snapshot.md')));
-  } finally { f.cleanup(); }
-});
-
-test('fix-review-lite consumer search: a session outside the repository adds no sessions-root exclude', async () => {
+// fix-review-lite consumer search: a session outside the repository adds no sessions-root exclude
+{
   const f = await fixture();
   try {
     await reviewed(f);
@@ -463,6 +469,43 @@ test('fix-review-lite consumer search: a session outside the repository adds no 
     assert.equal(exit, 0);
     assert.ok(text.includes('`skills/writer.ts:12-30`') || text.includes('`skills/writer.ts:12`'), 'repository citation kept');
     assert.ok(!text.includes(':(exclude'), 'no exclude for the outside sessions root');
+  } finally { f.cleanup(); }
+}
+
+// fix-review-lite consumer search: a listed path cited as unrenderable gets one glob exclude, an unlisted one none
+{
+  const f = await fixture();
+  try {
+    await reviewed(f);
+    put(f, '{{x}}/a.md');
+    put(f, '{{x}}/.env');
+    put(f, 'skills/writer.ts');
+    const diff = ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,3 @@', ' # Work', '+Cites `{{x}}/a.md:1`, `{{x}}/.env:1` and `{{y}}/b.md:1`.'].join('\n') + '\n';
+    gitStub(f, ['{{x}}/a.md', '{{x}}/.env', 'skills/writer.ts'], () => ({exit: 1, stdout: diff, stderr: ''}));
+    const {exit, text} = await brief(f);
+    assert.equal(exit, 0);
+    assert.ok(text.includes('`{ {x} }/a.md`: unrenderable name'));
+    assert.ok(text.includes('`{ {y} }/b.md`: unrenderable name'));
+    assert.equal(text.split('":(exclude,glob)??x??/a.md"').length - 1, 1);
+    // Sensitive and cited as unrenderable: one exclude, not one per reason.
+    assert.equal(text.split('":(exclude,glob)??x??/.env"').length - 1, 1);
+    assert.ok(!text.includes('??y??'), 'unlisted unrenderable citation adds no exclude');
+  } finally { f.cleanup(); }
+}
+});
+
+test('fix-review-lite citations: a leading ./ normalizes to the repository path, so one citation is kept once', async () => {
+  const f = await fixture();
+  try {
+    await reviewed(f);
+    put(f, 'skills/writer.ts');
+    const diff = ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,3 @@', ' # Work', '+Cites `./skills/writer.ts:12` and `skills/writer.ts:12`.'].join('\n') + '\n';
+    gitStub(f, ['skills/writer.ts'], () => ({exit: 1, stdout: diff, stderr: ''}));
+    const {exit, value, text} = await brief(f);
+    assert.equal(exit, 0);
+    assert.ok(!text.includes('./skills'), 'no unnormalized path');
+    assert.equal(text.split('`skills/writer.ts:12`').length - 1, 1);
+    assert.equal(value!['citations'], 1);
   } finally { f.cleanup(); }
 });
 
@@ -495,26 +538,6 @@ test('fix-review-lite citations: a name with braces or a link opener is withheld
     assert.ok(text.includes('`[a] (b).md`: unrenderable name'));
     assert.ok(text.includes('`skills/writer.ts:12`'));
     assert.equal(value!['citations'], 1);
-  } finally { f.cleanup(); }
-});
-
-test('fix-review-lite consumer search: a listed path cited as unrenderable gets one glob exclude, an unlisted one none', async () => {
-  const f = await fixture();
-  try {
-    await reviewed(f);
-    put(f, '{{x}}/a.md');
-    put(f, '{{x}}/.env');
-    put(f, 'skills/writer.ts');
-    const diff = ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,3 @@', ' # Work', '+Cites `{{x}}/a.md:1`, `{{x}}/.env:1` and `{{y}}/b.md:1`.'].join('\n') + '\n';
-    gitStub(f, ['{{x}}/a.md', '{{x}}/.env', 'skills/writer.ts'], () => ({exit: 1, stdout: diff, stderr: ''}));
-    const {exit, text} = await brief(f);
-    assert.equal(exit, 0);
-    assert.ok(text.includes('`{ {x} }/a.md`: unrenderable name'));
-    assert.ok(text.includes('`{ {y} }/b.md`: unrenderable name'));
-    assert.equal(text.split('":(exclude,glob)??x??/a.md"').length - 1, 1);
-    // Sensitive and cited as unrenderable: one exclude, not one per reason.
-    assert.equal(text.split('":(exclude,glob)??x??/.env"').length - 1, 1);
-    assert.ok(!text.includes('??y??'), 'unlisted unrenderable citation adds no exclude');
   } finally { f.cleanup(); }
 });
 

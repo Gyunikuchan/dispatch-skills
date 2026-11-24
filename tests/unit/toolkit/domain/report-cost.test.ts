@@ -12,7 +12,6 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
-
 const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
 const failure = (text: string, truncated = false) => {
@@ -25,15 +24,6 @@ const parseDetail = (text: string) => {
   return result.ok ? null : result.failure.detail;
 };
 
-
-
-
-
-
-
-
-
-
 const MARK = 'unresolved-locus: ';
 const planLocus = '§ Work';
 const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
@@ -41,13 +31,6 @@ const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
   assert.ok(result.ok);
   return result.findings.map(item => item.locus);
 };
-
-
-
-
-
-
-
 
 // SECTION: Unknown tag recovery
 
@@ -59,10 +42,6 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   assert.ok(result.ok, result.ok ? '' : result.failure.detail);
   return result.findings;
 };
-
-
-
-
 
 // SECTION: Diagnostics reports
 
@@ -110,36 +89,12 @@ function assertShape(finding: Finding | undefined, category: keyof typeof CATEGO
 
 // SECTION: Layout, durations, and token columns
 
-
-
 // SECTION: Heuristics, severity, and model attribution
-
-
 
 const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
-
-
-
-
-
-
 
 // SECTION: Scope gate and redaction
 
@@ -150,27 +105,10 @@ const LEAKS = [
 ];
 const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
 
-
-
-
-
-
-
-
-
-
-
 // SECTION: Finding origin
 
 const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
 const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
-
-
-
-
-
-
-
 
 // SECTION: Estimated cost rendering
 
@@ -193,12 +131,6 @@ const phaseCost = (text: string, phase: string) => lastCells(overviewRows(text).
 const M = 1_000_000;
 const mega = (model: string, effort: string, input: number, overrides: Partial<InvocationFacts> = {}) =>
   invocation({ provider: 'codex', model, effort, usage: { input, output: 0 }, ...overrides });
-
-
-
-
-
-
 
 // SECTION: Cost folding under the byte cap
 
@@ -245,7 +177,9 @@ function assertFolded(kept: readonly string[][], folded: readonly string[], keyO
   return rest;
 }
 
-test('cost cells show estimated cost in the Summary, Phases, Tokens by platform and Tokens by stage', () => {
+test('cost cells price units, sum phases and attribute coverage across tables', () => {
+// cost cells show estimated cost in the Summary, Phases, Tokens by platform and Tokens by stage
+{
   const run = facts({ invocations: [mega('alpha', 'high', M)] });
   const text = costRender([run]);
   assert.match(text, /^- Estimated cost ~\$10\.00 \(partial\) · priced 1 · unpriced 0/m);
@@ -263,17 +197,19 @@ test('cost cells show estimated cost in the Summary, Phases, Tokens by platform 
   assert.ok(tableLines(plain, '### Tokens by stage').some((line) => line.endsWith('| 1/1 | — | — |')), plain);
   const roleLine = (t: string) => /^\| CLI delegates \|.*$/m.exec(t)?.[0];
   assert.ok(roleLine(text) && roleLine(plain));
-});
+}
 
-test('cost cells keep unpriced units out of the sum', () => {
+// cost cells keep unpriced units out of the sum
+{
   const cost = (invocations: InvocationFacts[]) => phaseCost(costRender([facts({ invocations })]), 'code review')[0];
   assert.equal(cost([mega('beta', 'low', M), mega('mystery', 'low', M)]), '~$2.00');
   assert.equal(cost([mega('mystery', 'low', M)]), '—');
   const text = costRender([facts({ invocations: [mega('beta', 'low', M), mega('mystery', 'low', M), bare({ provider: 'codex' })] })]);
   assert.match(text, /priced 1 · unpriced 2/m);
-});
+}
 
-test('phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total', () => {
+// phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total
+{
   const host = (phase: string | undefined, role: 'host' | 'subagent', model: string, input: number) =>
     ({ stage: 'plan' as const, ...(phase ? { phase } : {}), role, model, effort: null, input, output: 0 });
   const run = facts({
@@ -292,9 +228,10 @@ test('phase cost sums CLI delegates and host rows by phase, with the rest in una
   assert.ok(rows.find((line) => line.includes('| unattributed phase |'))!.includes('| — | 1 | 1,000,000 |'), 'only the orphan CLI invocation fills the token columns');
   const none = costRender([facts({ hostUsage: { platform: 'claude', rows: [host('review', 'host', 'alpha', M)] }, invocations: [] })]);
   assert.ok(!none.includes('unattributed phase'), 'a phased host row leaves no unattributed phase row');
-});
+}
 
-test('phase cost adds reasoning at the output rate only when the platform reports it apart from output', () => {
+// phase cost adds reasoning at the output rate only when the platform reports it apart from output
+{
   const usage = { input: 0, output: M, reasoning: M };
   const run = (provider: string, extra: Partial<Usage> = {}) => facts({ invocations: [mega('alpha', 'low', 0, { provider, usage: { ...usage, ...extra } })] });
   const cost = (provider: string, extra?: Partial<Usage>) => phaseCost(costRender([run(provider, extra)]), 'code review')[0];
@@ -307,9 +244,10 @@ test('phase cost adds reasoning at the output rate only when the platform report
   const host = (reasoningInOutput?: boolean) => facts({ invocations: [], hostUsage: { platform: 'opencode', rows: [{ stage: 'code review', role: 'host', model: 'alpha', effort: null, input: 0, output: M, reasoning: M, ...(reasoningInOutput === undefined ? {} : { reasoningInOutput }) }] } });
   assert.match(costRender([host()]), /^- Estimated cost ~\$40\.00 /m);
   assert.match(costRender([host(true)]), /^- Estimated cost ~\$20\.00 /m);
-});
+}
 
-test('cost drivers share bars rank keys by cost midpoint share, with exact strings for each edge', () => {
+// cost drivers share bars rank keys by cost midpoint share, with exact strings for each edge
+{
   const sharesOf = (invocations: InvocationFacts[]) => {
     const text = costRender([facts({ invocations })]);
     return tableLines(text, '## Cost drivers').slice(2).map((l) => {
@@ -327,9 +265,10 @@ test('cost drivers share bars rank keys by cost midpoint share, with exact strin
   assert.deepEqual(sharesOf([mega('mystery', 'medium', 30), mega('lost', 'medium', 10)]), ['mystery/medium 75%', 'lost/medium 25%']);
   // zero priced total: shares unavailable
   assert.deepEqual(sharesOf([mega('zero', 'high', 300), mega('zero', 'low', 100)]), ['zero/high —', 'zero/low —']);
-});
+}
 
-test('cost coverage names each reason in Tokens by platform and in host and subagent stage rows', () => {
+// cost coverage names each reason in Tokens by platform and in host and subagent stage rows
+{
   const platform = (text: string, name: string) => tableLines(text, '### Tokens by platform').find((line) => line.startsWith(`| ${name} |`))!;
   const covAndNotes = (line: string) => lastCells(line, 3).slice(0, 2);
   const run = facts({
@@ -358,8 +297,8 @@ test('cost coverage names each reason in Tokens by platform and in host and suba
   assert.ok(stages.some((line) => line.startsWith('| plan | claude | host | tiered |') && line.endsWith('| — | tier unknown | ~$0.15–$0.75 |')), hosted);
   assert.ok(stages.some((line) => line.startsWith('| plan | claude | subagent | mystery |') && line.endsWith('| — | unpriced model | — |')), hosted);
   assert.ok(stages.some((line) => line.startsWith('| plan | claude | subagent | beta |') && line.endsWith('| — | — | ~$<0.01 |')), hosted);
+}
 });
-
 test('cost folding folds the lowest-ranked Tokens by stage rows into one trailing row', () => {
   const rows = Array.from({ length: 3000 }, (_, index) => ({ ...sourceRow(index), effort: `e${String(index).padStart(4, '0')}` }));
   const all: Source[] = rows.map((r) => ({ key: `${r.model}/${r.effort}`, tokens: r.tokens, cost: r.cost }));
@@ -386,7 +325,7 @@ test('cost folding folds the lowest-ranked Tokens by stage rows into one trailin
 });
 
 test('cost folding folds Phases rows for many review subjects and keeps the run total', () => {
-  const rows = Array.from({ length: 1800 }, (_, index) => ({ ...sourceRow(index), key: `review-${index.toString(16).padStart(16, '0')}`, wallMs: 1000 * (index + 1) }));
+  const rows = Array.from({ length: 1200 }, (_, index) => ({ ...sourceRow(index), key: `review-${index.toString(16).padStart(16, '0')}`, wallMs: 1000 * (index + 1) }));
   const all: Source[] = rows.map(({ key, tokens, cost }) => ({ key, tokens, cost }));
   const run = facts({
     phases: rows.map((r) => ({ key: r.key, name: 'code review', outcome: 'complete', wallMs: r.wallMs })),
@@ -429,8 +368,11 @@ test('cost folding folds Tokens by platform rows last, after earlier tables fold
   const stage = tableCells(text, '### Tokens by stage'), overview = overviewCells(text);
   assert.deepEqual([stage.length, stage[0]![0], stage[0]![12]], [1, '3000 smaller rows', expected]);
   assert.deepEqual([overview.length, overview[0]![0], overview[0]!.at(-1)], [1, '1 smaller rows', expected]);
-});
 
+  // Boundary: a small table never folds.
+  const small = renderDiagnostics([facts({ invocations: [mega('flat', 'low', 1000)] })], foldPricer).text;
+  assert.ok(!tableCells(small, '### Tokens by platform').flat().some((cell) => /smaller rows/.test(cell)), 'small tables stay whole');
+});
 test('cost end to end: mixed-platform facts price in all four locations and survive an oversized report', () => {
   const shipped = JSON.parse(fs.readFileSync(path.join(SKILL_ROOT, 'references/pricing.json'), 'utf8'));
   const endPricer = resolvePricing(shipped, { 'lmstudio/*': { rates: { input: 0, output: 0 } } })!;

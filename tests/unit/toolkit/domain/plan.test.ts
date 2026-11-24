@@ -505,7 +505,8 @@ const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) => PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
 const defectsOf = (source: string, code: string) => { const result = parsePlan(source); return [...(result.ok ? [] : result.defects), ...result.warnings].filter((item) => item.code === code); };
 
-test('grouped delete registers every path and flags duplicates', () => {
+test('grouped delete headings share one comma and note grammar', () => {
+  // Grouped delete registers every path and flags duplicates.
   const source = withDelete('src/old-a.ts, src/old-b.ts');
   const plan = parsed(source);
   const deletes = plan.changes.filter((change) => change.action === 'DELETE');
@@ -520,22 +521,20 @@ test('grouped delete registers every path and flags duplicates', () => {
 
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/old-a.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/old-a.ts" appears more than once.']);
   assert.deepEqual(defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message), ['Change path "src/fetch.ts" appears more than once.']);
-});
 
-test('modify change heading rejects comma-separated paths', () => {
-  const source = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
-  assert.deepEqual(defectsOf(source, 'change-heading').map((item) => item.message), [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')]);
-  const backticked = PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`');
-  assert.deepEqual(defectsOf(backticked, 'change-heading').map((item) => item.message), [splitMessage('NEW', '`tests/fetch.test.ts`, `tests/other.test.ts`')]);
+  // Non-grouped headings reject comma-separated paths.
+  const modifySource = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
+  assert.deepEqual(defectsOf(modifySource, 'change-heading').map((item) => item.message), [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')]);
+  const backtickedNew = PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`');
+  assert.deepEqual(defectsOf(backtickedNew, 'change-heading').map((item) => item.message), [splitMessage('NEW', '`tests/fetch.test.ts`, `tests/other.test.ts`')]);
   const noPathSource = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts');
   assert.deepEqual(defects(noPathSource), ['change-heading', 'task-behaviour', 'missing-section']);
   const soleSource = PLAN.replace(/#### \[MODIFY\][\s\S]*?- Inputs: src\/fetch\.ts\n/, '#### [GENERATED] src/fetch.ts, docs/api.md\n- Command: `npm run docs`\n- Inputs: src/fetch.ts\n');
   assert.deepEqual(defectsOf(soleSource, 'change-heading').map((item) => item.message), [splitMessage('GENERATED', 'src/fetch.ts, docs/api.md')]);
-});
 
-test('duplicate delete notes hint grouping', () => {
-  const source = PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`);
-  assert.deepEqual(defectsOf(source, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." repeats a sibling note; say what changes in this file; group these [DELETE] paths under one heading.'));
+  // Repeated sibling notes hint grouping for deletes and name the file otherwise.
+  const dupDelete = PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`);
+  assert.deepEqual(defectsOf(dupDelete, 'filler-note').map((item) => item.message), Array(2).fill('Change note "remove the obsolete retry shims." repeats a sibling note; say what changes in this file; group these [DELETE] paths under one heading.'));
   const sibling = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n');
   assert.deepEqual(defectsOf(sibling, 'filler-note').map((item) => item.message), Array(2).fill('Change note "add a retry counter to fetchWithRetry." repeats a sibling note; say what changes in this file.'));
   const filler = PLAN.replace('- Inputs: src/fetch.ts\n', '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: same\n');
@@ -554,7 +553,8 @@ const overlapPlan = (writerPath = 'src/shared.ts', writerHeader = '') => TASKS
 const okPlan = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result; };
 const overlapCodes = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'overlap');
 
-test('warns on unjustified cross-task overlap', () => {
+test('cross-task overlap warns only for unjustified shared writes', () => {
+  // Unjustified overlap warns once and keeps both notes.
   const result = okPlan(overlapPlan());
   assert.deepEqual(result.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
   assert.equal(overlapCodes(overlapPlan()).length, 1);
@@ -564,35 +564,32 @@ test('warns on unjustified cross-task overlap', () => {
   const alias = okPlan(overlapPlan('src/Shared.ts'));
   assert.deepEqual(alias.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
   assert.match(alias.warnings.find((item) => item.code === 'overlap')?.message ?? '', /\(as "src\/Shared\.ts" in T3\)/);
-});
 
-test('accepts justified overlap', () => {
-  const result = okPlan(overlapPlan('src/shared.ts', '\n- Overlap: `src/shared.ts` — both lookup tables live in one module.'));
-  assert.deepEqual(result.plan.warnings, []);
+  // A declared Overlap line justifies the shared path; missing reasons and unowned paths fail.
+  const justified = okPlan(overlapPlan('src/shared.ts', '\n- Overlap: `src/shared.ts` — both lookup tables live in one module.'));
+  assert.deepEqual(justified.plan.warnings, []);
   assert.deepEqual(overlapCodes(overlapPlan('src/shared.ts', '\n- Overlap: src/Shared.ts — case variants name one file.')), []);
-  assert.deepEqual(result.plan.tasks[2]?.overlaps, [{ path: 'src/shared.ts', reason: 'both lookup tables live in one module.' }]);
-  assert.equal(result.plan.tasks[2]?.summary, 'The writer encodes records with the shared shape and regenerates the docs.');
+  assert.deepEqual(justified.plan.tasks[2]?.overlaps, [{ path: 'src/shared.ts', reason: 'both lookup tables live in one module.' }]);
+  assert.equal(justified.plan.tasks[2]?.summary, 'The writer encodes records with the shared shape and regenerates the docs.');
   assert.ok(defects(overlapPlan('src/shared.ts', '\n- Overlap: src/shared.ts')).includes('task-overlap'), 'missing reason');
   assert.ok(defects(overlapPlan('src/shared.ts', '\n- Overlap: src/reader.ts — not written here.')).includes('task-overlap'), 'unowned path');
-});
 
-test('keeps duplicate path defect within one task', () => {
+  // The duplicate-path defect stays within one task and Overlap never excuses a same-task repeat.
   const repeated = TASKS.replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/writer.ts\n- Changes: also log each encode.\n`);
   assert.deepEqual(defectsOf(repeated, 'duplicate-change-path').map((item) => item.message), ['Change path "src/writer.ts" appears more than once.']);
   const aliased = TASKS.replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/Writer.ts\n- Changes: also log each encode.\n`);
   assert.deepEqual(defectsOf(aliased, 'duplicate-change-path').map((item) => item.message), ['Change path "src/Writer.ts" aliases "src/writer.ts" on case-insensitive filesystems.']);
-  const justified = repeated.replace('### T3 — Write through the contract', '### T3 — Write through the contract\n- Overlap: src/writer.ts — same task.');
-  assert.ok(defects(justified).includes('duplicate-change-path'), 'Overlap does not excuse a same-task repeat');
-});
+  const excused = repeated.replace('### T3 — Write through the contract', '### T3 — Write through the contract\n- Overlap: src/writer.ts — same task.');
+  assert.ok(defects(excused).includes('duplicate-change-path'), 'Overlap does not excuse a same-task repeat');
 
-test('ignores reference-only paths for overlap', () => {
+  // Reference-only paths (prose, comments, criteria lists) never count for overlap.
   const source = TASKS
     .replace('| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |', '| T2 | Read through the contract | The reader decodes records that `src/writer.ts` encodes. | T1 | SC2 |')
     .replace(READER_ENTRY, '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract; mirror `src/writer.ts`.\n<!-- #### [MODIFY] src/writer.ts -->\n')
     .replace('  - Integration: spans reader and writer tasks.', '  - Changes: src/reader.ts, src/writer.ts\n  - Integration: spans reader and writer tasks.');
-  const result = okPlan(source);
-  assert.deepEqual(result.plan.warnings, []);
-  assert.deepEqual(result.warnings.filter((item) => item.code === 'overlap'), []);
+  const refResult = okPlan(source);
+  assert.deepEqual(refResult.plan.warnings, []);
+  assert.deepEqual(refResult.warnings.filter((item) => item.code === 'overlap'), []);
   const directSource = TASKS.replace(READER_ENTRY, `${READER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the reader decode hook.\n`);
   assert.deepEqual(okPlan(directSource).plan.warnings, []);
   assert.deepEqual(overlapCodes(directSource), []);
@@ -643,19 +640,23 @@ test('seam advisory accounts for review-only and verify-backed criteria', () => 
   assert.equal(seamWarnings(laterVerify).length, 1);
 });
 
-test('detects test paths across runners', () => {
-  for (const path of ['test_x.py', 'pkg/x_unit_test.go', 'tests/x.rs', 'tests/test_x_unit.py', 'src/x.unit.test.ts']) assert.ok(isTestPath(path), path);
-  for (const path of ['src/testing.ts', 'src/contest.ts']) assert.ok(!isTestPath(path), path);
-});
-
 // SECTION: Declared tests and RED command
 
 const RED_LINE = '  - RED: `node --test {files}`\n';
 const NEW_FETCH_TEST = '#### [NEW] tests/fetch.test.ts\n- Purpose: pins the retry cap.';
 const warningsOf = (source: string, code: string) => okPlan(source).warnings.filter((item) => item.code === code);
 const criterionLine = (source: string, heading: string) => source.split('\n').indexOf(heading) + 1;
+const CHECK_LINE = '  - Check: `node --test tests/fetch.test.ts`\n';
+const checkTestsWarnings = (source: string) => warningsOf(source, 'criterion-check-tests');
+const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');
+const withPattern = (pattern: string) => PLAN.replace('`node --test tests/fetch.test.ts`', `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``);
+const withFinding = (id: string) => PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);
 
-test('declared test paths: Tests parses normalized paths into the criterion', () => {
+test('declared test paths, RED commands and check cross-references share one grammar', () => {
+  for (const path of ['test_x.py', 'pkg/x_unit_test.go', 'tests/x.rs', 'tests/test_x_unit.py', 'src/x.unit.test.ts']) assert.ok(isTestPath(path), path);
+  for (const path of ['src/testing.ts', 'src/contest.ts']) assert.ok(!isTestPath(path), path);
+
+  // Tests parses normalized paths into the criterion and rejects unowned entries.
   assert.deepEqual(parsed(PLAN).criteria.map((criterion) => criterion.tests), [['tests/fetch.test.ts'], []]);
   const backticked = PLAN.replace(TESTS_LINE, '  - Tests: `./tests/fetch.test.ts`\n');
   assert.deepEqual(parsed(backticked).criteria[0]?.tests, ['tests/fetch.test.ts']);
@@ -675,9 +676,8 @@ test('declared test paths: Tests parses normalized paths into the criterion', ()
   const heading = criterionLine(named, '#### [NEW] tests/sc1.test.ts');
   assert.ok(namedDefects(named).some((item) => item.line === heading));
   assert.ok(!namedDefects(named.replace('  - Tests: tests/sc1.test.ts\n', '')).some((item) => item.line === heading));
-});
 
-test('RED command field: parses one inline-code command per criterion', () => {
+  // RED parses one inline-code command per criterion; a missing RED downgrades.
   assert.deepEqual(parsed(PLAN).criteria.map((criterion) => criterion.red), ['node --test {files}', null]);
   const exception = parsed(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n')).criteria[0];
   assert.equal(exception?.red, null);
@@ -686,43 +686,38 @@ test('RED command field: parses one inline-code command per criterion', () => {
   assert.equal(both?.red, 'node --test {files}');
   assert.equal(both?.redException, 'already-satisfied');
   for (const line of ['  - RED: node --test {files}\n', '  - RED: `node --test` `{files}`\n', '  - RED:\n', `${RED_LINE}${RED_LINE}`]) {
-    const source = PLAN.replace(RED_LINE, line);
-    assert.equal(defectsOf(source, 'criterion-red-command').length, 1, line);
+    const redSource = PLAN.replace(RED_LINE, line);
+    assert.equal(defectsOf(redSource, 'criterion-red-command').length, 1, line);
   }
   assert.equal(namedDefects(PLAN.replace(RED_LINE, '  - RED: `node --test --test-name-pattern="sc1" {files}`\n')).length, 1);
   const downgradeSource = PLAN.replace(RED_LINE, '');
-  const found = warningsOf(downgradeSource, 'red-downgraded');
-  assert.equal(found.length, 1);
-  assert.equal(found[0]?.severity, 'warning');
-  assert.equal(found[0]?.line, criterionLine(downgradeSource, '- [SC1] Fetch stops after three attempts'));
-  assert.match(found[0]?.message ?? '', /SC1/);
+  const redFound = warningsOf(downgradeSource, 'red-downgraded');
+  assert.equal(redFound.length, 1);
+  assert.equal(redFound[0]?.severity, 'warning');
+  assert.equal(redFound[0]?.line, criterionLine(downgradeSource, '- [SC1] Fetch stops after three attempts'));
+  assert.match(redFound[0]?.message ?? '', /SC1/);
   assert.deepEqual(warningsOf(PLAN, 'red-downgraded'), []);
   assert.deepEqual(warningsOf(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n'), 'red-downgraded'), []);
-});
 
-test('undeclared test path warning: a test-like Changes path outside every Tests warns', () => {
+  // A test-like Changes path outside every Tests warns; support files stay exempt.
   assert.deepEqual(warningsOf(PLAN, 'undeclared-test-path'), []);
-  const source = PLAN.replace(TESTS_LINE, '');
-  const found = warningsOf(source, 'undeclared-test-path');
-  assert.equal(found.length, 1);
-  assert.equal(found[0]?.severity, 'warning');
-  assert.match(found[0]?.message ?? '', /tests\/fetch\.test\.ts/);
+  const undeclaredSource = PLAN.replace(TESTS_LINE, '');
+  const undeclared = warningsOf(undeclaredSource, 'undeclared-test-path');
+  assert.equal(undeclared.length, 1);
+  assert.equal(undeclared[0]?.severity, 'warning');
+  assert.match(undeclared[0]?.message ?? '', /tests\/fetch\.test\.ts/);
   const support = ['tests/fixtures/fetch.ts', 'tests/helpers/fetch.ts', 'tests/mocks/fetch.ts'];
   const exemptSource = PLAN.replace(NEW_FETCH_TEST, `${NEW_FETCH_TEST}\n${support.map((path) => `#### [NEW] ${path}\n- Purpose: adds the shared retry ${path.split('/')[1]} module.`).join('\n')}`)
     .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts\n', `  - Changes: src/fetch.ts, tests/fetch.test.ts, ${support.join(', ')}\n`);
   assert.deepEqual(warningsOf(exemptSource, 'undeclared-test-path'), []);
-});
 
-const CHECK_LINE = '  - Check: `node --test tests/fetch.test.ts`\n';
-const checkTestsWarnings = (source: string) => warningsOf(source, 'criterion-check-tests');
-
-test('criterion-check-tests warns only when a Check names a test file that no Tests path lists', () => {
-  const source = PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/other.test.ts`\n');
-  const found = checkTestsWarnings(source);
-  assert.equal(found.length, 1);
-  assert.equal(found[0]?.severity, 'warning');
-  assert.equal(found[0]?.line, criterionLine(source, '  - Check: `node --test tests/other.test.ts`'));
-  assert.match(found[0]?.message ?? '', /tests\/fetch\.test\.ts/);
+  // Check warns only when it names a test file that no Tests path lists.
+  const checkSource = PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/other.test.ts`\n');
+  const checkFound = checkTestsWarnings(checkSource);
+  assert.equal(checkFound.length, 1);
+  assert.equal(checkFound[0]?.severity, 'warning');
+  assert.equal(checkFound[0]?.line, criterionLine(checkSource, '  - Check: `node --test tests/other.test.ts`'));
+  assert.match(checkFound[0]?.message ?? '', /tests\/fetch\.test\.ts/);
   assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `npm test`\n')), [], 'aggregate Check without test paths');
   const supportOnly = PLAN.replace(TESTS_LINE, '  - Tests: tests/helpers/fetch.ts\n')
     .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts\n', '  - Changes: src/fetch.ts, tests/fetch.test.ts, tests/helpers/fetch.ts\n')
@@ -739,10 +734,6 @@ test('criterion-check-tests warns only when a Check names a test file that no Te
   assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/`\n')), [], 'Check directory with trailing slash');
   assert.deepEqual(checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests`\n')), [], 'Check directory without trailing slash');
 });
-
-const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');
-const withPattern = (pattern: string) => PLAN.replace('`node --test tests/fetch.test.ts`', `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``);
-const withFinding = (id: string) => PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);
 
 test('plan IDs stay out of test selectors and files while criteria and findings register', () => {
   const verifyFound = namedDefects(withPattern('sc1 caps'));
@@ -891,7 +882,15 @@ test('plan criterion satisfies ids parse with one diagnostic per missing criteri
   }
 });
 
-test('plan human layout: At a Glance is required and shared sections precede the Task Map', () => {
+const collapsed = (source: string) => source
+  .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<details>\n<summary>Retry implementation</summary>\n')
+  .replace('## Success Criteria', '</details>\n\n## Success Criteria')
+  .replace(/(- \[SC\d+\][^\n]*\n)/g, '$1  <details>\n  <summary>Checks</summary>\n\n')
+  .replace('- [SC2]', '  </details>\n\n- [SC2]')
+  .replace('## Verification Plan', '  </details>\n\n## Verification Plan');
+
+test('plan human layout keeps At a Glance, glance fields and wrappers parse-stable', () => {
+  // At a Glance is required and shared sections precede the Task Map.
   assert.ok(parsePlan(PLAN).warnings.some(row => row.code === 'missing-section'));
   const source = PLAN.replace('## Key Decisions & Context', '## At a Glance\n- Retry cap.\n\n## Background\n- Context.\n\n## Key Interfaces & Data\n- Contract.\n\n## Key Decisions & Context').replace('## Task Map', '## Constraints\n- Keep API.\n\n## Task Map');
   const result = parsePlan(source);
@@ -900,10 +899,9 @@ test('plan human layout: At a Glance is required and shared sections precede the
   for (const heading of ['At a Glance', 'Key Interfaces & Data', 'Constraints']) assert.ok(result.plan.sharedContext.includes(`## ${heading}`));
   assert.ok(!result.plan.sharedContext.includes('#### [MODIFY]'));
   assert.ok(parsePlan(source.replace('## At a Glance', '## Constraints').replace('## Constraints\n- Keep API.', '## At a Glance\n- Keep API.')).warnings.some(row => row.code === 'section-order'));
-});
 
-test('plan glance: parses What and How it works with indented continuation lines', () => {
-  const source = PLAN.replace('## Key Decisions & Context', [
+  // Glance parses What and How it works with indented continuation lines.
+  const glanceSource = PLAN.replace('## Key Decisions & Context', [
     '## At a Glance',
     '- **What:** Fetch stops after three attempts.',
     '  Callers receive the final error.',
@@ -912,9 +910,9 @@ test('plan glance: parses What and How it works with indented continuation lines
     '',
     '## Key Decisions & Context',
   ].join('\n'));
-  const result = parsePlan(source);
-  assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.plan.glance, {
+  const glance = parsePlan(glanceSource);
+  assert.ok(glance.ok, JSON.stringify(glance));
+  assert.deepEqual(glance.plan.glance, {
     what: 'Fetch stops after three attempts.\nCallers receive the final error.',
     how: 'Count attempts before sending.\nStop after the final retry.',
     visuals: '',
@@ -938,7 +936,7 @@ test('plan glance: parses What and How it works with indented continuation lines
     'The note stays with the visual.',
     '</details>',
   ].join('\n');
-  const visualResult = parsePlan(source.replace('\n\n## Key Decisions & Context', `\n${visuals}\n\n## Key Decisions & Context`));
+  const visualResult = parsePlan(glanceSource.replace('\n\n## Key Decisions & Context', `\n${visuals}\n\n## Key Decisions & Context`));
   assert.ok(visualResult.ok, JSON.stringify(visualResult));
   assert.equal(visualResult.plan.glance?.visuals, visuals);
 
@@ -946,23 +944,15 @@ test('plan glance: parses What and How it works with indented continuation lines
   assert.ok(empty.ok, JSON.stringify(empty));
   assert.deepEqual(empty.plan.glance, { what: '', how: '', visuals: '' });
   assert.equal(parsed(PLAN).glance, null);
-});
 
-const collapsed = (source: string) => source
-  .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<details>\n<summary>Retry implementation</summary>\n')
-  .replace('## Success Criteria', '</details>\n\n## Success Criteria')
-  .replace(/(- \[SC\d+\][^\n]*\n)/g, '$1  <details>\n  <summary>Checks</summary>\n\n')
-  .replace('- [SC2]', '  </details>\n\n- [SC2]')
-  .replace('## Verification Plan', '  </details>\n\n## Verification Plan');
-
-test('plan human layout: details wrappers and callouts leave parse results unchanged', () => {
-  const source = collapsed(readable()).replace('## Task Map', '> [!NOTE]\n> User context.\n\n## Task Map');
+  // Details wrappers and callouts leave parse results unchanged.
+  const wrappedSource = collapsed(readable()).replace('## Task Map', '> [!NOTE]\n> User context.\n\n## Task Map');
   const stripLines = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => key === 'line' ? undefined : item));
-  const plain = parsed(readable()), wrapped = parsed(source);
+  const plain = parsed(readable()), wrapped = parsed(wrappedSource);
   for (const key of ['tasks', 'changes', 'criteria', 'verification'] as const) assert.deepEqual(stripLines(wrapped[key]), stripLines(plain[key]));
   const vocabulary = placeholderVocabulary(['````markdown\n<details>\n<summary>Checks</summary>\n<unfilled>\n</details>\n````']);
-  assert.deepEqual(parsePlan(source, { placeholders: vocabulary }).warnings.filter(row => row.code === 'leftover-placeholder'), []);
-  assert.ok(parsePlan(source + '\n<unfilled>', { placeholders: vocabulary }).warnings.some(row => row.code === 'leftover-placeholder'));
+  assert.deepEqual(parsePlan(wrappedSource, { placeholders: vocabulary }).warnings.filter(row => row.code === 'leftover-placeholder'), []);
+  assert.ok(parsePlan(wrappedSource + '\n<unfilled>', { placeholders: vocabulary }).warnings.some(row => row.code === 'leftover-placeholder'));
   assert.ok(defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<div>Other HTML</div>')).includes('task-map'));
 });
 

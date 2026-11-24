@@ -239,19 +239,17 @@ test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked 
   for (const name of ['tokenizer.ts', 'secretary.md']) assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
 });
 
-test('denylist prose: names every denied extension', () => {
+test('denylist prose names every denied extension and the basename word rule', () => {
   const prompt = formatSafetyPrompt('Review it');
   for (const extension of ['pem', 'key', 'pkcs12', 'pfx', 'p12', 'kdbx', 'keystore', 'jks', 'ovpn']) {
     assert.equal(findSensitiveMatch(`x.${extension}`, (file) => file), 'file', `.${extension} remains denied`);
-    assert.match(prompt, new RegExp(`\\*\\.${extension}(?=,|\\s|$)`), `prompt names .${extension}`);
+    assert.match(prompt, new RegExp(`\\.${extension}(?=,|\\s|$)`), `prompt names .${extension}`);
   }
-});
-
-test('denylist prose: describes the whole basename word rule', () => {
-  const prompt = formatSafetyPrompt('Review it');
   assert.match(prompt, /whole basename words token, secret, or secrets/);
   assert.match(prompt, /ASCII letters and digits/);
 });
+
+
 
 test('session artifact word patterns are exempt', async () => {
   const session = '/sessions/20261101T0000Z-prose-token-diet';

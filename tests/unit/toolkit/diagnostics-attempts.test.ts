@@ -25,11 +25,6 @@ const writeJson = (file: string, value: unknown) => {
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
 
-
-
-
-
-
 const rosterSlot = (slot: string, provider: string, options: {native?: boolean; reserve?: boolean; model?: string} = {}) => ({
   slot, provider, index: 0, native: options.native ?? false, reserve: options.reserve ?? false, model: options.model ?? 'model-a',
 });
@@ -94,26 +89,6 @@ function saveRound(input: {
     });
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 const hostTest_HEAD = 'a'.repeat(40);
 const hostTest_TREE = 'b'.repeat(40);
@@ -214,14 +189,6 @@ async function hostTest_deliver(f: ReturnType<typeof sessionFixture>, head: stri
     data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
   });
 }
-
-
-
-
-
-
-
-
 
 function encodeVarint(val: number | bigint): number[] {
   const bytes: number[] = [];
@@ -326,7 +293,9 @@ test('nudge marker persists only for boolean resume launches', async () => {
   } finally { g.cleanup(); }
 });
 
-test('nudge: recovered stalls yield no waste finding', async () => {
+test('nudge and resume chains account recovered-stall waste exactly', async () => {
+// nudge: recovered stalls yield no waste finding
+{
   const f = sessionFixture({ memory: true });
   try {
     const subject = 'aaaaaaaaaaaaaaaa';
@@ -350,9 +319,10 @@ test('nudge: recovered stalls yield no waste finding', async () => {
     const facts = sessionFacts(g.session, {records: [], lastSeq: 0, torn: null} as Fold, 'complete');
     assert.deepEqual(heuristics(facts).filter((finding) => finding.source === 'H1'), [], 'one recovered stall plus one unrelated failure');
   } finally { g.cleanup(); }
-});
+}
 
-test('nudge: waste counts a recovered stall exactly', async () => {
+// nudge: waste counts a recovered stall exactly
+{
   const f = sessionFixture({ memory: true });
   try {
     const subject = 'cccccccccccccccc';
@@ -379,9 +349,10 @@ test('nudge: waste counts a recovered stall exactly', async () => {
     assert.equal(findings.length, 1, 'unrelated failures of another model');
     assert.match(findings[0]!.evidence, /`timeout`: 2 of 4 CLI attempts failed/);
   } finally { g.cleanup(); }
-});
+}
 
-test('diagnostics resume chain leaves waste only without a successful end', async () => {
+// diagnostics resume chain leaves waste only without a successful end
+{
   const f = sessionFixture({ memory: true });
   try {
     const subject = 'eeeeeeeeeeeeeeee';
@@ -409,6 +380,7 @@ test('diagnostics resume chain leaves waste only without a successful end', asyn
     assert.equal(findings.length, 1);
     assert.match(findings[0]!.evidence, /`timeout`: 3 of 3 CLI attempts failed/);
   } finally { g.cleanup(); }
+}
 });
 
 test('attempt rows persist once across callback and launch failure', async () => {

@@ -47,7 +47,9 @@ async function fixture(t: { after: (fn: () => void) => void }) {
   return { f, add, edits, run, write, approve, approvalGate };
 }
 
-test('one lint call records the explicit baseline and the next edit derives it', async t => {
+test('lint edits record the explicit baseline and derive the next edit', async t => {
+// one lint call records the explicit baseline and the next edit derives it
+{
   const { edits, run, write } = await fixture(t);
   const before = artifactHash('plan', PLAN);
   const after = write('First change');
@@ -68,26 +70,10 @@ test('one lint call records the explicit baseline and the next edit derives it',
   assert.equal(edits().length, 2);
   assert.equal(edits()[1]!.key, 'lint-edit:plan:2');
   assert.deepEqual(second.value.edit, { seq: edits()[1]!.seq, deduped: false, before: after, after: next });
-});
+}
 
-test('retry returns the stored seq only for matching fields and baseline', async t => {
-  const { edits, run, write } = await fixture(t);
-  const before = artifactHash('plan', PLAN);
-  const after = write('Changed plan');
-  const first = await run({ ...FIELDS, before });
-  assert.equal(first.exit, 0, first.summary);
-  for (const fields of [FIELDS, { ...FIELDS, before }]) {
-    const retry = await run(fields);
-    assert.equal(retry.exit, 0, retry.summary);
-    assert.deepEqual(retry.value.edit, { ...first.value.edit, deduped: true });
-    assert.match(retry.summary, new RegExp(`; edit seq ${first.value.edit.seq} deduped`));
-  }
-  assert.equal((await run({ ...FIELDS, rationale: 'Another rationale' })).reason, 'no-change');
-  assert.equal((await run({ ...FIELDS, before: after })).reason, 'no-change');
-  assert.equal(edits().length, 1);
-});
-
-test('approval accepts an explicit new baseline and the following derived edit', async t => {
+// approval accepts an explicit new baseline and the following derived edit
+{
   const { edits, run, write, approve, approvalGate } = await fixture(t);
   const before = artifactHash('plan', PLAN);
   write('Earlier edit');
@@ -103,9 +89,30 @@ test('approval accepts an explicit new baseline and the following derived edit',
   assert.equal(derived.exit, 0, derived.summary);
   assert.deepEqual(edits().slice(1).map(row => [row.data['before'], row.data['after']]), [[approved, after], [after, current]]);
   assert.deepEqual(approvalGate(current), { allowed: true });
+}
 });
 
-test('approval of a rebound plan needs an explicit first edit baseline', async t => {
+test('retry and rebound edits preserve seq, baseline and approval', async t => {
+// retry returns the stored seq only for matching fields and baseline
+{
+  const { edits, run, write } = await fixture(t);
+  const before = artifactHash('plan', PLAN);
+  const after = write('Changed plan');
+  const first = await run({ ...FIELDS, before });
+  assert.equal(first.exit, 0, first.summary);
+  for (const fields of [FIELDS, { ...FIELDS, before }]) {
+    const retry = await run(fields);
+    assert.equal(retry.exit, 0, retry.summary);
+    assert.deepEqual(retry.value.edit, { ...first.value.edit, deduped: true });
+    assert.match(retry.summary, new RegExp(`; edit seq ${first.value.edit.seq} deduped`));
+  }
+  assert.equal((await run({ ...FIELDS, rationale: 'Another rationale' })).reason, 'no-change');
+  assert.equal((await run({ ...FIELDS, before: after })).reason, 'no-change');
+  assert.equal(edits().length, 1);
+}
+
+// approval of a rebound plan needs an explicit first edit baseline
+{
   const { f, add, edits, run, write, approve, approvalGate } = await fixture(t);
   const oldAfter = write('Shared edited contents');
   const first = await run({ ...FIELDS, before: artifactHash('plan', PLAN) });
@@ -144,9 +151,10 @@ test('approval of a rebound plan needs an explicit first edit baseline', async t
   assert.deepEqual(derived.value.edit, { seq: edits()[2]!.seq, deduped: false, before: after, after: current });
   assert.equal(edits()[2]!.key, 'lint-edit:plan:3');
   assert.deepEqual(approvalGate(current), { allowed: true });
-});
+}
 
-test('retry after restoring an earlier plan binding preserves its approval', async t => {
+// retry after restoring an earlier plan binding preserves its approval
+{
   const { f, add, edits, run, write, approve, approvalGate } = await fixture(t);
   const before = artifactHash('plan', PLAN);
   const after = write('First plan edited');
@@ -175,6 +183,7 @@ test('retry after restoring an earlier plan binding preserves its approval', asy
   assert.deepEqual(derived.value.edit, { seq: edits()[2]!.seq, deduped: false, before: after, after: current });
   assert.equal(edits()[2]!.key, 'lint-edit:plan:3');
   assert.deepEqual(approvalGate(current), { allowed: true });
+}
 });
 
 test('lint edit refusals leave the ledger without edits', async t => {

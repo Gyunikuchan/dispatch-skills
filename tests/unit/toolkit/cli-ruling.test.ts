@@ -94,7 +94,9 @@ describe('toolkit CLI rulings contract', () => {
     } finally { restoreAtomicWrite(); f.cleanup(); }
   });
 
-  test('bind after a completed review renders its findings section', async () => {
+    test('bind renders findings only after a completed review', async () => {
+  // bind after a completed review renders its findings section
+  {
     const f = sessionFixture({memory:true});
     const restoreAtomicWrite = useMemoryAtomicWrite();
     try {
@@ -111,9 +113,10 @@ describe('toolkit CLI rulings contract', () => {
       assert.equal(value['findingsSection'], 'updated', JSON.stringify(value));
       assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
     } finally { restoreAtomicWrite(); f.cleanup(); }
-  });
+  }
 
-  test('bind before any review leaves the artifact unchanged', async () => {
+  // bind before any review leaves the artifact unchanged
+  {
     const f = sessionFixture({memory:true});
     try {
       f.artifact('mission.spec.md', '# Mission\n');
@@ -126,5 +129,8 @@ describe('toolkit CLI rulings contract', () => {
       assert.equal('findingsSection' in value, false);
       assert.equal(fs.readFileSync(plan, 'utf8'), source);
     } finally { f.cleanup(); }
+  }
   });
+
+  
 });

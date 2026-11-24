@@ -318,22 +318,28 @@ test('codex omits a readable child when another date directory cannot be searche
   const blocked = codex.read({ ...query, budget: { remaining: 10000 } }, { ...blockedFs, list: dir => { if (/1969[\\/]12[\\/]31$/.test(dir)) throw Object.assign(Error('private'), { code: 'EACCES' }); return blockedFs.list(dir); } });
   assert.equal(blocked.unavailable, 'read-error:EACCES'); assert.deepEqual(blocked.rows, []); assert.deepEqual(blockedFs.reads, []);
 });
-test('codex reports and blocks listed host and child files that vanish before discovery stat', () => {
-  const host1 = rollout('00-01', 'host'); const host2 = rollout('00-02', 'host'); const host3 = rollout('00-03', 'host'); const child1 = rollout('00-04', 'child'); const child2 = rollout('00-05', 'child'); const child3 = rollout('00-06', 'child');
-  const fs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
-  const result = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs, stat: file => file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl') ? null : fs.stat(file) });
-  assert.equal(result.unavailable, 'read-error:ENOENT'); assert.equal(result.notes?.subagent?.['unreadable files'], 1); assert.equal(result.rows.filter(row => row.role === 'host').length, 1); assert.equal(result.rows.filter(row => row.role === 'subagent').length, 1);
-
-  // A discovery stat throw blocks the same thread the same way as a vanished file.
-  const throwingFs = memoryFs({ [host1]: lines(context, event(1)), [host2]: lines(context, event(7, 1000)), [host3]: lines(context, event(7, 3000)), [child1]: lines(meta('host'), context, event(2)), [child2]: lines(meta('host'), context, event(8, 1000)), [child3]: lines(meta('host'), context, event(8, 3000)) });
-  const threw = codex.read({ ...query, budget: { remaining: 100000 } }, { ...throwingFs, stat: file => { if (file.includes('00-00-02-host.jsonl') || file.includes('00-00-05-child.jsonl')) throw Object.assign(Error('private'), { code: 'EACCES' }); return throwingFs.stat(file); } });
-  assert.equal(threw.unavailable, 'read-error:EACCES'); assert.equal(threw.notes?.subagent?.['unreadable files'], 1); assert.equal(threw.rows.filter(row => row.role === 'host').length, 1); assert.equal(threw.rows.filter(row => row.role === 'subagent').length, 1);
-
+test('codex reports and blocks listed files that vanish before discovery stat', () => {
+  const host = rollout('00-01', 'host'); const child = rollout('00-02', 'child');
+  const files = { [host]: lines(context, event(1)), [child]: lines(meta('host'), context, event(2)) };
+  for (const failure of ['vanish', 'throw'] as const) {
+    const fs = memoryFs(files);
+    const vanished = codex.read({ ...query, budget: { remaining: 100000 } }, { ...fs,
+      stat: file => {
+        if (!file.includes('00-00-02-child.jsonl')) return fs.stat(file);
+        if (failure === 'vanish') return null;
+        throw Object.assign(Error('private'), { code: 'EACCES' });
+      } });
+    assert.equal(vanished.rows.filter(row => row.role === 'host').length, 1, failure);
+    assert.equal(vanished.rows.filter(row => row.role === 'subagent').length, 0, failure);
+    assert.equal(vanished.notes?.subagent?.['unreadable files'], 1, failure);
+  }
+  const single = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });
   let calls = 0;
-  const singleHost = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });
-  const vanishRead = codex.read({ ...query, budget: { remaining: 10000 } }, { ...singleHost, stat: file => file.endsWith('host.jsonl') && ++calls === 2 ? null : singleHost.stat(file) });
+  const vanishRead = codex.read({ ...query, budget: { remaining: 10000 } }, { ...single,
+    stat: file => file.endsWith('host.jsonl') && ++calls === 2 ? null : single.stat(file) });
   assert.equal(vanishRead.unavailable, 'read-error:ENOENT'); assert.deepEqual(vanishRead.rows, []);
 });
+
 
 test('codex nested subagents count depth-3 and out-of-order headers without noting unrelated sessions', () => {
   const host = rollout('00-00', 'host');

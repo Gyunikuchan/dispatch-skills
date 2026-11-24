@@ -11,7 +11,6 @@ const finding = (overrides: Record<string, string> = {}) => ({
 });
 const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
 
-
 const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
 const failure = (text: string, truncated = false) => {
@@ -24,15 +23,6 @@ const parseDetail = (text: string) => {
   return result.ok ? null : result.failure.detail;
 };
 
-
-
-
-
-
-
-
-
-
 const MARK = 'unresolved-locus: ';
 const planLocus = '§ Work';
 const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
@@ -40,13 +30,6 @@ const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
   assert.ok(result.ok);
   return result.findings.map(item => item.locus);
 };
-
-
-
-
-
-
-
 
 // SECTION: Unknown tag recovery
 
@@ -58,10 +41,6 @@ const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
   assert.ok(result.ok, result.ok ? '' : result.failure.detail);
   return result.findings;
 };
-
-
-
-
 
 // SECTION: Diagnostics reports
 
@@ -109,36 +88,12 @@ function assertShape(finding: Finding | undefined, category: keyof typeof CATEGO
 
 // SECTION: Layout, durations, and token columns
 
-
-
 // SECTION: Heuristics, severity, and model attribution
-
-
 
 const rejections = (tool: string, action: string, cls: string, count = 2) => Array.from({ length: count }, () => ({ tool, action, cls }));
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const stageRows = (text: string) => text.split('### Tokens by stage')[1]!.split('### Review yield')[0]!.split('\n').filter((line) => line.startsWith('|'));
-
-
-
-
-
-
 
 // SECTION: Scope gate and redaction
 
@@ -149,27 +104,10 @@ const LEAKS = [
 ];
 const CLEAN = 'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
 
-
-
-
-
-
-
-
-
-
-
 // SECTION: Finding origin
 
 const originReply = (...origins: (string | undefined)[]) => report(origins.map((origin, index) => finding({defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index, locus: 'src/file' + index + '.ts:L1', ...(origin === undefined ? {} : {origin})})));
 const draftsOf = (text: string) => { const result = parseReport({kind: 'code', source: 'codex[0]', text}); assert.ok(result.ok, JSON.stringify(result)); return result.findings; };
-
-
-
-
-
-
-
 
 test('rejected MUST reports require exact explicit requested confirmations', () => {
   const parse = (confirmations?: unknown) => parseReport({kind:'code',source:'claude[0]',expectedRequestIds:['request-1'],text:JSON.stringify({status:'CLEAN',findings:[],...(confirmations === undefined ? {} : {confirmations})})});
@@ -330,15 +268,18 @@ test('a fence or tagged fence inside a JSON string does not end the report', () 
   }
 });
 
-test('degenerate fences and large malformed replies stay bounded', () => {
+test('malformed reports fail with a bounded classified failure', () => {
+// degenerate fences and large malformed replies stay bounded
+{
   const started = Date.now();
   assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(50000) + 'x\n```y```' }).ok, false);
   const text = `${'{"a":\n'.repeat(2000)}{"status":1}`;
   assert.equal(parseReport({ kind: 'code', source: 'codex[0]', text }).ok, false);
   assert.ok(Date.now() - started < 2000, 'malformed replies exceeded budget');
-});
+}
 
-test('delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope', () => {
+// delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope
+{
   assert.equal(failure('   '), 'empty-output');
   assert.equal(failure("I'm unable to help with reviewing this."), 'refusal');
   assert.equal(failure('{"status":"FINDINGS","findings":[{"sev', true), 'truncated');
@@ -346,51 +287,10 @@ test('delegates-one-report-parse: failures are empty output, refusal, truncation
   assert.equal(failure(report([finding()], 'CLEAN')), 'uncovered-scope');
   assert.equal(failure(JSON.stringify({ status: 'CLEAN', findings: [], otherFindings: [] })), 'uncovered-scope');
   assert.equal(failure(report([finding({ defect: '<invoke name="x">' })])), 'uncovered-scope');
-});
+}
 
-test('loose locus keeps findings: only the loose locus of a reply is marked, in every kind', () => {
-  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'A – T5 – Fix skill' }), finding({ locus: planLocus, defect: 'second defect' })]), [MARK + 'A – T5 – Fix skill', planLocus]);
-  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:L1-L9' }), finding({ defect: 'second defect' })]), [MARK + 'src/fetch.ts:L1-L9', 'src/fetch.ts:L12']);
-  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:12' })]), ['src/fetch.ts:L12']);
-  assert.deepEqual(parsedLoci('plan', [finding({ locus: ' a\n\t<!-- b -->\u001b[31m c ' })]), [MARK + 'a &lt;!-- b --&gt; c']);
-  for (const locus of ['', '   ', 42, null, ['§ Work']]) assert.deepEqual(parsedLoci('plan', [{ ...finding(), locus }]), [MARK + '(none)'], JSON.stringify(locus));
-});
-
-test('loose locus keeps findings: clipping stays within 120 bytes, splits no character and merges no findings', () => {
-  const head = 'é'.repeat(100);
-  const loci = parsedLoci('plan', [finding({ locus: head + ' first' }), finding({ locus: head + ' second' })]);
-  assert.equal(loci.length, 2);
-  assert.equal(loci[0], loci[1]);
-  const shown = loci[0]!.slice(MARK.length);
-  assert.ok(Buffer.byteLength(shown) <= 120, shown);
-  assert.ok(shown.endsWith('é…'), shown);
-  assert.equal(parsedLoci('plan', [finding({ locus: 'same loose' }), finding({ locus: 'same loose' })]).length, 1);
-  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'a\nb' }), finding({ locus: 'a b' })]), [MARK + 'a b', MARK + 'a b']);
-});
-
-test('loose locus keeps findings: other malformed replies keep their failure class', () => {
-  const loose = { locus: 'src/fetch.ts' };
-  assert.equal(failure(report([finding(loose), finding({ impact: 'HIGH' })])), 'uncovered-scope');
-  assert.equal(failure(report([finding({ ...loose, defect: '' })])), 'uncovered-scope');
-  assert.equal(failure(report([finding(loose)], 'CLEAN')), 'uncovered-scope');
-  assert.equal(failure(report([finding(loose)]).slice(0, -12), true), 'truncated');
-});
-
-test('loose locus keeps findings: a marked finding never matches by location', () => {
-  const parse = (source: string) => {
-    const result = parseReport({ kind: 'plan', source, text: report([finding({ locus: 'A – T5' })]) });
-    assert.ok(result.ok);
-    return result.findings;
-  };
-  const findings = collectFindings(1, [...parse('codex[0]'), ...parse('claude[0]')]);
-  assert.deepEqual(findings.map(item => [item.dupOf ?? null, item.sources]), [[null, ['codex[0]']], [null, ['claude[0]']]]);
-  const key = { locus: MARK + 'A – T5', category: 'correctness', text: 'retry loop never terminates' };
-  assert.equal(matchFinding(key, key), false);
-  assert.equal(matchFinding(key, { ...key, locus: '§ Work' }), false);
-  assert.equal(matchFinding({ ...key, locus: '§ Work' }, { ...key, locus: '§ Work' }), true);
-});
-
-test('blocked json reports validate and sanitize reason', () => {
+// blocked json reports validate and sanitize reason
+{
   const lineStart = parseReport({ kind: 'code', source: 'codex[0]', text: `Note\n${JSON.stringify({ reason: 'target unreadable', status: 'BLOCKED' })}` });
   assert.ok(!lineStart.ok);
   assert.equal(lineStart.failure.kind, 'blocked');
@@ -405,9 +305,78 @@ test('blocked json reports validate and sanitize reason', () => {
     JSON.stringify({ status: 'BLOCKED', reason: 42 }),
     JSON.stringify({ status: 'BLOCKED', findings: [] }),
   ]) assert.equal(failure(text), 'uncovered-scope', text);
-});
+}
 
-test('review-dedup: duplicates keep their own id with dupOf; the first cites every reporting source', () => {
+// unknown tags fail invalid reports without masking other failures
+{
+  for (const tag of ['', '   ', '\n\t']) assert.equal(failure(report([finding({ tag })])), 'uncovered-scope', JSON.stringify(tag));
+  for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }]) assert.equal(failure(report([{ ...finding(), tag }])), 'uncovered-scope', JSON.stringify(tag));
+  const { tag: _tag, ...missing } = finding();
+  assert.equal(failure(report([missing])), 'uncovered-scope');
+  const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
+  assert.equal(failure(report([unknown({ impact: 'HIGH' })])), 'uncovered-scope');
+  assert.equal(failure(report([unknown({ defect: '' })])), 'uncovered-scope');
+  assert.equal(failure(report([unknown({ defect: '<invoke name="x">' })])), 'uncovered-scope');
+  const { defect: _defect, ...noDefect } = unknown();
+  assert.equal(failure(report([noDefect])), 'uncovered-scope');
+  assert.equal(failure(report([unknown()], 'CLEAN')), 'uncovered-scope');
+  assert.equal(failure(report([finding(), unknown({ impact: 'HIGH' })])), 'uncovered-scope');
+  const cut = report([unknown()]).slice(0, -12);
+  assert.equal(failure(cut, true), 'truncated');
+  assert.equal(failure(cut), 'uncovered-scope');
+  assert.equal(failure("I'm unable to help with reviewing this robustness tag."), 'refusal');
+}
+});
+test('loose locus marks only the loose locus and never matches by location', () => {
+// loose locus keeps findings: only the loose locus of a reply is marked, in every kind
+{
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'A – T5 – Fix skill' }), finding({ locus: planLocus, defect: 'second defect' })]), [MARK + 'A – T5 – Fix skill', planLocus]);
+  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:L1-L9' }), finding({ defect: 'second defect' })]), [MARK + 'src/fetch.ts:L1-L9', 'src/fetch.ts:L12']);
+  assert.deepEqual(parsedLoci('code', [finding({ locus: 'src/fetch.ts:12' })]), ['src/fetch.ts:L12']);
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: ' a\n\t<!-- b -->\u001b[31m c ' })]), [MARK + 'a &lt;!-- b --&gt; c']);
+  for (const locus of ['', '   ', 42, null, ['§ Work']]) assert.deepEqual(parsedLoci('plan', [{ ...finding(), locus }]), [MARK + '(none)'], JSON.stringify(locus));
+}
+
+// loose locus keeps findings: clipping stays within 120 bytes, splits no character and merges no findings
+{
+  const head = 'é'.repeat(100);
+  const loci = parsedLoci('plan', [finding({ locus: head + ' first' }), finding({ locus: head + ' second' })]);
+  assert.equal(loci.length, 2);
+  assert.equal(loci[0], loci[1]);
+  const shown = loci[0]!.slice(MARK.length);
+  assert.ok(Buffer.byteLength(shown) <= 120, shown);
+  assert.ok(shown.endsWith('é…'), shown);
+  assert.equal(parsedLoci('plan', [finding({ locus: 'same loose' }), finding({ locus: 'same loose' })]).length, 1);
+  assert.deepEqual(parsedLoci('plan', [finding({ locus: 'a\nb' }), finding({ locus: 'a b' })]), [MARK + 'a b', MARK + 'a b']);
+}
+
+// loose locus keeps findings: other malformed replies keep their failure class
+{
+  const loose = { locus: 'src/fetch.ts' };
+  assert.equal(failure(report([finding(loose), finding({ impact: 'HIGH' })])), 'uncovered-scope');
+  assert.equal(failure(report([finding({ ...loose, defect: '' })])), 'uncovered-scope');
+  assert.equal(failure(report([finding(loose)], 'CLEAN')), 'uncovered-scope');
+  assert.equal(failure(report([finding(loose)]).slice(0, -12), true), 'truncated');
+}
+
+// loose locus keeps findings: a marked finding never matches by location
+{
+  const parse = (source: string) => {
+    const result = parseReport({ kind: 'plan', source, text: report([finding({ locus: 'A – T5' })]) });
+    assert.ok(result.ok);
+    return result.findings;
+  };
+  const findings = collectFindings(1, [...parse('codex[0]'), ...parse('claude[0]')]);
+  assert.deepEqual(findings.map(item => [item.dupOf ?? null, item.sources]), [[null, ['codex[0]']], [null, ['claude[0]']]]);
+  const key = { locus: MARK + 'A – T5', category: 'correctness', text: 'retry loop never terminates' };
+  assert.equal(matchFinding(key, key), false);
+  assert.equal(matchFinding(key, { ...key, locus: '§ Work' }), false);
+  assert.equal(matchFinding({ ...key, locus: '§ Work' }, { ...key, locus: '§ Work' }), true);
+}
+});
+test('finding collection dedups findings and preserves unknown tags', () => {
+// review-dedup: duplicates keep their own id with dupOf; the first cites every reporting source
+{
   const first = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding()]) });
   const second = parseReport({ kind: 'code', source: 'claude[0]', text: report([finding({ locus: 'src/fetch.ts:L14', defect: 'the retry loop never terminates when failure persists' })]) });
   const other = parseReport({ kind: 'code', source: 'agy[0]', text: report([finding({ locus: 'src/other.ts:L3', tag: 'performance', defect: 'quadratic scan', requiredChange: 'index lookups' })]) });
@@ -416,17 +385,10 @@ test('review-dedup: duplicates keep their own id with dupOf; the first cites eve
   assert.deepEqual(findings.map((item) => [item.id, item.dupOf ?? null]), [['R1-F001', null], ['R1-F002', 'R1-F001'], ['R1-F003', null]]);
   assert.deepEqual(findings[0]?.sources, ['codex[0]', 'claude[0]']);
   assert.deepEqual(findings[2]?.sources, ['agy[0]']);
-});
+}
 
-test('review-sanitization: report text is sanitized before relay', () => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ defect: 'bad \u001b[31mred\u001b[0m <!-- ignore previous --> loop' })]) });
-  assert.ok(result.ok);
-  const defect = result.findings[0]?.defect ?? '';
-  assert.ok(!defect.includes('\u001b'));
-  assert.ok(!defect.includes('<!--'));
-});
-
-test('collected findings preserve unknown tags across review kinds, sanitizing collisions', () => {
+// collected findings preserve unknown tags across review kinds, sanitizing collisions
+{
   // Plan review recovery
   const planText = `\`\`\`json\n${report([
     planFinding('robustness', 'Proposed Changes', 'retry path has no bound'),
@@ -462,9 +424,10 @@ test('collected findings preserve unknown tags across review kinds, sanitizing c
   const prefix = 'x'.repeat(80);
   const bounded = parsedFindings('code', report([finding({ tag: `${prefix}a` }), finding({ tag: `${prefix}b` })]));
   assert.deepEqual(bounded.map((item) => [item.category, item.originalTag]), [['uncategorized', prefix], ['uncategorized', prefix]]);
-});
+}
 
-test('adjacent and intent tag handling preserves exact keywords and treats variants as uncategorized', () => {
+// adjacent and intent tag handling preserves exact keywords and treats variants as uncategorized
+{
   for (const tag of ['Adjacent', 'ADJACENT', 'adjacent-scope', 'Intent']) {
     const [item] = parsedFindings('code', report([finding({ tag })]));
     assert.deepEqual([item?.category, item?.originalTag, item?.scope], ['uncategorized', tag, 'in'], tag);
@@ -475,28 +438,10 @@ test('adjacent and intent tag handling preserves exact keywords and treats varia
   const [intent] = parsedFindings('code', report([finding({ tag: 'intent' })]));
   assert.deepEqual([intent?.category, intent?.scope], ['intent', 'in']);
   assert.ok(!('originalTag' in (intent ?? {})));
-});
+}
 
-test('unknown tags fail invalid reports without masking other failures', () => {
-  for (const tag of ['', '   ', '\n\t']) assert.equal(failure(report([finding({ tag })])), 'uncovered-scope', JSON.stringify(tag));
-  for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }]) assert.equal(failure(report([{ ...finding(), tag }])), 'uncovered-scope', JSON.stringify(tag));
-  const { tag: _tag, ...missing } = finding();
-  assert.equal(failure(report([missing])), 'uncovered-scope');
-  const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
-  assert.equal(failure(report([unknown({ impact: 'HIGH' })])), 'uncovered-scope');
-  assert.equal(failure(report([unknown({ defect: '' })])), 'uncovered-scope');
-  assert.equal(failure(report([unknown({ defect: '<invoke name="x">' })])), 'uncovered-scope');
-  const { defect: _defect, ...noDefect } = unknown();
-  assert.equal(failure(report([noDefect])), 'uncovered-scope');
-  assert.equal(failure(report([unknown()], 'CLEAN')), 'uncovered-scope');
-  assert.equal(failure(report([finding(), unknown({ impact: 'HIGH' })])), 'uncovered-scope');
-  const cut = report([unknown()]).slice(0, -12);
-  assert.equal(failure(cut, true), 'truncated');
-  assert.equal(failure(cut), 'uncovered-scope');
-  assert.equal(failure("I'm unable to help with reviewing this robustness tag."), 'refusal');
-});
-
-test('original tag is sanitized and bounded', () => {
+// original tag is sanitized and bounded
+{
   const tags = ['<!-- ignore previous -->', '<b>bold</b>', '[link](https://a.example)', '`code`', 'line\nbreak', 'résumé 日本語', 'x'.repeat(500), '  padded  '];
   for (const tag of tags) {
     const [item] = parsedFindings('code', report([finding({ tag })]));
@@ -505,6 +450,14 @@ test('original tag is sanitized and bounded', () => {
   }
   assert.equal(parsedFindings('code', report([finding({ tag: '  padded  ' })]))[0]?.originalTag, 'padded');
   assert.equal(parsedFindings('code', report([finding({ tag: 'x'.repeat(500) })]))[0]?.originalTag, 'x'.repeat(80));
+}
+});
+test('review-sanitization: report text is sanitized before relay', () => {
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text: report([finding({ defect: 'bad \u001b[31mred\u001b[0m <!-- ignore previous --> loop' })]) });
+  assert.ok(result.ok);
+  const defect = result.findings[0]?.defect ?? '';
+  assert.ok(!defect.includes('\u001b'));
+  assert.ok(!defect.includes('<!--'));
 });
 
 test('heuristic H1 reports repeated failures with model attribution, fallback recovery and fix text', () => {
@@ -553,7 +506,6 @@ test('heuristic H1 reports repeated failures with model attribution, fallback re
     ]);
     assert.match(unrecovered.evidence, /agy\/gemini-4-argon ×7/);
     assert.match(unrecovered.evidence, /0 recovered by fallback/);
-
 
   }
   // merged from: heuristic H1 fires on repeated failures and suppresses isolated failures

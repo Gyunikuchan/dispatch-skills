@@ -1,39 +1,13 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
-
-function sessionFixture() {
-  const root = path.join(path.parse(os.tmpdir()).root, 'status-' + crypto.randomUUID());
-  const cleanup = memoryNodeFs(root);
-  const session = path.join(root, '.scratch/dispatch-skills/20261023T0000Z-test');
-  fs.mkdirSync(session, { recursive: true });
-  fs.writeFileSync(path.join(session, 'manifest.json'), JSON.stringify({
-    schemaVersion: 1, folderName: path.basename(session), sessionId: 'test', safeSessionId: 'test', repositoryRoot: fs.realpathSync(root),
-  }));
-  const lines: string[] = [];
-  const deps: CliDeps = {
-    run: async () => { throw new Error('Unit tests must not spawn processes'); },
-    delegate: async () => { throw new Error('Unscripted delegate'); },
-    modes: () => ['cli'], orchestrator: null, liveness: { claude: true, agy: true, codex: true, copilot: true, opencode: true },
-    stdout: (line) => lines.push(line), env: {}, clock: () => 0,
-    sleep: async () => {}, pid: 42, host: 'test-host', isAlive: () => false,
-    skillRoot: path.resolve('skills/dispatch'),
-  };
-  return {
-    root, session, lines, deps, cleanup,
-    artifact: (name: string, source: string) => { const file = path.join(root, name); fs.writeFileSync(file, source); return file; },
-    output: () => { if (lines.length !== 1) throw new Error('Expected one output line'); return JSON.parse(lines[0]!) as { ok: boolean; summary: string; path: string | null; reason?: string }; },
-  };
-}
+import { sessionFixture } from './helpers/session.ts';
 
 test('status report exposes bindings approval gate open escalations and torn tail without locking', async () => {
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
     const plan = f.artifact('work.plan.md', 'plan');
@@ -95,10 +69,9 @@ const PLAN = [
   '- `node contract`',
 ].join('\n');
 
-
 test('status retains missing automated criteria for manual completions and waivers', async () => {
   const { fakeGit } = await import('./helpers/fake-git.ts');
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
     f.artifact('work.plan.md', PLAN);
@@ -121,7 +94,7 @@ test('status retains missing automated criteria for manual completions and waive
 
 test('status retains recovery status with broken and missing plan', async () => {
   const { fakeGit } = await import('./helpers/fake-git.ts');
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
     const plan = f.artifact('work.plan.md', PLAN);
@@ -164,7 +137,7 @@ test('status retains recovery status with broken and missing plan', async () => 
 
 test('uncommitted consumers report the delivery source as not yet delivered', async () => {
  const { fakeGit } = await import('./helpers/fake-git.ts');
- const f = sessionFixture();
+ const f = sessionFixture({ memory: true });
  try {
  f.artifact('mission.spec.md', 'mission');
  f.artifact('work.plan.md', PLAN);
@@ -183,8 +156,10 @@ test('uncommitted consumers report the delivery source as not yet delivered', as
  } finally { f.cleanup(); }
 });
 
-test('status budget reflects rulings after completion', async () => {
-  const f = sessionFixture();
+test('status budget and coverage admission reflect rulings and open slots', async () => {
+// status budget reflects rulings after completion
+{
+  const f = sessionFixture({ memory: true });
   try {
     const review = 'plan-work.plan', directory = path.join(f.session, '.state/reviews', review);
     for (const round of [1, 2]) {
@@ -201,10 +176,11 @@ test('status budget reflects rulings after completion', async () => {
     await appendRecord(f.session, { kind: 'ruling', by: 'orchestrator', key: 'ruling-accepted', data: { subject: 'review:' + review + ':R2-F001', ruling: 'accepted', rationale: 'Fixed' } }, f.deps);
     assert.deepEqual(await budget(), { cap: 2, ceiling: 4, nextRound: 3, asOfSeq: 1, state: 'allowed' });
   } finally { f.cleanup(); }
-});
+}
 
-test('status reports coverage admission for open and unreadable slots', async () => {
-  const f = sessionFixture();
+// status reports coverage admission for open and unreadable slots
+{
+  const f = sessionFixture({ memory: true });
   try {
     const review = 'code-integration', directory = path.join(f.session, '.state/reviews', review, 'round-1');
     const write = (file: string, value: unknown) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
@@ -224,13 +200,14 @@ test('status reports coverage admission for open and unreadable slots', async ()
     assert.deepEqual(await budget(), { cap: 1, ceiling: 3, nextRound: 2, asOfSeq: 0, state: 'allowed',
       coverage: { state: 'readable', open: ['codex[0]'], decision: 'rerun', use: 'free' } });
   } finally { f.cleanup(); }
+}
 });
 
 test('statusReport reflects latest strict criterion evidence across pass-fail-pass', async () => {
   const { fakeGit } = await import('./helpers/fake-git.ts');
   const { checks: planChecks, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
   const { readManifest } = await import('../../../skills/dispatch/scripts/lib/session.ts');
-  const f = sessionFixture();
+  const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
     f.artifact('work.plan.md', PLAN);

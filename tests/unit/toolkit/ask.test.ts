@@ -202,7 +202,9 @@ test('ask summary reports underfill for native-only providers excluded for anoth
   } finally {f.cleanup();}
 });
 
-test('ask run saves failed when a host native reply is blocked with no reserve', async () => {
+test('host native failures persist reports in failed saves', async () => {
+  const cases: {name: string; run: () => Promise<void>}[] = [
+    {name: 'blocked reply with no reserve', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -225,9 +227,8 @@ test('ask run saves failed when a host native reply is blocked with no reserve',
     assert.ok(fs.existsSync(replyPath + '.invalid-1'));
     assert.equal(f.launches.length, 0);
   } finally {f.cleanup();}
-});
-
-test('ask run saves failed when a host reserve native attempt fails', async () => {
+    }},
+    {name: 'reserve native attempt fails', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -248,9 +249,8 @@ test('ask run saves failed when a host reserve native attempt fails', async () =
     assert.ok(f.launches.some(launch => launch.provider === 'claude'));
     assert.ok(!f.launches.some(launch => launch.provider === 'codex'));
   } finally {f.cleanup();}
-});
-
-test('ask run records the failure report when a host native attempt fails with no reserve', async () => {
+    }},
+    {name: 'failure report recorded with no reserve', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -270,9 +270,8 @@ test('ask run records the failure report when a host native attempt fails with n
     assert.ok(fs.existsSync((pending.replyPath as string) + '.invalid-1'));
     assert.equal(f.launches.length, 0);
   } finally {f.cleanup();}
-});
-
-test('ask diagnostics retain a host native-only reserve attempt reported failed', async () => {
+    }},
+    {name: 'reported reserve failure keeps diagnostics', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -297,9 +296,14 @@ test('ask diagnostics retain a host native-only reserve attempt reported failed'
     assert.equal(pendingEvent.model, 'reserve', 'the pending marker names the reserve model');
     assert.ok(events.some((event: any) => event.kind === 'native' && event.state === 'failed' && event.provider === 'codex'), 'a reported native-only reserve failure emits a native failed event: ' + JSON.stringify(events.filter((event: any) => event.kind === 'native')));
   } finally {f.cleanup();}
+    }},
+  ];
+  for (const item of cases) await item.run();
 });
 
-test('ask run falls back to cli when the host changes before the reply', async () => {
+test('host changes and deferred waves reconcile saved state', async () => {
+  const cases: {name: string; run: () => Promise<void>}[] = [
+    {name: 'falls back to cli when the host changes', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -319,9 +323,8 @@ test('ask run falls back to cli when the host changes before the reply', async (
     assert.equal(done.value.answers[0].text, 'Fallback answer');
     assert.ok(fs.existsSync(replyPath + '.invalid-1'));
   } finally {f.cleanup();}
-});
-
-test('ask runs the deferred cli wave with a saved orphan of either slot shape', async () => {
+    }},
+    {name: 'deferred cli wave reconciles either slot shape', run: async () => {
   for (const legacy of [false, true]) {
     const f = fixture(); try {
       fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
@@ -352,9 +355,8 @@ test('ask runs the deferred cli wave with a saved orphan of either slot shape', 
       assert.equal(f.launches.length, 1, 'only the unsaved cli voice launches');
     } finally {f.cleanup();}
   }
-});
-
-test('ask reconciles a saved native-first reserve attempt after a host change', async () => {
+    }},
+    {name: 'saved reserve attempt reconciles after host change', run: async () => {
   const f = fixture(); try {
     fs.writeFileSync(path.join(f.deps.skillRoot, 'config.jsonc'), JSON.stringify({'read-delegates': {
       claude: {targets: [{medium: {model: 'target'}}]},
@@ -380,6 +382,9 @@ test('ask reconciles a saved native-first reserve attempt after a host change', 
     assert.equal(reconciled?.responder.provider, 'codex');
     assert.equal(done.value.ignoredFailureReports, undefined, 'the matching report is consumed, not ignored: ' + JSON.stringify(done.value));
   } finally {f.cleanup();}
+    }},
+  ];
+  for (const item of cases) await item.run();
 });
 
 test('ask diagnostics name the reserve voice on invalid and completed native replies', async () => {
@@ -442,7 +447,9 @@ test('ask run honors pins for all, count, and provider selection and rejects inv
   } finally {f.cleanup();}
 });
 
-test('ask run refuses with host-sandboxed under sandboxed claude host and proceeds when unsandboxed', async () => {
+test('host-sandboxed refuses sandboxed runs and allows safe rosters', async () => {
+  const cases: {name: string; run: () => Promise<void>}[] = [
+    {name: 'refuses under a sandboxed claude host and proceeds unsandboxed', run: async () => {
   const f = fixture(); try {
     f.deps.orchestrator = {platform: 'claude', model: null};
     f.deps.env = {...f.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
@@ -464,9 +471,8 @@ test('ask run refuses with host-sandboxed under sandboxed claude host and procee
     assert.equal(rerun.exit, 0, JSON.stringify(rerun.output));
     assert.equal(f.launches.length, 1);
   } finally {f.cleanup();}
-});
-
-test('ask run host-sandboxed allows non-claude hosts and native-first-only rosters, but refuses reserves and native-failed', async () => {
+    }},
+    {name: 'allows non-claude hosts but refuses reserves and native-failed', run: async () => {
   const f1 = fixture(); try {
     f1.deps.orchestrator = {platform: 'opencode', model: null};
     f1.deps.env = {...f1.deps.env, SANDBOX_RUNTIME: 'seatbelt'};
@@ -503,6 +509,9 @@ test('ask run host-sandboxed allows non-claude hosts and native-first-only roste
     reserves: [],
     nativeFirstProviders: ['claude'],
   }), false);
+    }},
+  ];
+  for (const item of cases) await item.run();
 });
 
 test('ask native-pending summary lists distinct summaryLaunch items within 1024 bytes', async () => {
