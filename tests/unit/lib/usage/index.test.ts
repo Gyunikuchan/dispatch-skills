@@ -8,6 +8,23 @@ import { zstdCompressSync } from 'node:zlib';
 import { hostSessionId, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { MAX_FILE_BYTES, MAX_TOTAL_BYTES, readTranscript, stageAt } from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
+import { lines } from './helpers/memory-fs.ts';
+
+test('Copilot host folding preserves bounded actors and unknown effort', () => {
+  const records = Array.from({ length: 35 }, (_, i) => ({ type: 'session.usage_record', timestamp: new Date(1000).toISOString(), agentId: `private-actor-${i}`, data: {   usage: { accounting: { sourceSessionId: 'private-source', usageId: `receipt-${i}`, sequence: i }, model: 'custom/model', inputTokens: 10, outputTokens: 2, copilotUsage: { totalNanoAiu: 100 }, cost: 1, aiCreditsStatus: 'complete' } } }));
+  const fs = memoryFs({ '/home/.copilot/session-state/agent-session/events.jsonl': lines(...records) });
+  const env = (name: string) => name === 'COPILOT_AGENT_SESSION_ID' ? 'agent-session' : name === 'COPILOT_CLI_SESSION_ID' ? 'wrong-session' : undefined;
+  const result = readHostUsage('copilot', { ...query, env }, fs);
+  assert.equal(result.rows.reduce((sum, r) => sum + r.input, 0), 350);
+  assert.equal(new Set(result.rows.flatMap(r => r.agent ?? [])).size, 32);
+  const overflow = result.rows.find(r => !r.agent)!;
+  assert.equal(overflow.input, 30);
+  assert.equal(overflow.copilot?.billing.totalNanoAiu, 300);
+  assert.equal(overflow.copilot?.actorCoverage, 'partial');
+  assert.ok(result.rows.every(r => r.effort === null && r.maxDepth === undefined));
+  assert.doesNotMatch(JSON.stringify(result), /private-|wrong-session/);
+  assert.deepEqual(fs.reads, [path.normalize('/home/.copilot/session-state/agent-session/events.jsonl')]);
+});
 
 const input = { ...query, env: (_: string): string | undefined => undefined };
 
@@ -405,6 +422,6 @@ test('foldHostRows excludes skipResponse rows from turns and tool sums', () => {
 test('hostSessionId validates env session ids and returns undefined when absent or unsafe', () => {
   assert.equal(hostSessionId('claude', n => n === 'CLAUDE_CODE_SESSION_ID' ? 'sess-123' : undefined), 'sess-123');
   assert.equal(hostSessionId('claude', n => n === 'CLAUDE_CODE_SESSION_ID' ? '../bad' : undefined), undefined);
-  assert.equal(hostSessionId('copilot', () => 'sess-123'), undefined);
+  assert.equal(hostSessionId('copilot', () => 'sess-123'), 'sess-123');
   assert.equal(hostSessionId(null, () => 'sess-123'), undefined);
 });

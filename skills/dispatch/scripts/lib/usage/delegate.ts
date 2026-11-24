@@ -4,6 +4,8 @@ import { collectAgyUsage } from './agy.ts';
 import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { collectClaudeUsage } from './claude.ts';
 import { collectCodexUsage } from './codex.ts';
+import { collectCopilotUsage } from './copilot.ts';
+import { mergeCopilot, type CopilotActor } from './rows.ts';
 import { collectOpencodeUsage } from './opencode.ts';
 import { baseCounters } from './read.ts';
 import { MAX_RESPONSE_AGENTS, usageKey, type DelegateQuery, type HostUsageQuery, type HostUsageResult } from './rows.ts';
@@ -70,7 +72,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   if (!validSessionId(query.sessionId)) return { complete: false };
   if (!Number.isFinite(query.startMs) || !Number.isFinite(query.endMs)) return { complete: false };
 
-  const startMs = query.resumed ? query.startMs : Math.floor(query.startMs / 1000) * 1000;
+  const startMs = query.platform === 'copilot' || query.resumed ? query.startMs : Math.floor(query.startMs / 1000) * 1000;
   const hostQuery: HostUsageQuery = {
     ...(query.collectResponses ? { collectResponses: true } : {}),
     sessionId: query.sessionId,
@@ -85,6 +87,9 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   let result: HostUsageResult;
   try {
     switch (query.platform) {
+      case 'copilot':
+        result = collectCopilotUsage(hostQuery, query.fs, { rootRole: 'delegate' });
+        break;
       case 'claude': {
         if (!query.cwd) return { complete: false };
         const projectDir = query.cwd.replace(/[^A-Za-z0-9]/g, '-');
@@ -120,7 +125,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   const invalidCounters = !incomplete && rows.some(r => !baseCounters(r));
   const counts = responseCounts(query, result, Boolean(incomplete || result.unavailable || invalidCounters));
   const evidence = counts.length ? { responses: counts } : {};
-  if (incomplete) return { complete: false, ...evidence };
+  if (incomplete && (query.platform !== 'copilot' || !rows.length)) return { complete: false, ...evidence };
   if (invalidCounters) return { complete: false, invalidCounters: true, ...evidence };
 
   const folded = foldRows(rows);
@@ -170,7 +175,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   }
 
   return {
-    complete: true,
+    complete: !incomplete,
     ...evidence,
     usage: {
       ...folded.total,
@@ -183,7 +188,30 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
       models,
       ...(actualModels.length > 0 ? { actualModels: actualModels.slice(0, 8) } : {}),
       actualEffort,
+      ...(query.platform === 'copilot' ? { copilot: mergeCopilot(rows.map(r => r.copilot))!, actors: copilotActors(rows, models) } : {}),
       ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }),
     },
   };
+}
+
+function copilotActors(rows: HostUsageResult['rows'], models: Record<string, DiagnosticModelUsage>): CopilotActor[] {
+  const aliases = new Map<string, string>();
+  for (const r of rows) if (r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS) aliases.set(r.responseActor, `actor-${aliases.size + 1}`);
+  const groups = new Map<string, typeof rows>();
+  for (const original of rows) {
+    const r = Object.hasOwn(models, usageKey(original.model, original.effort)) ? original : { ...original, model: OTHER_KEY, effort: null };
+    const agent = aliases.get(r.responseActor ?? '');
+    const key = JSON.stringify([r.role, agent, r.model, r.effort]);
+    const group = groups.get(key) ?? []; group.push(r); groups.set(key, group);
+  }
+  return [...groups.values()].map(group => {
+    const r = group[0]!, agent = aliases.get(r.responseActor ?? '');
+    const parent = aliases.get(r.parentActor ?? '');
+    const copilot = mergeCopilot(group.map(r => r.copilot))!;
+    if (!agent) { copilot.actorCoverage = 'partial'; copilot.lineageCoverage = 'unknown'; }
+    const folded = foldRows(group);
+    const total = folded.total;
+    const bands = folded.models[usageKey(r.model, r.effort)]?.bands;
+    return { ...total, ...(bands ? { bands } : {}), turns: group.length, role: r.role, model: r.model, effort: r.effort, ...(agent ? { agent } : {}), ...(agent && parent ? { parent } : {}), ...(agent && r.depth !== undefined ? { depth: r.depth } : {}), copilot };
+  });
 }

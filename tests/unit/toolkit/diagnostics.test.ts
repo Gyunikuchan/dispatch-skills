@@ -24,6 +24,214 @@ const writeJson = (file: string, value: unknown) => {
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
 
+test('Copilot diagnostics retains billing evidence without disabled reads', async () => {
+  const { memoryFs } = await import('../lib/usage/helpers/memory-fs.ts');
+  for (const enabled of [false, true]) {
+    const f = sessionFixture({ memory: true });
+    try {
+      const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+      fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: enabled }));
+      f.deps.skillRoot = skill;
+      const usageFs = memoryFs({});
+      usageFs.stat = () => { throw new Error('disabled collection must not read'); };
+      f.deps.hostUsageFs = usageFs;
+      f.deps.delegate = async () => ({
+        outcome: { status: 'ok', text: 'answer', sessionId: null, resume: null },
+        invocations: [{ provider: 'copilot', model: 'custom/model', mode: 'cli', effort: null, configuredEffort: 'high', launched: true, outcome: 'ok', usage: { input: 10, output: 2, scope: 'invocation', provenance: 'session', inputSemantics: 'uncached', copilot: { tokenCoverage: 'complete', lineageCoverage: 'unknown', actorCoverage: 'complete', billing: { coverage: 'partial', totalNanoAiu: 50, statuses: ['pending'], multipliers: [2] } } } }],
+      });
+      if (enabled) {
+        const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
+        await observer.deps.delegate('copilot', { promptPath: '/brief', model: null, effort: 'high', sandbox: false, schemaPath: null, resume: null, cwd: f.session, timeoutMs: 1000, outputCapBytes: 100, attachments: [], logPath: path.join(f.session, 'logs', 'copilot[0].log'), briefPath: '/spill' }, 'cli');
+        observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
+        const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+        assert.equal(facts.invocations[0]?.configuredEffort, 'high');
+        assert.equal(facts.invocations[0]?.usage?.copilot?.billing.totalNanoAiu, 50);
+      } else {
+        assert.equal(observeTool(f.session, 'ask', 'run', undefined, f.deps), undefined);
+        assert.deepEqual(usageFs.reads, []);
+      }
+    } finally { f.cleanup(); }
+  }
+});
+
+test('Copilot native replacement clears primary effort in persistence and saved replay', async () => {
+  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  const f = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    f.deps.orchestrator = { platform: 'copilot', model: null };
+    const primary = { ...rosterSlot('copilot[0]', 'copilot', { native: true, model: 'primary' }), effort: 'high' };
+    const reserve = { ...rosterSlot('copilot[1]', 'copilot', { native: true, reserve: true, model: 'reserve' }), index: 1 };
+    const dir = path.join(f.session, '.state', 'reviews', 'code-alpha', 'round-1', 'gen-1');
+    const input = { dir, slots: [primary, reserve], prompt: 'question', validate: (text: string) => ({ ok: true as const, text }), sessionRoot: f.session };
+    const observer = observeTool(f.session, 'review', 'run', undefined, f.deps)!;
+    const first = await fanOutComplete(input, observer.deps);
+    const pending = first.find(r => r.state === 'native');
+    assert.ok(pending?.state === 'native');
+    const second = await fanOutComplete({ ...input, nativeFailures: [{ attempt: pending.attempt, reason: 'unavailable', reasonHash: 'synthetic' }] }, observer.deps);
+    const replacement = second.find(r => r.state === 'native');
+    assert.ok(replacement?.state === 'native');
+    assert.equal(replacement.model, 'reserve');
+    assert.equal(replacement.effort, undefined);
+    observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'pending', value: null });
+    const captures = fs.readdirSync(path.join(f.session, '.state', 'diagnostics'))
+      .map(file => JSON.parse(fs.readFileSync(path.join(f.session, '.state', 'diagnostics', file), 'utf8')));
+    assert.equal(captures[0].invocations.find((i: { surface: string }) => i.surface === 'native').effort, undefined);
+    captureRuns(f.session, [{ phase: 'code-review', subject: roundSubject(f.session, 'code-alpha', 1), slot: primary.slot,
+      surface: 'native', provider: 'copilot', model: 'primary', effort: 'high', launched: false, outcome: 'native-failed', nativeState: 'failed', attempt: 1 }]);
+    saveRound({ session: f.session, review: 'code-alpha', round: 1, roster: [primary, reserve], outcomes: [replacement] });
+    let facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    const pendingReplay = facts.invocations.find(i => i.surface === 'native')!;
+    assert.deepEqual([pendingReplay.provider, pendingReplay.model, pendingReplay.effort, pendingReplay.nativeState, pendingReplay.attempt],
+      ['copilot', 'reserve', undefined, 'pending', undefined]);
+    captureRuns(f.session, [{ phase: 'code-review', subject: roundSubject(f.session, 'code-alpha', 1), slot: primary.slot,
+      surface: 'native', provider: 'copilot', model: 'reserve', launched: false, outcome: 'native-failed', nativeState: 'failed', attempt: 2 }]);
+    saveRound({ session: f.session, review: 'code-alpha', round: 1, roster: [primary, reserve], outcomes: [replacement] });
+    facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    const matchingTerminal = facts.invocations.find(i => i.surface === 'native')!;
+    assert.deepEqual([matchingTerminal.model, matchingTerminal.effort, matchingTerminal.nativeState, matchingTerminal.attempt],
+      ['reserve', undefined, 'failed', 2]);
+    captureRuns(f.session, [{ phase: 'code-review', subject: roundSubject(f.session, 'code-alpha', 1), slot: primary.slot,
+      surface: 'native', provider: 'copilot', model: 'primary', effort: 'high', launched: false, outcome: 'native-pending', nativeState: 'pending', attempt: 1 }]);
+    saveRound({ session: f.session, review: 'code-alpha', round: 1, roster: [primary, reserve], outcomes: [{
+      slot: primary.slot, state: 'done', responder: { slot: reserve.slot, provider: 'copilot', model: 'reserve', native: true },
+    }] });
+    facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    const replay = facts.invocations.find(i => i.surface === 'native')!;
+    assert.deepEqual([replay.model, replay.effort, replay.nativeState, replay.attempt], ['reserve', undefined, 'completed', undefined]);
+    const changedPrimary = { ...primary, model: 'changed', effort: 'low' };
+    saveRound({ session: f.session, review: 'code-alpha', round: 1, roster: [changedPrimary, reserve], outcomes: [{
+      slot: primary.slot, state: 'done', responder: { slot: primary.slot, provider: 'copilot', model: 'primary', native: true, effort: 'high' },
+    }] });
+    const saved = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations.find(i => i.surface === 'native')!;
+    assert.deepEqual([saved.model, saved.effort, saved.nativeState, saved.attempt], ['primary', 'high', 'completed', 1]);
+  } finally { f.cleanup(); }
+});
+
+test('native failed slots retain captured physical settings after roster changes', async () => {
+  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  for (const failReserve of [true, false]) {
+    const f = sessionFixture({ memory: true });
+    try {
+      const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+      writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+      f.deps.skillRoot = skill;
+      f.deps.orchestrator = { platform: 'copilot', model: null };
+      const primary = { ...rosterSlot('copilot[0]', 'copilot', { native: true, model: 'primary-model' }), effort: 'high' };
+      const reserve = { ...rosterSlot('copilot[1]', 'copilot', { native: true, reserve: true, model: 'reserve-model' }), index: 1, effort: 'medium' };
+      const roster = failReserve ? [primary, reserve] : [primary];
+      const review = failReserve ? 'code-failed-reserve' : 'code-failed-primary';
+      const dir = path.join(f.session, '.state', 'reviews', review, 'round-1', 'gen-1');
+      const input = { dir, slots: roster, prompt: 'question', validate: (text: string) => ({ ok: true as const, text }), sessionRoot: f.session };
+      const observer = observeTool(f.session, 'review', 'run', undefined, f.deps)!;
+      let native = (await fanOutComplete(input, observer.deps)).find(row => row.state === 'native');
+      assert.ok(native?.state === 'native');
+      if (failReserve) {
+        native = (await fanOutComplete({ ...input, nativeFailures: [{ attempt: native.attempt, reason: 'unavailable', reasonHash: 'primary' }] }, observer.deps))
+          .find(row => row.state === 'native');
+        assert.ok(native?.state === 'native');
+        assert.equal(native.model, 'reserve-model');
+      }
+      const failed = (await fanOutComplete({
+        ...input, nativeFailures: [{ attempt: native.attempt, reason: 'unavailable', reasonHash: 'failed' }],
+      }, observer.deps)).find(row => row.slot === primary.slot);
+      assert.equal(failed?.state, 'failed');
+      observer.finish({ ok: false, exit: 4, reason: 'refusal', summary: 'failed', value: null });
+      const changedRoster = roster.map(slot => ({
+        ...slot, model: `changed-${slot.slot}`, effort: 'low',
+      }));
+      saveRound({ session: f.session, review, round: 1, roster: changedRoster, outcomes: [failed] });
+      const row = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations
+        .find(invocation => invocation.surface === 'native' && invocation.slot === primary.slot)!;
+      assert.deepEqual([row.provider, row.model, row.effort, row.nativeState, row.outcome],
+        ['copilot', failReserve ? 'reserve-model' : 'primary-model', failReserve ? 'medium' : 'high', 'failed', 'native-failed']);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('saved invalid and interrupted native fallback markers remain terminal', async () => {
+  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+
+  const invalidFixture = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(invalidFixture.root, 'skill'); fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    invalidFixture.deps.skillRoot = skill;
+    invalidFixture.deps.orchestrator = { platform: 'copilot', model: null };
+    const primary = { ...rosterSlot('copilot[0]', 'copilot', { native: true, model: 'saved-model' }), effort: 'high' };
+    const review = 'code-invalid-saved';
+    const dir = path.join(invalidFixture.session, '.state', 'reviews', review, 'round-1', 'gen-1');
+    const input = { dir, slots: [primary], prompt: 'question', validate: (text: string) => ({ ok: true as const, text }), sessionRoot: invalidFixture.session };
+    const observer = observeTool(invalidFixture.session, 'review', 'run', undefined, invalidFixture.deps)!;
+    const launched = (await fanOutComplete(input, observer.deps)).find(row => row.state === 'native');
+    assert.ok(launched?.state === 'native');
+    fs.writeFileSync(launched.replyPath, 'invalid reply');
+    const invalid = (await fanOutComplete({
+      ...input, validate: () => ({ ok: false as const, cls: 'refusal' as const, reason: 'invalid reply' }),
+    }, observer.deps)).find(row => row.slot === primary.slot);
+    assert.ok(invalid?.state === 'native');
+    assert.equal(invalid.error, 'invalid reply');
+    saveRound({ session: invalidFixture.session, review, round: 1, roster: [primary], outcomes: [invalid] });
+    const row = sessionFacts(invalidFixture.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations
+      .find(invocation => invocation.surface === 'native')!;
+    assert.deepEqual([row.model, row.effort, row.nativeState, row.outcome], ['saved-model', 'high', 'invalid', 'native-invalid']);
+
+    fs.writeFileSync(launched.replyPath, 'corrected reply');
+    const nativeSlotPath = path.join(dir, 'slots', `${primary.slot}.json`);
+    const rename = fs.renameSync;
+    const interruptedSave = Object.assign(new Error('interrupted done save'), {code: 'EIO'});
+    fs.renameSync = (from, to) => {
+      if (to === nativeSlotPath) throw interruptedSave;
+      return rename(from, to);
+    };
+    try {
+      await assert.rejects(fanOutComplete(input, observer.deps), /interrupted done save/);
+    } finally { fs.renameSync = rename; }
+    observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'interrupted', value: null });
+    saveRound({ session: invalidFixture.session, review, round: 1, roster: [primary], outcomes: [invalid] });
+    const interrupted = sessionFacts(invalidFixture.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations
+      .find(invocation => invocation.surface === 'native')!;
+    assert.deepEqual([interrupted.model, interrupted.effort, interrupted.nativeState, interrupted.outcome],
+      ['saved-model', 'high', 'completed', 'ok']);
+  } finally { invalidFixture.cleanup(); }
+
+  const fallbackFixture = sessionFixture({ memory: true });
+  try {
+    const skill = path.join(fallbackFixture.root, 'skill'); fs.mkdirSync(skill);
+    writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
+    fallbackFixture.deps.skillRoot = skill;
+    fallbackFixture.deps.orchestrator = { platform: 'copilot', model: null };
+    const original = { ...rosterSlot('copilot[0]', 'copilot', { native: true, model: 'saved-model' }), effort: 'high' };
+    const replacement = { ...rosterSlot('copilot[1]', 'copilot', { native: true, model: 'replacement-model' }), index: 1 };
+    const review = 'code-interrupted-fallback';
+    const dir = path.join(fallbackFixture.session, '.state', 'reviews', review, 'round-1', 'gen-1');
+    const input = { dir, slots: [original], prompt: 'question', validate: (text: string) => ({ ok: true as const, text }), sessionRoot: fallbackFixture.session };
+    const observer = observeTool(fallbackFixture.session, 'review', 'run', undefined, fallbackFixture.deps)!;
+    const launched = (await fanOutComplete(input, observer.deps)).find(row => row.state === 'native');
+    assert.ok(launched?.state === 'native');
+    const next = await fanOutComplete({
+      ...input, slots: [replacement],
+      nativeFailures: [{ attempt: launched.attempt, reason: 'interrupted', reasonHash: 'interrupted' }],
+    }, observer.deps);
+    const savedPath = path.join(dir, 'slots', `${original.slot}.json`);
+    const marked = JSON.parse(fs.readFileSync(savedPath, 'utf8')) as { state: string; cliFallback?: true; model?: string; effort?: string };
+    assert.equal(marked.cliFallback, true);
+    const newPending = next.find(row => row.slot === replacement.slot)!;
+    observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'fallback interrupted', value: null });
+    const changedOriginal = { ...original, model: 'changed-roster-model', effort: 'low' };
+    saveRound({
+      session: fallbackFixture.session, review, round: 1,
+      roster: [changedOriginal, replacement],
+      outcomes: [marked, newPending],
+    });
+    const row = sessionFacts(fallbackFixture.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations
+      .find(invocation => invocation.surface === 'native' && invocation.slot === original.slot)!;
+    assert.deepEqual([row.model, row.effort, row.nativeState, row.outcome], ['saved-model', 'high', 'failed', 'native-failed']);
+  } finally { fallbackFixture.cleanup(); }
+});
+
 
 
 

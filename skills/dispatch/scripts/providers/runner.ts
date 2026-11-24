@@ -580,6 +580,10 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
 }
 
 function recordInvocation(rows: Invocation[], req: DelegateRequest, row: Invocation): void {
+  if (row.provider === 'copilot' && !row.launched) {
+    row.model = null; row.effort = null;
+    if (req.effort) row.configuredEffort = req.effort;
+  }
   rows.push(row);
   try { req.onInvocation?.(row); } catch {}
 }
@@ -738,15 +742,17 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             sessionRead = clockBehind ? { complete: false } : spec.sessionUsage(result.stdout, {
               mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages,
               cwd: current.cwd, resumed: isResume, collectResponses: true, transcripts,
+              ...(spec.id === 'copilot' ? { sessionId: spec.attemptSession?.(result, current) ?? undefined } : {}),
             });
           } catch { sessionRead = { complete: false }; }
         }
         responses = sessionRead?.responses;
         const sessionUsage = sessionRead?.usage;
         const sessionCounters = baseCounters(sessionUsage);
-        if (sessionRead?.complete && sessionUsage && sessionCounters) {
+        if ((sessionRead?.complete || spec.id === 'copilot') && sessionUsage && sessionCounters) {
           usage = { ...sessionUsage, provenance: 'session' };
           baseline = 'none';
+          if (!sessionRead?.complete) coverage.push('transcript unavailable');
         } else {
           if (sessionRead !== undefined) coverage.push('transcript unavailable');
           if (sessionRead?.invalidCounters || (sessionUsage && !sessionCounters) || (stdoutUsage && !stdoutCounters)) coverage.push('invalid counters');
@@ -791,9 +797,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     }
     const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
     const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
-    const rowModel = spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
-    const rowEffort = spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(responses?.length ? { responses } : {}), ...(req.collectUsage === true && coverage.length ? { coverage } : {}) });
+    const rowModel = spec.id === 'copilot' ? measuredModel : spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
+    const rowEffort = spec.id === 'copilot' ? usage?.actualEffort ?? null : spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
+    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, ...(spec.id === 'copilot' && current.effort ? { configuredEffort: current.effort } : {}), launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(responses?.length ? { responses } : {}), ...(req.collectUsage === true && coverage.length ? { coverage } : {}) });
     if (isWrapUpLaunch) {
       if (outcome.status === 'ok') return { outcome, result, attempts, briefFile, invocations };
       return wrapUpTimeout(result);

@@ -131,6 +131,14 @@ function invocationUnits(
       cost: priceUnit(pricer, i.provider, configured ? model.slice(model.lastIndexOf('/') + 1) : model, cleanPart, usage?.reasoningInOutput, onDate),
     };
   };
+  if (usage?.actors) {
+    for (const actor of usage.actors) {
+      const entry = unit(actor.model || DASH, actor.effort ?? DASH, actor);
+      entry.role = actor.role;
+      out.push(entry);
+    }
+    return out;
+  }
   if (usage?.models) {
     for (const [key, part] of Object.entries(usage.models)) {
       const at = key.indexOf('#');
@@ -172,6 +180,7 @@ function turnRowsOf(run: RunFacts, units: readonly Unit[]): TurnRow[] {
   }));
   for (const i of run.invocations) {
     if (i.surface !== 'cli' || !i.launched || !i.responses?.length) continue;
+    if (measured(i)?.actors?.some(a => a.role === 'subagent')) continue;
     const stage = stageForPhase(run, i.phase);
     for (const r of i.responses) {
       if (r.role !== 'subagent') continue;
@@ -543,9 +552,9 @@ export function efficiencyOf(runs: readonly RunFacts[], pricer?: Pricer) {
   };
 }
 
-type Fold = { responses?: number; timing?: number; workload?: number; health?: number; yield?: number; stage?: number; phase?: number; platform?: number };
+type Fold = { responses?: number; timing?: number; workload?: number; copilot?: number; health?: number; yield?: number; stage?: number; phase?: number; platform?: number };
 type Foldable = { units: readonly Unit[]; tokens: number; key: string };
-const FOLD_ORDER = ['responses', 'timing', 'workload', 'phase', 'stage', 'platform', 'health', 'yield'] as const;
+const FOLD_ORDER = ['responses', 'timing', 'workload', 'copilot', 'phase', 'stage', 'platform', 'health', 'yield'] as const;
 
 /** Keeps the `keep` best-ranked rows (high cost, low cost, tokens, key; unpriced counts 0) in normal order and merges the rest into one trailing row. */
 function foldTable<R extends Foldable>(rows: readonly R[], keep: number | undefined, merge: (rest: R[]) => R, pinned: (row: R) => boolean = () => false): R[] {
@@ -582,7 +591,7 @@ function buildSections(
   tier2Cost: (fold: Fold) => string[];
   tier2Efficiency: (fold: Fold) => string[];
   tier2Execution: (fold: Fold) => string[];
-  counts: Record<(typeof FOLD_ORDER)[number], number>;
+  counts: Record<Exclude<(typeof FOLD_ORDER)[number], 'copilot'>, number>;
 } {
   const singleRun = runs.length === 1;
   const allUnits = runUnits.flat();
@@ -843,12 +852,13 @@ function buildSections(
 
 function appendix(runs: readonly RunFacts[]): string[] {
   const singleRun = runs.length === 1;
+  const configured = runs.some(run => run.invocations.some(i => i.configuredEffort));
   const lines = ['<details>', '', '<summary>Invocations, provenance, and configuration</summary>', '',
-    row([...(singleRun ? [] : ['Run']), 'Phase', 'Provider', 'Model', 'Effort', 'Duration', 'Input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Total', 'Outcome']),
-    '| ' + (singleRun ? '' : '--- | ') + '--- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |'];
+    row([...(singleRun ? [] : ['Run']), 'Phase', 'Provider', 'Model', 'Effort', ...(configured ? ['Configured effort'] : []), 'Duration', 'Input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Total', 'Outcome']),
+    '| ' + (singleRun ? '' : '--- | ') + '--- | --- | --- | --- | ' + (configured ? '--- | ' : '') + '---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |'];
   runs.forEach((run, index) => {
     for (const i of run.invocations) {
-      const usage = i.usage ? totals([{ usage: i.usage, platform: i.provider, reasoningInOutput: i.usage.reasoningInOutput }]) : undefined;
+      const usage = measured(i) ? totals([{ usage: measured(i)!, platform: i.provider, reasoningInOutput: i.usage?.reasoningInOutput }]) : undefined;
       const all = usage?.all;
       const apart = usage ? usage.all - usage.input - (usage.cacheRead ?? 0) - (usage.cacheWrite ?? 0) - usage.output : 0;
       const reasoningCell = usage?.reasoning === undefined ? DASH : apart > 0 ? num(apart) : `${num(usage.reasoning)} (in output)`;
@@ -858,7 +868,7 @@ function appendix(runs: readonly RunFacts[]): string[] {
       const review = /^review-[a-f0-9]{16}$/.test(i.phase);
       const ordinal = i.attempt !== undefined && i.attempt > 0 ? i.attempt : undefined;
       const identity = i.subject ? (review ? ` · attempt ${i.subject}/${ordinal ?? DASH}` : ` · subject ${i.subject} · attempt ${ordinal ?? DASH}`) : ordinal === undefined ? '' : ` · attempt ${ordinal}`;
-      lines.push(row([...(singleRun ? [] : [String(index + 1)]), phaseName(run, i.phase) + identity + (i.slot ? ' · slot ' + i.slot : ''), provider, model, i.effort ?? DASH, formatDuration(i.durationMs), ...tokenCells(usage), reasoningCell, all === undefined ? DASH : num(all), i.surface === 'native' ? `native ${i.nativeState ?? (i.outcome === 'ok' ? 'completed' : i.outcome === 'native-pending' ? 'pending' : 'unavailable')}` : `${i.outcome}${i.nudge === true ? ' · nudge' : ''}${i.wrapUp === true ? ' · wrapUp' : ''}${i.validationOutcome ? ' · validation ' + i.validationOutcome : ''}${i.routingOutcome ? ' · routing ' + i.routingOutcome : ''}${i.slotState ? ' · slot ' + i.slotState : ''}${i.lifecycleSteps?.length ? ' · lifecycle ' + i.lifecycleSteps.map(s => `${s.step} ${s.outcome} ${s.elapsedMs}/${s.budgetMs} ms`).join(', ') : ''}${i.launched ? '' : ' (not launched)'}`]));
+      lines.push(row([...(singleRun ? [] : [String(index + 1)]), phaseName(run, i.phase) + identity + (i.slot ? ' · slot ' + i.slot : ''), provider, model, i.surface === 'native' && i.effort ? `${i.effort} (configured)` : i.effort ?? DASH, ...(configured ? [i.configuredEffort ?? DASH] : []), formatDuration(i.durationMs), ...tokenCells(usage), reasoningCell, all === undefined ? DASH : num(all), i.surface === 'native' ? `native ${i.nativeState ?? (i.outcome === 'ok' ? 'completed' : i.outcome === 'native-pending' ? 'pending' : 'unavailable')}` : `${i.outcome}${i.nudge === true ? ' · nudge' : ''}${i.wrapUp === true ? ' · wrapUp' : ''}${i.validationOutcome ? ' · validation ' + i.validationOutcome : ''}${i.routingOutcome ? ' · routing ' + i.routingOutcome : ''}${i.slotState ? ' · slot ' + i.slotState : ''}${i.lifecycleSteps?.length ? ' · lifecycle ' + i.lifecycleSteps.map(s => `${s.step} ${s.outcome} ${s.elapsedMs}/${s.budgetMs} ms`).join(', ') : ''}${i.launched ? '' : ' (not launched)'}`]));
     }
   });
   lines.push('');
@@ -1010,6 +1020,8 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     return lines;
   };
   const tail = appendix(runs);
+  const copilot = copilotDetails(runs);
+  const counts = { ...sections.counts, copilot: copilot.count };
   const assemble = (withAppendix: boolean, keep: number, fold: Fold = {}) => [
     ...lead,
     ...sections.reviewHealth(fold),
@@ -1018,6 +1030,7 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     ...sections.tier2Cost(fold),
     ...sections.tier2Efficiency(fold),
     ...sections.tier2Execution(fold),
+    ...copilot.render(fold.copilot),
     ...(withAppendix ? tail : ['<details>', '', '<summary>Invocations, provenance, and configuration</summary>', '', 'Omitted at the report size limit.', '', '</details>', '']),
   ].join('\n');
   const fits = (text: string) => Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes;
@@ -1027,13 +1040,14 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
   const fold: Fold = {};
   for (const table of FOLD_ORDER) {
     if (fits(text)) break;
-    if (!sections.counts[table]) continue;
+    if (!counts[table]) continue;
     const render = (n: number) => assemble(false, 0, { ...fold, [table]: n });
     let lo = 0;
-    for (let hi = fits(render(0)) ? sections.counts[table] - 1 : 0; lo < hi;) {
+    for (let hi = fits(render(0)) ? counts[table] - 1 : 0; lo < hi;) {
       const mid = (lo + hi + 1) >> 1;
       if (fits(render(mid))) lo = mid; else hi = mid - 1;
     }
+
     fold[table] = lo;
     text = render(lo);
   }
@@ -1042,4 +1056,32 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     text = `${cut.slice(0, cut.lastIndexOf('\n'))}\n\nTruncated at the report size limit.\n`;
   }
   return { text, findings: findings.length, ...opt('top', findings[0] && summaryLine(findings[0])) };
+}
+
+function copilotDetails(runs: readonly RunFacts[]): { count: number; render: (keep?: number) => string[] } {
+  const values: { stage: string; role: string; agent?: string | undefined; model: string; effort?: string | null | undefined; depth?: number | undefined; copilot?: import('../../lib/usage/rows.ts').CopilotEvidence | undefined }[] = [];
+  for (const run of runs) {
+    if (run.hostUsage?.platform === 'copilot') for (const r of run.hostUsage.rows) values.push({ stage: r.stage, role: r.role, agent: r.agent, model: r.model, effort: r.effort, depth: r.maxDepth, copilot: r.copilot });
+    for (const i of run.invocations) if (i.provider === 'copilot' && measured(i)) {
+      if (i.usage?.actors?.length) for (const a of i.usage.actors) values.push({ stage: phaseName(run, i.phase), role: a.role, agent: a.agent, model: a.model, effort: a.effort, depth: a.depth, copilot: a.copilot });
+      else values.push({ stage: phaseName(run, i.phase), role: 'delegate', model: i.model, effort: i.effort, copilot: i.usage?.copilot });
+    }
+  }
+  const count = Math.min(values.length, MAX_RESPONSE_AGENTS);
+  return { count, render: (keep = count) => {
+    if (!values.length) return [];
+    const reasons = [
+      ...(values.length > count ? [`${values.length - count} beyond the ${MAX_RESPONSE_AGENTS}-row detail cap`] : []),
+      ...(keep < count ? [`${count - keep} additional rows omitted at the report size limit`] : []),
+    ];
+    return [
+      '<details>', '', '<summary>Copilot accounting evidence</summary>', '',
+      'Supported local records only; unknown formats and unresolved nesting limit coverage. Reported nano-AI units and premium-request multipliers are not USD or final charges. Token-priced costs are USD estimates.', '',
+      row(['Stage', 'Role', 'Actor', 'Model (observed)', 'Effort (observed)', 'Depth', 'Tokens / lineage / actors', 'Reported nano-AI units', 'Multiplier', 'Billing state / coverage']),
+      '| --- | --- | --- | --- | --- | ---: | --- | ---: | --- | --- |',
+      ...values.slice(0, keep).map(v => row([v.stage, v.role, v.agent ?? 'Other or unknown actors', v.model || DASH, v.effort ?? DASH, v.depth === undefined ? DASH : String(v.depth), v.copilot ? `${v.copilot.tokenCoverage} / ${v.copilot.lineageCoverage} / ${v.copilot.actorCoverage}` : 'unknown', v.copilot?.billing.totalNanoAiu === undefined ? DASH : String(v.copilot.billing.totalNanoAiu), v.copilot?.billing.multipliers?.join(', ') ?? DASH, `${v.copilot?.billing.statuses?.join(', ') ?? DASH} / ${v.copilot?.billing.coverage ?? 'unknown'}`])),
+      ...(keep < values.length ? ['', `Detail coverage partial: ${values.length - keep} accounting rows omitted (${reasons.join('; ')}); measured token and cost rollups retain all rows.`] : []),
+      '', '</details>', '',
+    ];
+  } };
 }

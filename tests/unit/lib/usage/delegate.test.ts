@@ -6,6 +6,29 @@ import type { DelegateQuery, HostUsageFs } from '../../../../skills/dispatch/scr
 import type { OpencodeMessage, OpencodeRead, OpencodeReadOptions } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import { lines, memoryFs } from './helpers/memory-fs.ts';
 
+test('Copilot delegate windows deduplicate replayed receipts', () => {
+  const event = (atMs: number, sequence: number) => ({ type: 'session.usage_record', timestamp: new Date(atMs).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence }, model: 'copilot-model', inputTokens: 100, outputTokens: 20 } } });
+  const fs = memoryFs({ '/home/.copilot/session-state/sess-1/events.jsonl': lines(event(9000, 1), event(11000, 1), event(12000, 2)) });
+  const result = readDelegateSession(baseQuery({ platform: 'copilot', fs }));
+  assert.equal(result.usage?.input, 100);
+  assert.equal(result.usage?.output, 20);
+  assert.equal(result.usage?.actualEffort, null);
+  assert.equal(result.usage?.inputSemantics, 'uncached');
+});
+
+test('Copilot actor projections retain model-cap subtotals without exposing dropped configuration', () => {
+  const records = Array.from({ length: 34 }, (_, i) => ({ type: 'session.usage_record', timestamp: new Date(12000).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${i}`, sequence: i }, model: `model-${i}`, reasoningEffort: 'high', inputTokens: 10, outputTokens: 2, copilotUsage: { totalNanoAiu: 10 }, aiCreditsStatus: 'complete', cost: 1 } } }));
+  const fs = memoryFs({ '/home/.copilot/session-state/sess-1/events.jsonl': lines(...records) });
+  const result = readDelegateSession(baseQuery({ platform: 'copilot', fs }));
+  assert.equal(result.usage?.input, 340);
+  assert.equal(result.usage?.actors?.length, 33);
+  assert.equal(result.usage?.actors?.reduce((s, a) => s + a.input, 0), 340);
+  const other = result.usage?.actors?.find(a => a.model === 'other');
+  assert.equal(other?.input, 20);
+  assert.equal(other?.effort, null);
+  assert.equal(other?.copilot.billing.totalNanoAiu, 20);
+});
+
 function buildVarint(n: number): number[] {
   const bytes: number[] = [];
   let v = n >>> 0;

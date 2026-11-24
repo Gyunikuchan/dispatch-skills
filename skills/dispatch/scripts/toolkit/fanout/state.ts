@@ -126,7 +126,7 @@ export function savedOrphanTargets(dir: string): RosterSlot[] {
   return out;
 }
 
-export type Emit = (slot: {slot: string; provider: string; model?: string | readonly string[] | undefined}, event: Omit<DiagnosticEvent, 'subject' | 'slot' | 'provider' | 'model' | 'attempt'> & Record<string, unknown>) => void;
+export type Emit = (slot: {slot: string; provider: string; model?: string | readonly string[] | undefined; effort?: string}, event: Omit<DiagnosticEvent, 'subject' | 'slot' | 'provider' | 'model' | 'attempt'> & Record<string, unknown>) => void;
 
 export function slotFiles(dir: string, onFailed: FanOutInput['onFailed'], emit: Emit, hook: CliDeps['hook']) {
   const name = (slot: string) => {

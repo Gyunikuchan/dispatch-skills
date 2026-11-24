@@ -6,6 +6,8 @@ import { validSessionId } from '../session.ts';
 import { agy, readAgySqliteGenMetadata } from './agy.ts';
 import { claudeCode } from './claude.ts';
 import { codex } from './codex.ts';
+import { copilot } from './copilot.ts';
+import { mergeCopilot } from './rows.ts';
 import { opencode } from './opencode.ts';
 import { boundModels, foldRows, OTHER_KEY, type BandedCounters } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
@@ -17,12 +19,16 @@ function foldHostRows(
   hostComplete: boolean,
   subagentComplete: boolean,
 ): HostUsageRow[] {
-  const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[] }>();
+  const aliases = new Map<string, string>();
+  const serial = { host: 0, subagent: 0 };
+  for (const r of rows) if (r.copilot && r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS) aliases.set(r.responseActor, `${r.role}-${++serial[r.role as HostRole]}`);
+  const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[]; agent?: string }>();
   for (const r of rows) {
     const phase = phaseAt(phases, r.atMs);
     const role = r.role as HostRole;
-    const gKey = `${r.stage}\0${phase ?? ''}\0${role}`;
-    const group = groups.get(gKey) ?? { stage: r.stage, phase, role, rows: [] };
+    const agent = r.copilot ? aliases.get(r.responseActor ?? '') : undefined;
+    const gKey = `${r.stage}\0${phase ?? ''}\0${role}\0${agent ?? ''}`;
+    const group = groups.get(gKey) ?? { stage: r.stage, phase, role, rows: [], ...(agent ? { agent } : {}) };
     group.rows.push(r);
     groups.set(gKey, group);
   }
@@ -53,13 +59,21 @@ function foldHostRows(
       const turns = roleComplete && active.every(r => r.turns !== undefined) ? active.reduce((total, r) => total + r.turns!, 0) : undefined;
       const toolCalls = roleComplete && active.length > 0 && active.every(r => r.toolCalls !== undefined) ? active.reduce((total, r) => total + r.toolCalls!, 0) : undefined;
       const toolTurns = roleComplete && active.length > 0 && active.every(r => r.toolTurns !== undefined) ? active.reduce((total, r) => total + r.toolTurns!, 0) : undefined;
-      const maxDepth = roleComplete && group.role === 'subagent' ? inputs.reduce((max, r) => Math.max(max, r.depth), 0) : undefined;
+      const precise = inputs.every(r => r.depth !== undefined) && (!inputs.some(r => r.copilot) || group.agent !== undefined);
+      const maxDepth = (roleComplete || inputs.every(r => r.copilot)) && precise && group.role === 'subagent' ? inputs.reduce((max, r) => Math.max(max, r.depth!), 0) : undefined;
+      const copilot = mergeCopilot(inputs.map(r => r.copilot));
+      if (copilot && !group.agent) { copilot.actorCoverage = 'partial'; copilot.lineageCoverage = 'unknown'; }
+      const parents = new Set(inputs.map(r => r.parentActor ? aliases.get(r.parentActor) : undefined));
+      const parent = parents.size === 1 ? [...parents][0] : undefined;
       const row: HostUsageRow = {
         ...(turns === undefined ? {} : { turns }),
         ...(toolCalls === undefined ? {} : { toolCalls }),
         ...(toolTurns === undefined ? {} : { toolTurns }),
         ...(maxDepth === undefined ? {} : { maxDepth }),
         stage: group.stage,
+        ...(group.agent ? { agent: group.agent } : {}),
+        ...(parent && group.agent ? { parent } : {}),
+        ...(copilot ? { copilot } : {}),
         ...(group.phase === undefined ? {} : { phase: group.phase }),
         role: group.role,
         model,
@@ -142,7 +156,7 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
   }
   return aggregates;
 }
-const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode };
+const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode, copilot };
 export function hostSessionId(platform: ProviderKey | null, env: (name: string) => string | undefined): string | undefined {
   const adapter = platform ? ADAPTERS[platform] : undefined;
   const sessionId = adapter?.sessionEnv.map(env).find(Boolean);
@@ -164,7 +178,7 @@ export function readHostUsage(platform: ProviderKey | null, input: HostUsageInpu
     const subagentRows = res.rows.filter(r => r.role === 'subagent');
     const subagentActorsComplete = subagentComplete && subagentRows.every(r => r.responseActor !== undefined);
     const subagentCount = subagentActorsComplete ? new Set(subagentRows.map(r => r.responseActor!)).size : undefined;
-    const maxSubagentDepth = subagentActorsComplete ? subagentRows.reduce((max, r) => Math.max(max, r.depth), 0) : undefined;
+    const maxSubagentDepth = subagentActorsComplete && subagentRows.every(r => r.depth !== undefined) ? subagentRows.reduce((max, r) => Math.max(max, r.depth!), 0) : undefined;
     const responses = foldHostResponses(res, input.stages);
     return {
       platform, rows: foldHostRows(res.rows, input.phases ?? [], hostComplete, subagentComplete),

@@ -398,7 +398,7 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
           const {isBlocked, raw} = parseBlockedFile(text);
           if (isBlocked && isCurrentHost(nativeSaved.provider)) {
-            const {failed, reserve} = prepareHostBlocked(slot, nativeSaved, raw, slot);
+            const {failed, reserve} = prepareHostBlocked(slot, nativeSaved, raw, attemptOf(slot, nativeSaved));
             if (reserve) {
               const launched = await reserve;
               if (launched) {
@@ -416,13 +416,13 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
             continue;
           }
           const checked = input.validate(text, slot.slot);
-          emit(slot,{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
+          emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:checked.ok?'ok':checked.cls});
           if (checked.ok) {
-            emit(slot,{kind:'native',state:'completed',replay:true});
+            emit(attemptOf(slot,nativeSaved),{kind:'native',state:'completed',replay:true});
             outcomes.set(slot.slot, saveDoneFromNative(slot, nativeSaved, checked.text ?? text));
             continue;
           }
-          emit(slot,{kind:'native',state:'invalid',replay:true});
+          emit(attemptOf(slot,nativeSaved),{kind:'native',state:'invalid',replay:true});
           outcomes.set(slot.slot, markInvalid(slot, nativeSaved, checked));
           pendingRemains = true;
           continue;

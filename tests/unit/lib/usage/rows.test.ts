@@ -1,6 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addCounters, splitUsageKey, tokenTotal, usageKey, type Counters } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
+import { mergeCopilot, type CopilotEvidence } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
+
+test('Copilot billing folds retain partial subtotals without complete missing or capped evidence', () => {
+  const evidence = (multiplier: number): CopilotEvidence => ({ tokenCoverage: 'complete', lineageCoverage: 'complete', actorCoverage: 'complete', billing: { coverage: 'complete', totalNanoAiu: 10, multipliers: [multiplier], statuses: ['complete'] } });
+  const missing = mergeCopilot([evidence(1), { ...evidence(2), lineageCoverage: 'unknown', billing: { coverage: 'unknown' } }])!;
+  assert.equal(missing.billing.totalNanoAiu, 10);
+  assert.equal(missing.billing.coverage, 'partial');
+  assert.equal(missing.lineageCoverage, 'partial');
+  assert.equal(missing.tokenCoverage, 'complete');
+  const capped = mergeCopilot(Array.from({ length: 9 }, (_, i) => evidence(i)))!;
+  assert.equal(capped.billing.totalNanoAiu, 90);
+  assert.equal(capped.billing.multipliers?.length, 8);
+  assert.equal(capped.billing.coverage, 'partial');
+});
 
 test('addCounters mutates target and preserves absent vs zero optional counters', () => {
   const total: Counters = { input: 10, output: 5 };

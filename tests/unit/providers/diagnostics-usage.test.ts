@@ -14,6 +14,18 @@ import { observeTool, sessionFacts } from '../../../skills/dispatch/scripts/tool
 import { sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { sessionFixture } from '../toolkit/helpers/session.ts';
 import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
+import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
+
+test('Copilot provider collection uses proven session identity', () => {
+  const fs = memoryFs({ '/home/.copilot/session-state/proven/events.jsonl': lines({ type: 'session.usage_record', timestamp: new Date(1000).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', sequence: 1, usageId: 'usage' }, model: 'custom/model', reasoningEffort: 'max', inputTokens: 100, cacheReadTokens: 10, cacheWriteTokens: 20, outputTokens: 10 } } }) });
+  const context = { mode: 'cli' as const, platform: { os: 'linux' as const, arch: 'x64', wsl: false, bubblewrap: true, argvLimit: 10000, home: '/home', path: [], pathExt: [] }, env: { COPILOT_AGENT_SESSION_ID: 'inherited' }, launchStartMs: 0, launchEndMs: 2000, transcripts: { fs, budget: { remaining: 10000 } } };
+  assert.equal(copilot.sessionUsage!('Session ID: proven', context)?.usage, undefined);
+  assert.deepEqual(fs.reads, []);
+  const result = copilot.sessionUsage!('', { ...context, sessionId: 'proven' });
+  assert.equal(result?.usage?.input, 70);
+  assert.equal(result?.usage?.actualEffort, 'max');
+  assert.deepEqual(result?.usage?.actualModels, ['custom/model']);
+});
 
 const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
   codex: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8')),

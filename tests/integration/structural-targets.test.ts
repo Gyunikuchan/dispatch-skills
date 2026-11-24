@@ -16,11 +16,8 @@ test('toolkit stays within the structural size budgets', () => {
     .map(String).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   const lines = files.reduce((total, file) => total +
     fs.readFileSync(path.join(root, 'skills/dispatch/scripts', file), 'utf8').split('\n').length - 1, 0);
-  // NOTE: 20874 allows bounded response capture, rate provenance, and shared coverage and efficiency reporting.
-  // The additional 42 lines cover part-aware reports, ruling paths, and host retro warnings;
-  // 21574 covers deterministic User/LLM/Tool turn & depth extraction across 4 adapters, thread-verified round workload, H10/H11 heuristics, and 3-tier Unicode bar rendering;
-  // 21610 adds per-round Review Health identity matching with CLI-only native span qualification, host/subagent partial turn & cache-hit completeness guards, sparse zero User-turn handling, session-wide toolkit action counts, and override-rate Summary warnings.
-  const driverLocBudget = 21610;
+  // NOTE: 21960 covers bounded Copilot receipts, exact qualified models, physical effort, actor/billing reporting, and saved native projection/terminal state.
+  const driverLocBudget = 21960;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`

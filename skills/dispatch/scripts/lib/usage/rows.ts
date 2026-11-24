@@ -9,12 +9,19 @@ export type HostStage = typeof STAGE_ORDER[number];
 export type HostRole = typeof HOST_ROLES[number];
 export type Counters = DiagnosticCounters;
 export const MAX_RESPONSE_AGENTS = 32;
-export const HOST_RESPONSE_BASES = ['agy-planner-response', 'claude-assistant-message', 'codex-token-count', 'opencode-assistant-message'] as const;
+export const HOST_RESPONSE_BASES = ['agy-planner-response', 'claude-assistant-message', 'codex-token-count', 'opencode-assistant-message', 'copilot-usage-record'] as const;
 export const RESPONSE_STAGES = [...STAGE_ORDER, 'unattributed'] as const;
 export const RESPONSE_COVERAGES = ['complete', 'partial', 'unknown'] as const;
 export type HostResponseBasis = typeof HOST_RESPONSE_BASES[number];
 export type ResponseStage = typeof RESPONSE_STAGES[number];
 export type ResponseCoverage = typeof RESPONSE_COVERAGES[number];
+export type CopilotEvidence = {
+  tokenCoverage: ResponseCoverage;
+  lineageCoverage: ResponseCoverage;
+  actorCoverage: ResponseCoverage;
+  billing: { coverage: ResponseCoverage; totalNanoAiu?: number; statuses?: string[]; multipliers?: number[] };
+};
+export type CopilotActor = Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; turns?: number; agent?: string; parent?: string; role: 'host' | 'delegate' | 'subagent'; model: string; effort: string | null; depth?: number; copilot: CopilotEvidence };
 export type HostResponseAggregate = {
   stage: ResponseStage;
   role: HostRole;
@@ -30,7 +37,7 @@ export type UsageRow = Counters & {
   model: string;
   effort: string | null;
   role: 'host' | 'subagent' | 'delegate';
-  depth: number;
+  depth?: number;
   atMs: number;
   wholeSecond?: true;
   reasoningInOutput: boolean;
@@ -38,6 +45,8 @@ export type UsageRow = Counters & {
   toolCalls?: number;
   toolTurns?: number;
   responseActor?: string; // Adapter-local identity, projected to an alias before returning facts.
+  parentActor?: string;
+  copilot?: CopilotEvidence;
   skipResponse?: true;
 };
 export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & {
@@ -47,6 +56,9 @@ export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; m
   toolCalls?: number;
   toolTurns?: number;
   maxDepth?: number;
+  agent?: string;
+  parent?: string;
+  copilot?: CopilotEvidence;
 };
 export type HostUnavailable = typeof HOST_UNAVAILABLE[number];
 export type HostNote = typeof HOST_NOTES[number];
@@ -68,7 +80,7 @@ export type ReadBudget = { remaining: number };
 export type HostUsageQuery = { collectResponses?: true; sessionId: string; startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[]; budget: ReadBudget };
 export type DelegateQuery = {
   collectResponses?: true;
-  platform: 'claude' | 'codex' | 'opencode' | 'agy';
+  platform: 'claude' | 'codex' | 'opencode' | 'agy' | 'copilot';
   sessionId: string;
   startMs: number;
   endMs: number;
@@ -109,4 +121,23 @@ export const usageKey = (model: string | null | undefined, effort: string | null
 export function splitUsageKey(key: string): { model: string; effort: string | undefined } {
   const at = key.indexOf('#');
   return at < 0 ? { model: key, effort: undefined } : { model: key.slice(0, at), effort: key.slice(at + 1) };
+}
+
+export function mergeCopilot(parts: readonly (CopilotEvidence | undefined)[]): CopilotEvidence | undefined {
+  if (!parts.some(Boolean)) return undefined;
+  const coverage = (key: 'tokenCoverage' | 'lineageCoverage' | 'actorCoverage'): ResponseCoverage => parts.every(p => p?.[key] === 'complete') ? 'complete' : parts.every(p => !p || p[key] === 'unknown') ? 'unknown' : 'partial';
+  const billing = parts.map(p => p?.billing);
+  const measured = billing.filter(b => b?.totalNanoAiu !== undefined);
+  const total = measured.reduce((s, b) => s + b!.totalNanoAiu!, 0);
+  const allStatuses = [...new Set(billing.flatMap(b => b?.statuses ?? []))];
+  const allMultipliers = [...new Set(billing.flatMap(b => b?.multipliers ?? []))];
+  const statuses = allStatuses.slice(0, 8), multipliers = allMultipliers.slice(0, 8);
+  return {
+    tokenCoverage: coverage('tokenCoverage'), lineageCoverage: coverage('lineageCoverage'), actorCoverage: coverage('actorCoverage'),
+    billing: {
+      coverage: billing.every(b => b?.coverage === 'complete') && Number.isSafeInteger(total) && allStatuses.length <= 8 && allMultipliers.length <= 8 ? 'complete' : measured.length ? 'partial' : 'unknown',
+      ...(measured.length && Number.isSafeInteger(total) ? { totalNanoAiu: total } : {}),
+      ...(statuses.length ? { statuses } : {}), ...(multipliers.length ? { multipliers } : {}),
+    },
+  };
 }

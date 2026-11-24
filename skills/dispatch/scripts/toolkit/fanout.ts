@@ -103,6 +103,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const emit: Emit = (slot, event) => {
     if(!deps.diagnostics)return;
     try {deps.diagnostics({...event,subject:input.dir,slot:slot.slot,provider:slot.provider,
+      ...(slot.effort !== undefined ? { effort: slot.effort } : {}),
       model:typeof slot.model==='string'?slot.model:(Array.isArray(slot.model)?slot.model[0]??undefined:undefined),attempt:ordinals.get(slot.slot)??0} as DiagnosticEvent);}catch{}
   };
   const all = Array.isArray(input.slots) ? input.slots as readonly RosterSlot[] :

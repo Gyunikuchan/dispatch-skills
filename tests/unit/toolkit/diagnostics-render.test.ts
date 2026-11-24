@@ -6,7 +6,7 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { heuristics, normalizeUsage, sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
@@ -17,6 +17,92 @@ import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
+import { renderDiagnostics, unitsOf } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics-render.ts';
+import { readHostUsage } from '../../../skills/dispatch/scripts/lib/usage/index.ts';
+import { readDelegateSession } from '../../../skills/dispatch/scripts/lib/usage/delegate.ts';
+import { resolvePricing } from '../../../skills/dispatch/scripts/lib/pricing.ts';
+import { lines, memoryFs, query } from '../lib/usage/helpers/memory-fs.ts';
+
+function copilotCalls(model: string) {
+  const fs = memoryFs({ '/home/.copilot/session-state/host/events.jsonl': lines(
+    { type: 'subagent.started', agentId: 'child', data: { toolCallId: 'child-call' } },
+    ...[undefined, 'child'].map((agentId, sequence) => ({ type: 'session.usage_record', timestamp: new Date(1000 + sequence).toISOString(), agentId,
+      data: { usage: { accounting: { sourceSessionId: 'source', sequence, usageId: `receipt-${sequence}` }, model, reasoningEffort: 'high',
+        inputTokens: 100, outputTokens: 20, copilotUsage: { totalNanoAiu: 200 }, cost: 1, aiCreditsStatus: 'complete' } } })),
+  ) });
+  const hostUsage = readHostUsage('copilot', { ...query, env: () => 'host' }, fs);
+  const read = readDelegateSession({ ...query, platform: 'copilot', fs, resumed: false, collectResponses: true });
+  assert.ok(read.usage);
+  assert.ok(read.usage.actualModels);
+  assert.ok(read.responses);
+  const invocation = { phase: 'implementation', provider: 'copilot', model, surface: 'cli' as const, launched: true, outcome: 'ok',
+    usageSource: 'session' as const, usage: normalizeUsage(read.usage, 'uncached')!, reportedModels: read.usage.actualModels,
+    responses: read.responses.map((r, i) => ({ ...r, stage: 'implementation' as const, agent: `delegate-${r.role === 'subagent' ? 'child-' : ''}${String(i + 1).padStart(16, '0')}` })) };
+  return { hostUsage, invocation };
+}
+
+test('Copilot qualified models survive public collection gates rendering and exact rates', () => {
+  const model = '11111111-1111-1111-1111-111111111111/bedrock.claude-haiku-5-5';
+  const { hostUsage, invocation } = copilotCalls(model);
+  const rates = { [model]: { rates: { input: 1_000_000, output: 2_000_000 } } };
+  const facts = sanitizeFacts({ phases: [], reviews: [], invocations: [invocation], hostUsage, config: { pricing: rates } });
+  assert.equal(facts.hostUsage?.rows[0]?.model, model);
+  assert.deepEqual(facts.invocations[0]?.reportedModels, [model]);
+  assert.ok(facts.invocations[0]?.usage?.actors?.every(a => a.model === model));
+  assert.ok(Object.keys(facts.invocations[0]?.usage?.models ?? {}).every(key => key === `${model}#high`));
+  assert.deepEqual(facts.config?.['pricing'], rates);
+  const pricer = resolvePricing({ asOf: '2026-11-24', source: [], models: {} }, facts.config?.['pricing']);
+  assert.ok(pricer);
+  assert.ok(unitsOf(facts, pricer).every(u => u.cost?.high === 140 && u.cost.rateBasis?.match === 'qualified'));
+  assert.match(renderDiagnostics([facts], pricer).text, new RegExp(model));
+  for (const bad of ['11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111/', `${model}/11111111-1111-1111-1111-111111111111`, '/home/private', 'https://host.test/model', 'private@example.com']) {
+    const rejected = sanitizeFacts({ phases: [], reviews: [], invocations: [{ phase: 'implementation', provider: 'copilot', model: bad,
+      surface: 'cli', launched: true, outcome: 'ok', reportedModels: [bad] }] });
+    assert.equal(rejected.invocations[0]?.model, '—');
+    assert.equal(rejected.invocations[0]?.reportedModels, undefined);
+  }
+});
+
+test('Copilot child receipt turns are not supplemented twice in summary role or stage', () => {
+  const { invocation } = copilotCalls('custom/model');
+  const text = renderDiagnostics([{ phases: [{ key: 'implementation', name: 'implementation' }], reviews: [], invocations: [invocation] }]).text;
+  assert.match(text, /- Turns: User — · LLM 2 \(partial\)/);
+  const cells = (label: string) => text.split('\n').find(line => line.startsWith(`| ${label} |`))!.split('|').map(v => v.trim());
+  assert.equal(cells('Subagents')[7], '1');
+  assert.equal(cells('CLI delegates')[7], '1');
+  assert.equal(cells('implementation')[7], '2');
+});
+
+test('Copilot accounting detail folds before the report cap with closed markup and exact rollups', () => {
+  const { hostUsage } = copilotCalls('model-' + 'x'.repeat(88));
+  hostUsage.rows = Array.from({ length: 900 }, (_, i) => ({ ...hostUsage.rows[1]!, phase: `phase-${i}`, input: 1, output: 1, turns: 1 }));
+  for (const crowded of [false, true]) {
+    const phases = crowded ? Array.from({ length: 1000 }, (_, i) => ({ key: `phase-${i}-` + 'x'.repeat(110), name: 'implementation' })) : [];
+    const text = renderDiagnostics([{ phases, reviews: [], invocations: [], hostUsage }]).text;
+    assert.ok(Buffer.byteLength(text) <= 131072);
+    assert.equal((text.match(/<details>/g) ?? []).length, (text.match(/<\/details>/g) ?? []).length);
+    assert.doesNotMatch(text, /Truncated at the report size limit/);
+    assert.equal(text.trim().endsWith('</details>'), true);
+    assert.match(text, /\| Subagents \|[^\n]*\| 1,800 \|/);
+    const note = text.split('\n').find(line => line.startsWith('Detail coverage partial:'))!;
+    assert.match(note, new RegExp(`Detail coverage partial: ${crowded ? 900 : 868} accounting rows omitted`));
+    assert.match(note, /868 beyond the 32-row detail cap/);
+    if (crowded) assert.match(note, /32 additional rows omitted at the report size limit/);
+    else assert.doesNotMatch(note, /report size limit/);
+  }
+});
+
+test('Copilot reports separate billing coverage from USD estimates', () => {
+  const text = renderDiagnostics([{ phases: [], reviews: [], invocations: [
+    { phase: 'implementation', provider: 'copilot', model: 'custom/model', surface: 'cli', launched: true, outcome: 'ok', configuredEffort: 'high', usage: { input: 70, output: 40, copilot: { tokenCoverage: 'complete', lineageCoverage: 'unknown', actorCoverage: 'complete', billing: { coverage: 'partial', totalNanoAiu: 200, statuses: ['pending'], multipliers: [2] } } } },
+    { phase: 'implementation', provider: 'copilot', model: 'custom/model', surface: 'native', launched: false, outcome: 'ok', effort: 'max' },
+  ] }]).text;
+  assert.match(text, /nano-AI units/);
+  assert.match(text, /200/);
+  assert.match(text, /partial/);
+  assert.match(text, /Configured effort/);
+  assert.match(text, /USD estimate/);
+});
 
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), {recursive: true});
@@ -281,6 +367,7 @@ test('diagnostics render writes the session report when enabled and reports off 
     assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
     const output = f.output();
     assert.equal(output.ok, true);
+    assert.deepEqual(f.launches, [], 'rendering diagnostics does not invoke an inference delegate');
     const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
     assert.equal(result.path, path.join(f.session, 'diagnostics.md'));
     const text = fs.readFileSync(result.path, 'utf8');

@@ -22,7 +22,7 @@ import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
 type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
 type SlotOutcome =
   | {slot: string; state: 'done'; responder?: {slot: string; provider: string; model: string | null; native: boolean; effort?: string}}
-  | {slot: string; state: 'native'}
+  | {slot: string; state: 'native'; provider?: string; model?: string | readonly string[]; effort?: string; error?: string; cliFallback?: true}
   | {slot: string; state: 'failed'; cls: string};
 type ReviewedFinding = {
   id: string;
@@ -102,7 +102,7 @@ export function readReviews(session: string): ReviewRound[] {
 
 function invocation(round: ReviewRound, slot: SlotOutcome): InvocationFacts {
   const target = round.roster.find(row => row.slot === slot['slot']);
-  const responder = slot['state'] === 'done' ? (slot as {responder?: {provider: string; model: string | null; native: boolean}}).responder : undefined;
+  const responder = slot['state'] === 'done' ? (slot as {responder?: {provider: string; model: string | null; native: boolean; effort?: string}}).responder : slot.state === 'native' && slot.provider ? { provider: slot.provider, model: typeof slot.model === 'string' ? slot.model : slot.model?.[0] ?? null, native: true, ...(slot.effort !== undefined ? { effort: slot.effort } : {}) } : undefined;
   const provider = responder?.provider ?? target?.provider ?? 'unavailable';
   const responderModel = responder?.model;
   const targetModel = typeof target?.model === 'string' ? target.model : Array.isArray((target as {model?: unknown})?.model) ? ((target as {model: readonly string[]}).model[0] ?? 'unavailable') : 'unavailable';
@@ -122,6 +122,7 @@ function invocation(round: ReviewRound, slot: SlotOutcome): InvocationFacts {
     launched: false,
     surface,
     slot: slot['slot'],
+    ...(surface === 'native' && responder?.effort !== undefined ? { effort: responder.effort } : {}),
   };
   if (slot['state'] === 'done') return {...base, outcome: 'ok'};
   if (slot['state'] === 'native') return {...base, outcome: 'native-pending'};
@@ -496,26 +497,49 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   }
   phaseMilestones.sort((a,b)=>a.atMs-b.atMs);
   const invocations:InvocationFacts[]=[];
-  const native=new Map<string,InvocationFacts>();
-  const add=({superseded: _superseded, ...row}:InvocationFacts)=>{
+  const native=new Map<string,{row:InvocationFacts;atMs:number}>();
+  const nativeRank=(row:InvocationFacts)=>row.nativeState==='completed'?3:row.nativeState==='invalid'||row.nativeState==='failed'?2:1;
+  const matchesPhysical=(capture:InvocationFacts|undefined,row:InvocationFacts)=>capture?.surface==='native'&&capture.provider===row.provider&&capture.model===row.model&&capture.effort===row.effort;
+  const add=({superseded: _superseded, ...row}:InvocationFacts,atMs=Infinity)=>{
     const phase=row.subject?phaseBySubject.get(row.subject):undefined;
     const value={...row,...(phase?{phase}:{}),...(row.subject && superseded.has(row.subject) ? {superseded:true as const} : {})};
     if(value.surface!=='native'){invocations.push(value);return;}
     const key=[value.subject??value.phase,value.slot??''].join('|');
     const previous=native.get(key);
-    const rank=(r:InvocationFacts)=>r.nativeState==='completed'?3:r.nativeState==='invalid'||r.nativeState==='failed'?2:1;
-    if(!previous||rank(value)>=rank(previous))native.set(key,value);
+    // Later captures and saved descriptors replace settings; tied captures preserve terminal evidence.
+    if(!previous||atMs>previous.atMs||(atMs===previous.atMs&&nativeRank(value)>=nativeRank(previous.row)))native.set(key,{row:value,atMs});
   };
-  measured.flatMap(row=>row.invocations).forEach(add);
+  for(const capture of measured)for(const row of capture.invocations)add(row,capture.capture?.start??0);
   for(const round of rounds)for(const slot of round.slots) {
     const row=invocation(round,slot);
-    if(row.surface!=='native')continue;
     const subject=hash(path.join(root,round.review,`round-${round.round}`,`gen-${round.generation}`));
-    // A current semantic slot is authoritative, but never creates another CLI launch.
-    const prior=[...native.values()].find(i=>i.subject===subject&&i.slot===slot['slot']);
-    add({...row,phase:reviewKeys.get(round.review)!,subject,attempt:prior?.attempt??0,nativeState:slot['state']==='done'?'completed':slot['state']==='native'?'pending':slot['state']==='failed'?'failed':'invalid'});
+    const key=[subject,slot['slot']].join('|'),captured=native.get(key)?.row;
+    if(slot.state==='done'&&slot.responder&&!slot.responder.native)continue;
+    const descriptor=slot.state==='native'&&typeof slot.provider==='string';
+    const responder=slot.state==='done'&&slot.responder?.native===true;
+    if(!descriptor&&!responder&&row.surface!=='native'&&captured?.surface!=='native')continue;
+    const physical=descriptor||responder;
+    const matchingCapture=matchesPhysical(captured,row);
+    const settings=physical?row:captured?.surface==='native'?captured:row;
+    let nativeState:InvocationFacts['nativeState']=slot.state==='done'?'completed':slot.state==='failed'?'failed':
+      slot.state==='native'&&slot.cliFallback===true?'failed':slot.state==='native'&&slot.error!==undefined?'invalid':'pending';
+    let outcome=nativeState==='completed'?'ok':`native-${nativeState}`;
+    // A matching descriptor can outlive its terminal capture if the final slot save was interrupted.
+    if(descriptor&&slot.cliFallback!==true&&matchingCapture&&captured?.nativeState!==undefined&&captured.nativeState!=='pending'&&
+      (slot.error===undefined||captured.nativeState==='completed')) {
+      nativeState=captured.nativeState;
+      outcome=captured.outcome;
+    }
+    const projected:InvocationFacts={...row,provider:settings.provider,model:settings.model,surface:'native',outcome,nativeState,
+      ...(physical?(matchingCapture&&captured?.attempt!==undefined?{attempt:captured.attempt}:{})
+        :captured?.surface==='native'&&captured.attempt!==undefined?{attempt:captured.attempt}:{}),
+      ...(settings.effort===undefined?{}:{effort:settings.effort}),
+      phase:reviewKeys.get(round.review)!,subject};
+    if(settings.effort===undefined)delete projected.effort;
+    // Descriptors own physical settings; descriptor-less failures retain the latest captured actor.
+    add(projected);
   }
-  invocations.push(...native.values());
+  invocations.push(...[...native.values()].map(value=>value.row));
   const retro = readRetro(path.join(session, '.state', 'retro.json'));
   const provenance=new Map<string,NonNullable<RunFacts['provenance']>[number]>();
   for(const row of measured) {
@@ -704,8 +728,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
             crypto.createHmac('sha256', path.resolve(session)).update(JSON.stringify([i.provider, role, actor])).digest('hex').slice(0, 16)}`;
           return { ...response, stage: name, ...(agent ? { agent } : {}) };
         }) : undefined;
-        facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??'default',mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{}),...(i.wrapUp===true?{wrapUp:true as const}:{})});
+        facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??(i.provider==='copilot'?'unavailable':'default'),mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
+          ...(i.configuredEffort ? { configuredEffort: i.configuredEffort } : {}),...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{}),...(i.wrapUp===true?{wrapUp:true as const}:{})});
         seen.add(i);added=true;
       }
       if(added||pendingPersistence)persist();
@@ -722,8 +746,8 @@ export function observeTool(session: string, tool: string, action: string, kind:
           if(row)row.validationOutcome=event.outcome;
         } else if(event.kind==='native') {
           const prior=facts.invocations.find(i=>i.surface==='native'&&i.subject===subject&&i.slot===event.slot);
-          const row={...base,surface:'native' as const,outcome:event.state==='completed'?'ok':'native-'+event.state,nativeState:event.state};
-          if(prior)Object.assign(prior,row);else facts.invocations.push(row);
+          const row={...base,...(event.effort ? { effort: event.effort } : {}),surface:'native' as const,outcome:event.state==='completed'?'ok':'native-'+event.state,nativeState:event.state};
+          if(prior){delete prior.effort;Object.assign(prior,row);}else facts.invocations.push(row);
         } else if(event.kind==='routing'||event.kind==='slot') {
           let row=facts.invocations.findLast(i=>i.surface==='cli'&&i.subject===subject&&i.slot===event.slot);
           if(!row&&event.cls) {

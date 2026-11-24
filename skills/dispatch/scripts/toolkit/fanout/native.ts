@@ -71,7 +71,7 @@ export function reportEvidence(native: {provider: string; model?: string | reado
 }
 
   // Native events name the voice that launched: a reserve attempt reports the reserve's provider and model under the logical slot.
-  export const attemptOf = (logical: RosterSlot, voice: {provider: string; model?: string | readonly string[]}) => ({slot: logical.slot, provider: voice.provider, model: voice.model});
+  export const attemptOf = (logical: RosterSlot, voice: {provider: string; model?: string | readonly string[]; effort?: string}) => ({slot: logical.slot, provider: voice.provider, model: voice.model, ...(voice.effort !== undefined ? { effort: voice.effort } : {})});
 export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, ports: {
   all: readonly RosterSlot[]; firstReserve: RosterSlot | undefined; nativeFirstProviders: readonly string[];
   host: () => CliDeps['orchestrator']; cwd: string; files: Omit<ReturnType<typeof slotFiles>, 'name'>;

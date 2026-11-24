@@ -1,5 +1,6 @@
 import { pricingProblems } from '../../lib/pricing.ts';
 import { BANDS, boundModels, type Bands } from '../../lib/usage/bands.ts';
+import type { CopilotActor, CopilotEvidence } from '../../lib/usage/rows.ts';
 import { baseCounters, count as safeCount, hasUsageTokens } from '../../lib/usage/read.ts';
 import { addCounters, HOST_ROLES, HOST_RESPONSE_BASES, MAX_RESPONSE_AGENTS, RESPONSE_COVERAGES, RESPONSE_STAGES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Counters, type HostResponseAggregate, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
@@ -33,12 +34,33 @@ const match = (re: RegExp) => (v: unknown): string | undefined => typeof v === '
 const responseAgent = match(/^(?:host|subagent)-(?:[1-9]|[12][0-9]|3[0-2])$/);
 const token = match(/^[a-z][a-z0-9-]{0,39}$/);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/);
-const modelAlias = match(/^[A-Za-z0-9][A-Za-z0-9_.:/@\[\]-]{0,95}$/);
-const modelName = (v: unknown): string | undefined => { const name = modelAlias(v); return name && !/^[A-Za-z]:|\/\//.test(name) ? name : undefined; };
+function modelName(v: unknown): string | undefined {
+  if (typeof v !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:/@\[\]-]{0,95}$/.test(v) || /^[A-Za-z]:|\/\//.test(v)) return undefined;
+  // A qualified model's UUID namespace is configuration, while its suffix still passes every locator gate.
+  const name = v.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i, '');
+  return name && locatorFree(name) ? v : undefined;
+}
 function isoDate(v: unknown): string | undefined {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return undefined;
   const d = new Date(`${v}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(v) ? v : undefined;
+}
+
+function copilotOf(value: unknown): CopilotEvidence | undefined {
+  if (!record(value) || !record(value['billing'])) return undefined;
+  const raw = value['billing'];
+  const statuses = list(raw['statuses']).flatMap(v => token(v) ? [token(v)!] : []).slice(0, 8);
+  const multipliers = list(raw['multipliers']).filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0).slice(0, 8);
+  const totalNanoAiu = count(raw['totalNanoAiu']);
+  const coverage = (v: unknown) => RESPONSE_COVERAGES.find(c => c === v) ?? 'unknown';
+  const billingCoverage = coverage(raw['coverage']);
+  return {
+    tokenCoverage: coverage(value['tokenCoverage']), lineageCoverage: coverage(value['lineageCoverage']), actorCoverage: coverage(value['actorCoverage']),
+    billing: {
+      coverage: billingCoverage === 'complete' && (totalNanoAiu === undefined || !statuses.length || statuses.some(s => s !== 'complete') || !multipliers.length) ? totalNanoAiu === undefined ? 'unknown' : 'partial' : billingCoverage,
+      ...opt('totalNanoAiu', totalNanoAiu), ...(statuses.length ? { statuses } : {}), ...(multipliers.length ? { multipliers } : {}),
+    },
+  };
 }
 const count = (v: unknown): number | undefined => safeCount(v) ? v : undefined;
 const millis = (v: unknown): number | undefined => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
@@ -121,6 +143,20 @@ function usageOf(v: unknown, subtractCache: boolean): Usage | undefined {
     return u.bands ? { ...c, bands: Object.fromEntries(Object.entries(u.bands).map(([b, bv]) => [b, canonicalCounters(bv!)])) } : c;
   };
   const out: Usage = { ...canonical(base), ...(typeof v['reasoningInOutput'] === 'boolean' ? { reasoningInOutput: v['reasoningInOutput'] } : {}) };
+  const copilot = copilotOf(v['copilot']);
+  if (copilot) out.copilot = copilot;
+  if (copilot && Array.isArray(v['actors'])) {
+    const actors: CopilotActor[] = [];
+    for (const actor of v['actors']) {
+      if (!record(actor)) continue;
+      const actorCounters = counters(actor), evidence = copilotOf(actor['copilot']);
+      if (!actorCounters || !evidence || !['delegate', 'subagent'].includes(String(actor['role']))) continue;
+      const agent = match(/^actor-(?:[1-9]|[12][0-9]|3[0-2])$/)(actor['agent']);
+      actors.push({ ...actorCounters, role: actor['role'] as 'delegate' | 'subagent', model: modelName(actor['model']) ?? DASH, effort: token(actor['effort']) ?? null, copilot: evidence, ...opt('agent', agent), ...opt('parent', agent ? match(/^actor-(?:[1-9]|[12][0-9]|3[0-2])$/)(actor['parent']) : undefined), ...opt('depth', agent && evidence.lineageCoverage === 'complete' ? count(actor['depth']) : undefined) });
+    }
+    const total = actors.reduce((s, a) => addCounters(s, a), { input: 0, output: 0 } as Counters);
+    if (actors.length && (['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const).every(k => (total[k] ?? 0) === (base[k] ?? 0))) out.actors = actors;
+  }
   const models = record(v['models']) ? Object.entries(v['models']) : [];
   // A `<model>#<effort>` key keeps its own effort; an empty or gate-failing part renders `—` but keeps its counters.
   const parts = models.map(([key, part]) => {
@@ -272,7 +308,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
   }
   return [{
     phase: phaseKey(v['phase']) ?? '', provider: token(v['provider']) ?? DASH, model: modelName(v['model']) ?? DASH,
-    ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('mode', token(v['mode'])),
+    ...opt('effort', v['effort'] === undefined ? undefined : token(v['effort']) ?? DASH), ...opt('configuredEffort', surface === 'cli' && v['provider'] === 'copilot' ? token(v['configuredEffort']) : undefined), ...opt('mode', token(v['mode'])),
     surface, launched, ...opt('durationMs', millis(v['durationMs'])),
     ...opt('startMs', millis(v['startMs'])), ...opt('endMs', millis(v['endMs'])),
     ...opt('routingOutcome',(['next-model','next-mode','reserve','stop'] as const).find(x=>x===v['routingOutcome'])),
@@ -330,6 +366,7 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
     if(!stage || !role || !usage) return [];
     return [{
       stage, ...opt('phase', phaseKey(v['phase'])), role, model: modelName(v['model']) ?? DASH, effort: token(v['effort']) ?? null,
+      ...opt('copilot', copilotOf(v['copilot'])), ...opt('agent', responseAgent(v['agent'])), ...opt('parent', responseAgent(v['parent'])),
       ...usage, ...opt('maxDepth', role === 'subagent' ? count(v['maxDepth']) : undefined),
       ...(typeof v['reasoningInOutput']==='boolean'?{reasoningInOutput:v['reasoningInOutput']}:{}),
     }];

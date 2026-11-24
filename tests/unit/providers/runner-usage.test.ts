@@ -78,6 +78,23 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+test('Copilot runner keeps observed effort separate from requested effort', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const { lines, memoryFs } = await import('../lib/usage/helpers/memory-fs.ts');
+  for (const measured of [true, false]) {
+    const h = harness(posix);
+    h.ports.usageFs = memoryFs(measured ? { '/h/.copilot/session-state/proven123/events.jsonl': lines({ type: 'session.usage_record', timestamp: new Date(1).toISOString(), data: {     usage: { accounting: { sourceSessionId: 'source', sequence: 1, usageId: 'receipt' }, model: 'custom/model', inputTokens: 100, outputTokens: 20 } } }) } : {});
+    const pending = runDelegate(copilot, { ...req, model: 'requested/model', effort: 'high', collectUsage: true }, 'cli', h.ports);
+    await flush(); h.clock.advance(2);
+    h.finish(ok({ stdout: 'Session ID: proven123\nanswer' }));
+    const result = await pending;
+    assert.equal(result.invocations[0]?.effort, null);
+    assert.equal(result.invocations[0]?.configuredEffort, 'high');
+    assert.equal(result.invocations[0]?.model, measured ? 'custom/model' : null);
+    assert.equal(result.invocations[0]?.usage?.input, measured ? 100 : undefined);
+  }
+});
+
 
 
 

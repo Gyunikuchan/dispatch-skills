@@ -78,6 +78,39 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+test('Copilot resume collection keeps disjoint receipt windows', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const { lines, memoryFs } = await import('../lib/usage/helpers/memory-fs.ts');
+  const event = (at: number, sequence: number) => ({ type: 'session.usage_record', timestamp: new Date(at).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence }, model: 'observed', reasoningEffort: 'low', inputTokens: 10, outputTokens: 2 } } });
+  const h = harness(posix);
+  h.ports.usageFs = memoryFs({ '/h/.copilot/session-state/proven123/events.jsonl': lines(event(1, 1), event(11, 1), event(12, 2)) });
+  const pending = runDelegate(copilot, { ...req, timeoutMs: 60000, collectUsage: true, effort: 'high', onResume: () => h.clock.advance(1) }, 'cli', h.ports);
+  await flush(); h.clock.advance(10);
+  h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'Session ID: proven123\npartial', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
+  await flush(); await flush(); h.clock.advance(10);
+  h.finish(ok({ stdout: 'bannerless recovered answer' }));
+  const result = await pending;
+  assert.equal(result.invocations.length, 2);
+  assert.deepEqual(result.invocations.map(i => i.usage?.input), [10, 10]);
+  assert.ok(result.invocations.every(i => i.effort === 'low' && i.configuredEffort === 'high'));
+});
+
+test('Copilot retry clears only the rejected per-attempt configured effort', async () => {
+  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
+  const h = harness(posix);
+  const spec = { ...copilot, parse: (out: ProcessResult, launch: Parameters<typeof copilot.parse>[1]) =>
+    launch.effort ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true } : copilot.parse(out, launch) };
+  const pending = runDelegate(spec, { ...req, effort: 'high' }, 'cli', h.ports);
+  await flush(); h.finish(ok());
+  await flush(); await flush(); h.finish(ok({ stdout: 'answer' }));
+  const result = await pending;
+  assert.equal(result.outcome.status, 'ok');
+  assert.deepEqual(result.invocations.map(i => i.configuredEffort), ['high', undefined]);
+  assert.deepEqual(result.invocations.map(i => i.effort), [null, null]);
+  assert.ok(h.launches[0]!.argv.includes('high'));
+  assert.ok(!h.launches[1]!.argv.includes('high'));
+});
+
 
 
 

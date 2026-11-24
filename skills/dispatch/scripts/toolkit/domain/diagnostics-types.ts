@@ -1,5 +1,5 @@
 import type { Bands } from '../../lib/usage/bands.ts';
-import type { Counters, HostUsageFacts, ResponseStage } from '../../lib/usage/rows.ts';
+import type { CopilotActor, CopilotEvidence, Counters, HostUsageFacts, ResponseStage } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { CoverageReason, DelegateResponse, FailureClass, UsageSource } from '../types.ts';
 import type { ReviewKind } from './types.ts';
@@ -27,14 +27,14 @@ export type Category = keyof typeof CATEGORIES;
 export type ModelUsage = Counters & { bands?: Bands; turns?: number; toolCalls?: number; toolTurns?: number };
 
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
-export type Usage = ModelUsage & { models?: Record<string, ModelUsage>; reasoningInOutput?: boolean };
+export type Usage = ModelUsage & { copilot?: CopilotEvidence; actors?: CopilotActor[]; models?: Record<string, ModelUsage>; reasoningInOutput?: boolean };
 
 /** Tool-call durations can overlap; they do not measure session elapsed time. */
 export type PhaseFacts = { key: string; name: string; outcome?: string; wallMs?: number; driverMs?: number; hostMs?: number; userMs?: number };
 
 /** One launch attempt (`phase` is a phase key; `outcome` is `ok` or a failure class). */
 export type DiagnosticEvent = {
-  subject: string; slot: string; provider?: string; model?: string; attempt: number; targetSlot?: string;
+  subject: string; slot: string; provider?: string; model?: string; effort?: string; attempt: number; targetSlot?: string;
 } & (
   {kind:'validation'; outcome:string; surface:'cli'|'native'} |
   {kind:'routing'; cls?:FailureClass; state:'next-model'|'next-mode'|'reserve'|'stop'} |
@@ -44,7 +44,7 @@ export type DiagnosticEvent = {
 export type DelegateResponseFacts = DelegateResponse & { stage: ResponseStage; agent?: string };
 
 export type InvocationFacts = {
-  phase: string; provider: string; model: string; effort?: string; mode?: string; surface: 'cli' | 'native';
+  phase: string; provider: string; model: string; effort?: string; configuredEffort?: string; mode?: string; surface: 'cli' | 'native';
   launched: boolean; durationMs?: number; startMs?: number; endMs?: number; outcome: string; usage?: Usage; usageSource?: UsageSource; reportedModels?: string[]; reportedModelAmbiguous?: true; coverage?: CoverageReason[];
   responses?: DelegateResponseFacts[];
   superseded?: true;
@@ -127,7 +127,7 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   ...files('references/verbs', 'ask design implement plan review verify', '.md'),
   ...files('references', 'artifact-readability decision-frame diagnostics glossary grounding providers review-coverage review-fixes review-rules self-build spec-authoring spec-stage toolkit worktree-cleanup', '.md'),
   ...files('scripts/lib', 'canonical-markdown cli config fs-ext integrity node-fs-ext opencode-db platform pricing quota-store session', '.ts'),
-  ...files('scripts/lib/usage', 'agy bands claude codex delegate index opencode read rows', '.ts'),
+  ...files('scripts/lib/usage', 'agy bands claude codex copilot delegate index opencode read rows', '.ts'),
   ...files('scripts/policy', 'cascade quota roster', '.ts'),
   ...files('scripts/providers', 'agy claude codex copilot discovery index node-process opencode opencode-runtime probe runner types', '.ts'),
   ...files('scripts/toolkit/domain', 'citations context criterion-id design diagnostics diagnostics-gates diagnostics-heuristics diagnostics-render diagnostics-types fix-review-lite plan plan-graph plan-lint plan-parse prompt report sanitize severity spec stable-value types', '.ts'),

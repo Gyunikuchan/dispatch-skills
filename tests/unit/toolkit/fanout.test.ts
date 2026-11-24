@@ -11,6 +11,52 @@ const slot = (provider: string, model: string | string[] = 'good', reserve = fal
 const validate = (text: string) => text.trim() ? {ok: true as const, text: text.trim()} : {ok: false as const, cls: 'empty-output' as const, reason: 'empty'};
 const quota = {schemaVersion:1 as const,policyVersion:1 as const,decidedAt:0,decisions:[]};
 
+test('Copilot native effort follows physical launches and saved replay', async () => {
+  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+  for (const nativeOnly of [true, false]) {
+    const f = sessionFixture({ memory: true });
+    try {
+      f.deps.orchestrator = { platform: 'copilot', model: null };
+      const events: import('../../../skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts').DiagnosticEvent[] = [];
+      f.deps.diagnostics = event => { events.push(event); };
+      const target = { ...slot('copilot', 'physical-model', false, nativeOnly), effort: 'max' };
+      const dir = path.join(f.session, 'native-effort');
+      const input = { dir, slots: [target], prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: nativeOnly ? [] : ['copilot'] };
+      const first = await fanOutComplete(input, f.deps);
+      const pending = first.find(r => r.state === 'native');
+      assert.ok(pending?.state === 'native');
+      fs.writeFileSync(pending.replyPath, 'answer');
+      events.length = 0;
+      await fanOutComplete({ ...input, slots: [{ ...target, model: 'changed-model', effort: 'low' }] }, f.deps);
+      await fanOutComplete({ ...input, slots: [{ ...target, model: 'changed-model', effort: 'low' }] }, f.deps);
+      const completed = events.find(e => e.kind === 'native' && e.state === 'completed');
+      assert.equal(completed?.model, 'physical-model');
+      assert.equal(completed?.effort, 'max');
+    } finally { f.cleanup(); }
+  }
+  const f = sessionFixture({ memory: true });
+  try {
+    f.deps.orchestrator = { platform: 'copilot', model: null };
+    f.script('claude', 'logical-model', { status: 'fail', cls: 'auth', detail: 'unavailable' });
+    const events: import('../../../skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts').DiagnosticEvent[] = [];
+    f.deps.diagnostics = e => { events.push(e); };
+    const target = { ...slot('claude', 'logical-model'), effort: 'low' };
+    const reserve = { ...slot('copilot', 'reserve-model', true), effort: 'xhigh' };
+    const input = { dir: path.join(f.session, 'reserve-effort'), slots: [target, reserve], prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: ['copilot'] };
+    const first = await fanOutComplete(input, f.deps);
+    const native = first.find(r => r.state === 'native');
+    assert.ok(native?.state === 'native');
+    fs.writeFileSync(native.replyPath, 'answer');
+    events.length = 0;
+    await fanOutComplete({ ...input, slots: [target, { ...reserve, model: 'changed', effort: 'low' }] }, f.deps);
+    await fanOutComplete({ ...input, slots: [target, { ...reserve, model: 'changed', effort: 'low' }] }, f.deps);
+    const completed = events.find(e => e.kind === 'native' && e.state === 'completed');
+    assert.equal(completed?.slot, target.slot);
+    assert.equal(completed?.model, 'reserve-model');
+    assert.equal(completed?.effort, 'xhigh');
+  } finally { f.cleanup(); }
+});
+
 test('rejected MUST validation retains logical source across direct reserve native and replay',async()=>{
  const {fanOut}=await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
  const f=sessionFixture({memory:true});try {
