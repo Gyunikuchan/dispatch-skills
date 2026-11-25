@@ -4,15 +4,34 @@ import { failureDisposition } from '../../policy/cascade.ts';
 import { normalizeProvider } from '../../policy/roster.ts';
 import { sessionScope, formatSafetyPrompt } from '../../providers/runner.ts';
 import { nodeRunnerFs } from '../../providers/node-process.ts';
-import { BLOCKED_MARKER, failureReasonDisplay, failureReasonEvidence, isBlockedReply, parseBlockedReply } from '../domain/blocker.ts';
+import {
+  BLOCKED_MARKER,
+  failureReasonDisplay,
+  failureReasonEvidence,
+  isBlockedReply,
+  parseBlockedReply,
+} from '../domain/blocker.ts';
 import type { CliDeps } from '../cli.ts';
 import type { RosterSlot } from '../domain/types.ts';
-import { atomic, mergeBlocked, nativeLaunchAs, type BlockedAttempt, type Emit, type FailureClass, type FanOutInput, type NativeFailure, type SlotOutcome, type Validation, type slotFiles } from './state.ts';
+import {
+  atomic,
+  mergeBlocked,
+  nativeLaunchAs,
+  type BlockedAttempt,
+  type Emit,
+  type FailureClass,
+  type FanOutInput,
+  type NativeFailure,
+  type SlotOutcome,
+  type Validation,
+  type slotFiles,
+} from './state.ts';
 import type { cliVoice } from './voice.ts';
 
-const newNativeReply = (cwd: string, replyPath: string) => `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`${BLOCKED_MARKER} <reason>\` when you cannot write it.\n`;
+const newNativeReply = (cwd: string, replyPath: string) =>
+  `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`${BLOCKED_MARKER} <reason>\` when you cannot write it.\n`;
 
-export function firstModelOf(slot: {model?: string | readonly string[] | undefined}): string | null {
+export function firstModelOf(slot: { model?: string | readonly string[] | undefined }): string | null {
   if (slot.model === undefined) return null;
   if (typeof slot.model === 'string') return slot.model;
   return slot.model[0] ?? null;
@@ -25,7 +44,7 @@ export function isNativeFirstSlot(slot: RosterSlot, providers: readonly string[]
 export function isNativeFirstProvider(provider: string, providers: readonly string[] | undefined): boolean {
   if (!providers?.length) return false;
   const normalized = normalizeProvider(provider);
-  return providers.some(candidate => normalizeProvider(candidate) === normalized);
+  return providers.some((candidate) => normalizeProvider(candidate) === normalized);
 }
 
 function makeNonce(): string {
@@ -45,34 +64,89 @@ function blockedDisplayOf(reason: string, evidence?: BlockedAttempt[]): string {
 }
 
 // Blocked evidence for a reported attempt, attributed to the voice that ran it.
-export function reportEvidence(native: {provider: string; model?: string | readonly string[]}, report: NativeFailure): BlockedAttempt[] | undefined {
+export function reportEvidence(
+  native: { provider: string; model?: string | readonly string[] },
+  report: NativeFailure,
+): BlockedAttempt[] | undefined {
   if (!isBlockedReply(report.reason)) return undefined;
-  return [{provider: native.provider, model: firstModelOf(native), reason: blockedDisplayOf(report.reason), reasonHash: report.reasonHash}];
+  return [
+    {
+      provider: native.provider,
+      model: firstModelOf(native),
+      reason: blockedDisplayOf(report.reason),
+      reasonHash: report.reasonHash,
+    },
+  ];
 }
 
-  // Native events name the voice that launched: a reserve attempt reports the reserve's provider and model under the logical slot.
-  export const attemptOf = (logical: RosterSlot, voice: {provider: string; model?: string | readonly string[]; effort?: string}) => ({slot: logical.slot, provider: voice.provider, model: voice.model, ...(voice.effort !== undefined ? { effort: voice.effort } : {})});
-export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, ports: {
-  all: readonly RosterSlot[]; firstReserve: RosterSlot | undefined; nativeFirstProviders: readonly string[];
-  host: () => CliDeps['orchestrator']; cwd: string; files: Omit<ReturnType<typeof slotFiles>, 'name'>;
-  emit: Emit; markNativeLaunched: () => void; claimReserve: (logical: string) => void;
-  ownerOfReserve: () => string | undefined; voiceCLI: ReturnType<typeof cliVoice>;
-}) {
-  const {all, firstReserve, nativeFirstProviders, host: orchestrator, cwd, files, emit, markNativeLaunched, claimReserve, ownerOfReserve, voiceCLI} = ports;
-  const {fileOfLogical, basePathOf, nativePathOf, replyPathFor, oldReplyPathOf, readSaved, saveLogical} = files;
-  const baseTextOf = (slot: RosterSlot): string => typeof input.prompt === 'string' ? input.prompt : input.prompt(slot);
+// Native events name the voice that launched: a reserve attempt reports the reserve's provider and model under the logical slot.
+export const attemptOf = (
+  logical: RosterSlot,
+  voice: { provider: string; model?: string | readonly string[]; effort?: string },
+) => ({
+  slot: logical.slot,
+  provider: voice.provider,
+  model: voice.model,
+  ...(voice.effort !== undefined ? { effort: voice.effort } : {}),
+});
+export function nativeVoice(
+  input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>,
+  ports: {
+    all: readonly RosterSlot[];
+    firstReserve: RosterSlot | undefined;
+    nativeFirstProviders: readonly string[];
+    host: () => CliDeps['orchestrator'];
+    cwd: string;
+    files: Omit<ReturnType<typeof slotFiles>, 'name'>;
+    emit: Emit;
+    markNativeLaunched: () => void;
+    claimReserve: (logical: string) => void;
+    ownerOfReserve: () => string | undefined;
+    voiceCLI: ReturnType<typeof cliVoice>;
+  },
+) {
+  const {
+    all,
+    firstReserve,
+    nativeFirstProviders,
+    host: orchestrator,
+    cwd,
+    files,
+    emit,
+    markNativeLaunched,
+    claimReserve,
+    ownerOfReserve,
+    voiceCLI,
+  } = ports;
+  const { fileOfLogical, basePathOf, nativePathOf, replyPathFor, oldReplyPathOf, readSaved, saveLogical } = files;
+  const baseTextOf = (slot: RosterSlot): string =>
+    typeof input.prompt === 'string' ? input.prompt : input.prompt(slot);
 
   const buildNativePrompt = (baseText: string, replyPath: string): string => {
     const scope = sessionScope(input.sessionRoot, nodeRunnerFs);
-    const guarded = formatSafetyPrompt(baseText, {...scope, ...(cwd ? {workspaceRoot: cwd} : {})});
-    return `${guarded}\n\n[REPLY FILE EXCEPTION]: You may write only to \`${replyPath}\`; all other project file writes stay denied.\n` + newNativeReply(cwd, replyPath);
+    const guarded = formatSafetyPrompt(baseText, { ...scope, ...(cwd ? { workspaceRoot: cwd } : {}) });
+    return (
+      `${guarded}\n\n[REPLY FILE EXCEPTION]: You may write only to \`${replyPath}\`; all other project file writes stay denied.\n` +
+      newNativeReply(cwd, replyPath)
+    );
   };
 
-  const descriptor = (logical: RosterSlot, physical: RosterSlot, promptPath: string, replyPath: string, attempt: string): Extract<SlotOutcome, {state: 'native'}> => ({
-    slot: logical.slot, state: 'native', promptPath, replyPath,
-    provider: physical.provider, attempt, cwd,
-    ...(physical.model !== undefined ? {model: physical.model} : {}),
-    ...(physical.effort !== undefined ? {effort: physical.effort} : {}),
+  const descriptor = (
+    logical: RosterSlot,
+    physical: RosterSlot,
+    promptPath: string,
+    replyPath: string,
+    attempt: string,
+  ): Extract<SlotOutcome, { state: 'native' }> => ({
+    slot: logical.slot,
+    state: 'native',
+    promptPath,
+    replyPath,
+    provider: physical.provider,
+    attempt,
+    cwd,
+    ...(physical.model !== undefined ? { model: physical.model } : {}),
+    ...(physical.effort !== undefined ? { effort: physical.effort } : {}),
     launchAs: nativeLaunchAs(physical.provider, physical.model, physical.effort),
   });
 
@@ -80,23 +154,27 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     try {
       const current = fs.readFileSync(baseFile, 'utf8');
       if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
-    } catch { fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), {mode: 0o600}); }
+    } catch {
+      fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), { mode: 0o600 });
+    }
   };
 
-  const publishNative = (slot: RosterSlot, outcome: Extract<SlotOutcome, {state: 'native'}>): SlotOutcome => {
+  const publishNative = (slot: RosterSlot, outcome: Extract<SlotOutcome, { state: 'native' }>): SlotOutcome => {
     atomic(fileOfLogical(slot.slot), outcome);
-    emit(slot, {kind: 'slot', state: 'native'});
+    emit(slot, { kind: 'slot', state: 'native' });
     return outcome;
   };
 
-  const createNativeOnly = (slot: RosterSlot): Extract<SlotOutcome, {state: 'native'}> => {
+  const createNativeOnly = (slot: RosterSlot): Extract<SlotOutcome, { state: 'native' }> => {
     const baseText = baseTextOf(slot);
     const baseFile = basePathOf(slot.slot);
-    try { fs.writeFileSync(baseFile, baseText, {mode: 0o600}); } catch {}
+    try {
+      fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+    } catch {}
     const replyPath = oldReplyPathOf(slot.slot);
     const nonce = makeNonce();
     const attempt = `${slot.slot}#${nonce}`;
-    emit(slot,{kind:'native',state:'pending'});
+    emit(slot, { kind: 'native', state: 'pending' });
     // Native-only keeps its prompt path and base text: base plus the reply section naming the working directory.
     appendNativeReply(baseFile, baseText, replyPath);
     const outcome = descriptor(slot, slot, baseFile, replyPath, attempt);
@@ -104,18 +182,20 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     return outcome;
   };
 
-  const createNativeFirst = (logical: RosterSlot, physical: RosterSlot): Extract<SlotOutcome, {state: 'native'}> => {
+  const createNativeFirst = (logical: RosterSlot, physical: RosterSlot): Extract<SlotOutcome, { state: 'native' }> => {
     const baseText = baseTextOf(logical);
     const baseFile = basePathOf(logical.slot);
     try {
-      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, {mode: 0o600});
-    } catch { fs.writeFileSync(baseFile, baseText, {mode: 0o600}); }
+      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+    } catch {
+      fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+    }
     const nonce = makeNonce();
     const attempt = `${physical.slot}#${nonce}`;
     const replyPath = replyPathFor(logical.slot, nonce);
     const nativeFile = nativePathOf(logical.slot);
-    fs.writeFileSync(nativeFile, buildNativePrompt(baseText, replyPath), {mode: 0o600});
-    emit(attemptOf(logical, physical),{kind:'native',state:'pending'});
+    fs.writeFileSync(nativeFile, buildNativePrompt(baseText, replyPath), { mode: 0o600 });
+    emit(attemptOf(logical, physical), { kind: 'native', state: 'pending' });
     markNativeLaunched();
     return descriptor(logical, physical, nativeFile, replyPath, attempt);
   };
@@ -143,10 +223,16 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
   };
 
   // An invalid native reply is quarantined and the attempt stays pending with the checked reason and evidence.
-  const markInvalid = (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, checked: Extract<Validation, {ok: false}>): SlotOutcome => {
+  const markInvalid = (
+    slot: RosterSlot,
+    native: Extract<SlotOutcome, { state: 'native' }>,
+    checked: Extract<Validation, { ok: false }>,
+  ): SlotOutcome => {
     invalidateReply(native.replyPath);
-    const blocked = checked.blocked ? mergeBlocked(native.blocked, [{provider: native.provider, model: firstModelOf(native), ...checked.blocked}]) : native.blocked;
-    const pending: SlotOutcome = {...native, error: checked.reason, ...(blocked?.length ? {blocked} : {})};
+    const blocked = checked.blocked
+      ? mergeBlocked(native.blocked, [{ provider: native.provider, model: firstModelOf(native), ...checked.blocked }])
+      : native.blocked;
+    const pending: SlotOutcome = { ...native, error: checked.reason, ...(blocked?.length ? { blocked } : {}) };
     atomic(fileOfLogical(slot.slot), pending);
     return pending;
   };
@@ -161,7 +247,7 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
   // host never runs its CLI: it takes the reserve or saves failed.
   const fallbackToCli = async (
     logical: RosterSlot,
-    nativeSaved: Extract<SlotOutcome, {state: 'native'}>,
+    nativeSaved: Extract<SlotOutcome, { state: 'native' }>,
     nativeError: string,
     extraBlocked?: BlockedAttempt[],
   ): Promise<SlotOutcome> => {
@@ -170,12 +256,23 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     // internal 'blocked: ' reason with its blocked evidence.
     const blockedFailure = isBlockedReply(nativeError) || (nativeError.startsWith('blocked: ') && merged.length > 0);
     const display = blockedDisplayOf(nativeError, extraBlocked);
-    const withFallback = {...nativeSaved, cliFallback: true as const, nativeError, ...(merged.length ? {blocked: merged} : {})};
+    const withFallback = {
+      ...nativeSaved,
+      cliFallback: true as const,
+      nativeError,
+      ...(merged.length ? { blocked: merged } : {}),
+    };
     atomic(fileOfLogical(logical.slot), withFallback);
-    emit(attemptOf(logical, nativeSaved), {kind: 'native', state: 'failed'});
+    emit(attemptOf(logical, nativeSaved), { kind: 'native', state: 'failed' });
     invalidateReply(nativeSaved.replyPath);
-    const {physical} = routeForNative(nativeSaved);
-    const failedForHost = (): Extract<SlotOutcome, {state: 'failed'}> => ({slot: logical.slot, state: 'failed', cls: blockedFailure ? 'blocked' : 'refusal', reason: (blockedFailure ? 'blocked: ' : 'refusal: ') + display, ...(merged.length ? {blocked: merged} : {})});
+    const { physical } = routeForNative(nativeSaved);
+    const failedForHost = (): Extract<SlotOutcome, { state: 'failed' }> => ({
+      slot: logical.slot,
+      state: 'failed',
+      cls: blockedFailure ? 'blocked' : 'refusal',
+      reason: (blockedFailure ? 'blocked: ' : 'refusal: ') + display,
+      ...(merged.length ? { blocked: merged } : {}),
+    });
     if (physical !== undefined && isCurrentHost(physical.provider)) {
       const failed = failedForHost();
       const isReserveSubstitute = physical.slot !== logical.slot;
@@ -187,9 +284,9 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     }
     if (physical === undefined || physical.native) return saveLogical(logical, failedForHost());
     const baseFile = basePathOf(logical.slot);
-    if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseTextOf(logical), {mode: 0o600});
+    if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseTextOf(logical), { mode: 0o600 });
     let cliOutcome = await voiceCLI(physical, logical.slot, baseFile);
-    if (merged.length) cliOutcome = {...cliOutcome, blocked: mergeBlocked(merged, cliOutcome.blocked)} as SlotOutcome;
+    if (merged.length) cliOutcome = { ...cliOutcome, blocked: mergeBlocked(merged, cliOutcome.blocked) } as SlotOutcome;
     if (cliOutcome.state === 'failed') {
       const isReserveSubstitute = physical.slot !== logical.slot;
       if (!isReserveSubstitute && reserveAllowed(logical.slot, cliOutcome.cls)) {
@@ -197,7 +294,7 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
         if (launched) return launched.state === 'native' ? launched : saveLogical(logical, launched);
       }
     }
-    return saveLogical(logical, {...cliOutcome, slot: logical.slot});
+    return saveLogical(logical, { ...cliOutcome, slot: logical.slot });
   };
 
   const isCurrentHost = (provider: string): boolean => {
@@ -240,8 +337,11 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
       let released = false;
       try {
         const ownerSaved = readSaved(reserveOwner);
-        released = (ownerSaved?.state === 'done' && !reserveConsumedBy(ownerSaved)) ||
-          (ownerSaved?.state === 'failed' && (ownerSaved as {cliOnly?: true}).cliOnly === true && !fs.existsSync(nativePathOf(reserveOwner)));
+        released =
+          (ownerSaved?.state === 'done' && !reserveConsumedBy(ownerSaved)) ||
+          (ownerSaved?.state === 'failed' &&
+            (ownerSaved as { cliOnly?: true }).cliOnly === true &&
+            !fs.existsSync(nativePathOf(reserveOwner)));
       } catch {
         released = false;
       }
@@ -250,11 +350,11 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     if (reserveOwner === logical) {
       const saved = readSaved(logical);
       if (saved === undefined) return true;
-      if (saved.state === 'native' && (saved as {cliFallback?: true}).cliFallback) return true;
+      if (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback) return true;
       // A saved failed outcome with a durable cliOnly marker may retake, which
       // also resumes an interrupted native reservation for its owner. A lost
       // marker fails closed to no-retake.
-      if (saved.state === 'failed' && (saved as {cliOnly?: true}).cliOnly === true) return true;
+      if (saved.state === 'failed' && (saved as { cliOnly?: true }).cliOnly === true) return true;
       return false;
     }
     return true;
@@ -282,13 +382,17 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     const baseText = baseTextOf(logical);
     const baseFile = basePathOf(logical.slot);
     try {
-      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, {mode: 0o600});
-    } catch { fs.writeFileSync(baseFile, baseText, {mode: 0o600}); }
+      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+    } catch {
+      fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+    }
     const replyPath = oldReplyPathOf(logical.slot);
-    emit(attemptOf(logical, reserve), {kind:'native',state:'pending'});
+    emit(attemptOf(logical, reserve), { kind: 'native', state: 'pending' });
     appendNativeReply(baseFile, baseText, replyPath);
     const created = descriptor(logical, reserve, baseFile, replyPath, `${reserve.slot}#${nonce}`);
-    const withBlocked = failed.blocked?.length ? {...created, blocked: mergeBlocked(created.blocked, failed.blocked)} : created;
+    const withBlocked = failed.blocked?.length
+      ? { ...created, blocked: mergeBlocked(created.blocked, failed.blocked) }
+      : created;
     markNativeLaunched();
     return publishNative(logical, withBlocked);
   };
@@ -300,17 +404,25 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
   // BEFORE substitution (missing physical fails closed on saved evidence,
   // no CLI under the wrong voice) and the exact BLOCKED report marker in
   // every report and replay path.
-  const routeForNative = (saved: {attempt: string; provider: string}): {physical: RosterSlot | undefined; routeOk: boolean; first: boolean} => {
+  const routeForNative = (saved: {
+    attempt: string;
+    provider: string;
+  }): { physical: RosterSlot | undefined; routeOk: boolean; first: boolean } => {
     const physicalSlot = saved.attempt.split('#')[0] ?? '';
-    const physical = all.find(entry => entry.slot === physicalSlot);
+    const physical = all.find((entry) => entry.slot === physicalSlot);
     const first = isNativeFirstProvider(physical?.provider ?? saved.provider, nativeFirstProviders);
-    const routeOk = physical !== undefined && (first || ((physical.native ?? false) && isCurrentHost(physical.provider)));
-    return {physical, routeOk, first};
+    const routeOk =
+      physical !== undefined && (first || ((physical.native ?? false) && isCurrentHost(physical.provider)));
+    return { physical, routeOk, first };
   };
   // One reserve gate for every path: native-first descriptor, native-only on
   // current host, keep failed off-host, CLI only for non-native. The current
   // host never runs its CLI: a host reserve mints a native descriptor.
-  const takeReserve = async (logical: RosterSlot, failed: SlotOutcome, promptPath: string): Promise<SlotOutcome | undefined> => {
+  const takeReserve = async (
+    logical: RosterSlot,
+    failed: SlotOutcome,
+    promptPath: string,
+  ): Promise<SlotOutcome | undefined> => {
     if (!firstReserve) return undefined;
     const first = isNativeFirstProvider(firstReserve.provider, nativeFirstProviders);
     if (firstReserve.native) {
@@ -320,34 +432,49 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     }
     if (first || isCurrentHost(firstReserve.provider)) {
       const native = createNativeFirst(logical, firstReserve);
-      const withBlocked = failed.blocked?.length ? {...native, blocked: mergeBlocked(native.blocked, failed.blocked)} : native;
+      const withBlocked = failed.blocked?.length
+        ? { ...native, blocked: mergeBlocked(native.blocked, failed.blocked) }
+        : native;
       claimReserve(logical.slot);
       return publishNative(logical, withBlocked);
     }
     claimReserve(logical.slot);
     const substitute = await voiceCLI(firstReserve, logical.slot, promptPath);
-    emit(firstReserve, {kind:'slot', state:substitute.state, targetSlot:logical.slot, ...(substitute.state === 'failed' ? {cls: substitute.cls} : {})});
+    emit(firstReserve, {
+      kind: 'slot',
+      state: substitute.state,
+      targetSlot: logical.slot,
+      ...(substitute.state === 'failed' ? { cls: substitute.cls } : {}),
+    });
     const blocked = mergeBlocked(failed.blocked, substitute.blocked);
-    return {...substitute, slot: logical.slot, ...(blocked.length?{blocked}:{})} as SlotOutcome;
+    return { ...substitute, slot: logical.slot, ...(blocked.length ? { blocked } : {}) } as SlotOutcome;
   };
   const takeReserveWithFreshPrompt = (slot: RosterSlot, failed: SlotOutcome): Promise<SlotOutcome | undefined> => {
     const baseFile = basePathOf(slot.slot);
-    fs.writeFileSync(baseFile, baseTextOf(slot), {mode: 0o600});
+    fs.writeFileSync(baseFile, baseTextOf(slot), { mode: 0o600 });
     return takeReserve(slot, failed, baseFile);
   };
 
   // A reported native failure ends its attempt. External reports use the exact
   // 'BLOCKED:' marker only; any other casing is a refusal, not the protocol marker.
   // A current-host attempt that is not a substitute takes its reserve when allowed.
-  const saveReportFailure = async (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, report: NativeFailure): Promise<SlotOutcome> => {
+  const saveReportFailure = async (
+    slot: RosterSlot,
+    native: Extract<SlotOutcome, { state: 'native' }>,
+    report: NativeFailure,
+  ): Promise<SlotOutcome> => {
     const sanitized = blockedDisplayOf(report.reason);
     invalidateReply(native.replyPath);
-    emit(attemptOf(slot, native), {kind: 'native', state: 'failed'});
+    emit(attemptOf(slot, native), { kind: 'native', state: 'failed' });
     const canSubstitute = isCurrentHost(native.provider) && native.attempt.split('#')[0] === slot.slot;
     const cls = isBlockedReply(report.reason) ? 'blocked' : 'refusal';
     const blocked = cls === 'blocked' ? mergeBlocked(native.blocked, reportEvidence(native, report)) : native.blocked;
-    const failed: Extract<SlotOutcome, {state: 'failed'}> = {
-      slot: slot.slot, state: 'failed', cls, reason: cls + ': ' + sanitized, ...(blocked?.length ? {blocked} : {}),
+    const failed: Extract<SlotOutcome, { state: 'failed' }> = {
+      slot: slot.slot,
+      state: 'failed',
+      cls,
+      reason: cls + ': ' + sanitized,
+      ...(blocked?.length ? { blocked } : {}),
     };
     if (canSubstitute && reserveAllowed(slot.slot, failed.cls)) {
       const launched = await takeReserveWithFreshPrompt(slot, failed);
@@ -359,27 +486,65 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
   // The responder records the launched voice, not the current roster: a config
   // change between launch and consumption must not attribute the answer to a
   // model or effort that never launched.
-  const saveDoneFromNative = (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, text: string): SlotOutcome => {
+  const saveDoneFromNative = (
+    slot: RosterSlot,
+    native: Extract<SlotOutcome, { state: 'native' }>,
+    text: string,
+  ): SlotOutcome => {
     const done: SlotOutcome = {
-      slot: slot.slot, state: 'done', text,
-      responder: {slot: slot.slot, provider: native.provider, model: firstModelOf(native), native: true, ...(native.effort !== undefined ? {effort: native.effort} : {})},
-      ...(native.blocked?.length ? {blocked: native.blocked} : {}),
+      slot: slot.slot,
+      state: 'done',
+      text,
+      responder: {
+        slot: slot.slot,
+        provider: native.provider,
+        model: firstModelOf(native),
+        native: true,
+        ...(native.effort !== undefined ? { effort: native.effort } : {}),
+      },
+      ...(native.blocked?.length ? { blocked: native.blocked } : {}),
     };
     atomic(fileOfLogical(slot.slot), done);
     return done;
   };
 
-  const prepareHostBlocked = (slot: RosterSlot, native: Extract<SlotOutcome, {state: 'native'}>, raw: string, voice: Parameters<Emit>[0]) => {
+  const prepareHostBlocked = (
+    slot: RosterSlot,
+    native: Extract<SlotOutcome, { state: 'native' }>,
+    raw: string,
+    voice: Parameters<Emit>[0],
+  ) => {
     const entry = blockedEntry(native.provider, firstModelOf(native), raw);
-    emit(voice, {kind: 'validation', surface: 'native', outcome: 'blocked'});
-    emit(voice, {kind: 'native', state: 'failed', replay: true});
+    emit(voice, { kind: 'validation', surface: 'native', outcome: 'blocked' });
+    emit(voice, { kind: 'native', state: 'failed', replay: true });
     invalidateReply(native.replyPath);
     const blocked = mergeBlocked(native.blocked, [entry]);
-    const failed: Extract<SlotOutcome, {state: 'failed'}> = {slot: slot.slot, state: 'failed', cls: 'blocked', reason: 'blocked: ' + entry.reason, blocked};
-    if (native.attempt.split('#')[0] !== slot.slot || !reserveAllowed(slot.slot, failed.cls)) return {failed};
-    return {failed, reserve: takeReserveWithFreshPrompt(slot, failed)};
+    const failed: Extract<SlotOutcome, { state: 'failed' }> = {
+      slot: slot.slot,
+      state: 'failed',
+      cls: 'blocked',
+      reason: 'blocked: ' + entry.reason,
+      blocked,
+    };
+    if (native.attempt.split('#')[0] !== slot.slot || !reserveAllowed(slot.slot, failed.cls)) return { failed };
+    return { failed, reserve: takeReserveWithFreshPrompt(slot, failed) };
   };
 
-  return {baseTextOf, publishNative, createNativeOnly, createNativeFirst, invalidateReply, markInvalid, fallbackToCli,
-    isCurrentHost, reserveAllowed, reserveLaunchable, routeForNative, takeReserve, saveReportFailure, saveDoneFromNative, prepareHostBlocked};
+  return {
+    baseTextOf,
+    publishNative,
+    createNativeOnly,
+    createNativeFirst,
+    invalidateReply,
+    markInvalid,
+    fallbackToCli,
+    isCurrentHost,
+    reserveAllowed,
+    reserveLaunchable,
+    routeForNative,
+    takeReserve,
+    saveReportFailure,
+    saveDoneFromNative,
+    prepareHostBlocked,
+  };
 }

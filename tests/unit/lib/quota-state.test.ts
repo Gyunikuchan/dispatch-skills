@@ -17,14 +17,42 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-state-'));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  const sessionDir = initSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') }).path;
+  const sessionDir = initSession({
+    repositoryRoot: repo,
+    sessionId: crypto.randomUUID(),
+    sessionTitle: 'Quota fixture',
+    now: new Date('2026-10-19T00:00:00Z'),
+  }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
   const capture = (keys: QuotaKey[] = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);
     return { ...state, snapshot: quotaSnapshot(keys, state.generations, state.observations, clock) };
   };
-  const quotaDir = () => path.join(sessionDir, '.state', 'quota', crypto.createHash('sha256').update(JSON.stringify([key.provider, key.model, key.mode])).digest('hex'));
-  return { root, repo, sessionDir, options, capture, quotaDir, cleanup: () => { try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* Windows locked handle */ } } };
+  const quotaDir = () =>
+    path.join(
+      sessionDir,
+      '.state',
+      'quota',
+      crypto
+        .createHash('sha256')
+        .update(JSON.stringify([key.provider, key.model, key.mode]))
+        .digest('hex'),
+    );
+  return {
+    root,
+    repo,
+    sessionDir,
+    options,
+    capture,
+    quotaDir,
+    cleanup: () => {
+      try {
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* Windows locked handle */
+      }
+    },
+  };
 }
 
 test('reprobe race: Windows can replace the generation after a prolonged sharing lock', ({ mock }) => {
@@ -49,7 +77,8 @@ test('old bucket volume cannot hide valid current and previous bucket evidence',
   const f = setup();
   try {
     const generation = f.capture().generations[0]!.generation;
-    for (let bucket = 1; bucket <= 10; bucket++) assert.equal(publishQuotaFailure(f.options, key, generation, bucket * H).published, true);
+    for (let bucket = 1; bucket <= 10; bucket++)
+      assert.equal(publishQuotaFailure(f.options, key, generation, bucket * H).published, true);
     const at = 100 * H - 1;
     publishQuotaFailure(f.options, key, generation, at);
     publishQuotaFailure(f.options, key, generation, 100 * H);
@@ -59,7 +88,9 @@ test('old bucket volume cannot hide valid current and previous bucket evidence',
     assert.equal(fs.readdirSync(f.quotaDir()).length, 13);
     fs.writeFileSync(path.join(f.quotaDir(), generation + '.100.json'), '{');
     assert.equal(f.capture([key], 100 * H + 1).snapshot.decisions[0]!.skipped, true);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('malformed oversized unsupported and future records use normal routing', () => {
@@ -71,18 +102,27 @@ test('malformed oversized unsupported and future records use normal routing', ()
       const state = f.capture();
       assert.equal(state.snapshot.decisions[0]!.skipped, false);
       assert.equal(state.warnings.length, 1);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   }
   for (const corrupt of ['{', 'x'.repeat(4097), JSON.stringify({ schemaVersion: 2 }), 'future']) {
     const f = setup();
     try {
       const marker = f.capture().generations[0]!;
       const observation = path.join(f.quotaDir(), marker.generation + '.' + Math.floor(now / H) + '.json');
-      fs.writeFileSync(observation, corrupt === 'future' ? JSON.stringify({ ...marker, bucket: Math.floor(now / H), observedAt: now + 1 }) : corrupt);
+      fs.writeFileSync(
+        observation,
+        corrupt === 'future'
+          ? JSON.stringify({ ...marker, bucket: Math.floor(now / H), observedAt: now + 1 })
+          : corrupt,
+      );
       const state = f.capture();
       assert.equal(state.snapshot.decisions[0]!.skipped, false);
       assert.equal(state.warnings.length, 1);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   }
 });
 
@@ -91,13 +131,27 @@ test('linked state and records cannot redirect reads or writes', () => {
     const f = setup();
     try {
       const marker = f.capture().generations[0]!;
-      const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside);
-      const sentinel = path.join(outside, 'sentinel'); fs.writeFileSync(sentinel, 'intact');
-      const target = locus === '.state' ? path.join(f.sessionDir, '.state') : locus === 'quota' ? path.join(f.sessionDir, '.state', 'quota') : locus === 'key' ? f.quotaDir()
-        : locus === 'generation' ? path.join(f.quotaDir(), 'generation.json') : path.join(f.quotaDir(), marker.generation + '.' + Math.floor(now / H) + '.json');
+      const outside = path.join(f.root, 'outside');
+      fs.mkdirSync(outside);
+      const sentinel = path.join(outside, 'sentinel');
+      fs.writeFileSync(sentinel, 'intact');
+      const target =
+        locus === '.state'
+          ? path.join(f.sessionDir, '.state')
+          : locus === 'quota'
+            ? path.join(f.sessionDir, '.state', 'quota')
+            : locus === 'key'
+              ? f.quotaDir()
+              : locus === 'generation'
+                ? path.join(f.quotaDir(), 'generation.json')
+                : path.join(f.quotaDir(), marker.generation + '.' + Math.floor(now / H) + '.json');
       const isFile = locus === 'generation' || locus === 'observation';
       if (fs.existsSync(target)) fs.rmSync(target, { recursive: !isFile });
-      fs.symlinkSync(isFile ? sentinel : outside, target, isFile ? 'file' : process.platform === 'win32' ? 'junction' : 'dir');
+      fs.symlinkSync(
+        isFile ? sentinel : outside,
+        target,
+        isFile ? 'file' : process.platform === 'win32' ? 'junction' : 'dir',
+      );
       const state = f.capture();
       assert.equal(state.snapshot.decisions[0]!.skipped, false, locus);
       assert.equal(state.warnings.length, 1, locus);
@@ -105,6 +159,8 @@ test('linked state and records cannot redirect reads or writes', () => {
       if (locus !== 'observation') assert.throws(() => reprobeQuota(f.options, key), locus);
       assert.equal(fs.readFileSync(sentinel, 'utf8'), 'intact');
       assert.deepEqual(fs.readdirSync(outside), ['sentinel']);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   }
 });

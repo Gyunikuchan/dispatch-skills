@@ -9,7 +9,10 @@ import { checks, loadPlan } from '../../skills/dispatch/scripts/toolkit/plan-vie
 
 const target = 'tests/step.test.ts';
 const source = planSource
-  .replace('#### [MODIFY] src/file.ts', '#### [MODIFY] src/file.ts\n- Purpose: implements behavior.\n#### [NEW] ' + target)
+  .replace(
+    '#### [MODIFY] src/file.ts',
+    '#### [MODIFY] src/file.ts\n- Purpose: implements behavior.\n#### [NEW] ' + target,
+  )
   .replace('  - Changes: src/file.ts', '  - Changes: src/file.ts, ' + target + '\n  - Tests: ' + target);
 const twoCriteriaSource = [
   '# Work',
@@ -82,7 +85,7 @@ const cleanupFile = (r: Repo, data: object) => {
 };
 const commit = (r: Repo, data: object, hook?: Parameters<Repo['run']>[1]) =>
   r.run(['worktree', 'commit', '--reason', 'remove step tests', '--test-cleanup', cleanupFile(r, data)], hook);
-const cleanups = (r: Repo) => foldLedger(r.session).records.filter(row => row.data['phase'] === 'test-cleanup');
+const cleanups = (r: Repo) => foldLedger(r.session).records.filter((row) => row.data['phase'] === 'test-cleanup');
 const removal = { removed: ['SC1'], deleted: 2, merged: 1 };
 
 test('test cleanup commit records removed criteria and counts once', async () => {
@@ -97,12 +100,30 @@ test('test cleanup commit records removed criteria and counts once', async () =>
     assert.match(r.git(['log', '-1', '--format=%B'], r.integration), /Dispatch-Test-Cleanup-Data: /);
     const [record] = cleanups(r);
     assert.equal(cleanups(r).length, 1);
-    assert.deepEqual({ from: record!.data['from'], fromTree: record!.data['fromTree'], to: record!.data['to'], removed: record!.data['removed'], deleted: record!.data['deleted'], merged: record!.data['merged'], trees: record!.data['trees'] },
-      { from: before, fromTree: r.git(['rev-parse', before + '^{tree}'], r.integration), to: head, ...removal, trees: { SC1: r.git(['rev-parse', before + '^{tree}'], r.integration) } });
+    assert.deepEqual(
+      {
+        from: record!.data['from'],
+        fromTree: record!.data['fromTree'],
+        to: record!.data['to'],
+        removed: record!.data['removed'],
+        deleted: record!.data['deleted'],
+        merged: record!.data['merged'],
+        trees: record!.data['trees'],
+      },
+      {
+        from: before,
+        fromTree: r.git(['rev-parse', before + '^{tree}'], r.integration),
+        to: head,
+        ...removal,
+        trees: { SC1: r.git(['rev-parse', before + '^{tree}'], r.integration) },
+      },
+    );
     fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'again\n');
     assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-recorded');
     assert.equal(cleanups(r).length, 1);
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('test cleanup commit refuses missing evidence, unchanged test paths and empty cleanup', async () => {
@@ -111,17 +132,34 @@ test('test cleanup commit refuses missing evidence, unchanged test paths and emp
     fs.rmSync(path.join(r.integration, target));
     const head = r.git(['rev-parse', 'HEAD'], r.integration);
     assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-evidence-required');
-    assert.equal((await commit(r, { removed: ['SC9'], deleted: 1, merged: 0 })).output.reason, 'test-cleanup-evidence-required');
+    assert.equal(
+      (await commit(r, { removed: ['SC9'], deleted: 1, merged: 0 })).output.reason,
+      'test-cleanup-evidence-required',
+    );
     assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
     assert.equal(cleanups(r).length, 0);
 
-    const check = checks(loadPlan(r.session, readManifest(r.session))).find(row => row.criterion === 'SC1')!;
+    const check = checks(loadPlan(r.session, readManifest(r.session))).find((row) => row.criterion === 'SC1')!;
     const tree = r.git(['rev-parse', 'HEAD^{tree}'], r.integration);
     const evidenceFile = path.join(r.session, 'legacy-review-evidence.json');
-    fs.writeFileSync(evidenceFile, JSON.stringify({
-      kind: 'evidence', key: 'legacy-review-evidence', by: 'tool',
-      data: { criterion: 'SC1', commandDigest: check.commandDigest, tree, clean: false, before: tree, after: tree, exit: 1, path: '.state/evidence/legacy-review.json' },
-    }));
+    fs.writeFileSync(
+      evidenceFile,
+      JSON.stringify({
+        kind: 'evidence',
+        key: 'legacy-review-evidence',
+        by: 'tool',
+        data: {
+          criterion: 'SC1',
+          commandDigest: check.commandDigest,
+          tree,
+          clean: false,
+          before: tree,
+          after: tree,
+          exit: 1,
+          path: '.state/evidence/legacy-review.json',
+        },
+      }),
+    );
     assert.equal((await r.run(['ledger', 'append', evidenceFile])).exit, 0);
     assert.equal((await commit(r, removal)).output.reason, 'test-cleanup-evidence-required');
     assert.equal(cleanups(r).length, 0);
@@ -133,7 +171,9 @@ test('test cleanup commit refuses missing evidence, unchanged test paths and emp
     assert.equal((await commit(r, { removed: [], deleted: 0, merged: 0 })).output.reason, 'test-cleanup-empty');
     assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
     assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('an interrupted test cleanup commit with split trailers records on retry without a second commit', async () => {
@@ -143,21 +183,25 @@ test('an interrupted test cleanup commit with split trailers records on retry wi
   try {
     const before = r.git(['rev-parse', 'HEAD'], r.integration);
     fs.rmSync(path.join(r.integration, target));
-    const crashed = await commit(r, data, point => { if (point === 'commit:after-commit') throw Error('crash'); });
+    const crashed = await commit(r, data, (point) => {
+      if (point === 'commit:after-commit') throw Error('crash');
+    });
     assert.equal(crashed.exit, 2);
     assert.equal(cleanups(r).length, 0);
     const head = r.git(['rev-parse', 'HEAD'], r.integration);
     assert.notEqual(head, before);
     const lines = r.git(['log', '-1', '--format=%B'], r.integration).split(/\r?\n/);
-    assert.ok(lines.every(line => line.length <= 100));
-    assert.ok(lines.filter(line => line.startsWith('Dispatch-Test-Cleanup-Data: ')).length > 1);
+    assert.ok(lines.every((line) => line.length <= 100));
+    assert.ok(lines.filter((line) => line.startsWith('Dispatch-Test-Cleanup-Data: ')).length > 1);
     assert.equal((await commit(r, { ...data, deleted: 9 })).output.ok, false);
     const retried = await commit(r, data);
     assert.equal(retried.output.ok, true, JSON.stringify(retried));
     assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
     assert.equal(cleanups(r).length, 1);
     assert.equal(cleanups(r)[0]!.data['from'], before);
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('verify skips criteria whose tests cleanup removed and refuses to select them', async () => {
@@ -167,12 +211,17 @@ test('verify skips criteria whose tests cleanup removed and refuses to select th
     assert.equal((await commit(r, removal)).output.ok, true);
     const all = await r.run(['check', 'run']);
     assert.equal(all.output.ok, true, JSON.stringify(all));
-    assert.deepEqual(all.value.checks.map((row: { criterion: string }) => row.criterion), ['contract']);
+    assert.deepEqual(
+      all.value.checks.map((row: { criterion: string }) => row.criterion),
+      ['contract'],
+    );
     const named = await r.run(['check', 'run', '--criteria', 'SC1']);
     assert.equal(named.exit, 4);
     assert.equal(named.output.reason, 'test-cleanup-removed');
     assert.match(named.output.summary, /stays bound to their recorded evidence tree/);
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('test cleanup commit accepts evidence from an unchanged earlier tree; status names the evidence tree of removed criteria', async () => {
@@ -195,7 +244,13 @@ test('test cleanup commit accepts evidence from an unchanged earlier tree; statu
     assert.equal((await r.run(['check', 'run'])).output.ok, true);
     const status = await r.run(['status', 'show']);
     assert.deepEqual(status.value.criteria, []);
-    assert.deepEqual(status.value.testCleanup, { from: before, trees: { SC1: earlyTree }, removed: ['SC1'], deleted: 2, merged: 1 });
+    assert.deepEqual(status.value.testCleanup, {
+      from: before,
+      trees: { SC1: earlyTree },
+      removed: ['SC1'],
+      deleted: 2,
+      merged: 1,
+    });
     const row = status.value.criterionStatuses.find((entry: { criterion: string }) => entry.criterion === 'SC1');
     assert.equal(row.state, 'verified');
     assert.equal(row.reason, 'verified at ' + earlyTree + '; tests removed in cleanup');
@@ -205,36 +260,54 @@ test('test cleanup commit accepts evidence from an unchanged earlier tree; statu
     const report = await r.run(['report', 'complete']);
     assert.equal(report.output.ok, true, JSON.stringify(report));
     const walkthrough = fs.readFileSync(path.join(r.session, report.value.path), 'utf8');
-    assert.ok(walkthrough.includes('**Test cleanup:** deleted 2 · merged 1 tests; criteria with tests removed: SC1 at ' + earlyTree.slice(0, 12)));
+    assert.ok(
+      walkthrough.includes(
+        '**Test cleanup:** deleted 2 · merged 1 tests; criteria with tests removed: SC1 at ' + earlyTree.slice(0, 12),
+      ),
+    );
     const reported = report.value.statuses.find((entry: { criterion: string }) => entry.criterion === 'SC1');
     assert.equal(reported.state, 'verified');
     assert.equal(reported.reason, 'verified at ' + earlyTree + '; tests removed in cleanup');
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('test cleanup commit refuses after a declared, renamed, or undeclared path changed', async () => {
   const cases: { label: string; change: (r: Repo) => void }[] = [
-    { label: 'changes path', change: (r) => {
-      fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'changed after check\n');
-      r.git(['add', 'src/file.ts'], r.integration);
-      r.git(['commit', '-m', 'change src'], r.integration);
-    } },
-    { label: 'tests path', change: (r) => {
-      fs.writeFileSync(path.join(r.integration, target), 'edited test\n');
-      r.git(['add', target], r.integration);
-      r.git(['commit', '-m', 'change test'], r.integration);
-    } },
-    { label: 'undeclared path', change: (r) => {
-      fs.writeFileSync(path.join(r.integration, 'src/undeclared-helper.ts'), 'helper\n');
-      r.git(['add', 'src/undeclared-helper.ts'], r.integration);
-      r.git(['commit', '-m', 'undeclared helper'], r.integration);
-    } },
-    { label: 'renamed tests path', change: (r) => {
-      r.git(['mv', target, 'tests/other.test.ts'], r.integration);
-      r.git(['commit', '-m', 'rename step test to other test'], r.integration);
-      fs.rmSync(path.join(r.integration, 'tests/other.test.ts'));
-      return;
-    } },
+    {
+      label: 'changes path',
+      change: (r) => {
+        fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'changed after check\n');
+        r.git(['add', 'src/file.ts'], r.integration);
+        r.git(['commit', '-m', 'change src'], r.integration);
+      },
+    },
+    {
+      label: 'tests path',
+      change: (r) => {
+        fs.writeFileSync(path.join(r.integration, target), 'edited test\n');
+        r.git(['add', target], r.integration);
+        r.git(['commit', '-m', 'change test'], r.integration);
+      },
+    },
+    {
+      label: 'undeclared path',
+      change: (r) => {
+        fs.writeFileSync(path.join(r.integration, 'src/undeclared-helper.ts'), 'helper\n');
+        r.git(['add', 'src/undeclared-helper.ts'], r.integration);
+        r.git(['commit', '-m', 'undeclared helper'], r.integration);
+      },
+    },
+    {
+      label: 'renamed tests path',
+      change: (r) => {
+        r.git(['mv', target, 'tests/other.test.ts'], r.integration);
+        r.git(['commit', '-m', 'rename step test to other test'], r.integration);
+        fs.rmSync(path.join(r.integration, 'tests/other.test.ts'));
+        return;
+      },
+    },
   ];
   for (const { label, change } of cases) {
     const r = await integrated(false, twoCriteriaSource);
@@ -248,14 +321,19 @@ test('test cleanup commit refuses after a declared, renamed, or undeclared path 
       assert.match(refused.output.summary, /\bSC1\b/, label);
       assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head, label);
       assert.equal(cleanups(r).length, 0, label);
-    } finally { r.cleanup(); }
+    } finally {
+      r.cleanup();
+    }
   }
 });
 
 test('test cleanup commit treats a leading-whitespace path as distinct from a trimmed declared path', async () => {
   const plan = twoCriteriaSource
     .replace('### T2 — Other', '### T2 — Other\n#### [NEW] foo.ts\n- Purpose: implements foo.')
-    .replace('  - Changes: src/other.ts, tests/other.test.ts', '  - Changes: foo.ts, src/other.ts, tests/other.test.ts');
+    .replace(
+      '  - Changes: src/other.ts, tests/other.test.ts',
+      '  - Changes: foo.ts, src/other.ts, tests/other.test.ts',
+    );
   const r = await integrated(false, plan);
   try {
     assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true);
@@ -269,7 +347,9 @@ test('test cleanup commit treats a leading-whitespace path as distinct from a tr
     assert.match(refused.output.summary, /\bSC1\b/);
     assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), head);
     assert.equal(cleanups(r).length, 0);
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });
 
 test('test cleanup commit accepts a directory-valued Tests path when a file under it changes', async () => {
@@ -282,5 +362,7 @@ test('test cleanup commit accepts a directory-valued Tests path when a file unde
     assert.equal(done.output.ok, true, JSON.stringify(done));
     const [record] = cleanups(r);
     assert.deepEqual(record!.data['trees'], { SC1: beforeTree });
-  } finally { r.cleanup(); }
+  } finally {
+    r.cleanup();
+  }
 });

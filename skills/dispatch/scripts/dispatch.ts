@@ -4,7 +4,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseCommand, SESSION_ACTIONS, UsageError } from './lib/cli.ts';
 import { reprobeQuota } from './lib/quota-store.ts';
-import { AmbiguousSessionIdentity, findRepoRoot, initSession, platformSessionId, reactivateSession, recordHost } from './lib/session.ts';
+import {
+  AmbiguousSessionIdentity,
+  findRepoRoot,
+  initSession,
+  platformSessionId,
+  reactivateSession,
+  recordHost,
+} from './lib/session.ts';
 import { H } from './policy/quota.ts';
 import { normalizeProvider } from './policy/roster.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
@@ -13,7 +20,8 @@ import { renderCallTable, stripGeneratedMarkers } from './toolkit/contracts.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics-capture.ts';
 
-const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor\'s `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery.';
+const GROUNDING_INSTRUCTIONS =
+  "When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery.";
 
 // SECTION: help — prints call table from contracts or one toolkit.md section as raw text; reads no session, config or ledger.
 function printHelp(heading: string, deps: EntryDeps): number {
@@ -27,42 +35,78 @@ function printHelp(heading: string, deps: EntryDeps): number {
     return 0;
   }
   let lines: string[];
-  try { lines = stripGeneratedMarkers(fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8')).split(/\r?\n/); }
-  catch (error) { return fail(error instanceof Error ? error.message : String(error), 'fault', 2); }
-  const start = key ? lines.findIndex((line) => line.toLowerCase() === '## ' + key || line.toLowerCase() === '### ' + key) : -1;
-  if (start < 0) return fail('Unknown or empty heading; valid headings: ' + lines.filter((line) => /^#{2,3} /.test(line)).map((line) => line.replace(/^#{2,3} /, '')).join(', '), 'usage', 1);
+  try {
+    lines = stripGeneratedMarkers(fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8')).split(
+      /\r?\n/,
+    );
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error), 'fault', 2);
+  }
+  const start = key
+    ? lines.findIndex((line) => line.toLowerCase() === '## ' + key || line.toLowerCase() === '### ' + key)
+    : -1;
+  if (start < 0)
+    return fail(
+      'Unknown or empty heading; valid headings: ' +
+        lines
+          .filter((line) => /^#{2,3} /.test(line))
+          .map((line) => line.replace(/^#{2,3} /, ''))
+          .join(', '),
+      'usage',
+      1,
+    );
   const stop = lines[start]!.startsWith('## ') ? /^#{1,2} / : /^#{1,3} /;
-  let end = start; while (++end < lines.length && !stop.test(lines[end]!)) {}
+  let end = start;
+  while (++end < lines.length && !stop.test(lines[end]!)) {}
   deps.stdout(lines.slice(start, end).join('\n').trimEnd() + '\n');
   return 0;
 }
 
 type EntryDeps = CliDeps & { cwd?: () => string };
 
-export async function main(argv: readonly string[] = process.argv.slice(2), deps: EntryDeps = nodeDeps()): Promise<number> {
+export async function main(
+  argv: readonly string[] = process.argv.slice(2),
+  deps: EntryDeps = nodeDeps(),
+): Promise<number> {
   if (argv[0] === 'help') {
     // NOTE: a `--flag` token and the token after it are options, not heading text.
-    const words = argv.slice(1).filter((arg, index, rest) => !arg.startsWith('--') && !rest[index - 1]?.startsWith('--'));
+    const words = argv
+      .slice(1)
+      .filter((arg, index, rest) => !arg.startsWith('--') && !rest[index - 1]?.startsWith('--'));
     return printHelp(words.join(' ').trim(), deps);
   }
   if (argv[0] !== 'session') return toolkitMain([...argv], deps);
   const print = (value: Record<string, unknown>) => deps.stdout(JSON.stringify(value) + '\n');
   try {
     const command = parseCommand(argv);
-    if (!(SESSION_ACTIONS as readonly string[]).includes(command.action ?? '')) throw new UsageError('session requires ' + SESSION_ACTIONS.slice(0, -1).join(', ') + ', or ' + SESSION_ACTIONS.at(-1));
+    if (!(SESSION_ACTIONS as readonly string[]).includes(command.action ?? ''))
+      throw new UsageError(
+        'session requires ' + SESSION_ACTIONS.slice(0, -1).join(', ') + ', or ' + SESSION_ACTIONS.at(-1),
+      );
     const flag = (name: string) => command.flags[name] as string | undefined;
     const repo = findRepoRoot((deps.cwd ?? process.cwd)());
     if (!repo) throw new UsageError('session requires a Git repository');
     if (command.action === 'quota-reprobe') {
-      const provider = flag('provider')!, mode = flag('mode')!;
+      const provider = flag('provider')!,
+        mode = flag('mode')!;
       if (!isProviderId(provider)) throw new UsageError('Unknown --provider');
-      if (!SPECS[provider].modes.some((entry) => entry.id === mode)) throw new UsageError('Unknown --mode for provider');
+      if (!SPECS[provider].modes.some((entry) => entry.id === mode))
+        throw new UsageError('Unknown --mode for provider');
       const key = { provider, model: flag('model') ?? null, mode };
       let result;
-      try { result = reprobeQuota({ sessionDir: path.resolve(flag('session-dir')!), repositoryRoot: repo, bucketWidth: H }, key); }
-      catch (error) {
-        if (error instanceof Error && (['Linked quota path', 'Invalid quota key or bucket width', 'Quota session ownership mismatch'].includes(error.message)
-          || /^Session manifest (?:is missing or invalid|has an unsupported or unsafe identity): /.test(error.message))) {
+      try {
+        result = reprobeQuota(
+          { sessionDir: path.resolve(flag('session-dir')!), repositoryRoot: repo, bucketWidth: H },
+          key,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (['Linked quota path', 'Invalid quota key or bucket width', 'Quota session ownership mismatch'].includes(
+            error.message,
+          ) ||
+            /^Session manifest (?:is missing or invalid|has an unsupported or unsafe identity): /.test(error.message))
+        ) {
           throw new UsageError(error.message);
         }
         throw error;
@@ -72,12 +116,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
     }
     const host = normalizeProvider(flag('host')!);
     if (!isProviderId(host)) throw new UsageError(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
-    const session = command.action === 'init'
-      ? initSession({ repositoryRoot: repo, sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(), sessionTitle: flag('objective')!, now: new Date(deps.clock()) })
-      : { path: reactivateSession(path.resolve(flag('session-dir')!), repo), reused: true };
+    const session =
+      command.action === 'init'
+        ? initSession({
+            repositoryRoot: repo,
+            sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(),
+            sessionTitle: flag('objective')!,
+            now: new Date(deps.clock()),
+          })
+        : { path: reactivateSession(path.resolve(flag('session-dir')!), repo), reused: true };
     recordHost(session.path, host);
     const diagnostics = diagnosticInstructions(deps.skillRoot).instructions;
-    print({ ok: true, summary: capSummary('Session ' + command.action + ' complete'), path: session.path, reused: session.reused, instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS });
+    print({
+      ok: true,
+      summary: capSummary('Session ' + command.action + ' complete'),
+      path: session.path,
+      reused: session.reused,
+      instructions: diagnostics ? `${GROUNDING_INSTRUCTIONS} ${diagnostics}` : GROUNDING_INSTRUCTIONS,
+    });
     return 0;
   } catch (error) {
     if (error instanceof AmbiguousSessionIdentity) {
@@ -88,18 +144,34 @@ export async function main(argv: readonly string[] = process.argv.slice(2), deps
       }
       const candidateCount = error.candidates.length;
       print({
-        ok: false, summary: capSummary(error.message), path: null, reason: 'fault', help: 'session reactivate',
-        candidates, candidateCount, omitted: candidateCount - candidates.length,
+        ok: false,
+        summary: capSummary(error.message),
+        path: null,
+        reason: 'fault',
+        help: 'session reactivate',
+        candidates,
+        candidateCount,
+        omitted: candidateCount - candidates.length,
       });
       return 2;
     }
     const usage = error instanceof UsageError;
-    print({ ok: false, summary: capSummary(error instanceof Error ? error.message : String(error)), path: null, reason: usage ? 'usage' : 'fault', help: (SESSION_ACTIONS as readonly string[]).includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table' });
+    print({
+      ok: false,
+      summary: capSummary(error instanceof Error ? error.message : String(error)),
+      path: null,
+      reason: usage ? 'usage' : 'fault',
+      help: (SESSION_ACTIONS as readonly string[]).includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table',
+    });
     return usage ? 1 : 2;
   }
 }
 
-export function isEntry(argvPath: string | undefined, realpath: (file: string) => string = fs.realpathSync, moduleUrl = import.meta.url): boolean {
+export function isEntry(
+  argvPath: string | undefined,
+  realpath: (file: string) => string = fs.realpathSync,
+  moduleUrl = import.meta.url,
+): boolean {
   return !!argvPath && pathToFileURL(realpath(path.resolve(argvPath))).href === moduleUrl;
 }
 

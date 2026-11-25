@@ -22,7 +22,14 @@ import { readRun, updateRun } from './run-state.ts';
 // ============================================================================
 
 export type ScenarioEntry = {
-  id: string; scope: string; class: string; trigger: string; expectedOutcome: string; startingState: string; entries: string[]; kind?: string;
+  id: string;
+  scope: string;
+  class: string;
+  trigger: string;
+  expectedOutcome: string;
+  startingState: string;
+  entries: string[];
+  kind?: string;
 };
 export type Catalog = { version: number; scenarios: ScenarioEntry[] };
 export type RiskLead = { kind: 'change' | 'defect' | 'diagnostic'; path?: string; scenario?: string; note?: string };
@@ -42,8 +49,14 @@ export type Selection = {
   gaps: string[];
 };
 export type Packet = {
-  scope: string; runId: string; partial: boolean; reference: string; findingsPath: string; evidence: string[];
-  scenarios: SelectedScenario[]; gaps: string[];
+  scope: string;
+  runId: string;
+  partial: boolean;
+  reference: string;
+  findingsPath: string;
+  evidence: string[];
+  scenarios: SelectedScenario[];
+  gaps: string[];
 };
 
 // ============================================================================
@@ -78,7 +91,8 @@ export function selectScenarios(options: SelectOptions): Selection {
   const exists = options.exists ?? ((p: string) => fs.existsSync(path.join(REPO_ROOT, ...p.split('/'))));
   validateCatalog(options.catalog, exists);
   const explicitIds = new Set(options.scope?.scenarios ?? []);
-  for (const id of explicitIds) if (!options.catalog.scenarios.some((s) => s.id === id)) throw new Error(`unknown scenario ${id}`);
+  for (const id of explicitIds)
+    if (!options.catalog.scenarios.some((s) => s.id === id)) throw new Error(`unknown scenario ${id}`);
   const requested = options.scope?.scopes;
   for (const scope of requested ?? []) if (!SCOPES.includes(scope)) throw new Error(`unknown scope ${scope}`);
   const named = options.catalog.scenarios.filter((s) => explicitIds.has(s.id));
@@ -92,7 +106,8 @@ export function selectScenarios(options: SelectOptions): Selection {
     // A scope holding named scenarios traces only their classes; every other mandatory class is a recorded gap.
     const namedClasses = new Set(named.filter((s) => s.scope === scope).map((s) => s.class));
     const classes = (SCOPE_CLASSES[scope] ?? []).filter((cls) => namedClasses.size === 0 || namedClasses.has(cls));
-    for (const cls of SCOPE_CLASSES[scope] ?? []) if (!classes.includes(cls)) gaps.push(`scope ${scope} class ${cls} not selected (user-narrowed run)`);
+    for (const cls of SCOPE_CLASSES[scope] ?? [])
+      if (!classes.includes(cls)) gaps.push(`scope ${scope} class ${cls} not selected (user-narrowed run)`);
     const scenarios = classes.map((cls) => {
       const candidates = options.catalog.scenarios
         .filter((s) => s.scope === scope && s.class === cls)
@@ -111,15 +126,29 @@ export function selectScenarios(options: SelectOptions): Selection {
     return { scope, scenarios };
   });
   const selected = result.flatMap((s) => s.scenarios.map((x) => x.id));
-  for (const s of named) if (!selected.includes(s.id)) gaps.push(`scenario ${s.id} not traced (${scopes.includes(s.scope) ? `class ${s.class} already covered` : `scope ${s.scope} not selected`})`);
+  for (const s of named)
+    if (!selected.includes(s.id))
+      gaps.push(
+        `scenario ${s.id} not traced (${scopes.includes(s.scope) ? `class ${s.class} already covered` : `scope ${s.scope} not selected`})`,
+      );
   return { partial: narrowedScopes !== undefined, scopes: result, selected, gaps };
 }
 
-type Ranked = { entry: ScenarioEntry; explicit: boolean; newKind: boolean; risk: number; prior: number; reason: string };
+type Ranked = {
+  entry: ScenarioEntry;
+  explicit: boolean;
+  newKind: boolean;
+  risk: number;
+  prior: number;
+  reason: string;
+};
 
 function rank(entry: ScenarioEntry, explicitIds: Set<string>, usedKinds: Set<string>, options: SelectOptions): Ranked {
-  const leads = (options.risk ?? []).filter((lead) =>
-    lead.scenario === entry.id || (lead.path !== undefined && entry.entries.some((e) => e === lead.path || e.startsWith(`${lead.path}/`))));
+  const leads = (options.risk ?? []).filter(
+    (lead) =>
+      lead.scenario === entry.id ||
+      (lead.path !== undefined && entry.entries.some((e) => e === lead.path || e.startsWith(`${lead.path}/`))),
+  );
   const risk = leads.reduce((sum, lead) => sum + RISK_WEIGHT[lead.kind], 0);
   const prior = options.priorCoverage?.[entry.id] ?? 0;
   const explicit = explicitIds.has(entry.id);
@@ -134,27 +163,33 @@ function rank(entry: ScenarioEntry, explicitIds: Set<string>, usedKinds: Set<str
 }
 
 function compareRanks(a: Ranked, b: Ranked): number {
-  return Number(b.explicit) - Number(a.explicit)
-    || Number(b.newKind) - Number(a.newKind)
-    || b.risk - a.risk
-    || a.prior - b.prior
-    || (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0);
+  return (
+    Number(b.explicit) - Number(a.explicit) ||
+    Number(b.newKind) - Number(a.newKind) ||
+    b.risk - a.risk ||
+    a.prior - b.prior ||
+    (a.entry.id < b.entry.id ? -1 : a.entry.id > b.entry.id ? 1 : 0)
+  );
 }
 
 function validateCatalog(catalog: Catalog, exists: (p: string) => boolean): void {
-  if (catalog.version !== 1) throw new Error(`Scenario catalog: unsupported version ${String(catalog.version)} (expected 1)`);
+  if (catalog.version !== 1)
+    throw new Error(`Scenario catalog: unsupported version ${String(catalog.version)} (expected 1)`);
   const seen = new Set<string>();
   for (const s of catalog.scenarios) {
     if (seen.has(s.id)) throw new Error(`Scenario catalog: duplicate id ${s.id}`);
     seen.add(s.id);
     const classes = SCOPE_CLASSES[s.scope];
     if (!classes) throw new Error(`Scenario catalog: ${s.id} has unknown scope ${s.scope}`);
-    if (!classes.includes(s.class)) throw new Error(`Scenario catalog: ${s.id} has unknown class ${s.class} for scope ${s.scope}`);
+    if (!classes.includes(s.class))
+      throw new Error(`Scenario catalog: ${s.id} has unknown class ${s.class} for scope ${s.scope}`);
     for (const field of ['trigger', 'expectedOutcome', 'startingState'] as const) {
       if (typeof s[field] !== 'string' || !s[field]) throw new Error(`Scenario catalog: ${s.id} lacks ${field}`);
     }
-    if (s.kind !== undefined && !REVIEW_KINDS.includes(s.kind)) throw new Error(`Scenario catalog: ${s.id} has unknown review kind ${s.kind}`);
-    if (!Array.isArray(s.entries) || s.entries.length === 0) throw new Error(`Scenario catalog: ${s.id} has no entry pointers`);
+    if (s.kind !== undefined && !REVIEW_KINDS.includes(s.kind))
+      throw new Error(`Scenario catalog: ${s.id} has unknown review kind ${s.kind}`);
+    if (!Array.isArray(s.entries) || s.entries.length === 0)
+      throw new Error(`Scenario catalog: ${s.id} has no entry pointers`);
     for (const entry of s.entries) {
       // Line numbers drift with every edit; entries name files and auditors locate lines at trace time.
       if (LINE_POINTER.test(entry)) throw new Error(`Scenario catalog: ${s.id} entry ${entry} caches a line number`);
@@ -163,7 +198,8 @@ function validateCatalog(catalog: Catalog, exists: (p: string) => boolean): void
   }
   for (const [scope, classes] of Object.entries(SCOPE_CLASSES)) {
     for (const cls of classes) {
-      if (!catalog.scenarios.some((s) => s.scope === scope && s.class === cls)) throw new Error(`Scenario catalog: no ${scope} scenario for class ${cls}`);
+      if (!catalog.scenarios.some((s) => s.scope === scope && s.class === cls))
+        throw new Error(`Scenario catalog: no ${scope} scenario for class ${cls}`);
     }
   }
 }
@@ -192,18 +228,30 @@ export function buildPackets(selection: Selection, options: { runId: string }): 
  * packets, and an interrupted emit leaves no selection, so rerunning regenerates the same packets idempotently.
  */
 export function emitPackets(
-  workDir: string, selection: Selection, options: { runId: string; writeFile?: (file: string, text: string) => void },
+  workDir: string,
+  selection: Selection,
+  options: { runId: string; writeFile?: (file: string, text: string) => void },
 ): Packet[] {
   const packets = buildPackets(selection, options);
   const write = options.writeFile ?? writeAtomic;
   const dir = path.join(workDir, 'packets');
   fs.mkdirSync(dir, { recursive: true });
-  for (const packet of packets) write(path.join(dir, `${packet.scope}.json`), `${JSON.stringify(packet, null, 2)}
-`);
+  for (const packet of packets)
+    write(
+      path.join(dir, `${packet.scope}.json`),
+      `${JSON.stringify(packet, null, 2)}
+`,
+    );
   updateRun(workDir, (m) => {
     Object.assign(m, { scenarios: { selected: selection.selected, partial: selection.partial, gaps: selection.gaps } });
     for (const packet of packets) {
-      m.scopes[packet.scope] ??= { lifecycle: 'pending', handle: null, budgets: {}, resultPath: packet.findingsPath, gaps: [] };
+      m.scopes[packet.scope] ??= {
+        lifecycle: 'pending',
+        handle: null,
+        budgets: {},
+        resultPath: packet.findingsPath,
+        gaps: [],
+      };
     }
   });
   return packets;
@@ -221,16 +269,28 @@ function writeAtomic(file: string, text: string): void {
 // ============================================================================
 
 function main(argv: string[]): void {
-  const flag = (name: string) => { const i = argv.indexOf(name); return i === -1 ? undefined : argv[i + 1]; };
-  const list = (name: string) => flag(name)?.split(',').map((s) => s.trim()).filter(Boolean);
+  const flag = (name: string) => {
+    const i = argv.indexOf(name);
+    return i === -1 ? undefined : argv[i + 1];
+  };
+  const list = (name: string) =>
+    flag(name)
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
   const runId = flag('--run');
-  if (!runId || !/^\d{4}-\d{2}-\d{2}-\d{4}$/.test(runId)) throw new Error('Missing or malformed --run <yyyy-mm-dd-hhmm>');
+  if (!runId || !/^\d{4}-\d{2}-\d{2}-\d{4}$/.test(runId))
+    throw new Error('Missing or malformed --run <yyyy-mm-dd-hhmm>');
   const workDir = path.join(REPO_ROOT, '.scratch', 'audits', `${runId}-work`);
   const manifest = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: unknown };
-  if (manifest.scenarios) throw new Error(`Run ${runId} already has a scenario selection; reuse packets/ in its work directory.`);
+  if (manifest.scenarios)
+    throw new Error(`Run ${runId} already has a scenario selection; reuse packets/ in its work directory.`);
   const scopes = list('--scopes');
   const scenarios = list('--scenarios');
-  const readJson = (name: string) => { const file = flag(name); return file ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined; };
+  const readJson = (name: string) => {
+    const file = flag(name);
+    return file ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
+  };
   const selection = selectScenarios({
     catalog: loadCatalog(),
     scope: scopes || scenarios ? { scopes, scenarios } : undefined,
@@ -238,8 +298,12 @@ function main(argv: string[]): void {
     priorCoverage: readJson('--prior') as Record<string, number> | undefined,
   });
   emitPackets(workDir, selection, { runId });
-  const lines = selection.scopes.map((s) => `${s.scope}: ${s.scenarios.map((x) => `${x.id} (${x.reason})`).join('; ')}`);
-  process.stdout.write(`${[...lines, `partial: ${selection.partial}`, ...selection.gaps.map((g) => `gap: ${g}`)].join('\n')}\n`);
+  const lines = selection.scopes.map(
+    (s) => `${s.scope}: ${s.scenarios.map((x) => `${x.id} (${x.reason})`).join('; ')}`,
+  );
+  process.stdout.write(
+    `${[...lines, `partial: ${selection.partial}`, ...selection.gaps.map((g) => `gap: ${g}`)].join('\n')}\n`,
+  );
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {

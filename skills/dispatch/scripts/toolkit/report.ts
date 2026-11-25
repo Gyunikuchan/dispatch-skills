@@ -1,9 +1,23 @@
-import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundFile, reviewFindingsFile, reviewGenerationDirectory, reviewRoundNumber } from './review-state.ts';
+import {
+  INTEGRATION_REVIEW,
+  reviewDirectory,
+  reviewRoundFile,
+  reviewFindingsFile,
+  reviewGenerationDirectory,
+  reviewRoundNumber,
+} from './review-state.ts';
 import { reviewIdentity } from './review-identity.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { cleanupBinding, criterionStatusCounts, criterionStatuses, latestCleanup, verifiedStage, type CriterionStatus } from './evidence.ts';
+import {
+  cleanupBinding,
+  criterionStatusCounts,
+  criterionStatuses,
+  latestCleanup,
+  verifiedStage,
+  type CriterionStatus,
+} from './evidence.ts';
 import { git, gitOk, headTree, splitPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration-state.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
@@ -57,11 +71,12 @@ type Snapshot = {
   reviewFixes: ReviewFixReport[];
   testCleanup: WalkthroughView['testCleanup'];
 };
-type ReportFacts = Snapshot & {view: WalkthroughView};
+type ReportFacts = Snapshot & { view: WalkthroughView };
 
 function isDirectory(directory: string): boolean {
-  try { return fs.statSync(directory).isDirectory(); }
-  catch (error) {
+  try {
+    return fs.statSync(directory).isDirectory();
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
@@ -69,35 +84,58 @@ function isDirectory(directory: string): boolean {
 
 function recordForDestination(fold: Fold, integration: LedgerRecord): LedgerRecord | undefined {
   const dest = integration.data['dest'] as { path?: unknown; branch?: unknown } | undefined;
-  return fold.records.findLast((record) => record.kind === 'integrate' && record.data['phase'] === 'delivered' &&
-    record.data['dest']?.path === dest?.path && record.data['dest']?.branch === dest?.branch);
+  return fold.records.findLast(
+    (record) =>
+      record.kind === 'integrate' &&
+      record.data['phase'] === 'delivered' &&
+      record.data['dest']?.path === dest?.path &&
+      record.data['dest']?.branch === dest?.branch,
+  );
 }
 
 function completedReviewHeads(session: string): string[] {
   const root = reviewDirectory(session, INTEGRATION_REVIEW);
   const heads = new Set<string>();
   if (!isDirectory(root)) return [];
-  for (const name of fs.readdirSync(root, {withFileTypes: true})) {
+  for (const name of fs.readdirSync(root, { withFileTypes: true })) {
     if (!name.isDirectory() || reviewRoundNumber(name.name) === undefined) continue;
     const directory = path.join(root, name.name);
     if (!fs.existsSync(reviewFindingsFile(directory))) continue;
-    const round = readReviewJson<{scope?: string; generation?: number; target?: {head?: string}}>(reviewRoundFile(directory));
+    const round = readReviewJson<{ scope?: string; generation?: number; target?: { head?: string } }>(
+      reviewRoundFile(directory),
+    );
     const head = round?.target?.head;
     const generation = round?.generation;
-    if (typeof head !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ||
-        /\(confirmation-only\)/i.test(round?.scope ?? '') ||
-        typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1) continue;
+    if (
+      typeof head !== 'string' ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ||
+      /\(confirmation-only\)/i.test(round?.scope ?? '') ||
+      typeof generation !== 'number' ||
+      !Number.isSafeInteger(generation) ||
+      generation < 1
+    )
+      continue;
     const slots = path.join(reviewGenerationDirectory(directory, generation), 'slots');
-    if (isDirectory(slots) && fs.readdirSync(slots, {withFileTypes: true}).some(file =>
-      file.isFile() && file.name.endsWith('.json') &&
-      readReviewJson<{state?: string}>(path.join(slots, file.name))?.state === 'done')) heads.add(head);
+    if (
+      isDirectory(slots) &&
+      fs
+        .readdirSync(slots, { withFileTypes: true })
+        .some(
+          (file) =>
+            file.isFile() &&
+            file.name.endsWith('.json') &&
+            readReviewJson<{ state?: string }>(path.join(slots, file.name))?.state === 'done',
+        )
+    )
+      heads.add(head);
   }
   return [...heads];
 }
 
 function readReviewJson<T>(file: string): T | undefined {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; }
-  catch (error) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+  } catch (error) {
     if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
@@ -128,63 +166,133 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     }
   }
   const checkRows = checks(plan);
-  const cleanup=cleanupBinding(fold),cleanupRecord=latestCleanup(fold);
-  const fixRecords=fold.records.filter(record=>record.kind==='integrate'&&record.data['phase']==='fix'&&record.data['reviewFix']);
-  let reviewedCodeBaseline:string|undefined;
-  if(fixRecords.length&&integrationPath&&integration&&head&&typeof integration.data['base']==='string') {
+  const cleanup = cleanupBinding(fold),
+    cleanupRecord = latestCleanup(fold);
+  const fixRecords = fold.records.filter(
+    (record) => record.kind === 'integrate' && record.data['phase'] === 'fix' && record.data['reviewFix'],
+  );
+  let reviewedCodeBaseline: string | undefined;
+  if (fixRecords.length && integrationPath && integration && head && typeof integration.data['base'] === 'string') {
     try {
-      reviewedCodeBaseline=(await reviewIdentity(ctx,fold,integrationPath,head,integration.data['base'])).baseline;
-    } catch(error) {
-      if(!(error instanceof ToolError&&error.reason==='review-required'))throw error;
+      reviewedCodeBaseline = (await reviewIdentity(ctx, fold, integrationPath, head, integration.data['base']))
+        .baseline;
+    } catch (error) {
+      if (!(error instanceof ToolError && error.reason === 'review-required')) throw error;
     }
   }
-  const reviewHeads=fixRecords.length?completedReviewHeads(ctx.session):[];
-  const hasCurrentVerification=fixRecords.length&&current&&checkRows.length&&verifiedStage(fold,checkRows,current,cleanup);
-  const reviewFixes:ReviewFixReport[]=[];
-  const repository=ctx.manifest.repositoryRoot;
-  for(const record of fixRecords) {
-    const commit=String(record.data['commit']);
-    const metadata=record.data['reviewFix'] as ReviewFix;
-    const isAncestor=async(target:string)=>(await git(ctx.deps,repository,['merge-base','--is-ancestor',commit,target])).exit===0;
-    let reviewed=false;
-    for(const target of reviewHeads) {
-      if(await isAncestor(target)) { reviewed=true; break; }
+  const reviewHeads = fixRecords.length ? completedReviewHeads(ctx.session) : [];
+  const hasCurrentVerification =
+    fixRecords.length && current && checkRows.length && verifiedStage(fold, checkRows, current, cleanup);
+  const reviewFixes: ReviewFixReport[] = [];
+  const repository = ctx.manifest.repositoryRoot;
+  for (const record of fixRecords) {
+    const commit = String(record.data['commit']);
+    const metadata = record.data['reviewFix'] as ReviewFix;
+    const isAncestor = async (target: string) =>
+      (await git(ctx.deps, repository, ['merge-base', '--is-ancestor', commit, target])).exit === 0;
+    let reviewed = false;
+    for (const target of reviewHeads) {
+      if (await isAncestor(target)) {
+        reviewed = true;
+        break;
+      }
     }
-    const verification=!reviewed&&head&&hasCurrentVerification&&await isAncestor(head)?{
-      tree:current!.headTree,
-      criteria:checkRows.filter(check=>check.criterion!=='contract').map(check=>check.criterion),
-      contract:checkRows.filter(check=>check.criterion==='contract').map(check=>check.criterion),
-    }:undefined;
-    const names=await git(ctx.deps,repository,['diff-tree','--no-commit-id','--name-only','--no-renames','-r','-z',commit]);
+    const verification =
+      !reviewed && head && hasCurrentVerification && (await isAncestor(head))
+        ? {
+            tree: current!.headTree,
+            criteria: checkRows.filter((check) => check.criterion !== 'contract').map((check) => check.criterion),
+            contract: checkRows.filter((check) => check.criterion === 'contract').map((check) => check.criterion),
+          }
+        : undefined;
+    const names = await git(ctx.deps, repository, [
+      'diff-tree',
+      '--no-commit-id',
+      '--name-only',
+      '--no-renames',
+      '-r',
+      '-z',
+      commit,
+    ]);
     reviewFixes.push({
-      commit,reason:String(record.data['reason']),metadata,
-      status:reviewed?'re-reviewed':verification?'verified but not re-reviewed':'not verified',
-      paths:names.exit===0?splitPaths(names.stdout):[],
-      ...(verification?{verification}:{}),
+      commit,
+      reason: String(record.data['reason']),
+      metadata,
+      status: reviewed ? 're-reviewed' : verification ? 'verified but not re-reviewed' : 'not verified',
+      paths: names.exit === 0 ? splitPaths(names.stdout) : [],
+      ...(verification ? { verification } : {}),
     });
   }
   const statusRows = criterionStatuses(fold, checkRows, current, cleanup);
   const delivered = integration ? recordForDestination(fold, integration) : undefined;
   const deliveredAtHead = Boolean(delivered && head && delivered.data['source'] === head);
   const planTaskIds = new Set(plan.tasks.map((task) => task.id));
-  const integrated = new Set(fold.records.flatMap((record) =>
-    record.kind === 'integrate' && record.data['phase'] === 'done' && typeof record.data['task'] === 'string' &&
-      planTaskIds.has(record.data['task']) ? [record.data['task'] as string] : []));
+  const integrated = new Set(
+    fold.records.flatMap((record) =>
+      record.kind === 'integrate' &&
+      record.data['phase'] === 'done' &&
+      typeof record.data['task'] === 'string' &&
+      planTaskIds.has(record.data['task'])
+        ? [record.data['task'] as string]
+        : [],
+    ),
+  );
   const riskToken = plan.box['Risk']?.trim().split(/\s+/, 1)[0];
   const risk = riskToken === 'med' || riskToken === 'high' ? riskToken : 'low';
   const planStem = path.basename(planPath).replace(/\.plan\.md$/i, '') || plan.title || 'walkthrough';
-  let rejectionConfirmations:RejectionState[]=[],confirmationError:string|undefined;
-  try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
-  catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
-  let coverage:WalkthroughView['coverage'];
-  try {coverage=coverageState(ctx.session,fold,INTEGRATION_REVIEW,applicableReviewIds(ctx.manifest,fold).get(INTEGRATION_REVIEW));}
-  catch(error) {if(!(error instanceof ToolError && error.reason==='coverage-required'))throw error;coverage='unreadable';}
+  let rejectionConfirmations: RejectionState[] = [],
+    confirmationError: string | undefined;
+  try {
+    rejectionConfirmations = loadRejections(ctx.session, fold, applicableReviewIds(ctx.manifest, fold));
+  } catch (error) {
+    if (!(error instanceof ToolError && error.reason === 'review-confirmation-required')) throw error;
+    confirmationError = error.message;
+  }
+  let coverage: WalkthroughView['coverage'];
+  try {
+    coverage = coverageState(
+      ctx.session,
+      fold,
+      INTEGRATION_REVIEW,
+      applicableReviewIds(ctx.manifest, fold).get(INTEGRATION_REVIEW),
+    );
+  } catch (error) {
+    if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error;
+    coverage = 'unreadable';
+  }
   return {
-    fold, bind, plan, planPath, planHash, planStem, specPath, specHash, designHash: hashes.design ?? undefined,
+    fold,
+    bind,
+    plan,
+    planPath,
+    planHash,
+    planStem,
+    specPath,
+    specHash,
+    designHash: hashes.design ?? undefined,
     risk,
-    integration, integrationPath, head, current, statuses: statusRows, delivered, deliveredAtHead,
-    integrated: integrated.size,rejectionConfirmations,confirmationError,coverage,reviewedCodeBaseline,reviewFixes,
-    testCleanup: cleanupRecord ? {from:cleanupRecord.data['from'],trees:cleanupRecord.data['trees'],removed:cleanupRecord.data['removed'],deleted:cleanupRecord.data['deleted'],merged:cleanupRecord.data['merged']} : undefined,
+    integration,
+    integrationPath,
+    head,
+    current,
+    statuses: statusRows,
+    delivered,
+    deliveredAtHead,
+    integrated: integrated.size,
+    rejectionConfirmations,
+    confirmationError,
+    coverage,
+    reviewedCodeBaseline,
+    reviewFixes,
+    testCleanup: cleanupRecord
+      ? {
+          from: cleanupRecord.data['from'],
+          trees: cleanupRecord.data['trees'],
+          removed: cleanupRecord.data['removed'],
+          deleted: cleanupRecord.data['deleted'],
+          merged: cleanupRecord.data['merged'],
+        }
+      : undefined,
   };
 }
 
@@ -201,8 +309,11 @@ function parseNameStatus(bytes: string): { status: string; path: string }[] {
 }
 
 function userDataSummary(data: Record<string, unknown>): string {
-  try { return JSON.stringify(data); }
-  catch { return '[unavailable]'; }
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return '[unavailable]';
+  }
 }
 
 /** Joins captured facts with changes and review results to form a rendered report. */
@@ -211,12 +322,18 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   const unplannedPaths: string[] = [];
   if (snapshot.integrationPath && snapshot.integration) {
     const result = await git(ctx.deps, snapshot.integrationPath, [
-      'diff', '--name-status', '--no-renames', '-z', String(snapshot.integration.data['base']), snapshot.head ?? 'HEAD',
+      'diff',
+      '--name-status',
+      '--no-renames',
+      '-z',
+      String(snapshot.integration.data['base']),
+      snapshot.head ?? 'HEAD',
     ]);
     if (result.exit !== 0) throw new ToolError(2, 'fault', result.stderr || result.stdout || 'Git diff failed');
     for (const change of parseNameStatus(result.stdout)) {
       const relative = change.path.replaceAll('\\', '/');
-      const owners = snapshot.plan.tasks.filter((task) => ownedPaths(snapshot.plan, task.id).includes(relative))
+      const owners = snapshot.plan.tasks
+        .filter((task) => ownedPaths(snapshot.plan, task.id).includes(relative))
         .map((task) => ({ id: task.id, title: task.title }));
       if (!owners.length) unplannedPaths.push(relative);
       changes.push({
@@ -228,49 +345,61 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   }
   const root = ctx.manifest.repositoryRoot;
   let bindingAtEdit: LedgerRecord | undefined;
-  const edits = snapshot.fold.records.filter((record) => {
-    if (record.kind === 'bind') bindingAtEdit = record;
-    if (record.kind !== 'edit') return false;
-    const artifact = record.data['artifact'];
-    const bound = bindingAtEdit?.data[artifact];
-    const reported = snapshot.bind.data[artifact];
-    return !!bound && !!reported && path.relative(path.resolve(root, reported), path.resolve(root, bound)) === '';
-  }).map((record) => ({
-    seq: record.seq,
-    artifact: String(record.data['artifact']),
-    class: String(record.data['class']),
-    rationale: String(record.data['rationale']),
-    diffRef: String(record.data['diffRef']),
-    affects: Array.isArray(record.data['affects']) ? record.data['affects'].map(String) : [],
-  }));
+  const edits = snapshot.fold.records
+    .filter((record) => {
+      if (record.kind === 'bind') bindingAtEdit = record;
+      if (record.kind !== 'edit') return false;
+      const artifact = record.data['artifact'];
+      const bound = bindingAtEdit?.data[artifact];
+      const reported = snapshot.bind.data[artifact];
+      return !!bound && !!reported && path.relative(path.resolve(root, reported), path.resolve(root, bound)) === '';
+    })
+    .map((record) => ({
+      seq: record.seq,
+      artifact: String(record.data['artifact']),
+      class: String(record.data['class']),
+      rationale: String(record.data['rationale']),
+      diffRef: String(record.data['diffRef']),
+      affects: Array.isArray(record.data['affects']) ? record.data['affects'].map(String) : [],
+    }));
   const escalations = new Map<string, LedgerRecord>();
-  for (const record of snapshot.fold.records) if (record.kind === 'escalation') escalations.set(String(record.data['id']), record);
-  const openEscalations = [...escalations.values()].filter((record) => record.data['state'] === 'open').map((record) => ({
-    id: String(record.data['id']), summary: String(record.data['summary']),
-  }));
+  for (const record of snapshot.fold.records)
+    if (record.kind === 'escalation') escalations.set(String(record.data['id']), record);
+  const openEscalations = [...escalations.values()]
+    .filter((record) => record.data['state'] === 'open')
+    .map((record) => ({
+      id: String(record.data['id']),
+      summary: String(record.data['summary']),
+    }));
   const deferredEscalations = [...escalations.values()].flatMap((record) => {
     const summary = String(record.data['summary']);
     const id = String(record.data['id']);
-    return record.data['state'] === 'resolved' && id.startsWith('ceiling:') && summary.startsWith('defer:') ? [{ id, summary }] : [];
+    return record.data['state'] === 'resolved' && id.startsWith('ceiling:') && summary.startsWith('defer:')
+      ? [{ id, summary }]
+      : [];
   });
   const rulings = new Map<string, LedgerRecord>();
-  for (const record of snapshot.fold.records) if (record.kind === 'ruling') rulings.set(String(record.data['subject']), record);
+  for (const record of snapshot.fold.records)
+    if (record.kind === 'ruling') rulings.set(String(record.data['subject']), record);
   const deferredRulings = [...rulings.values()].flatMap((record) => {
     const match = /^review:([^:]+):(.+)$/.exec(String(record.data['subject']));
     return record.data['ruling'] === 'deferred' && match ? [{ review: match[1]!, finding: match[2]! }] : [];
   });
-  const userRecords = snapshot.fold.records.filter((record) => record.by === 'user').map((record) => ({
-    seq: record.seq,
-    kind: record.kind,
-    summary: userDataSummary(record.data),
-    quote: record.quote ?? '',
-  }));
-  let review:ReturnType<typeof reviewRows>;
-  try {review=reviewRows(ctx.session,snapshot.fold,snapshot.rejectionConfirmations);}
-  catch(error) {
-    if(!snapshot.confirmationError || !(error instanceof ToolError && error.reason==='review-corrupt'))throw error;
-    snapshot.confirmationError+='; '+error.message;
-    review={rows:[],rounds:[]};
+  const userRecords = snapshot.fold.records
+    .filter((record) => record.by === 'user')
+    .map((record) => ({
+      seq: record.seq,
+      kind: record.kind,
+      summary: userDataSummary(record.data),
+      quote: record.quote ?? '',
+    }));
+  let review: ReturnType<typeof reviewRows>;
+  try {
+    review = reviewRows(ctx.session, snapshot.fold, snapshot.rejectionConfirmations);
+  } catch (error) {
+    if (!snapshot.confirmationError || !(error instanceof ToolError && error.reason === 'review-corrupt')) throw error;
+    snapshot.confirmationError += '; ' + error.message;
+    review = { rows: [], rounds: [] };
   }
   const destBranch = String(snapshot.integration?.data['dest']?.branch ?? '');
   const glance = snapshot.plan.glance;
@@ -285,10 +414,26 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   }
 
   const integrationSeq = snapshot.integration?.seq ?? 0;
-  const proofRecords = snapshot.fold.records.filter(r => r.seq > integrationSeq && r.kind === 'integrate' && r.data['phase'] === 'verification');
+  const proofRecords = snapshot.fold.records.filter(
+    (r) => r.seq > integrationSeq && r.kind === 'integrate' && r.data['phase'] === 'verification',
+  );
   const proof = proofRecords.at(-1);
-  const settled = proofRecords.find(r => r.data['open'].length === 0);
-  const runtimeProof = proof ? {outcome: proof.data['outcome'], head: proof.data['head'], reason: proof.data['reason'], report: proof.data['report'], artifacts: proof.data['artifacts'], dirty: proof.data['dirty'], fixes: settled ? snapshot.fold.records.filter(r => r.seq > settled.seq && r.kind === 'integrate' && r.data['phase'] === 'fix').map(r => ({commit: r.data['commit'], reason: r.data['reason'], beforeLatest: r.seq < proof.seq})) : []} : undefined;
+  const settled = proofRecords.find((r) => r.data['open'].length === 0);
+  const runtimeProof = proof
+    ? {
+        outcome: proof.data['outcome'],
+        head: proof.data['head'],
+        reason: proof.data['reason'],
+        report: proof.data['report'],
+        artifacts: proof.data['artifacts'],
+        dirty: proof.data['dirty'],
+        fixes: settled
+          ? snapshot.fold.records
+              .filter((r) => r.seq > settled.seq && r.kind === 'integrate' && r.data['phase'] === 'fix')
+              .map((r) => ({ commit: r.data['commit'], reason: r.data['reason'], beforeLatest: r.seq < proof.seq }))
+          : [],
+      }
+    : undefined;
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
     specPath: snapshot.specPath,
@@ -296,17 +441,19 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     planPath: snapshot.planPath,
     planHash: snapshot.planHash,
     risk: snapshot.risk,
-    delivered: snapshot.integration ? {
-      integrated: snapshot.integrated,
-      total: snapshot.plan.tasks.length,
-      source: snapshot.delivered?.data['source'] ?? null,
-      branch: destBranch,
-      ref: deliveredSourceRef(ctx.manifest.safeSessionId),
-    } : null,
+    delivered: snapshot.integration
+      ? {
+          integrated: snapshot.integrated,
+          total: snapshot.plan.tasks.length,
+          source: snapshot.delivered?.data['source'] ?? null,
+          branch: destBranch,
+          ref: deliveredSourceRef(ctx.manifest.safeSessionId),
+        }
+      : null,
     glance: glance ? { what: glance.what, visuals: glance.visuals } : null,
     repositoryRoot: ctx.manifest.repositoryRoot,
     ...(typeof designPath === 'string' ? { designPath, designHash: snapshot.designHash ?? 'unavailable' } : {}),
-    ...(runtimeProof ? {runtimeProof} : {}),
+    ...(runtimeProof ? { runtimeProof } : {}),
     visuals,
     focus: focusRecord ? { bullets: focusBullets, ...(focusVisual ? { visual: focusVisual } : {}) } : null,
     tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary })),
@@ -339,27 +486,41 @@ function resultValue(facts: ReportFacts, relativePath: string) {
     deferredEscalations: facts.view.deferredEscalations,
     userRecords: facts.view.userRecords,
     delivered: facts.view.delivered,
-    rejectionConfirmations:facts.rejectionConfirmations,confirmationError:facts.confirmationError,
-    reviewedCodeBaseline:facts.reviewedCodeBaseline,reviewFixes:facts.reviewFixes,
+    rejectionConfirmations: facts.rejectionConfirmations,
+    confirmationError: facts.confirmationError,
+    reviewedCodeBaseline: facts.reviewedCodeBaseline,
+    reviewFixes: facts.reviewFixes,
   };
 }
 
-function publishReport(ctx: HandlerContext, facts: ReportFacts, outcome: 'rendered' | 'complete', diagnostics: boolean): HandlerResult {
+function publishReport(
+  ctx: HandlerContext,
+  facts: ReportFacts,
+  outcome: 'rendered' | 'complete',
+  diagnostics: boolean,
+): HandlerResult {
   const walkthroughPath = path.join(ctx.session, facts.planStem + '.walkthrough.md');
   writePrivateOutput(walkthroughPath, renderWalkthrough(facts.view, ctx.session));
-  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, outcome, {manifest: ctx.manifest, deps: ctx.deps}) : undefined;
+  const diagnosticsPath = diagnostics
+    ? optionalDiagnostics(ctx.session, facts.fold, outcome, { manifest: ctx.manifest, deps: ctx.deps })
+    : undefined;
   const complete = outcome === 'complete';
   const warning = complete && diagnostics ? retroWarning(ctx.session) : undefined;
   const counts = criterionStatusCounts(facts.statuses);
   const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
   const deviations = facts.view.edits.length + facts.view.unplannedPaths.length;
   const summary = `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviations}; user records ${facts.view.userRecords.length}`;
-  const confirmation = !complete && facts.confirmationError ? '; confirmation unavailable: ' + facts.confirmationError : '';
+  const confirmation =
+    !complete && facts.confirmationError ? '; confirmation unavailable: ' + facts.confirmationError : '';
   return {
     ok: true,
     exit: 0,
     summary: (complete ? 'complete: ' : '') + summary + confirmation + (warning ? '; ' + warning : ''),
-    value: { ...resultValue(facts, relative), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}), ...(warning ? {warning} : {}) },
+    value: {
+      ...resultValue(facts, relative),
+      ...(diagnosticsPath ? { diagnostics: diagnosticsPath } : {}),
+      ...(warning ? { warning } : {}),
+    },
     postFold: facts.fold,
   };
 }
@@ -372,18 +533,34 @@ export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> 
 }
 
 function refusal(snapshot: Snapshot): ToolError | null {
-  if(snapshot.confirmationError)return new ToolError(4,'review-confirmation-required',snapshot.confirmationError);
-  if(snapshot.rejectionConfirmations.some(state=>state.state!=='confirmed'))return new ToolError(4,'review-confirmation-required','Rejected MUST findings need explicit reviewer confirmation');
-  if (!snapshot.integration || !snapshot.integrationPath) return new ToolError(4, 'no-integration', 'No integration worktree is available');
+  if (snapshot.confirmationError) return new ToolError(4, 'review-confirmation-required', snapshot.confirmationError);
+  if (snapshot.rejectionConfirmations.some((state) => state.state !== 'confirmed'))
+    return new ToolError(
+      4,
+      'review-confirmation-required',
+      'Rejected MUST findings need explicit reviewer confirmation',
+    );
+  if (!snapshot.integration || !snapshot.integrationPath)
+    return new ToolError(4, 'no-integration', 'No integration worktree is available');
   const missing = snapshot.statuses.filter((status) => status.state === 'missing').map((status) => status.criterion);
   const dirty = snapshot.current !== null && snapshot.current.testedTree !== snapshot.current.headTree;
-  if (missing.length) return new ToolError(4, 'criteria-unmet', `Missing criteria: ${missing.join(', ')}${dirty ? '; dirty checkout (integration tree differs from HEAD tree)' : ''}`);
-  if (!snapshot.deliveredAtHead) return new ToolError(4, 'undelivered', `No delivery record matches integration HEAD ${snapshot.head ?? 'unknown'}`);
+  if (missing.length)
+    return new ToolError(
+      4,
+      'criteria-unmet',
+      `Missing criteria: ${missing.join(', ')}${dirty ? '; dirty checkout (integration tree differs from HEAD tree)' : ''}`,
+    );
+  if (!snapshot.deliveredAtHead)
+    return new ToolError(4, 'undelivered', `No delivery record matches integration HEAD ${snapshot.head ?? 'unknown'}`);
   const risk = snapshot.risk;
   const focus = latest(snapshot.fold, 'focus');
   const bullets = focus?.data['bullets'];
   if ((risk === 'med' || risk === 'high') && (!Array.isArray(bullets) || bullets.length < 3)) {
-    return new ToolError(4, 'focus-required', 'At least three review focus bullets are required for med- or high-risk plans');
+    return new ToolError(
+      4,
+      'focus-required',
+      'At least three review focus bullets are required for med- or high-risk plans',
+    );
   }
   return null;
 }
@@ -405,7 +582,8 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
       value: {
         path: path.relative(ctx.session, walkthroughPath).split(path.sep).join('/'),
         statuses: snapshot.statuses,
-        reviewedCodeBaseline:snapshot.reviewedCodeBaseline,reviewFixes:snapshot.reviewFixes,
+        reviewedCodeBaseline: snapshot.reviewedCodeBaseline,
+        reviewFixes: snapshot.reviewFixes,
         reason: captured.refusal.reason,
         message: captured.refusal.message,
       },

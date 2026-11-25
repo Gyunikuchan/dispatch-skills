@@ -101,10 +101,13 @@ export function foldLedger(session: string): Fold {
 }
 
 export function latest(fold: Fold, kind: string): LedgerRecord | undefined {
-  return fold.records.findLast(record => record.kind === kind);
+  return fold.records.findLast((record) => record.kind === kind);
 }
 
-export function currentSnapshot(root: string, bind: Record<string, any> | LedgerRecord | undefined): { bytes: Partial<Record<ArtifactKind, string | null>>; hashes: Hashes } {
+export function currentSnapshot(
+  root: string,
+  bind: Record<string, any> | LedgerRecord | undefined,
+): { bytes: Partial<Record<ArtifactKind, string | null>>; hashes: Hashes } {
   const hashes: Hashes = {};
   const bytes: Partial<Record<ArtifactKind, string | null>> = {};
   const data = bind && 'data' in bind ? bind.data : bind;
@@ -113,7 +116,7 @@ export function currentSnapshot(root: string, bind: Record<string, any> | Ledger
     bytes[kind as ArtifactKind] = source;
     hashes[kind as ArtifactKind] = source === null ? null : artifactHash(kind as ArtifactKind, source);
   }
-  return {bytes, hashes};
+  return { bytes, hashes };
 }
 
 export function currentHashes(root: string, bind: Record<string, any> | LedgerRecord | undefined): Hashes {
@@ -122,14 +125,22 @@ export function currentHashes(root: string, bind: Record<string, any> | LedgerRe
 
 function content(record: RecordInput | LedgerRecord): string {
   return stableValue({
-    kind: record.kind, by: record.by,
-    ...(record.quote !== undefined ? { quote: record.quote } : {}), data: record.data,
+    kind: record.kind,
+    by: record.by,
+    ...(record.quote !== undefined ? { quote: record.quote } : {}),
+    data: record.data,
   });
 }
 
 type ApprovalChainResult = { allowed: true } | { allowed: false; reason: 'unrecorded-change' | 'intent-change' };
-function approvalChain(fold: Fold, artifact: string, approved: string, current: string | null | undefined, approvalSeq?: number): ApprovalChainResult {
-  const edits = fold.records.filter(row => row.kind === 'edit' && row.data['artifact'] === artifact);
+function approvalChain(
+  fold: Fold,
+  artifact: string,
+  approved: string,
+  current: string | null | undefined,
+  approvalSeq?: number,
+): ApprovalChainResult {
+  const edits = fold.records.filter((row) => row.kind === 'edit' && row.data['artifact'] === artifact);
   const walk = (start: string, rows: readonly LedgerRecord[]) => {
     let hash = start;
     for (const edit of rows) {
@@ -139,10 +150,10 @@ function approvalChain(fold: Fold, artifact: string, approved: string, current: 
     }
     return { allowed: true as const, hash };
   };
-  const before = approvalSeq === undefined ? edits : edits.filter(row => row.seq < approvalSeq);
+  const before = approvalSeq === undefined ? edits : edits.filter((row) => row.seq < approvalSeq);
   const baselines = [approved];
   // Earlier edit history is unrelated when a later recorded edit starts from the approved hash.
-  const chainStart = before.findLastIndex(edit => edit.data['before'] === approved);
+  const chainStart = before.findLastIndex((edit) => edit.data['before'] === approved);
   if (chainStart >= 0) {
     const chain = walk(approved, before.slice(chainStart));
     if (chain.allowed && chain.hash !== approved) baselines.push(chain.hash);
@@ -153,7 +164,7 @@ function approvalChain(fold: Fold, artifact: string, approved: string, current: 
       : { allowed: false, reason: 'unrecorded-change' };
   }
 
-  const after = edits.filter(row => row.seq > approvalSeq);
+  const after = edits.filter((row) => row.seq > approvalSeq);
   let baselineOneFailure: ApprovalChainResult | undefined;
   for (const baseline of baselines) {
     const chain = walk(baseline, after);
@@ -172,23 +183,42 @@ const CORRECTED_SUBJECT = /^review:([A-Za-z0-9][A-Za-z0-9._-]*):(R(\d+)-(?:F|RED
 /** Refuses a severity correction the stored finding or earlier rulings cannot support; fails closed when the finding is unreadable. */
 function checkCorrection(session: string, fold: Fold, data: Record<string, any>): void {
   if (data['impact'] === undefined) return;
-  const refuse = (why: string): never => { throw new ToolError(1, 'invalid-record', 'severity correction refused: ' + why); };
+  const refuse = (why: string): never => {
+    throw new ToolError(1, 'invalid-record', 'severity correction refused: ' + why);
+  };
   const match = CORRECTED_SUBJECT.exec(data['subject']);
-  if (!match || match[1]!.includes('..')) refuse('data.subject must be review:<review>:<finding> with a finding ID such as R1-F001');
+  if (!match || match[1]!.includes('..'))
+    refuse('data.subject must be review:<review>:<finding> with a finding ID such as R1-F001');
   const reviews = path.resolve(reviewRoot(session));
   const file = path.resolve(reviewFindingsFile(reviewRoundDirectory(reviewDirectory(session, match![1]!), match![3]!)));
   if (path.relative(reviews, file).startsWith('..')) refuse('data.subject resolves outside the session reviews');
   let finding: Record<string, any> | undefined;
-  try { finding = JSON.parse(fs.readFileSync(file, 'utf8')).findings.find((row: any) => row?.id === match![2]); } catch { /* Absent and unreadable findings refuse alike. */ }
-  if (!finding) refuse('stored finding ' + match![2] + " is absent or unreadable. Use a finding listed in that round's findings.json.");
-  if (!IMPACTS.includes(finding!['impact']) || !TRIGGERS.includes(finding!['trigger'])) refuse('finding ' + match![2] + ' has no stored impact and trigger to correct');
-  const current: Record<string, any> = currentRating(finding as never, fold.records.filter(row => row.kind === 'ruling' && row.data['subject'] === data['subject']));
+  try {
+    finding = JSON.parse(fs.readFileSync(file, 'utf8')).findings.find((row: any) => row?.id === match![2]);
+  } catch {
+    /* Absent and unreadable findings refuse alike. */
+  }
+  if (!finding)
+    refuse(
+      'stored finding ' + match![2] + " is absent or unreadable. Use a finding listed in that round's findings.json.",
+    );
+  if (!IMPACTS.includes(finding!['impact']) || !TRIGGERS.includes(finding!['trigger']))
+    refuse('finding ' + match![2] + ' has no stored impact and trigger to correct');
+  const current: Record<string, any> = currentRating(
+    finding as never,
+    fold.records.filter((row) => row.kind === 'ruling' && row.data['subject'] === data['subject']),
+  );
   const currentSummary = `; current: impact=${current['impact']}, trigger=${current['trigger']}`;
-  if (current['impact'] === 'critical' && data['impact'] !== 'critical') refuse('a critical impact cannot be lowered by correction; rule the finding rejected, which needs reviewer confirmation' + currentSummary);
-  const changed = ['impact', 'trigger'].filter(dimension => current[dimension] !== data[dimension]);
+  if (current['impact'] === 'critical' && data['impact'] !== 'critical')
+    refuse(
+      'a critical impact cannot be lowered by correction; rule the finding rejected, which needs reviewer confirmation' +
+        currentSummary,
+    );
+  const changed = ['impact', 'trigger'].filter((dimension) => current[dimension] !== data[dimension]);
   if (!changed.length) refuse('the corrected rating is unchanged' + currentSummary);
-  const unnamed = changed.filter(dimension => !new RegExp('\\b' + dimension + '\\b', 'i').test(data['rationale']));
-  if (unnamed.length) refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', ') + currentSummary);
+  const unnamed = changed.filter((dimension) => !new RegExp('\\b' + dimension + '\\b', 'i').test(data['rationale']));
+  if (unnamed.length)
+    refuse('data.rationale must name each changed dimension; missing: ' + unnamed.join(', ') + currentSummary);
 }
 
 type PreparedRecord = { record: RecordInput; key: string } | { seq: number; deduped: true };
@@ -196,9 +226,10 @@ type PreparedRecord = { record: RecordInput; key: string } | { seq: number; dedu
 function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRecord {
   const record = validateRecord(input) as RecordInput;
   const key = record.key ?? defaultKey(record);
-  const existing = fold.records.find(row => row.key === key);
+  const existing = fold.records.find((row) => row.key === key);
   if (existing) {
-    if (content(existing) !== content(record)) throw new ToolError(2, 'key-conflict', 'key ' + key + ' has different content');
+    if (content(existing) !== content(record))
+      throw new ToolError(2, 'key-conflict', 'key ' + key + ' has different content');
     return { seq: existing.seq, deduped: true };
   }
   if (record.kind === 'ruling') checkCorrection(session, fold, record.data);
@@ -216,28 +247,58 @@ function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRec
       try {
         const target = fs.realpathSync(path.resolve(root, relative));
         const remainder = path.relative(realRoot, target);
-        contained = remainder !== '..' && !remainder.startsWith('..' + path.sep) && !path.isAbsolute(remainder) && fs.statSync(target).isFile();
-      } catch { /* Missing or unreadable targets fail the same bind check. */ }
-      if (path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.split(/[\\/]/).includes('..') || !contained) {
+        contained =
+          remainder !== '..' &&
+          !remainder.startsWith('..' + path.sep) &&
+          !path.isAbsolute(remainder) &&
+          fs.statSync(target).isFile();
+      } catch {
+        /* Missing or unreadable targets fail the same bind check. */
+      }
+      if (
+        path.isAbsolute(relative) ||
+        path.win32.isAbsolute(relative) ||
+        relative.split(/[\\/]/).includes('..') ||
+        !contained
+      ) {
         throw new ToolError(1, 'invalid-record', 'data.' + kind + ' must name a contained existing file');
       }
     }
   }
   if (record.kind === 'approval') {
-    if (!bind) throw new ToolError(1, 'invalid-record', 'approval needs bound artifacts; append a bind record (data: an object with spec, plan?, design?) first. Currently bound artifact kinds: none.');
+    if (!bind)
+      throw new ToolError(
+        1,
+        'invalid-record',
+        'approval needs bound artifacts; append a bind record (data: an object with spec, plan?, design?) first. Currently bound artifact kinds: none.',
+      );
     const hashes = currentHashes(root, bind);
     const artifacts = Object.keys(bind.data).sort();
     const approvedArtifacts = Object.keys(record.data).sort();
-    if (stableValue(artifacts) !== stableValue(approvedArtifacts) || artifacts.some(artifact =>
-      !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed)) {
-      const current = Object.entries(hashes).map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`).join('; ');
-      throw new ToolError(1, 'approval-stale', 'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''));
+    if (
+      stableValue(artifacts) !== stableValue(approvedArtifacts) ||
+      artifacts.some(
+        (artifact) => !approvalChain(fold, artifact, record.data[artifact], hashes[artifact as ArtifactKind]).allowed,
+      )
+    ) {
+      const current = Object.entries(hashes)
+        .map(([artifact, hash]) => `current: ${artifact} ${hash ?? 'null'}`)
+        .join('; ');
+      throw new ToolError(
+        1,
+        'approval-stale',
+        'approval hashes differ from current bound artifacts' + (current ? '; ' + current : ''),
+      );
     }
   }
   if (record.kind === 'edit' && !Object.hasOwn(bind?.data ?? {}, record.data['artifact'])) {
     const boundKinds = Object.keys(bind?.data ?? {}).sort();
     const boundSummary = boundKinds.length ? boundKinds.join(', ') : 'none';
-    throw new ToolError(1, 'invalid-record', `data.artifact "${record.data['artifact']}" is not bound; append a bind record that includes it first. Currently bound artifact kinds: ${boundSummary}.`);
+    throw new ToolError(
+      1,
+      'invalid-record',
+      `data.artifact "${record.data['artifact']}" is not bound; append a bind record that includes it first. Currently bound artifact kinds: ${boundSummary}.`,
+    );
   }
   return { record, key };
 }
@@ -245,9 +306,17 @@ function prepareRecord(session: string, fold: Fold, input: unknown): PreparedRec
 // Reopen by path so a truncation made through a different descriptor is durable; directory sync is best effort.
 function syncPath(file: string, directory = false): void {
   let handle: number;
-  try { handle = fs.openSync(file, directory ? 'r' : 'r+'); }
-  catch { if (directory) return; handle = fs.openSync(file, 'a'); }
-  try { fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
+  try {
+    handle = fs.openSync(file, directory ? 'r' : 'r+');
+  } catch {
+    if (directory) return;
+    handle = fs.openSync(file, 'a');
+  }
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
 }
 
 function recoverTorn(session: string, fold: Fold): void {
@@ -269,12 +338,20 @@ type AppendRecordsOptions = {
 };
 
 // Body first without the final newline keeps an un-fsynced batch hidden from unlocked readers; the marker records its extent.
-function writeRecords(session: string, fold: Fold, toWrite: readonly LedgerRecord[], options?: AppendRecordsOptions): void {
+function writeRecords(
+  session: string,
+  fold: Fold,
+  toWrite: readonly LedgerRecord[],
+  options?: AppendRecordsOptions,
+): void {
   const file = ledgerPath(session);
   recoverTorn(session, fold);
   const baseSize = fs.existsSync(file) ? fs.statSync(file).size : 0;
   const batchEndSeq = toWrite.at(-1)!.seq;
-  const fullBuf = Buffer.from(toWrite.map(record => JSON.stringify(toWrite.length > 1 ? { ...record, batchEndSeq } : record) + '\n').join(''), 'utf8');
+  const fullBuf = Buffer.from(
+    toWrite.map((record) => JSON.stringify(toWrite.length > 1 ? { ...record, batchEndSeq } : record) + '\n').join(''),
+    'utf8',
+  );
   const bodyBuf = fullBuf.subarray(0, fullBuf.length - 1);
   const finalNewline = fullBuf.subarray(fullBuf.length - 1);
   let handle: number | undefined;
@@ -291,30 +368,47 @@ function writeRecords(session: string, fold: Fold, toWrite: readonly LedgerRecor
     fs.fsyncSync(handle);
   } catch (error) {
     if (handle !== undefined) {
-      try { fs.closeSync(handle); } catch { /* Preserve the write failure. */ }
+      try {
+        fs.closeSync(handle);
+      } catch {
+        /* Preserve the write failure. */
+      }
       handle = undefined;
     }
     try {
       fs.truncateSync(file, baseSize);
       syncPath(file);
       if (process.platform !== 'win32') syncPath(session, true);
-    } catch { /* Preserve the write failure; truncation is attempted by path first. */ }
+    } catch {
+      /* Preserve the write failure; truncation is attempted by path first. */
+    }
     throw error;
   } finally {
     if (handle !== undefined) fs.closeSync(handle);
   }
 }
 
-export type LedgerTransaction = {fold: Fold; append: (input: unknown) => Promise<{seq: number; deduped: boolean}>};
-export async function appendRecord(session: string, input: unknown, deps: LockDeps, options?: AppendRecordsOptions): Promise<{ seq: number; deduped: boolean }> {
+export type LedgerTransaction = { fold: Fold; append: (input: unknown) => Promise<{ seq: number; deduped: boolean }> };
+export async function appendRecord(
+  session: string,
+  input: unknown,
+  deps: LockDeps,
+  options?: AppendRecordsOptions,
+): Promise<{ seq: number; deduped: boolean }> {
   if (Array.isArray(input)) throw new ToolError(1, 'invalid-record', 'record must be a JSON object');
   const { seq, deduped } = await appendRecords(session, input, deps, options);
   return { seq, deduped };
 }
-export async function appendRecords(session: string, input: unknown, deps: LockDeps, options?: AppendRecordsOptions): Promise<AppendResult> {
+export async function appendRecords(
+  session: string,
+  input: unknown,
+  deps: LockDeps,
+  options?: AppendRecordsOptions,
+): Promise<AppendResult> {
   return withLedger(session, 'ledger append', deps, async ({ fold }) => {
     const items = Array.isArray(input) ? input : [input];
-    if (Array.isArray(input) && items.length === 0) throw new ToolError(1, 'invalid-record', 'record batch must be a non-empty array');
+    if (Array.isArray(input) && items.length === 0)
+      throw new ToolError(1, 'invalid-record', 'record batch must be a non-empty array');
     const working: Fold = { records: [...fold.records], lastSeq: fold.lastSeq, torn: fold.torn };
     const results: { seq: number; deduped: boolean }[] = [];
     const toWrite: LedgerRecord[] = [];
@@ -326,7 +420,12 @@ export async function appendRecords(session: string, input: unknown, deps: LockD
         results.push({ seq: prepared.seq, deduped: true });
         continue;
       }
-      const stored: LedgerRecord = { ...prepared.record, key: prepared.key, seq: working.lastSeq + 1, at: new Date(deps.clock()).toISOString() };
+      const stored: LedgerRecord = {
+        ...prepared.record,
+        key: prepared.key,
+        seq: working.lastSeq + 1,
+        at: new Date(deps.clock()).toISOString(),
+      };
       working.records.push(stored);
       working.lastSeq = stored.seq;
       toWrite.push(stored);
@@ -337,40 +436,53 @@ export async function appendRecords(session: string, input: unknown, deps: LockD
     fold.lastSeq = working.lastSeq;
     options?.onCommit?.(fold);
     return Array.isArray(input)
-      ? { seq: results.at(-1)!.seq, deduped: results.every(row => row.deduped), count: items.length, results }
+      ? { seq: results.at(-1)!.seq, deduped: results.every((row) => row.deduped), count: items.length, results }
       : { seq: results[0]!.seq, deduped: results[0]!.deduped };
   });
 }
-export async function withPostFold<T extends object>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T & { postFold: Fold }> {
-  return withLedger(session, tool, deps, async tx => ({ ...await fn(tx), postFold: tx.fold }));
+export async function withPostFold<T extends object>(
+  session: string,
+  tool: string,
+  deps: LockDeps,
+  fn: (tx: LedgerTransaction) => Promise<T>,
+): Promise<T & { postFold: Fold }> {
+  return withLedger(session, tool, deps, async (tx) => ({ ...(await fn(tx)), postFold: tx.fold }));
 }
 
-export async function withLedger<T>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
-  return withLock(session, tool, deps, async broken => {
+export async function withLedger<T>(
+  session: string,
+  tool: string,
+  deps: LockDeps,
+  fn: (tx: LedgerTransaction) => Promise<T>,
+): Promise<T> {
+  return withLock(session, tool, deps, async (broken) => {
     const fold = foldLedger(session);
     const append = async (input: unknown) => {
-    const prepared = prepareRecord(session, fold, input);
-    if ('deduped' in prepared) return { seq: prepared.seq, deduped: true };
-    const file = ledgerPath(session);
-    recoverTorn(session, fold);
-    const handle = fs.openSync(file, 'a');
-    try {
-      const seq = fold.lastSeq + 1;
-      const stored = { ...prepared.record, key: prepared.key, seq, at: new Date(deps.clock()).toISOString() };
-      fs.writeSync(handle, JSON.stringify(stored) + '\n');
-      fs.fsyncSync(handle);
-      fold.records.push(stored);
-      fold.lastSeq = seq;
-      return { seq, deduped: false };
-    } finally {
-      fs.closeSync(handle);
-    }
+      const prepared = prepareRecord(session, fold, input);
+      if ('deduped' in prepared) return { seq: prepared.seq, deduped: true };
+      const file = ledgerPath(session);
+      recoverTorn(session, fold);
+      const handle = fs.openSync(file, 'a');
+      try {
+        const seq = fold.lastSeq + 1;
+        const stored = { ...prepared.record, key: prepared.key, seq, at: new Date(deps.clock()).toISOString() };
+        fs.writeSync(handle, JSON.stringify(stored) + '\n');
+        fs.fsyncSync(handle);
+        fold.records.push(stored);
+        fold.lastSeq = seq;
+        return { seq, deduped: false };
+      } finally {
+        fs.closeSync(handle);
+      }
     };
-    if (broken) await append({
-      kind: 'note', key: 'stale-lock:' + broken.host + ':' + broken.pid + ':' + broken.at, by: 'tool',
-      data: {text: 'Broke stale lock from pid ' + broken.pid + ' on ' + broken.host},
-    });
-    return fn({fold,append});
+    if (broken)
+      await append({
+        kind: 'note',
+        key: 'stale-lock:' + broken.host + ':' + broken.pid + ':' + broken.at,
+        by: 'tool',
+        data: { text: 'Broke stale lock from pid ' + broken.pid + ' on ' + broken.host },
+      });
+    return fn({ fold, append });
   });
 }
 
@@ -392,24 +504,49 @@ export function containedSessionPath(session: string, relative: string): string 
 const reportDigest = (bytes: Buffer): string => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
 const zeroCleanup = (value: unknown): boolean => {
   const report = value as Record<string, unknown> | null;
-  return !!report && typeof report === 'object' && Object.keys(report).sort().join() === 'deleted,merged,removed' &&
-    Array.isArray(report['removed']) && report['removed'].length === 0 && report['deleted'] === 0 && report['merged'] === 0;
+  return (
+    !!report &&
+    typeof report === 'object' &&
+    Object.keys(report).sort().join() === 'deleted,merged,removed' &&
+    Array.isArray(report['removed']) &&
+    report['removed'].length === 0 &&
+    report['deleted'] === 0 &&
+    report['merged'] === 0
+  );
 };
 const cleanupPaths = async (deps: GitDeps, cwd: string, base: string, head: string): Promise<string[]> =>
-  base === head ? [] : (await gitPaths(deps, cwd, ['diff', '--name-only', '--no-renames', '-z', base, head, '--'])).sort();
+  base === head
+    ? []
+    : (await gitPaths(deps, cwd, ['diff', '--name-only', '--no-renames', '-z', base, head, '--'])).sort();
 const cleanCheckout = async (deps: GitDeps, cwd: string): Promise<boolean> =>
   !(await gitOk(deps, cwd, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all']));
 
-export async function appendCleanupCheckpoint(session: string, mode: unknown, value: unknown, deps: GitDeps & LockDeps) {
+export async function appendCleanupCheckpoint(
+  session: string,
+  mode: unknown,
+  value: unknown,
+  deps: GitDeps & LockDeps,
+) {
   const input = value as Record<string, unknown> | null;
-  if ((mode !== 'skip' && mode !== 'zero') || !input || typeof input !== 'object' ||
-      Object.keys(input).sort().join() !== (mode === 'skip' ? 'head' : 'head,report') ||
-      !gitObjectId(input['head']) || (mode === 'zero' && !zeroCleanup(input['report'])))
+  if (
+    (mode !== 'skip' && mode !== 'zero') ||
+    !input ||
+    typeof input !== 'object' ||
+    Object.keys(input).sort().join() !== (mode === 'skip' ? 'head' : 'head,report') ||
+    !gitObjectId(input['head']) ||
+    (mode === 'zero' && !zeroCleanup(input['report']))
+  )
     throw new ToolError(1, 'invalid-input', 'Cleanup requires skip {head} or zero {head,report} with zero counts');
-  return withLedger(session, 'ledger append', deps, async ({fold, append}) => {
+  return withLedger(session, 'ledger append', deps, async ({ fold, append }) => {
     const opened = integrationRecord(fold);
-    if (!opened || !gitObjectId(opened.data['base']) ||
-        fold.records.some(row => row.seq > opened.seq && row.kind === 'integrate' && ['closed', 'delivered'].includes(row.data['phase'])))
+    if (
+      !opened ||
+      !gitObjectId(opened.data['base']) ||
+      fold.records.some(
+        (row) =>
+          row.seq > opened.seq && row.kind === 'integrate' && ['closed', 'delivered'].includes(row.data['phase']),
+      )
+    )
       throw new ToolError(4, 'nothing-to-review', 'No open integration checkout');
     const cwd = containedSessionPath(session, opened.data['path']);
     const head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
@@ -418,40 +555,68 @@ export async function appendCleanupCheckpoint(session: string, mode: unknown, va
     const tree = await gitOk(deps, cwd, ['rev-parse', head + '^{tree}']);
     if (!gitObjectId(tree)) throw new ToolError(2, 'fault', 'Cannot establish the integration tree');
     const paths = mode === 'skip' ? await cleanupPaths(deps, cwd, opened.data['base'], head) : undefined;
-    if (head !== await gitOk(deps, cwd, ['rev-parse', 'HEAD']) || !await cleanCheckout(deps, cwd))
+    if (head !== (await gitOk(deps, cwd, ['rev-parse', 'HEAD'])) || !(await cleanCheckout(deps, cwd)))
       throw new ToolError(4, 'target-moved', 'Cleanup requires the current clean integration HEAD');
-    let proof: {paths: string[]} | {reportDigest: string};
-    if (paths) proof = {paths};
+    let proof: { paths: string[] } | { reportDigest: string };
+    if (paths) proof = { paths };
     else {
       const report = path.join(containedSessionPath(session, '.state'), 'test-cleanup.json');
-      atomic(report, {removed: [], deleted: 0, merged: 0});
-      proof = {reportDigest: reportDigest(fs.readFileSync(report))};
+      atomic(report, { removed: [], deleted: 0, merged: 0 });
+      proof = { reportDigest: reportDigest(fs.readFileSync(report)) };
     }
-    const result = await append({kind: 'note', by: 'tool', key: `test-cleanup:${mode}:${opened.seq}:${head}`,
-      data: {text: JSON.stringify({openingSeq: opened.seq, head, tree, ...proof})}});
-    return {result, fold};
+    const result = await append({
+      kind: 'note',
+      by: 'tool',
+      key: `test-cleanup:${mode}:${opened.seq}:${head}`,
+      data: { text: JSON.stringify({ openingSeq: opened.seq, head, tree, ...proof }) },
+    });
+    return { result, fold };
   });
 }
 
-export async function hasCleanupCheckpoint(session: string, fold: Fold, deps: GitDeps, cwd: string, head: string): Promise<boolean> {
+export async function hasCleanupCheckpoint(
+  session: string,
+  fold: Fold,
+  deps: GitDeps,
+  cwd: string,
+  head: string,
+): Promise<boolean> {
   const opened = integrationRecord(fold);
   if (!opened) return false;
   try {
-    const row = fold.records.findLast(row => row.seq > opened.seq && row.by === 'tool' && (
-      row.kind === 'integrate' && row.data['phase'] === 'test-cleanup' &&
-        (row.data['removed'].length || row.data['deleted'] || row.data['merged']) ||
-      row.kind === 'note' && CLEANUP_KEY.exec(row.key)?.[2] === String(opened.seq)));
+    const row = fold.records.findLast(
+      (row) =>
+        row.seq > opened.seq &&
+        row.by === 'tool' &&
+        ((row.kind === 'integrate' &&
+          row.data['phase'] === 'test-cleanup' &&
+          (row.data['removed'].length || row.data['deleted'] || row.data['merged'])) ||
+          (row.kind === 'note' && CLEANUP_KEY.exec(row.key)?.[2] === String(opened.seq))),
+    );
     if (!row) return false;
     const checkpoint = row.kind === 'note' ? CLEANUP_KEY.exec(row.key)?.[3] : row.data['to'];
-    if (!gitObjectId(checkpoint) || !gitObjectId(head) || !await cleanCheckout(deps, cwd) ||
-        (await git(deps, cwd, ['merge-base', '--is-ancestor', checkpoint, head])).exit !== 0) return false;
+    if (
+      !gitObjectId(checkpoint) ||
+      !gitObjectId(head) ||
+      !(await cleanCheckout(deps, cwd)) ||
+      (await git(deps, cwd, ['merge-base', '--is-ancestor', checkpoint, head])).exit !== 0
+    )
+      return false;
     if (row.kind !== 'note') return true;
     const proof = JSON.parse(row.data['text']);
-    if (proof?.openingSeq !== opened.seq || proof.head !== checkpoint || !gitObjectId(proof.tree) ||
-        proof.tree !== await gitOk(deps, cwd, ['rev-parse', checkpoint + '^{tree}'])) return false;
+    if (
+      proof?.openingSeq !== opened.seq ||
+      proof.head !== checkpoint ||
+      !gitObjectId(proof.tree) ||
+      proof.tree !== (await gitOk(deps, cwd, ['rev-parse', checkpoint + '^{tree}']))
+    )
+      return false;
     if (CLEANUP_KEY.exec(row.key)?.[1] === 'skip') {
-      return gitObjectId(opened.data['base']) && Array.isArray(proof.paths) &&
-        JSON.stringify(proof.paths) === JSON.stringify(await cleanupPaths(deps, cwd, opened.data['base'], checkpoint));
+      return (
+        gitObjectId(opened.data['base']) &&
+        Array.isArray(proof.paths) &&
+        JSON.stringify(proof.paths) === JSON.stringify(await cleanupPaths(deps, cwd, opened.data['base'], checkpoint))
+      );
     }
     const bytes = fs.readFileSync(containedSessionPath(session, CLEANUP_REPORT));
     return proof.reportDigest === reportDigest(bytes) && zeroCleanup(JSON.parse(bytes.toString('utf8')));
@@ -466,20 +631,24 @@ export async function appendLintEdit(
   fields: { class: string; affects: string[]; rationale: string; diffRef: string; before?: string },
   deps: LockDeps,
 ) {
-  return withLedger(session, 'lint run', deps, async tx => {
+  return withLedger(session, 'lint run', deps, async (tx) => {
     const repositoryRoot = readManifest(session).repositoryRoot;
     const value = lintArtifact(artifactPath, { repositoryRoot });
     if (value.errors.length) return { value };
     const { kind: artifact, hash: after } = value;
-    if (!artifact || artifact === 'context') throw new ToolError(1, 'invalid-input', '--edit cannot record a context map');
+    if (!artifact || artifact === 'context')
+      throw new ToolError(1, 'invalid-input', '--edit cannot record a context map');
     const bound = latest(tx.fold, 'bind')?.data[artifact] as string | undefined;
     if (!bound) throw new ToolError(1, 'invalid-record', 'Artifact kind is not bound: ' + artifact);
     const boundPath = path.resolve(repositoryRoot, bound);
     let isBoundPath = false;
     try {
       isBoundPath = path.relative(fs.realpathSync(boundPath), fs.realpathSync(artifactPath)) === '';
-    } catch { /* A missing or unreadable path cannot match the binding. */ }
-    if (!isBoundPath) throw new ToolError(1, 'invalid-record', 'Linted path must match the bound ' + artifact + ' path: ' + bound);
+    } catch {
+      /* A missing or unreadable path cannot match the binding. */
+    }
+    if (!isBoundPath)
+      throw new ToolError(1, 'invalid-record', 'Linted path must match the bound ' + artifact + ' path: ' + bound);
 
     let matchingBinding = false;
     let editCount = 0;
@@ -503,18 +672,28 @@ export async function appendLintEdit(
       }
     }
     const before = explicitBefore ?? (previous?.data['after'] as string | undefined);
-    if (before === undefined) throw new ToolError(1, 'invalid-input', '--edit requires before for the first ' + artifact + ' edit at the bound path');
+    if (before === undefined)
+      throw new ToolError(
+        1,
+        'invalid-input',
+        '--edit requires before for the first ' + artifact + ' edit at the bound path',
+      );
     if (before === after) throw new ToolError(1, 'no-change', 'Lint hash equals before for ' + artifact);
     const appended = await tx.append({
-      kind: 'edit', by: 'orchestrator', key: `lint-edit:${artifact}:${editCount + 1}`,
+      kind: 'edit',
+      by: 'orchestrator',
+      key: `lint-edit:${artifact}:${editCount + 1}`,
       data: { artifact, before, after, ...details },
     });
     return { value, edit: { ...appended, before, after } };
   });
 }
 
-export function queryLedger(fold: Fold, filter: { kind?: unknown; key?: unknown; since?: unknown } = {}): LedgerRecord[] {
-  if (filter.kind !== undefined && !KINDS.includes(filter.kind as typeof KINDS[number])) {
+export function queryLedger(
+  fold: Fold,
+  filter: { kind?: unknown; key?: unknown; since?: unknown } = {},
+): LedgerRecord[] {
+  if (filter.kind !== undefined && !KINDS.includes(filter.kind as (typeof KINDS)[number])) {
     throw new ToolError(1, 'invalid-input', `filter.kind must be one of: ${KINDS.join(', ')}.`);
   }
   let since = 0;
@@ -527,9 +706,12 @@ export function queryLedger(fold: Fold, filter: { kind?: unknown; key?: unknown;
       throw new ToolError(1, 'invalid-input', 'filter.since must be a nonnegative safe integer.');
     }
   }
-  return fold.records.filter(row =>
-    (filter.kind === undefined || row.kind === filter.kind) &&
-    (filter.key === undefined || row.key === filter.key) && row.seq > since);
+  return fold.records.filter(
+    (row) =>
+      (filter.kind === undefined || row.kind === filter.kind) &&
+      (filter.key === undefined || row.key === filter.key) &&
+      row.seq > since,
+  );
 }
 
 export function levelGate(fold: Fold, level?: string): { allowed: boolean; reason?: string } {
@@ -545,13 +727,21 @@ export function levelGate(fold: Fold, level?: string): { allowed: boolean; reaso
 // Fail closed: a missing spec hash or confirm record cannot match, so the spec is never implicitly confirmed.
 export function confirmGate(fold: Fold, specHash: string | null | undefined): { allowed: boolean; reason?: string } {
   const confirmed = latest(fold, 'confirm')?.data['spec'];
-  if (typeof specHash !== 'string' || typeof confirmed !== 'string' || !approvalChain(fold, 'spec', confirmed, specHash).allowed) {
+  if (
+    typeof specHash !== 'string' ||
+    typeof confirmed !== 'string' ||
+    !approvalChain(fold, 'spec', confirmed, specHash).allowed
+  ) {
     return { allowed: false, reason: 'missing-confirmation' };
   }
   return { allowed: true };
 }
 
-export function gate(fold: Fold, current: Hashes, level?: string): { allowed: boolean; reason?: string; artifact?: string } {
+export function gate(
+  fold: Fold,
+  current: Hashes,
+  level?: string,
+): { allowed: boolean; reason?: string; artifact?: string } {
   const decision = levelGate(fold, level);
   if (!decision.allowed) return decision;
   const confirmation = confirmGate(fold, current.spec);
@@ -561,11 +751,17 @@ export function gate(fold: Fold, current: Hashes, level?: string): { allowed: bo
   const approval = latest(fold, 'approval');
   const bind = latest(fold, 'bind');
   const artifacts = Object.keys(bind?.data ?? current);
-  if (!approval || artifacts.some(kind => !Object.hasOwn(approval.data, kind))) {
+  if (!approval || artifacts.some((kind) => !Object.hasOwn(approval.data, kind))) {
     return { allowed: false, reason: 'missing-approval' };
   }
   for (const artifact of artifacts) {
-    const chain = approvalChain(fold, artifact, approval.data[artifact], current[artifact as ArtifactKind], approval.seq);
+    const chain = approvalChain(
+      fold,
+      artifact,
+      approval.data[artifact],
+      current[artifact as ArtifactKind],
+      approval.seq,
+    );
     if (!chain.allowed) return { ...chain, artifact };
   }
   return { allowed: true };

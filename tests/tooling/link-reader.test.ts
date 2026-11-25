@@ -7,23 +7,31 @@ import { test } from 'node:test';
 // NOTE: literal dynamic import keeps each leaf test independently failing while the module is absent; tsc still types it.
 const loadReadLink = () => import('../../.agents/skills/link-reader/scripts/read-link.ts');
 
-function makeDeps(overrides: Partial<{
-  fetch: typeof globalThis.fetch;
-  runYtDlp: (url: string, outDir: string) => Promise<string | null>;
-  writeTemp: (name: string, text: string) => string;
-}> = {}) {
+function makeDeps(
+  overrides: Partial<{
+    fetch: typeof globalThis.fetch;
+    runYtDlp: (url: string, outDir: string) => Promise<string | null>;
+    writeTemp: (name: string, text: string) => string;
+  }> = {},
+) {
   const out: string[] = [];
   const err: string[] = [];
   const tempCalls: { name: string; text: string }[] = [];
   const deps = {
     fetch: overrides.fetch ?? (async () => new Response('{}', { status: 500 })),
     runYtDlp: overrides.runYtDlp ?? (async () => null),
-    writeTemp: overrides.writeTemp ?? ((name: string, text: string) => {
-      tempCalls.push({ name, text });
-      return `/tmp/${name}`;
-    }),
-    stdout: (text: string) => { out.push(text); },
-    stderr: (text: string) => { err.push(text); },
+    writeTemp:
+      overrides.writeTemp ??
+      ((name: string, text: string) => {
+        tempCalls.push({ name, text });
+        return `/tmp/${name}`;
+      }),
+    stdout: (text: string) => {
+      out.push(text);
+    },
+    stderr: (text: string) => {
+      err.push(text);
+    },
   };
   return { deps, out, err, tempCalls };
 }
@@ -58,30 +66,33 @@ test('X post renders author, text, counts, media URLs, quoted post, and same-aut
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const headers = new Headers(init?.headers);
       requests.push({ url, userAgent: headers.get('user-agent') });
-      return new Response(JSON.stringify({
-        code: 200,
-        status: {
-          text: 'Main post text with https://example.com/expanded',
-          author: { name: 'Andre Staltz', screen_name: 'andrestaltz' },
-          created_at: '2026-11-24T00:00:00Z',
-          replies: 7,
-          reposts: 56,
-          likes: 1234,
-          views: 89000,
-          media: {
-            all: [{ url: 'https://pbs.twimg.com/media/example.jpg', type: 'photo' }],
+      return new Response(
+        JSON.stringify({
+          code: 200,
+          status: {
+            text: 'Main post text with https://example.com/expanded',
+            author: { name: 'Andre Staltz', screen_name: 'andrestaltz' },
+            created_at: '2026-11-24T00:00:00Z',
+            replies: 7,
+            reposts: 56,
+            likes: 1234,
+            views: 89000,
+            media: {
+              all: [{ url: 'https://pbs.twimg.com/media/example.jpg', type: 'photo' }],
+            },
+            quote: {
+              author: { screen_name: 'other' },
+              text: 'Quoted post body',
+            },
           },
-          quote: {
-            author: { screen_name: 'other' },
-            text: 'Quoted post body',
-          },
-        },
-        thread: [
-          { author: { screen_name: 'andrestaltz' }, text: 'First in thread' },
-          { author: { screen_name: 'bystander' }, text: 'Reply from another user' },
-          { author: { screen_name: 'andrestaltz' }, text: 'Second in thread' },
-        ],
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+          thread: [
+            { author: { screen_name: 'andrestaltz' }, text: 'First in thread' },
+            { author: { screen_name: 'bystander' }, text: 'Reply from another user' },
+            { author: { screen_name: 'andrestaltz' }, text: 'Second in thread' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
     },
   });
 
@@ -111,18 +122,22 @@ test('X post renders author, text, counts, media URLs, quoted post, and same-aut
 test('X post omits Thread section when thread contains only the requested post', async () => {
   const { main } = await loadReadLink();
   const { deps, out } = makeDeps({
-    fetch: async () => new Response(JSON.stringify({
-      code: 200,
-      status: {
-        text: 'Solo post',
-        author: { name: 'Ada', screen_name: 'ada' },
-        created_at: '2026-11-24T00:00:00Z',
-        replies: 0,
-        reposts: 1,
-        likes: 2,
-      },
-      thread: [{ author: { screen_name: 'ada' }, text: 'Solo post' }],
-    }), { status: 200 }),
+    fetch: async () =>
+      new Response(
+        JSON.stringify({
+          code: 200,
+          status: {
+            text: 'Solo post',
+            author: { name: 'Ada', screen_name: 'ada' },
+            created_at: '2026-11-24T00:00:00Z',
+            replies: 0,
+            reposts: 1,
+            likes: 2,
+          },
+          thread: [{ author: { screen_name: 'ada' }, text: 'Solo post' }],
+        }),
+        { status: 200 },
+      ),
   });
 
   const code = await main(['https://vxtwitter.com/ada/status/999'], deps);
@@ -206,18 +221,26 @@ test('transcript track selection prefers English manual, then English asr, then 
       fetch: async (input) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if (url.includes('youtubei/v1/player')) {
-          return new Response(JSON.stringify(playerResponse({
-            captions: { playerCaptionsTracklistRenderer: { captionTracks } },
-          })), { status: 200 });
+          return new Response(
+            JSON.stringify(
+              playerResponse({
+                captions: { playerCaptionsTracklistRenderer: { captionTracks } },
+              }),
+            ),
+            { status: 200 },
+          );
         }
         fetchedCaptionUrl = url;
-        return new Response(JSON.stringify({
-          events: [
-            { tStartMs: 0, segs: [{ utf8: 'Hello   world.' }] },
-            { tStartMs: 5000, segs: [{ utf8: 'Second\nline.' }] },
-            { tStartMs: 35000, segs: [{ utf8: 'Later paragraph.' }] },
-          ],
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            events: [
+              { tStartMs: 0, segs: [{ utf8: 'Hello   world.' }] },
+              { tStartMs: 5000, segs: [{ utf8: 'Second\nline.' }] },
+              { tStartMs: 35000, segs: [{ utf8: 'Later paragraph.' }] },
+            ],
+          }),
+          { status: 200 },
+        );
       },
     });
     const code = await main(['https://www.youtube.com/watch?v=jP9yjEDlc4k'], deps);
@@ -260,20 +283,27 @@ test('long transcript over 60,000 bytes writes full Markdown via writeTemp and b
   const { main } = await loadReadLink();
   const events = Array.from({ length: 800 }, (_, i) => ({
     tStartMs: i * 1000,
-    segs: [{ utf8: `Segment ${i} with enough repeated words to exceed sixty thousand bytes easily across the transcript.` }],
+    segs: [
+      { utf8: `Segment ${i} with enough repeated words to exceed sixty thousand bytes easily across the transcript.` },
+    ],
   }));
 
   const { deps, out, tempCalls } = makeDeps({
     fetch: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('youtubei/v1/player')) {
-        return new Response(JSON.stringify(playerResponse({
-          captions: {
-            playerCaptionsTracklistRenderer: {
-              captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en', kind: 'asr' }],
-            },
-          },
-        })), { status: 200 });
+        return new Response(
+          JSON.stringify(
+            playerResponse({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en', kind: 'asr' }],
+                },
+              },
+            }),
+          ),
+          { status: 200 },
+        );
       }
       return new Response(JSON.stringify({ events }), { status: 200 });
     },
@@ -301,13 +331,18 @@ test('failure: empty caption body with unavailable yt-dlp prints metadata and un
     fetch: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('youtubei/v1/player')) {
-        return new Response(JSON.stringify(playerResponse({
-          captions: {
-            playerCaptionsTracklistRenderer: {
-              captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en' }],
-            },
-          },
-        })), { status: 200 });
+        return new Response(
+          JSON.stringify(
+            playerResponse({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en' }],
+                },
+              },
+            }),
+          ),
+          { status: 200 },
+        );
       }
       return new Response('', { status: 200 });
     },
@@ -329,21 +364,30 @@ test('failure fallback: when yt-dlp returns a json3 file, its transcript is rend
   const { main } = await loadReadLink();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-fixture-'));
   const json3Path = path.join(dir, 'jP9yjEDlc4k.en.json3');
-  fs.writeFileSync(json3Path, JSON.stringify({
-    events: [{ tStartMs: 12000, segs: [{ utf8: 'Recovered via yt-dlp.' }] }],
-  }), 'utf8');
+  fs.writeFileSync(
+    json3Path,
+    JSON.stringify({
+      events: [{ tStartMs: 12000, segs: [{ utf8: 'Recovered via yt-dlp.' }] }],
+    }),
+    'utf8',
+  );
 
   const { deps, out } = makeDeps({
     fetch: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('youtubei/v1/player')) {
-        return new Response(JSON.stringify(playerResponse({
-          captions: {
-            playerCaptionsTracklistRenderer: {
-              captionTracks: [{ baseUrl: 'https://captions.example/ja', languageCode: 'ja', kind: 'asr' }],
-            },
-          },
-        })), { status: 200 });
+        return new Response(
+          JSON.stringify(
+            playerResponse({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [{ baseUrl: 'https://captions.example/ja', languageCode: 'ja', kind: 'asr' }],
+                },
+              },
+            }),
+          ),
+          { status: 200 },
+        );
       }
       return new Response('', { status: 200 });
     },
@@ -362,9 +406,13 @@ test('failure fallback: when yt-dlp returns an .asr.json3 file, its transcript i
   const { main } = await loadReadLink();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-asr-fixture-'));
   const asrJson3Path = path.join(dir, 'jP9yjEDlc4k.en.asr.json3');
-  fs.writeFileSync(asrJson3Path, JSON.stringify({
-    events: [{ tStartMs: 5000, segs: [{ utf8: 'Auto-generated via yt-dlp.' }] }],
-  }), 'utf8');
+  fs.writeFileSync(
+    asrJson3Path,
+    JSON.stringify({
+      events: [{ tStartMs: 5000, segs: [{ utf8: 'Auto-generated via yt-dlp.' }] }],
+    }),
+    'utf8',
+  );
 
   const { deps, out } = makeDeps({
     fetch: async (input) => {
@@ -391,18 +439,25 @@ test('failure: caption body read rejection falls back cleanly and exits 0', asyn
     fetch: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('youtubei/v1/player')) {
-        return new Response(JSON.stringify(playerResponse({
-          captions: {
-            playerCaptionsTracklistRenderer: {
-              captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en' }],
-            },
-          },
-        })), { status: 200 });
+        return new Response(
+          JSON.stringify(
+            playerResponse({
+              captions: {
+                playerCaptionsTracklistRenderer: {
+                  captionTracks: [{ baseUrl: 'https://captions.example/en', languageCode: 'en' }],
+                },
+              },
+            }),
+          ),
+          { status: 200 },
+        );
       }
       return {
         ok: true,
         status: 200,
-        text: async () => { throw new Error('stream reset'); },
+        text: async () => {
+          throw new Error('stream reset');
+        },
       } as unknown as Response;
     },
     runYtDlp: async () => {
@@ -422,7 +477,8 @@ test('failure: caption body read rejection falls back cleanly and exits 0', asyn
 test('failure: X 404 prints reason on stderr and exits 1', async () => {
   const { main } = await loadReadLink();
   const { deps, out, err } = makeDeps({
-    fetch: async () => new Response(JSON.stringify({ code: 404, status: null, thread: null, message: 'NOT_FOUND' }), { status: 404 }),
+    fetch: async () =>
+      new Response(JSON.stringify({ code: 404, status: null, thread: null, message: 'NOT_FOUND' }), { status: 404 }),
   });
 
   const code = await main(['https://x.com/user/status/000'], deps);

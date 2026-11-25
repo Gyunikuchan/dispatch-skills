@@ -2,30 +2,57 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {test} from 'node:test';
-import {TOOL_ACTIONS} from '../../skills/dispatch/scripts/toolkit/cli.ts';
-import {maintain, renderContractRegions} from '../../scripts/maintain.ts';
-import {ACTION_CONTRACTS, SESSION_CONTRACTS, renderCallTable, stripGeneratedMarkers} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
-import {KINDS, recordSchemas} from '../../skills/dispatch/scripts/toolkit/records.ts';
-import {OVERLAY_ROOT} from './scan.ts';
+import { test } from 'node:test';
+import { TOOL_ACTIONS } from '../../skills/dispatch/scripts/toolkit/cli.ts';
+import { maintain, renderContractRegions } from '../../scripts/maintain.ts';
+import {
+  ACTION_CONTRACTS,
+  SESSION_CONTRACTS,
+  renderCallTable,
+  stripGeneratedMarkers,
+} from '../../skills/dispatch/scripts/toolkit/contracts.ts';
+import { KINDS, recordSchemas } from '../../skills/dispatch/scripts/toolkit/records.ts';
+import { OVERLAY_ROOT } from './scan.ts';
 const root = 'skills/dispatch/';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
-const refs = ['toolkit', 'spec-stage', 'review-rules', 'decision-frame', 'providers', 'worktree-cleanup', 'diagnostics', 'glossary', 'self-build', ...['ask', 'design', 'plan', 'implement', 'review', 'verify'].map(v => 'verbs/' + v)];
-const scanned = ['SKILL.md', ...refs.map(v => 'references/' + v + '.md')];
-const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(m => m[1]!);
-const markdown = (dir: string): string[] => fs.readdirSync(path.join(OVERLAY_ROOT, dir), {withFileTypes: true}).flatMap(e => e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : []);
+const refs = [
+  'toolkit',
+  'spec-stage',
+  'review-rules',
+  'decision-frame',
+  'providers',
+  'worktree-cleanup',
+  'diagnostics',
+  'glossary',
+  'self-build',
+  ...['ask', 'design', 'plan', 'implement', 'review', 'verify'].map((v) => 'verbs/' + v),
+];
+const scanned = ['SKILL.md', ...refs.map((v) => 'references/' + v + '.md')];
+const links = (text: string) => [...text.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map((m) => m[1]!);
+const markdown = (dir: string): string[] =>
+  fs
+    .readdirSync(path.join(OVERLAY_ROOT, dir), { withFileTypes: true })
+    .flatMap((e) =>
+      e.isDirectory() ? markdown(dir + '/' + e.name) : e.name.endsWith('.md') ? [dir + '/' + e.name] : [],
+    );
 const section = (text: string, heading: string) => text.split('### ' + heading + '\n')[1]?.split(/\n#{1,3} /)[0] ?? '';
-const backgroundStart = (command: string) => 'Always start `' + command + '` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).';
+const backgroundStart = (command: string) =>
+  'Always start `' +
+  command +
+  '` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).';
 
 test('maintain detects contract block drift without writing', () => {
   const source = path.join(OVERLAY_ROOT, root);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maintain-'));
   try {
-    fs.cpSync(path.join(source, 'references'), path.join(dir, 'references'), {recursive: true});
+    fs.cpSync(path.join(source, 'references'), path.join(dir, 'references'), { recursive: true });
     fs.copyFileSync(path.join(source, 'SKILL.md'), path.join(dir, 'SKILL.md'));
     const toolkitFile = path.join(dir, 'references/toolkit.md');
     const original = fs.readFileSync(toolkitFile, 'utf8').replace(/\r?\n/g, '\r\n');
-    const current = original.replace('<!-- GENERATED: action:ask-run -->`ask run', '<!-- GENERATED: action:ask-run -->`stale run');
+    const current = original.replace(
+      '<!-- GENERATED: action:ask-run -->`ask run',
+      '<!-- GENERATED: action:ask-run -->`stale run',
+    );
     const skillFile = path.join(dir, 'SKILL.md');
     const skill = fs.readFileSync(skillFile, 'utf8');
 
@@ -55,21 +82,33 @@ test('maintain detects contract block drift without writing', () => {
     assert.deepEqual(maintain(dir, false), []);
     assert.deepEqual(maintain(dir, true), []);
     assert.equal(fs.statSync(toolkitFile).mtimeMs, mtime);
-  } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('contract regeneration preserves surrounding prose and fails closed on misplaced or invalid delimiters', () => {
   const original = read(root + 'references/toolkit.md').replace(/\r\n/g, '\n');
-  assert.equal(stripGeneratedMarkers('A\r\n\r\n<!-- GENERATED: call-table -->\r\n\r\n'
-    + 'before<!-- END GENERATED: call-table -->after\n<!-- authored -->\n<!-- GENERATED:keep -->'),
-  'A\r\n\r\n\r\nbeforeafter\n<!-- authored -->\n<!-- GENERATED:keep -->');
+  assert.equal(
+    stripGeneratedMarkers(
+      'A\r\n\r\n<!-- GENERATED: call-table -->\r\n\r\n' +
+        'before<!-- END GENERATED: call-table -->after\n<!-- authored -->\n<!-- GENERATED:keep -->',
+    ),
+    'A\r\n\r\n\r\nbeforeafter\n<!-- authored -->\n<!-- GENERATED:keep -->',
+  );
   const opening = '<!-- GENERATED: action:ask-run -->';
   const closing = '<!-- END GENERATED: action:ask-run -->';
-  const customized = original.replace(closing + '. Pass the question', closing + ' and keep this authored note. Pass the question');
-  const stale = customized.replace(opening + '`ask run', opening + '`old run')
+  const customized = original.replace(
+    closing + '. Pass the question',
+    closing + ' and keep this authored note. Pass the question',
+  );
+  const stale = customized
+    .replace(opening + '`ask run', opening + '`old run')
     .replace('| Type | Heading | Arguments |', '| Type | Obsolete | Arguments |');
   assert.deepEqual(renderContractRegions(stale), {
-    text: customized, errors: [], drift: [
+    text: customized,
+    errors: [],
+    drift: [
       'references/toolkit.md: ### call table: generated content differs',
       'references/toolkit.md: ### ask run: generated content differs',
     ],
@@ -91,57 +130,85 @@ test('contract regeneration preserves surrounding prose and fails closed on misp
 });
 
 test('decision records resolve local links and headings', () => {
-  for (const file of markdown('docs/decisions')) for (const target of links(read(file))) {
-    if (/^(?:[a-z][a-z0-9+.-]*:|<)/i.test(target)) continue;
-    const [local, fragment] = target.split('#');
-    const resolved = path.resolve(OVERLAY_ROOT, path.dirname(file), local || path.basename(file));
-    const label = file + ' -> ' + target;
-    assert.ok(fs.existsSync(resolved), label);
-    if (fragment && resolved.endsWith('.md')) {
-      const headings = fs.readFileSync(resolved, 'utf8').match(/^#{1,6}\s+.+$/gm) ?? [];
-      const slugs = headings.map(heading => heading.replace(/^#{1,6}\s+/, '').toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-'));
-      assert.ok(slugs.includes(decodeURIComponent(fragment)), label);
+  for (const file of markdown('docs/decisions'))
+    for (const target of links(read(file))) {
+      if (/^(?:[a-z][a-z0-9+.-]*:|<)/i.test(target)) continue;
+      const [local, fragment] = target.split('#');
+      const resolved = path.resolve(OVERLAY_ROOT, path.dirname(file), local || path.basename(file));
+      const label = file + ' -> ' + target;
+      assert.ok(fs.existsSync(resolved), label);
+      if (fragment && resolved.endsWith('.md')) {
+        const headings = fs.readFileSync(resolved, 'utf8').match(/^#{1,6}\s+.+$/gm) ?? [];
+        const slugs = headings.map((heading) =>
+          heading
+            .replace(/^#{1,6}\s+/, '')
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+            .replace(/\s/g, '-'),
+        );
+        assert.ok(slugs.includes(decodeURIComponent(fragment)), label);
+      }
     }
-  }
 });
 
 test('skill contract keeps router entries and resolving reference links', () => {
   const skill = read(root + 'SKILL.md');
-  assert.match(skill, /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./);
+  assert.match(
+    skill,
+    /Recommend `plan` or `design` after intent refinement under \[spec stage\]\(references\/spec-stage\.md\)\./,
+  );
   assert.match(skill, /Keep `ask`, `review`, `verify` and `implement` on their requested verb/);
   const readPhase = skill.indexOf('Read the phase first');
   assert.ok(readPhase >= 0 && readPhase < skill.indexOf('## Tool loop'));
   assert.match(skill, /Ask needs no spec, plan or approval/);
   assert.ok(links(skill).includes('references/verbs/review.md'));
-  assert.match(read(root + 'references/verbs/review.md'), /Standalone review needs no bound plan and adds no approval gate/);
-  for (const file of refs.filter(v => v !== 'glossary' && v !== 'diagnostics')) assert.ok(links(skill).includes('references/' + file + '.md'), file);
-  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) for (const target of links(read(file))) {
-    const local = target.split('#')[0]!;
-    if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
-    assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
-  }
+  assert.match(
+    read(root + 'references/verbs/review.md'),
+    /Standalone review needs no bound plan and adds no approval gate/,
+  );
+  for (const file of refs.filter((v) => v !== 'glossary' && v !== 'diagnostics'))
+    assert.ok(links(skill).includes('references/' + file + '.md'), file);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')])
+    for (const target of links(read(file))) {
+      const local = target.split('#')[0]!;
+      if (!local || /^(https?:|mailto:|<)/.test(local)) continue;
+      assert.ok(fs.existsSync(path.resolve(OVERLAY_ROOT, path.dirname(file), local)), file + ' -> ' + target);
+    }
 
   // Tool actions syntax documentation
   const toolkit = read(root + 'references/toolkit.md');
   const actions = toolkit.split('## Tool actions\n')[1]?.split('\n## ')[0] ?? '';
-  assert.deepEqual([...actions.matchAll(/^### (.+)$/gm)].map(m => m[1]).sort(), [...TOOL_ACTIONS].sort());
-  for (const action of TOOL_ACTIONS) for (const label of ['Arguments:', 'Result path:', 'Refusals:']) assert.ok(section(actions, action).includes(label), action + ' ' + label);
+  assert.deepEqual([...actions.matchAll(/^### (.+)$/gm)].map((m) => m[1]).sort(), [...TOOL_ACTIONS].sort());
+  for (const action of TOOL_ACTIONS)
+    for (const label of ['Arguments:', 'Result path:', 'Refusals:'])
+      assert.ok(section(actions, action).includes(label), action + ' ' + label);
   assert.ok(toolkit.indexOf('## Session commands') > toolkit.indexOf('## Tool actions'));
   for (const file of scanned) {
     const text = read(root + file);
-    const matches = TOOL_ACTIONS.filter(action => text.split(/\r?\n/).some(line => new RegExp('\\b' + action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(line) && /--session\b/.test(line)));
+    const matches = TOOL_ACTIONS.filter((action) =>
+      text
+        .split(/\r?\n/)
+        .some(
+          (line) =>
+            new RegExp('\\b' + action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(line) &&
+            /--session\b/.test(line),
+        ),
+    );
     if (file !== 'references/toolkit.md') assert.ok(matches.length <= 1, file + ' ' + matches);
-    if (file === 'SKILL.md') { assert.deepEqual(matches, []); assert.ok(text.includes('<tool> <action>')); }
+    if (file === 'SKILL.md') {
+      assert.deepEqual(matches, []);
+      assert.ok(text.includes('<tool> <action>'));
+    }
   }
 
   // Ledger help retains authored field meanings and authority for every kind.
   const ledger = toolkit.split('## Ledger records\n')[1]?.split('\n## ')[0] ?? '';
-  assert.deepEqual([...ledger.matchAll(/^### (.+)$/gm)].map(m => m[1]).sort(), [...KINDS].sort());
+  assert.deepEqual([...ledger.matchAll(/^### (.+)$/gm)].map((m) => m[1]).sort(), [...KINDS].sort());
   const quoted = new Set(['approval', 'confirm', 'waiver', 'manual-complete']);
   for (const schema of recordSchemas()) {
     const body = section(ledger, schema.kind);
     const fields = schema.phased
-      ? ['phase', ...schema.phases.flatMap(phase => [phase.phase, ...phase.required, ...phase.optional])]
+      ? ['phase', ...schema.phases.flatMap((phase) => [phase.phase, ...phase.required, ...phase.optional])]
       : [...schema.required, ...schema.optional];
     if (schema.kind === 'ruling') assert.ok(body.includes('optional `impact`, `trigger` and `paths`'));
     for (const field of new Set(fields)) assert.ok(body.includes(field), schema.kind + ' ' + field);
@@ -157,15 +224,20 @@ test('skill contract keeps router entries and resolving reference links', () => 
   assert.match(section(ledger, 'writer'), /commit, taskSection, seq/);
   for (const term of ['native-pending', 'promptPath', 'replyPath', 'rerun']) assert.ok(toolkit.includes(term), term);
   const sessions = toolkit.split('## Session commands\n')[1] ?? '';
-  assert.deepEqual([...sessions.matchAll(/^### session (.+)$/gm)].map(m => m[1]).sort(), Object.keys(SESSION_CONTRACTS).sort());
-  for (const term of ['ok', 'summary', 'path', 'appliesTo', "action:'quota-reprobe'", "v:1"]) assert.ok(sessions.includes(term), term);
+  assert.deepEqual(
+    [...sessions.matchAll(/^### session (.+)$/gm)].map((m) => m[1]).sort(),
+    Object.keys(SESSION_CONTRACTS).sort(),
+  );
+  for (const term of ['ok', 'summary', 'path', 'appliesTo', "action:'quota-reprobe'", 'v:1'])
+    assert.ok(sessions.includes(term), term);
 });
 
 test('audit catalog points to existing toolkit and reference entry points', () => {
   const catalog = JSON.parse(read('.agents/skills/audit-dispatch-skills/references/scenarios.json'));
-  for (const scenario of catalog.scenarios) for (const entry of scenario.entries) {
-    assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, entry)), scenario.id + ' -> ' + entry);
-  }
+  for (const scenario of catalog.scenarios)
+    for (const entry of scenario.entries) {
+      assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, entry)), scenario.id + ' -> ' + entry);
+    }
 });
 
 test('phase prose places each workflow rule in its canonical home', () => {
@@ -184,12 +256,18 @@ test('phase prose places each workflow rule in its canonical home', () => {
   assert.match(plan, /existing test seams and helpers[^.]*`Seams:`/);
   assert.match(plan, /unchanged consumers and callers[^.]*`Rollback & Blast Radius`/);
   assert.match(plan, /parallel implementations[^.]*`Invariants:`/);
-  assert.match(design, /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/);
+  assert.match(
+    design,
+    /unchanged consumers and parallel implementations[^.]*`Architecture & Boundaries`[^.]*`Affected contracts`/,
+  );
   assert.match(rules, /launches the full configured roster when the previous completed round has an accepted MUST/);
   assert.match(rules, /or an accepted SHOULD from a round below the saved round-1 cap/);
   assert.match(rules, /launches one target: the first non-reserve slot of the previous round's saved roster/);
   assert.match(rules, /pending MUST rejection requests stay assigned/);
-  assert.match(rules, /Plan and design review prompts also name the session context map as a pre-change locator, not a completeness claim, when it exists/);
+  assert.match(
+    rules,
+    /Plan and design review prompts also name the session context map as a pre-change locator, not a completeness claim, when it exists/,
+  );
   assert.match(rules, /code review prompts never receive it/);
 
   // Review continuation and ceiling rules: one canonical home
@@ -207,10 +285,19 @@ test('phase prose places each workflow rule in its canonical home', () => {
   // Scope round single canonical home
   const canonical = ref('grounding');
   assert.match(canonical, /## Scope round\s+After `confirm` and before authoring a standalone plan or any design/i);
-  for (const [file, link] of [['spec-stage.md','grounding.md#scope-round'], ['verbs/plan.md','../grounding.md#scope-round'], ['verbs/design.md','../grounding.md#scope-round'], ['verbs/implement.md','../grounding.md#scope-round']] as const) {
+  for (const [file, link] of [
+    ['spec-stage.md', 'grounding.md#scope-round'],
+    ['verbs/plan.md', '../grounding.md#scope-round'],
+    ['verbs/design.md', '../grounding.md#scope-round'],
+    ['verbs/implement.md', '../grounding.md#scope-round'],
+  ] as const) {
     const text = read(root + 'references/' + file);
     assert.ok(links(text).includes(link), file);
-    assert.doesNotMatch(text, /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i, file);
+    assert.doesNotMatch(
+      text,
+      /(?:After `confirm`|after confirming the spec)[^\n]*scope round|scope round[^\n]*after `confirm`/i,
+      file,
+    );
   }
   assert.ok(links(implementText).includes('../spec-stage.md#readers-and-document-layers'));
 
@@ -234,9 +321,12 @@ test('spec stage critiques the request premise before confirmation', () => {
   const refineStep = stage.indexOf('2. **Critique and refine.**');
   const authorStep = stage.indexOf('3. **Author.**');
   const confirmStep = stage.indexOf('4. **Confirm.**');
-  const {refine, author, confirm} = stageParts();
+  const { refine, author, confirm } = stageParts();
 
-  assert.ok(groundStep >= 0 && refineStep > groundStep && authorStep > refineStep && confirmStep > authorStep, 'ground, critique, author and confirm in order');
+  assert.ok(
+    groundStep >= 0 && refineStep > groundStep && authorStep > refineStep && confirmStep > authorStep,
+    'ground, critique, author and confirm in order',
+  );
   assert.match(refine, /problem, scope and cost-and-risk[^.]*materially better/i);
   assert.match(refine, /not worse on intent/i);
   assert.match(refine, /in one line that the premise holds, with the reason/i);
@@ -256,9 +346,18 @@ test('spec stage critiques the request premise before confirmation', () => {
   const lint = confirm.indexOf('lint the updated spec', update);
   const recordText = "Record the user's reply as a `confirm` ledger record with the spec hash";
   const record = confirm.indexOf(recordText, lint);
-  assert.ok(update >= 0 && lint > update && record > lint, 'update and lint the fallback spec before recording confirm');
-  assert.equal((confirm.match(/Record the user's reply as a `confirm` ledger record with the spec hash/g) ?? []).length, 1);
-  assert.match(confirm, /once, using the resulting hash if this fallback update ran, or the current spec hash otherwise/i);
+  assert.ok(
+    update >= 0 && lint > update && record > lint,
+    'update and lint the fallback spec before recording confirm',
+  );
+  assert.equal(
+    (confirm.match(/Record the user's reply as a `confirm` ledger record with the spec hash/g) ?? []).length,
+    1,
+  );
+  assert.match(
+    confirm,
+    /once, using the resulting hash if this fallback update ran, or the current spec hash otherwise/i,
+  );
   assert.match(confirm, /reply is both the decision and confirmation/i);
   assert.match(confirm, /no extra exchange/i);
   assert.match(confirm, /revision protocol/i);
@@ -267,7 +366,7 @@ test('spec stage critiques the request premise before confirmation', () => {
 });
 
 test('spec stage critique lays out grounded approaches with simplicity and question admission', () => {
-  const {refine, author} = stageParts();
+  const { refine, author } = stageParts();
   assert.match(refine, /two or three grounded approaches with trade-offs and one recommendation/i);
   assert.match(refine, /drop approaches that work against the user's why or that existing work rules out/i);
   assert.match(refine, /when one approach remains, say so and state why the others do not fit/i);
@@ -284,7 +383,10 @@ test('spec stage critique lays out grounded approaches with simplicity and quest
   assert.match(refine, /never a strawman/i);
   assert.match(refine, /already that option[^.]*say so/i);
   assert.match(refine, /trade-off, limitation and risk/i);
-  assert.match(refine, /recommend the simplest presented approach that meets intent and the simplicity floor[^.]*heavier[^.]*reason/i);
+  assert.match(
+    refine,
+    /recommend the simplest presented approach that meets intent and the simplicity floor[^.]*heavier[^.]*reason/i,
+  );
   assert.match(template, /<option: trade-off, limitation, risk>/);
   assert.doesNotMatch(template, /<option and trade-off>/);
   assert.match(refine, /only decisions that change scope, behavior or risk and that grounding cannot answer/i);
@@ -300,20 +402,32 @@ test('spec stage critique lays out grounded approaches with simplicity and quest
 });
 
 test('spec stage short path and self-check', () => {
-  const {refine, author, confirm} = stageParts();
-  assert.match(refine, /open the first user exchange[^.]*with a short restatement of the request[\s\S]*current behavior[\s\S]*what the change touches[\s\S]*verified Surprises/i);
+  const { refine, author, confirm } = stageParts();
+  assert.match(
+    refine,
+    /open the first user exchange[^.]*with a short restatement of the request[\s\S]*current behavior[\s\S]*what the change touches[\s\S]*verified Surprises/i,
+  );
   assert.match(refine, /leaves no user decision open[^.]*no grilling round/i);
   assert.match(refine, /at every level, except when the critique leaves no user decision open/i);
-  assert.match(refine, /Confirm carries the critique result, any approach default, stated and assumed intent and the verb recommendation/i);
+  assert.match(
+    refine,
+    /Confirm carries the critique result, any approach default, stated and assumed intent and the verb recommendation/i,
+  );
   assert.match(confirm, /when `grilling` was unavailable or asked no round/i);
   assert.match(confirm, /approach default, a self-check answer or a corrected assumption/i);
-  assert.match(confirm, /opens a new decision in this fallback, follow the \[revision protocol\]\(spec-stage\.md#revision-protocol\) \(for a new decision, resume `grilling` for its branch first when the host provides it\), which records the new confirmation; otherwise:/i);
+  assert.match(
+    confirm,
+    /opens a new decision in this fallback, follow the \[revision protocol\]\(spec-stage\.md#revision-protocol\) \(for a new decision, resume `grilling` for its branch first when the host provides it\), which records the new confirmation; otherwise:/i,
+  );
   const lint = author.indexOf('Lint');
   const check = author.search(/self-check/i);
   const relint = author.search(/lint (?:again|passes again)/i);
   assert.ok(lint >= 0 && check > lint && relint > check, 'self-check after lint, re-lint after it');
   assert.match(author, /plan author/i);
-  assert.match(author, /answered by chat or grounding \(fill in\)[\s\S]*minor[^.]*`\(assumption\)`[\s\S]*ask[^.]*in Confirm, most important first/i);
+  assert.match(
+    author,
+    /answered by chat or grounding \(fill in\)[\s\S]*minor[^.]*`\(assumption\)`[\s\S]*ask[^.]*in Confirm, most important first/i,
+  );
   assert.match(author, /before Confirm/i);
 });
 
@@ -324,21 +438,33 @@ test('spec stage docs describe approach options', () => {
     concepts: read(root + 'references/readme/concepts.md'),
     adr: read('docs/decisions/0014-ground-first-intent-and-evidence-based-level.md'),
   };
-  for (const [name, text] of Object.entries({...docs, stage})) {
+  for (const [name, text] of Object.entries({ ...docs, stage })) {
     if (name !== 'stage') assert.match(text, /approach options?[^.]*recommend|recommend[^.]*approach options?/i, name);
     for (const sentence of text.split(/\.\s/).filter((s) => /alternative only when[^.]*materially better/i.test(s))) {
-      assert.match(sentence, /problem, scope and cost|other lenses/i, name + ': materially-better filter names its lenses');
+      assert.match(
+        sentence,
+        /problem, scope and cost|other lenses/i,
+        name + ': materially-better filter names its lenses',
+      );
     }
   }
   for (const [name, text] of Object.entries(docs)) {
     assert.match(text, /simplest[^.]*worth considering/i, name + ': simplest worthwhile option');
     assert.match(text, /trade-off, limitation and risk/i, name + ': per-option cost');
   }
-  assert.match(docs.adr, /brainstorming[^.]*rejected as a whole[\s\S]*adopts[^.]*approach options[^.]*question admission[^.]*short path[^.]*self-check/i);
+  assert.match(
+    docs.adr,
+    /brainstorming[^.]*rejected as a whole[\s\S]*adopts[^.]*approach options[^.]*question admission[^.]*short path[^.]*self-check/i,
+  );
 });
 
 test('aliases preserve entry mappings', () => {
-  const mapping = {'dispatch-plan': 'plan', 'dispatch-implement': 'implement', 'dispatch-code-review': 'review --kind code', 'dispatch-verify': 'verify'};
+  const mapping = {
+    'dispatch-plan': 'plan',
+    'dispatch-implement': 'implement',
+    'dispatch-code-review': 'review --kind code',
+    'dispatch-verify': 'verify',
+  };
   for (const [name, verb] of Object.entries(mapping)) {
     const text = read('skills/' + name + '/SKILL.md');
     assert.ok(text.includes('`' + verb + '`'), name);
@@ -348,7 +474,12 @@ test('aliases preserve entry mappings', () => {
   }
   const review = read('skills/dispatch-code-review/SKILL.md');
   assert.ok(review.includes('--spec'));
-  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')]) assert.doesNotMatch(read(file), /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review|dispatch-verify)\b/, file);
+  for (const file of [root + 'SKILL.md', ...markdown(root + 'references')])
+    assert.doesNotMatch(
+      read(file),
+      /\b(?:dispatch-plan|dispatch-implement|dispatch-code-review|dispatch-verify)\b/,
+      file,
+    );
 });
 
 test('human manuals retain portable links and current operational guidance', () => {
@@ -366,14 +497,20 @@ test('human manuals retain portable links and current operational guidance', () 
     'after it authors and lints a plan or design',
     'records it before the first review',
     'confirm the proposal with artifact approval after review',
-    'failures remain observable and recoverable', 'financial or data-integrity errors',
+    'failures remain observable and recoverable',
+    'financial or data-integrity errors',
     'a small rate-precision change can',
     'A large diff, changed external contract, finance repository, or state-machine file alone does not require high',
     '`ask` and standalone `review` resolve the level from the invocation, then the session ledger, then `medium`',
     'the level never decreases mid-run',
-    'nativeSubagentsOnly', 'write-subagents', 'OPENCODE_CONFIG_DIR', 'sandbox:false',
-    'positive safe integer', 'omission defaults to one',
-  ]) assert.ok(config.includes(term), term);
+    'nativeSubagentsOnly',
+    'write-subagents',
+    'OPENCODE_CONFIG_DIR',
+    'sandbox:false',
+    'positive safe integer',
+    'omission defaults to one',
+  ])
+    assert.ok(config.includes(term), term);
   const humanRoot = read('README.md');
   assert.match(read(root + 'references/templates/plan.md'), /retaining the session in the workspace/);
   const concepts = read(root + 'references/readme/concepts.md');
@@ -384,22 +521,61 @@ test('human manuals retain portable links and current operational guidance', () 
 test('worktree deliver commit and uncommitted contracts', () => {
   const toolkit = read(root + 'references/toolkit.md');
   const deliver = section(toolkit, 'worktree deliver');
-  assert.ok(toolkit.includes('`worktree deliver --session <session> [--commit <message-file\\|-> \\| --message <text>]`'), 'call table');
-  assert.ok(deliver.includes('`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`'), 'deliver arguments');
-  for (const term of ['--commit', 'recordOnly', 'committed', 'differing', 'warning', 'not-delivered', 'staged-changes', 'delivered-content-changed', 'commit-failed', 'head-not-descendant', 'delivered-uncommitted', 'caller-moved'])
+  assert.ok(
+    toolkit.includes('`worktree deliver --session <session> [--commit <message-file\\|-> \\| --message <text>]`'),
+    'call table',
+  );
+  assert.ok(
+    deliver.includes('`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`'),
+    'deliver arguments',
+  );
+  for (const term of [
+    '--commit',
+    'recordOnly',
+    'committed',
+    'differing',
+    'warning',
+    'not-delivered',
+    'staged-changes',
+    'delivered-content-changed',
+    'commit-failed',
+    'head-not-descendant',
+    'delivered-uncommitted',
+    'caller-moved',
+  ])
     assert.ok(deliver.includes(term), term);
   assert.ok(section(toolkit, 'lint run').includes('outside-increment'), 'lint run warning');
-  const approval = read(root + 'references/spec-stage.md').split('## Approval\n')[1]?.split(/\n## /)[0] ?? '';
+  const approval =
+    read(root + 'references/spec-stage.md')
+      .split('## Approval\n')[1]
+      ?.split(/\n## /)[0] ?? '';
   assert.match(approval, /approve all increments/);
   assert.match(approval, /user-quoted `note`/);
   assert.match(approval, /tuple with that quote/);
   const frame = section(read(root + 'references/decision-frame.md'), 'Plan or design approval');
   assert.match(frame, /all increments/);
-  assert.ok(links(frame).some(link => link.includes('spec-stage.md#approval')), 'opt-in link');
-  for (const term of ['delivered-source', 'caller-dirty', 'recovery-blocked', 'unsupported-sparse', 'unsupported-entry', 'git restore --source', '??']) assert.ok(deliver.includes(term), term);
-  for(const name of ['verbs/implement','worktree-cleanup','readme/implement']) assert.ok(links(read(root+'references/'+name+'.md')).some(link=>link.endsWith('toolkit.md#worktree-deliver')),name);
-  const concepts=read(root+'references/readme/concepts.md');
-  assert.match(concepts,/delivered-source/);assert.match(concepts,/git restore --source/);
+  assert.ok(
+    links(frame).some((link) => link.includes('spec-stage.md#approval')),
+    'opt-in link',
+  );
+  for (const term of [
+    'delivered-source',
+    'caller-dirty',
+    'recovery-blocked',
+    'unsupported-sparse',
+    'unsupported-entry',
+    'git restore --source',
+    '??',
+  ])
+    assert.ok(deliver.includes(term), term);
+  for (const name of ['verbs/implement', 'worktree-cleanup', 'readme/implement'])
+    assert.ok(
+      links(read(root + 'references/' + name + '.md')).some((link) => link.endsWith('toolkit.md#worktree-deliver')),
+      name,
+    );
+  const concepts = read(root + 'references/readme/concepts.md');
+  assert.match(concepts, /delivered-source/);
+  assert.match(concepts, /git restore --source/);
 });
 
 test('grounding contracts carry conventions host tools and follow-up guidance', () => {
@@ -425,7 +601,10 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
   assert.ok(read(root + 'references/verbs/design.md').includes('../grounding.md#scope-round'));
   assert.ok(explorer.includes('<slug>.spec.context.md'));
   assert.ok(explorer.includes('<slug>.plan.context.md'));
-  for (const [name, text] of [['grounding.md', grounding], ['explorer-brief.md', explorer]] as const) {
+  for (const [name, text] of [
+    ['grounding.md', grounding],
+    ['explorer-brief.md', explorer],
+  ] as const) {
     assert.ok(!text.includes('<slug>.context.md'), name + ' uses an unphased map path');
   }
 
@@ -452,28 +631,80 @@ test('grounding contracts carry conventions host tools and follow-up guidance', 
 
 test('root skill routes work and guards orchestrator context', () => {
   const skill = read(root + 'SKILL.md');
-  const definition = skill.indexOf("You are the orchestrator: the user's deputy, who middle-manages dispatched agents, whether native subagents or provider delegates");
-  assert.ok(definition >= 0 && definition < skill.indexOf('## Tool loop'), 'orchestrator definition precedes the tool loop');
+  const definition = skill.indexOf(
+    "You are the orchestrator: the user's deputy, who middle-manages dispatched agents, whether native subagents or provider delegates",
+  );
+  assert.ok(
+    definition >= 0 && definition < skill.indexOf('## Tool loop'),
+    'orchestrator definition precedes the tool loop',
+  );
   const block = (heading: string) => skill.split('## ' + heading + '\n')[1]?.split('\n## ')[0] ?? '';
   const routing = block('Routing');
   const workTable = routing.split(/\n\| Role \|/)[0] ?? routing;
-  const rows = workTable.split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Work')).map(line => line.split('|').map(cell => cell.trim()).filter(Boolean));
+  const rows = workTable
+    .split('\n')
+    .filter((line) => line.startsWith('| ') && !line.startsWith('| Work'))
+    .map((line) =>
+      line
+        .split('|')
+        .map((cell) => cell.trim())
+        .filter(Boolean),
+    );
   const route = (work: string) => rows.find(([cell]) => cell!.includes(work))?.[1];
   for (const [work, target] of [
-    ['log and verify triage', 'Explorer subagent'], ['grounding maps', 'Explorer subagent'],
-    ['Test cleanup', 'Utility subagent'], ['mechanical fixes', 'Utility subagent'],
-    ['Plan tasks', 'Writer at run level'], ['Differentiated review or ask voices', 'Delegate or native slot'],
-    ['Decisions, rulings, ledger, user gates', 'Orchestrator'], ['submitted-change inspection', 'Orchestrator'],
-  ] as const) assert.equal(route(work), target, work);
+    ['log and verify triage', 'Explorer subagent'],
+    ['grounding maps', 'Explorer subagent'],
+    ['Test cleanup', 'Utility subagent'],
+    ['mechanical fixes', 'Utility subagent'],
+    ['Plan tasks', 'Writer at run level'],
+    ['Differentiated review or ask voices', 'Delegate or native slot'],
+    ['Decisions, rulings, ledger, user gates', 'Orchestrator'],
+    ['submitted-change inspection', 'Orchestrator'],
+  ] as const)
+    assert.equal(route(work), target, work);
   assert.equal(route('retro'), undefined);
   assert.equal(rows.length, 6, 'six routes');
   assert.ok(links(routing).includes('references/toolkit.md#doctor-run'));
-  for (const phrase of ['from the `utility-subagents` entry', 'edits only assigned paths and runs no Git write commands and no toolkit', 'Reviewers read directly and launch no explorers']) assert.ok(routing.includes(phrase), phrase);
+  for (const phrase of [
+    'from the `utility-subagents` entry',
+    'edits only assigned paths and runs no Git write commands and no toolkit',
+    'Reviewers read directly and launch no explorers',
+  ])
+    assert.ok(routing.includes(phrase), phrase);
   const guard = block('Context guard');
-  for (const phrase of ['Every verb', 'files, logs, web, command output, result files, diffs', 'has a launch cost', 'known file, cited range, index query or small read', 'about 5 files or 20 KB (~5k tokens)', 'estimate, not a measured check', 'one explorer per independent topic in parallel', 'distilled, cited reply', 'verify load-bearing claims at source', 'Orchestrator-row work stays with the orchestrator at any size', 'including `ask`', 'Run `ask` only on user request']) assert.ok(guard.includes(phrase), phrase);
+  for (const phrase of [
+    'Every verb',
+    'files, logs, web, command output, result files, diffs',
+    'has a launch cost',
+    'known file, cited range, index query or small read',
+    'about 5 files or 20 KB (~5k tokens)',
+    'estimate, not a measured check',
+    'one explorer per independent topic in parallel',
+    'distilled, cited reply',
+    'verify load-bearing claims at source',
+    'Orchestrator-row work stays with the orchestrator at any size',
+    'including `ask`',
+    'Run `ask` only on user request',
+  ])
+    assert.ok(guard.includes(phrase), phrase);
   assert.ok(!guard.includes('500 lines'));
   const launch = block('Launch and continue');
-  for (const phrase of ['Request fresh context without parent history', 'report that once in the final handoff', 'objective, decisions, constraints, current state, next action and required evidence', 'grant no write authority', 'Retain handles until run end or host drop', 'it keeps its model, write boundary and launch deliverable reply rules', 'Follow-ups return inline without files', 'never rewrite `replyPath`, `reportPath` or an existing map', 'Launch fresh for an unrelated topic or when the host cannot continue', 'Never replace or duplicate work only for fresh context', 'Two writers never share a worktree', 'exactly as the result\'s `launchAs` line states', 'report a blocker with retained evidence; do not launch without']) assert.ok(launch.includes(phrase), phrase);
+  for (const phrase of [
+    'Request fresh context without parent history',
+    'report that once in the final handoff',
+    'objective, decisions, constraints, current state, next action and required evidence',
+    'grant no write authority',
+    'Retain handles until run end or host drop',
+    'it keeps its model, write boundary and launch deliverable reply rules',
+    'Follow-ups return inline without files',
+    'never rewrite `replyPath`, `reportPath` or an existing map',
+    'Launch fresh for an unrelated topic or when the host cannot continue',
+    'Never replace or duplicate work only for fresh context',
+    'Two writers never share a worktree',
+    "exactly as the result's `launchAs` line states",
+    'report a blocker with retained evidence; do not launch without',
+  ])
+    assert.ok(launch.includes(phrase), phrase);
   assert.ok(skill.indexOf('## Launch and continue') < skill.indexOf('## Invariants and recovery'));
   assert.doesNotMatch(skill, /`(?:Task|Agent|spawn_agent|runSubagent)`/, 'no host-specific subagent tool');
   const glossary = read(root + 'references/glossary.md');
@@ -483,7 +714,8 @@ test('root skill routes work and guards orchestrator context', () => {
 test('references keep branch detail and use the utility entry', () => {
   const ref = (name: string) => read(root + 'references/' + name + '.md');
   const skill = read(root + 'SKILL.md');
-  for (const heading of ['## Routing', '## Launch and continue']) assert.match(skill, new RegExp('^' + heading + '$', 'm'), heading);
+  for (const heading of ['## Routing', '## Launch and continue'])
+    assert.match(skill, new RegExp('^' + heading + '$', 'm'), heading);
   const grounding = ref('grounding');
   assert.doesNotMatch(grounding, /^## Follow-up explorers$/m);
   assert.ok(links(grounding).includes('../SKILL.md#routing'));
@@ -495,27 +727,41 @@ test('references keep branch detail and use the utility entry', () => {
   assert.ok(links(ref('verbs/ask')).includes('../../SKILL.md#routing'));
   const step6 = ref('verbs/implement').split('7. Apply [shared]')[1]?.split('8. Review')[0] ?? '';
   assert.doesNotMatch(step6, /--level low/);
-  assert.match(step6, /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/);
+  assert.match(
+    step6,
+    /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/,
+  );
   assert.match(step6, /runs only its edited test files/);
 });
 
 test('native voice launch order failure reports and change rules are documented', () => {
   const providers = read(root + 'references/providers.md');
   for (const term of [
-    '`cliWave: "pending"`', 'no retained handle', 'every retained handle finished or was reported',
-    'Stop a timed-out handle', '30-minute', '--native-failed', 'takes its reserve or saves `failed`', 'work in `cwd`',
-  ]) assert.ok(providers.includes(term), term);
+    '`cliWave: "pending"`',
+    'no retained handle',
+    'every retained handle finished or was reported',
+    'Stop a timed-out handle',
+    '30-minute',
+    '--native-failed',
+    'takes its reserve or saves `failed`',
+    'work in `cwd`',
+  ])
+    assert.ok(providers.includes(term), term);
   const coverage = read(root + 'references/review-coverage.md');
-  for (const term of [
-    'repositoryChanges', 'unproven', 'repository-changes:', 'repository-rerun:', 'Decision Frame',
-  ]) assert.ok(coverage.includes(term), term);
+  for (const term of ['repositoryChanges', 'unproven', 'repository-changes:', 'repository-rerun:', 'Decision Frame'])
+    assert.ok(coverage.includes(term), term);
   const rules = read(root + 'references/review-rules.md');
   assert.ok(links(rules).includes('review-coverage.md#repository-changes-from-native-voices'));
   assert.doesNotMatch(rules, /repository-changes:|repository-rerun:|keeps the legacy round-level meaning/);
   const toolkit = read(root + 'references/toolkit.md');
   for (const term of [
-    '--native-failed', 'cliWave', 'repositoryChanges', 'openRepositoryChanges', 'checkout-report.json',
-  ]) assert.ok(toolkit.includes(term), term);
+    '--native-failed',
+    'cliWave',
+    'repositoryChanges',
+    'openRepositoryChanges',
+    'checkout-report.json',
+  ])
+    assert.ok(toolkit.includes(term), term);
   const ask = read(root + 'references/verbs/ask.md');
   assert.ok(ask.includes('--native-failed'));
   assert.ok(links(ask).includes('../providers.md#native-slots'));
@@ -524,12 +770,22 @@ test('native voice launch order failure reports and change rules are documented'
   const reviewRun = section(toolkit, 'review run');
   const askRun = section(toolkit, 'ask run');
   const nativeSlots = providers.split('## Native slots')[1]?.split('\n## ')[0] ?? '';
-  for (const [name, text] of [['toolkit review run', reviewRun], ['toolkit ask run', askRun], ['providers native slots', nativeSlots]] as const) {
+  for (const [name, text] of [
+    ['toolkit review run', reviewRun],
+    ['toolkit ask run', askRun],
+    ['providers native slots', nativeSlots],
+  ] as const) {
     assert.ok(text.toLowerCase().includes('cliwave'), name + ': mentions cliWave');
     const sentences = text.split(/(?<=[.!?])\s+/);
-    const pendings = sentences.filter(sentence => {
+    const pendings = sentences.filter((sentence) => {
       const lower = sentence.toLowerCase();
-      return lower.includes('rerun') && (lower.includes('pending') || lower.includes('cliwave') || lower.includes('backgrounded rerun') || lower.includes('cli wave'));
+      return (
+        lower.includes('rerun') &&
+        (lower.includes('pending') ||
+          lower.includes('cliwave') ||
+          lower.includes('backgrounded rerun') ||
+          lower.includes('cli wave'))
+      );
     });
     assert.ok(pendings.length > 0, name + ': pending rerun instruction');
     for (const pending of pendings) {
@@ -539,17 +795,27 @@ test('native voice launch order failure reports and change rules are documented'
       const rerunIdx = rerunAtOnce >= 0 ? rerunAtOnce : lower.indexOf('rerun');
       const launchEvery = lower.search(/launch every native slot/);
       assert.ok(launchEvery >= 0 && launchEvery < rerunIdx, name + ': native-slot launch precedes pending rerun');
-      assert.ok(lower.search(/retain/) >= 0 && lower.search(/retain/) < rerunIdx, name + ': handle retained before pending rerun');
-      assert.ok(lower.search(/handle/) >= 0 && lower.search(/handle/) < rerunIdx, name + ': handle retained before pending rerun');
+      assert.ok(
+        lower.search(/retain/) >= 0 && lower.search(/retain/) < rerunIdx,
+        name + ': handle retained before pending rerun',
+      );
+      assert.ok(
+        lower.search(/handle/) >= 0 && lower.search(/handle/) < rerunIdx,
+        name + ': handle retained before pending rerun',
+      );
       assert.match(pending, /every native slot/i, name + ': every native slot launches');
       for (const match of pending.matchAll(/rerun at once/gi)) {
-        const before = pending.slice(0, (match.index ?? 0)).toLowerCase();
+        const before = pending.slice(0, match.index ?? 0).toLowerCase();
         assert.ok(/launch every native slot/.test(before), name + ': rerun at once follows native-slot launch');
       }
     }
   }
   assert.match(nativeSlots, /Rerun the consume call only after the complete reply is in `replyPath`/);
-  for (const [command, text] of [['review run', reviewRun], ['ask run', askRun], ['check run', section(toolkit, 'check run')]] as const) {
+  for (const [command, text] of [
+    ['review run', reviewRun],
+    ['ask run', askRun],
+    ['check run', section(toolkit, 'check run')],
+  ] as const) {
     assert.equal(text.split(backgroundStart(command)).length - 1, 1, command + ': background start stated once');
   }
   assert.match(reviewRun, /before the backgrounded rerun/i);
@@ -563,45 +829,95 @@ test('native slots launch by prompt path', () => {
   }
   const toolkit = read(root + 'references/toolkit.md');
   assert.doesNotMatch(toolkit, /#### (?:Test cleanup|Cap-ending SHOULD corrections)|\]\(#test-cleanup\)/);
-  for (const term of ['test-cleanup-evidence-required', 'test-cleanup-paths-unchanged', 'test-cleanup-recorded', 'test-cleanup-empty', 'test-cleanup-removed', '--review-fix', 'reviewFix', 'bind the revised spec, then append its `edit` record']) assert.ok(toolkit.includes(term), term);
+  for (const term of [
+    'test-cleanup-evidence-required',
+    'test-cleanup-paths-unchanged',
+    'test-cleanup-recorded',
+    'test-cleanup-empty',
+    'test-cleanup-removed',
+    '--review-fix',
+    'reviewFix',
+    'bind the revised spec, then append its `edit` record',
+  ])
+    assert.ok(toolkit.includes(term), term);
   const grounding = read(root + 'references/grounding.md');
-  assert.match(grounding, /only when the explorer did not report a passing `lint run`[^.]*inline[^.]*or after the orchestrator edits the map/);
-  for (const phrase of ['Relaunch a failed, timed-out or lint-failing explorer once', 'For a size error, ask it to compress wording while retaining every entry', 'self-ground']) assert.ok(grounding.includes(phrase), phrase);
+  assert.match(
+    grounding,
+    /only when the explorer did not report a passing `lint run`[^.]*inline[^.]*or after the orchestrator edits the map/,
+  );
+  for (const phrase of [
+    'Relaunch a failed, timed-out or lint-failing explorer once',
+    'For a size error, ask it to compress wording while retaining every entry',
+    'self-ground',
+  ])
+    assert.ok(grounding.includes(phrase), phrase);
   assert.match(providers, /read and execute[^.]*`promptPath`/i);
   assert.match(providers, /cannot read files[^.]*inline/i);
   assert.match(read(root + 'references/verbs/ask.md'), /answering a native voice yourself, read its prompt/i);
-  for (const file of ['SKILL.md', 'references/toolkit.md', 'references/verbs/ask.md']) assert.doesNotMatch(read(root + file), /read (?:each|the result's native slots and each) `?promptPath/i);
+  for (const file of ['SKILL.md', 'references/toolkit.md', 'references/verbs/ask.md'])
+    assert.doesNotMatch(read(root + file), /read (?:each|the result's native slots and each) `?promptPath/i);
 });
 test('orchestrator reads quality bar sections by stage', () => {
   const skill = read(root + 'SKILL.md');
-  assert.ok(!links(skill).some(link => link.endsWith('quality-bar.md')), 'SKILL.md does not link to the whole quality bar');
+  assert.ok(
+    !links(skill).some((link) => link.endsWith('quality-bar.md')),
+    'SKILL.md does not link to the whole quality bar',
+  );
   const plan = read(root + 'references/verbs/plan.md');
   assert.ok(links(plan).includes('../grounding.md#design-increments'));
   assert.doesNotMatch(plan, /quality-bar\.md#code/);
   const review = read(root + 'references/verbs/review.md');
-  for (const anchor of ['spec', 'plan', 'design']) assert.ok(links(review).includes('../templates/quality-bar.md#' + anchor));
-  for (const phrase of ['Standalone review needs no bound plan', 'Code targets are `integration`, a bound-plan task ID, `worktree`, `<a>..<b>` or `<rev>`', 'Session state is excluded']) assert.ok(review.includes(phrase), phrase);
+  for (const anchor of ['spec', 'plan', 'design'])
+    assert.ok(links(review).includes('../templates/quality-bar.md#' + anchor));
+  for (const phrase of [
+    'Standalone review needs no bound plan',
+    'Code targets are `integration`, a bound-plan task ID, `worktree`, `<a>..<b>` or `<rev>`',
+    'Session state is excluded',
+  ])
+    assert.ok(review.includes(phrase), phrase);
   assert.doesNotMatch(review.split('for plan,')[1]?.split(';')[0] ?? '', /quality-bar\.md#code/);
   const implementLinks = links(read(root + 'references/verbs/implement.md'));
-  for (const anchor of ['rulings-and-fix-scope', 'review-provenance-and-applicability']) assert.ok(implementLinks.includes('../review-rules.md#' + anchor));
+  for (const anchor of ['rulings-and-fix-scope', 'review-provenance-and-applicability'])
+    assert.ok(implementLinks.includes('../review-rules.md#' + anchor));
   for (const guide of ['../spec-stage.md', 'plan.md', 'design.md']) assert.ok(implementLinks.includes(guide), guide);
-  for (const [file, anchor] of [['spec-authoring.md','spec'], ['verbs/plan.md','plan'], ['verbs/design.md','design'], ['verbs/implement.md','code'], ['verbs/review.md','code'], ['verbs/plan.md','testing'], ['verbs/implement.md','testing'], ['verbs/review.md','testing']]) {
+  for (const [file, anchor] of [
+    ['spec-authoring.md', 'spec'],
+    ['verbs/plan.md', 'plan'],
+    ['verbs/design.md', 'design'],
+    ['verbs/implement.md', 'code'],
+    ['verbs/review.md', 'code'],
+    ['verbs/plan.md', 'testing'],
+    ['verbs/implement.md', 'testing'],
+    ['verbs/review.md', 'testing'],
+  ]) {
     const text = read(root + 'references/' + file);
-    assert.ok(links(text).some(link => link.endsWith('quality-bar.md#' + anchor)), file);
-    assert.ok(links(text).some(link => link.endsWith('quality-bar.md#shared')), file);
+    assert.ok(
+      links(text).some((link) => link.endsWith('quality-bar.md#' + anchor)),
+      file,
+    );
+    assert.ok(
+      links(text).some((link) => link.endsWith('quality-bar.md#shared')),
+      file,
+    );
   }
 });
 test('failed plan slot rule has one home', () => {
   const coverage = read(root + 'references/review-coverage.md');
-  assert.match(section(coverage, 'Failed-slot coverage'), /failed plan or design slot at the cap gets no extra round[^.]*\[Decision Frame\]\(decision-frame\.md\)[^.]*user decides/);
+  assert.match(
+    section(coverage, 'Failed-slot coverage'),
+    /failed plan or design slot at the cap gets no extra round[^.]*\[Decision Frame\]\(decision-frame\.md\)[^.]*user decides/,
+  );
   const rules = read(root + 'references/review-rules.md');
   assert.ok(links(rules).includes('review-coverage.md#failed-slot-coverage'));
   assert.doesNotMatch(rules, /failed plan or design slot at the cap gets no extra round/);
   const implement = read(root + 'references/verbs/implement.md');
-  const step = (n: number) => implement.split('\n').find(line => line.startsWith(n + '. ')) ?? '';
+  const step = (n: number) => implement.split('\n').find((line) => line.startsWith(n + '. ')) ?? '';
   assert.ok(links(step(1)).includes('../review-coverage.md#failed-slot-coverage'));
   assert.doesNotMatch(implement, /extra round|reduced coverage goes/);
-  assert.match(step(3), /`worktree create` refuses a task until its prerequisites have integrated; verify an integrated prerequisite before creating its dependents/);
+  assert.match(
+    step(3),
+    /`worktree create` refuses a task until its prerequisites have integrated; verify an integrated prerequisite before creating its dependents/,
+  );
   const toolkit = read(root + 'references/toolkit.md');
   assert.ok(section(toolkit, 'worktree create').includes('prerequisite-pending'));
   const removal = /drops only a non-host provider whose sandbox cannot run/;
@@ -626,8 +942,28 @@ test('reference duplicates keep one home and link to it', () => {
   const planTemplate = read(root + 'references/templates/plan.md');
   assert.ok(links(planTemplate).includes('plan-field-notes.md'));
   const fieldNotes = read(root + 'references/templates/plan-field-notes.md');
-  for (const code of ['glance-restates-task-map', 'section-order', 'task-behaviour', 'plan-id-in-test-name', 'criterion-red-test-path', 'criterion-tests-path', 'undeclared-test-path', 'criterion-red-command', 'red-downgraded', 'overlap', 'duplicate-change-path', 'criterion-task-changes', 'criterion-check-tests']) assert.ok(fieldNotes.includes(code), code);
-  assert.ok(fieldNotes.includes('A title-filtered Check does not cover its file; also run each filtered file unfiltered in another Check or under Automated Tests.'), 'title-filtered Check rule');
+  for (const code of [
+    'glance-restates-task-map',
+    'section-order',
+    'task-behaviour',
+    'plan-id-in-test-name',
+    'criterion-red-test-path',
+    'criterion-tests-path',
+    'undeclared-test-path',
+    'criterion-red-command',
+    'red-downgraded',
+    'overlap',
+    'duplicate-change-path',
+    'criterion-task-changes',
+    'criterion-check-tests',
+  ])
+    assert.ok(fieldNotes.includes(code), code);
+  assert.ok(
+    fieldNotes.includes(
+      'A title-filtered Check does not cover its file; also run each filtered file unfiltered in another Check or under Automated Tests.',
+    ),
+    'title-filtered Check rule',
+  );
   assert.doesNotMatch(planTemplate.split('## Field notes')[1] ?? '', /glance-restates-task-map/);
   // The map budget is rendered from DEFAULT_MAP_BUDGET; no reference hardcodes it.
   assert.doesNotMatch(ref('templates/context-map'), /16,384|32,768/);
@@ -665,7 +1001,9 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   assert.ok(grounding.includes('carries forward an entry'));
   assert.ok(grounding.includes("explorer brief's scope-round rule"));
   assert.match(grounding, /re-read and re-verify/);
-  assert.ok(grounding.includes('refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations'));
+  assert.ok(
+    grounding.includes('refined `REQ`s, `DEC`s, planning-altitude test seams, callers and parallel implementations'),
+  );
   assert.equal(grounding.split('git status').length - 1, 1, 'git status appears only as a prohibition');
   assert.ok(grounding.includes('Do not run a `git status` check.'));
   assert.equal(explorer.split('git status').length - 1, 0, 'explorer brief asks for no git status check');
@@ -676,14 +1014,23 @@ test('scope-round carry-forward and settled-decision deduplication contracts hol
   // Settled decisions, non-goals and earlier rulings are closed without new unweighed evidence.
   const quality = read(root + 'references/templates/quality-bar.md');
   const prompt = read(root + 'references/templates/review-prompt.md');
-  for (const [name, text] of [['quality-bar.md', quality], ['review-prompt.md', prompt]] as const) {
+  for (const [name, text] of [
+    ['quality-bar.md', quality],
+    ['review-prompt.md', prompt],
+  ] as const) {
     assert.match(text, /accepted or rejected rulings/i, name + ': settled rulings');
   }
   assert.ok(links(quality).includes('review-prompt.md#prompt-template'));
   assert.ok(links(quality).includes('review-prompt.md#re-review-template'));
   const promptFlat = prompt.replace(/\s+/g, ' ');
-  assert.match(promptFlat, /earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed/);
-  assert.match(promptFlat, /do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers/);
+  assert.match(
+    promptFlat,
+    /earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed/,
+  );
+  assert.match(
+    promptFlat,
+    /do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers/,
+  );
 
   const append = section(read(root + 'references/toolkit.md'), 'ledger append');
   assert.match(append, /single record object or a non-empty JSON array of record objects/i);
@@ -721,16 +1068,17 @@ test('grounding guidance defines two explorer kinds and limit-based conditions',
       return [rel];
     });
   }
-  const checkFiles = [
-    ...walk('skills/dispatch'),
-    ...walk('docs'),
-    ...walk('tests'),
-  ];
+  const checkFiles = [...walk('skills/dispatch'), ...walk('docs'), ...walk('tests')];
   const violations: string[] = [];
   for (const file of checkFiles) {
     if (file.replaceAll('\\', '/').endsWith('skill-contract.test.ts')) continue;
     const content = fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
-    if (/\bgap explorer\b/i.test(content) || /\bscout explorer\b/i.test(content) || /\bone slot is a scout\b/i.test(content) || /\bat most three in one round\b/i.test(content)) {
+    if (
+      /\bgap explorer\b/i.test(content) ||
+      /\bscout explorer\b/i.test(content) ||
+      /\bone slot is a scout\b/i.test(content) ||
+      /\bat most three in one round\b/i.test(content)
+    ) {
       violations.push(file.replaceAll('\\', '/'));
     }
   }
@@ -742,13 +1090,7 @@ test('subagent role table, shared rules and delegation contract', () => {
   for (const col of ['Launched by', 'May launch', 'Model source', 'Writes', 'May be continued']) {
     assert.match(skill, new RegExp(col, 'i'), `missing column: ${col}`);
   }
-  for (const role of [
-    'Child orchestrator',
-    'Writer',
-    'Explorer',
-    'Utility subagent',
-    'Reviewer or voice',
-  ]) {
+  for (const role of ['Child orchestrator', 'Writer', 'Explorer', 'Utility subagent', 'Reviewer or voice']) {
     assert.match(skill, new RegExp(role, 'i'), `missing role row: ${role}`);
   }
   assert.match(skill, /Explorer[^\n]*map[^\n]*research/i);
@@ -806,14 +1148,39 @@ test('implement runs verification before test cleanup and verify states the appr
     'Never re-check between rounds',
     'add tests in a re-check',
     'another code review round',
-  ]) assert.ok(implementGuide.includes(term), term);
+  ])
+    assert.ok(implementGuide.includes(term), term);
   assert.ok(links(implementGuide).includes('verify.md'));
   assert.match(implementGuide, /check run`[^\n]*before the verifier launches/i);
   const verifyGuide = read(root + 'references/verbs/verify.md');
   for (const step of ['1. ', '2. ', '3. ', '4. ', '5. ', '6. ']) {
     assert.ok(verifyGuide.includes('\n' + step), `missing numbered step ${step}`);
   }
-  for (const term of ['status show', 'check run', 'checks passed', 'finishes unblocked checks', 'NEEDS_APPROVAL', 'approval quote', 'declined check', 'not proved', 'Read-only calls', 'Persistent or shared state', 'verification:<cycle>:V<n>', 'On resume rule', 're-check only those issues', 'Escalate recurrence', 'three fix rounds per issue', 'report-only', 'dirty: true', 'returns results inline', 'new cycle launches fresh', 'no delivery step', 'test edits permitted', 'no test edits']) assert.ok(verifyGuide.includes(term), term);
+  for (const term of [
+    'status show',
+    'check run',
+    'checks passed',
+    'finishes unblocked checks',
+    'NEEDS_APPROVAL',
+    'approval quote',
+    'declined check',
+    'not proved',
+    'Read-only calls',
+    'Persistent or shared state',
+    'verification:<cycle>:V<n>',
+    'On resume rule',
+    're-check only those issues',
+    'Escalate recurrence',
+    'three fix rounds per issue',
+    'report-only',
+    'dirty: true',
+    'returns results inline',
+    'new cycle launches fresh',
+    'no delivery step',
+    'test edits permitted',
+    'no test edits',
+  ])
+    assert.ok(verifyGuide.includes(term), term);
   assert.match(verifyGuide, /failed check or baseline[^\n]*proved/i);
   const skill = read(root + 'SKILL.md');
   assert.match(skill, /runtime verification/);
@@ -829,26 +1196,31 @@ test('call table lists every tool action, record kind and session command with i
   const actualCallTable = '### call table\n' + section(toolkit, 'call table').trimEnd() + '\n';
   assert.equal(actualCallTable, renderCallTable(), 'toolkit.md ### call table must match renderCallTable() verbatim');
 
-  const lines = section(toolkit, 'call table').split('\n').filter(line => line.startsWith('| ')).slice(2);
-  const parsed = lines.map(line => {
+  const lines = section(toolkit, 'call table')
+    .split('\n')
+    .filter((line) => line.startsWith('| '))
+    .slice(2);
+  const parsed = lines.map((line) => {
     const [type, heading, ...rest] = line.slice(2, -2).split(' | ');
-    return {type: type!, heading: heading!, form: rest.join(' | ').split('\\|').join('|')};
+    return { type: type!, heading: heading!, form: rest.join(' | ').split('\\|').join('|') };
   });
   const expected = [
-    ...Object.keys(ACTION_CONTRACTS).map(h => ['action', h]),
-    ...recordSchemas().flatMap(schema => schema.phased
-      ? schema.phases.map(phase => ['record', `${schema.kind} (${phase.phase})`])
-      : [['record', schema.kind]]),
-    ...Object.keys(SESSION_CONTRACTS).map(action => ['session', 'session ' + action]),
+    ...Object.keys(ACTION_CONTRACTS).map((h) => ['action', h]),
+    ...recordSchemas().flatMap((schema) =>
+      schema.phased
+        ? schema.phases.map((phase) => ['record', `${schema.kind} (${phase.phase})`])
+        : [['record', schema.kind]],
+    ),
+    ...Object.keys(SESSION_CONTRACTS).map((action) => ['session', 'session ' + action]),
   ];
-  assert.deepEqual(parsed.map(r => [r.type, r.heading]).sort(), expected.sort());
+  assert.deepEqual(parsed.map((r) => [r.type, r.heading]).sort(), expected.sort());
   const firstSpan = (text: string) => /`([^`]+)`/.exec(text)?.[1] ?? '-';
   for (const row of parsed) {
     const targetHeading = row.type === 'record' ? row.heading.replace(/ \([^)]+\)$/, '') : row.heading;
     const body = section(toolkit, targetHeading);
     assert.ok(body.length > 0, `missing toolkit.md section for ${row.heading}`);
     if (row.type === 'action') {
-      const form = firstSpan(body.split('\n').find(line => line.startsWith('Arguments: ')) ?? '');
+      const form = firstSpan(body.split('\n').find((line) => line.startsWith('Arguments: ')) ?? '');
       assert.equal(row.form.replace(/^`|`$/g, ''), form, row.heading);
     } else if (row.type === 'session') {
       assert.equal(row.form.replace(/^`|`$/g, ''), firstSpan(body), row.heading);
@@ -866,7 +1238,10 @@ test('call table lists every tool action, record kind and session command with i
     ['brief test-cleanup', /<values\.json\|->.*--json <json>.*--base <ref> --integration-path <path>/],
     ['brief verifier', /<values\.json\|->.*--json <json>/],
     ['lint run', /--edit <fields\.json\|->.*--json <json>/],
-    ['worktree commit', /--review-fix <json-file\|->.*--review-fix-json <json>.*--test-cleanup <json-file\|->.*--test-cleanup-json <json>/],
+    [
+      'worktree commit',
+      /--review-fix <json-file\|->.*--review-fix-json <json>.*--test-cleanup <json-file\|->.*--test-cleanup-json <json>/,
+    ],
     ['worktree deliver', /--commit <message-file\|->.*--message <text>/],
     ['ledger append', /<record\.json\|->/],
   ] as const) {
@@ -890,23 +1265,78 @@ test('SKILL.md read rule loads the call table once and fetches help on demand or
 
 test('review rules require governing evidence for a reversal', () => {
   const rules = read(root + 'references/review-rules.md');
-  assert.ok(rules.includes('Before accepting a finding that reverses an earlier accepted ruling or an approved plan criterion, cite the governing spec or plan in the ruling and resolve the conflict there.'), 'review rules must require governing evidence and conflict resolution before a reversal');
+  assert.ok(
+    rules.includes(
+      'Before accepting a finding that reverses an earlier accepted ruling or an approved plan criterion, cite the governing spec or plan in the ruling and resolve the conflict there.',
+    ),
+    'review rules must require governing evidence and conflict resolution before a reversal',
+  );
 });
 
 test('merged rules keep one home', () => {
   const ref = (file: string) => read(root + 'references/' + file);
   const homes: Array<[string, string, string, string]> = [
     ['review-rules.md', 'plan and design only', 'decision-frame.md', 'Offer this only for plan and design reviews'],
-    ['decision-frame.md', 'Obtain a user quote for any actual waiver', 'decision-frame.md', 'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes'],
-    ['verbs/implement.md', 'Waivers and manual-completion records must quote', 'decision-frame.md', 'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes'],
-    ['verbs/verify.md', 'commit fixes and verifier-added tests', 'verbs/implement.md', 'Commit verifier-added tests and fixes with `worktree commit`'],
-    ['verbs/verify.md', 'A post-review re-check adds no tests', 'verbs/implement.md', 'Never re-check between rounds or add tests in a re-check'],
-    ['worktree-cleanup.md', 'Report every retained owned path', 'worktree-cleanup.md', 'Resolve owned retained paths before a successful handoff'],
-    ['verbs/review.md', 'worktree captures tracked and untracked', 'toolkit.md', 'Worktree captures HEAD plus tracked/untracked changes'],
-    ['verbs/review.md', 'Verify claims against intent and current source', 'review-rules.md', 'Verify every claim against current source and governing outcomes'],
-    ['verbs/review.md', 'Preserve prior findings, rulings', 'review-rules.md', 'Retain reviewed revision, scope, findings, rulings'],
-    ['verbs/plan.md', 'Settle the approval tuple', 'decision-frame.md', 'one approval tuple of spec hash, plan hash and optional design hash'],
-    ['grounding.md', 'resolve any symlinked cited path', 'templates/explorer-brief.md', 'resolve any symlinked path with `realpath`'],
+    [
+      'decision-frame.md',
+      'Obtain a user quote for any actual waiver',
+      'decision-frame.md',
+      'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes',
+    ],
+    [
+      'verbs/implement.md',
+      'Waivers and manual-completion records must quote',
+      'decision-frame.md',
+      'Waivers, manual completion and selection of xhigh/max also require verbatim user quotes',
+    ],
+    [
+      'verbs/verify.md',
+      'commit fixes and verifier-added tests',
+      'verbs/implement.md',
+      'Commit verifier-added tests and fixes with `worktree commit`',
+    ],
+    [
+      'verbs/verify.md',
+      'A post-review re-check adds no tests',
+      'verbs/implement.md',
+      'Never re-check between rounds or add tests in a re-check',
+    ],
+    [
+      'worktree-cleanup.md',
+      'Report every retained owned path',
+      'worktree-cleanup.md',
+      'Resolve owned retained paths before a successful handoff',
+    ],
+    [
+      'verbs/review.md',
+      'worktree captures tracked and untracked',
+      'toolkit.md',
+      'Worktree captures HEAD plus tracked/untracked changes',
+    ],
+    [
+      'verbs/review.md',
+      'Verify claims against intent and current source',
+      'review-rules.md',
+      'Verify every claim against current source and governing outcomes',
+    ],
+    [
+      'verbs/review.md',
+      'Preserve prior findings, rulings',
+      'review-rules.md',
+      'Retain reviewed revision, scope, findings, rulings',
+    ],
+    [
+      'verbs/plan.md',
+      'Settle the approval tuple',
+      'decision-frame.md',
+      'one approval tuple of spec hash, plan hash and optional design hash',
+    ],
+    [
+      'grounding.md',
+      'resolve any symlinked cited path',
+      'templates/explorer-brief.md',
+      'resolve any symlinked path with `realpath`',
+    ],
   ];
   for (const [oldFile, repeat, homeFile, home] of homes) {
     assert.ok(!ref(oldFile).includes(repeat), `${oldFile} repeats: ${repeat}`);
@@ -920,7 +1350,10 @@ test('flow defect repairs state and verifier disposable and refused-write rules'
   assert.match(brief, /When the host refuses the report write, return the full report text/);
   assert.match(brief, /A refused write needs no user ruling/);
   const verify = read(root + 'references/verbs/verify.md');
-  assert.match(verify, /When the host refuses the report write, the verifier returns the full report text and the orchestrator persists it/);
+  assert.match(
+    verify,
+    /When the host refuses the report write, the verifier returns the full report text and the orchestrator persists it/,
+  );
   assert.match(verify, /a refused write needs no user ruling/);
 });
 
@@ -940,9 +1373,15 @@ test('child launch documents inheritance, mismatch fallback, chaining and contin
   assert.match(providers, /definition with `model: inherit`/);
   assert.match(providers, /on the same model Claude Code inherits session effort\./);
   assert.match(providers, /Missing telemetry alone does not block documented inheritance\./);
-  assert.match(providers, /If the host cannot apply the settings or reports a mismatch, report the existing launch blocker with evidence\./);
+  assert.match(
+    providers,
+    /If the host cannot apply the settings or reports a mismatch, report the existing launch blocker with evidence\./,
+  );
   assert.match(read(root + 'references/verbs/design.md'), /on capability-missing chain the increment in its session\./);
-  assert.match(read(root + 'references/templates/increment-orchestrator-brief.md'), /Wait for the parent to continue you before any increment work\./);
+  assert.match(
+    read(root + 'references/templates/increment-orchestrator-brief.md'),
+    /Wait for the parent to continue you before any increment work\./,
+  );
 });
 
 test('design parent settles approval and caller commit', () => {
@@ -950,7 +1389,10 @@ test('design parent settles approval and caller commit', () => {
   for (const term of ['approval tuple', 'opt-in', 'empty commit', 'record-only', 'deviation']) {
     assert.ok(design.includes(term), term);
   }
-  assert.match(design, /Before accepting or declining a deviation, obtain a user decision for .* disagreement or uncertainty about intent or trade-offs/);
+  assert.match(
+    design,
+    /Before accepting or declining a deviation, obtain a user decision for .* disagreement or uncertainty about intent or trade-offs/,
+  );
   assert.match(design, /Wait for that decision before ruling on or implementing the affected change\./);
   assert.match(design, /Decline only when the increment can be met without the deviation/);
   assert.match(design, /otherwise obtain user approval at medium and above; at low follow/);
@@ -960,10 +1402,24 @@ test('accepted review fixes route by artifact and change', () => {
   const rules = read(root + 'references/review-rules.md');
   assert.match(rules, /plan and design fixes go to the orchestrator/i);
   assert.match(rules, /mechanical correction confirmed by a deterministic check goes to utility first/i);
-  for (const trigger of ['multiple files', 'an executable production statement', 'a production configuration or schema directive that changes runtime behaviour', 'a test assertion']) {
-    assert.match(rules, new RegExp('route a remaining fix to the responsible task writer if it changes[^.]*' + trigger, 'i'));
+  for (const trigger of [
+    'multiple files',
+    'an executable production statement',
+    'a production configuration or schema directive that changes runtime behaviour',
+    'a test assertion',
+  ]) {
+    assert.match(
+      rules,
+      new RegExp('route a remaining fix to the responsible task writer if it changes[^.]*' + trigger, 'i'),
+    );
   }
-  for (const pattern of [/orchestrator handles remaining small fixes/i, /content-preserving rename.*one file/i, /importer edit.*another file/i, /standalone review.*direct/i]) assert.match(rules, pattern);
+  for (const pattern of [
+    /orchestrator handles remaining small fixes/i,
+    /content-preserving rename.*one file/i,
+    /importer edit.*another file/i,
+    /standalone review.*direct/i,
+  ])
+    assert.match(rules, pattern);
 });
 
 test('writer review fix handoff preserves the integration boundary', () => {
@@ -972,33 +1428,75 @@ test('writer review fix handoff preserves the integration boundary', () => {
   const skill = read(root + 'SKILL.md');
   const brief = read(root + 'references/templates/writer-brief.md');
   assert.ok(links(guide).includes('../review-fixes.md'));
-  for (const pattern of [/clean integration worktree.*HEAD/i, /absolute integration worktree.*paths/i, /serial/i, /retained.*writer/i, /model candidates.*effort.*platform options/i, /dropped.*writer or utility/i, /HEAD.*delta/i, /staged.*unstaged.*untracked/i, /nonempty/i, /partial edits.*replacement/i, /worktree commit --review-fix/i]) assert.match(fixes, pattern);
+  for (const pattern of [
+    /clean integration worktree.*HEAD/i,
+    /absolute integration worktree.*paths/i,
+    /serial/i,
+    /retained.*writer/i,
+    /model candidates.*effort.*platform options/i,
+    /dropped.*writer or utility/i,
+    /HEAD.*delta/i,
+    /staged.*unstaged.*untracked/i,
+    /nonempty/i,
+    /partial edits.*replacement/i,
+    /worktree commit --review-fix/i,
+  ])
+    assert.match(fixes, pattern);
   assert.match(fixes, /full correction set in the accepted ruling’s `paths` field/);
-  assert.match(fixes, /latest accepted ruling that declares `paths` or fall back to the single-file locus when none does/);
+  assert.match(
+    fixes,
+    /latest accepted ruling that declares `paths` or fall back to the single-file locus when none does/,
+  );
   assert.doesNotMatch(fixes, /`?fix`? field/i);
-  assert.match(fixes, /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i);
+  assert.match(
+    fixes,
+    /cross-ownership fix.*all approved paths.*task owning the defective behaviour.*resolve unclear ownership.*plan and integration evidence before writes/i,
+  );
   assert.ok(links(fixes).includes('templates/quality-bar.md#shared'));
   assert.match(fixes, /reserve toolkit actions for the orchestrator/i);
-  assert.match(fixes, /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i);
-  assert.match(skill, /Follow-ups return inline without files, except assigned child increment continuation or review fix; review fixes also reply inline/i);
+  assert.match(
+    fixes,
+    /assignee replies inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results; it does not create, submit or integrate a task worktree/i,
+  );
+  assert.match(
+    skill,
+    /Follow-ups return inline without files, except assigned child increment continuation or review fix; review fixes also reply inline/i,
+  );
   const routing = skill.split('## Routing\n')[1]!.split('\n## ')[0]!;
-  assert.match(routing, /implementation integration mechanical fixes that a deterministic check confirms \| Utility subagent/i);
-  assert.match(routing, /remaining implementation integration fixes per \[writer triggers\]\(references\/review-rules\.md\) \| Writer at run level/i);
+  assert.match(
+    routing,
+    /implementation integration mechanical fixes that a deterministic check confirms \| Utility subagent/i,
+  );
+  assert.match(
+    routing,
+    /remaining implementation integration fixes per \[writer triggers\]\(references\/review-rules\.md\) \| Writer at run level/i,
+  );
   assert.match(routing, /remaining small integration fixes and standalone review fixes \| Orchestrator/i);
-  assert.match(read(root + 'references/toolkit.md'), /accepted fixes, including inspected assigned writer or utility deltas/i);
-  assert.match(brief, /For the ordinary task, reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `\{\{reportPath\}\}`; a one-line summary; and `concerns: <n>`/i);
-  assert.match(brief, /integration worktree.*listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results\. Preserve the original `\{\{reportPath\}\}` and RED evidence/i);
+  assert.match(
+    read(root + 'references/toolkit.md'),
+    /accepted fixes, including inspected assigned writer or utility deltas/i,
+  );
+  assert.match(
+    brief,
+    /For the ordinary task, reply only with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`; `\{\{reportPath\}\}`; a one-line summary; and `concerns: <n>`/i,
+  );
+  assert.match(
+    brief,
+    /integration worktree.*listed paths; reply inline with status `DONE`, `BLOCKED` or `NEEDS_CONTEXT`, changed paths and check results\. Preserve the original `\{\{reportPath\}\}` and RED evidence/i,
+  );
 });
 
 test('removed explorer config key explore-subagents is absent from code, tests and docs except allowed list', () => {
-  const allowed = new Set([
-    'docs/decisions/0001-strict-dispatch-config-format.md',
-    'docs/decisions/0015-native-subagent-routing.md',
-    'skills/dispatch/scripts/lib/config.ts',
-    'tests/unit/lib/config.test.ts',
-    'tests/integration/skill-contract.test.ts',
-    'skills/dispatch/config.local.jsonc',
-  ].map(p => path.normalize(p)));
+  const allowed = new Set(
+    [
+      'docs/decisions/0001-strict-dispatch-config-format.md',
+      'docs/decisions/0015-native-subagent-routing.md',
+      'skills/dispatch/scripts/lib/config.ts',
+      'tests/unit/lib/config.test.ts',
+      'tests/integration/skill-contract.test.ts',
+      'skills/dispatch/config.local.jsonc',
+    ].map((p) => path.normalize(p)),
+  );
 
   function walk(dir: string): string[] {
     const full = path.join(OVERLAY_ROOT, dir);
@@ -1013,12 +1511,7 @@ test('removed explorer config key explore-subagents is absent from code, tests a
     });
   }
 
-  const filesToCheck = [
-    ...walk('skills/dispatch'),
-    ...walk('docs'),
-    ...walk('tests'),
-    'README.md',
-  ];
+  const filesToCheck = [...walk('skills/dispatch'), ...walk('docs'), ...walk('tests'), 'README.md'];
 
   const violations: string[] = [];
   for (const rel of filesToCheck) {
@@ -1081,8 +1574,14 @@ test('each preserved rule has one canonical home; review fix procedure and light
 
   // Map correction: canonical home in grounding.md#check-and-recover; SKILL.md routing names only threshold-exceeding corrections.
   const grounding = ref('grounding.md');
-  assert.match(grounding, /verifies and rules in every case[\s\S]*small corrections[\s\S]*utility subagent[\s\S]*context guard/i);
-  assert.match(skill, /\|[^|\n]*map corrections? (?:over|exceeding) the context-guard threshold[^|\n]*\| Utility subagent \|/i);
+  assert.match(
+    grounding,
+    /verifies and rules in every case[\s\S]*small corrections[\s\S]*utility subagent[\s\S]*context guard/i,
+  );
+  assert.match(
+    skill,
+    /\|[^|\n]*map corrections? (?:over|exceeding) the context-guard threshold[^|\n]*\| Utility subagent \|/i,
+  );
   assert.doesNotMatch(skill, /\|[^|\n]*,\s*map correction,\s*/i);
 
   // Explorer write scope: canonical home in grounding.md#publish; other sites drop "read-only" on explorers.
@@ -1125,26 +1624,49 @@ test('each preserved rule has one canonical home; review fix procedure and light
   const fixRules = rules.split('The orchestrator runs steps 1–3')[1]!;
   const once = (needle: string) => assert.equal(fixRules.split(needle).length - 1, 1, needle);
   for (let n = 1; n <= 8; n++) assert.match(fixRules, new RegExp('^' + n + '\\. ', 'm'));
-  for (const text of ['mode `inline`', 'advisory', '`brief fix-review-lite <artifact> --session <session> --host <platform>`']) once(text);
-  assert.match(fixRules, /Repeat the review once at most per batch and only when the batch fixed an accepted MUST finding/);
+  for (const text of [
+    'mode `inline`',
+    'advisory',
+    '`brief fix-review-lite <artifact> --session <session> --host <platform>`',
+  ])
+    once(text);
+  assert.match(
+    fixRules,
+    /Repeat the review once at most per batch and only when the batch fixed an accepted MUST finding/,
+  );
   assert.match(fixRules, /For each edited artifact per batch, run `lint run --edit`/);
   assert.match(toolkit.split('### edit')[1]!, /For each edited artifact per fix batch, run `lint run --edit`/);
   // The fix-review-lite task text lives in its template; each input slot and rule appears once there.
   const fixReviewLiteBrief = ref('templates/fix-review-lite-brief.md');
   assert.match(fixReviewLiteBrief, /Unresolved citations\. You may read their listed matches:[\s\n]+{{unresolved}}/);
   assert.match(fixReviewLiteBrief, /Read only[^\n]*the listed citations and matches[^\n]*never read a withheld path/);
-  for (const text of ['Relative paths resolve against this root.', '{{questions}}', '{{diffPath}}', '{{artifact}}', '{{spec}}', '{{citations}}', 'Report only false citations']) assert.equal(fixReviewLiteBrief.split(text).length - 1, 1, text);
+  for (const text of [
+    'Relative paths resolve against this root.',
+    '{{questions}}',
+    '{{diffPath}}',
+    '{{artifact}}',
+    '{{spec}}',
+    '{{citations}}',
+    'Report only false citations',
+  ])
+    assert.equal(fixReviewLiteBrief.split(text).length - 1, 1, text);
   // REQ-4 bounds reads to the diff, artifact, spec and consumer searches; codegraph returns source outside that bound.
   assert.doesNotMatch(fixReviewLiteBrief, /codegraph explore/);
   assert.match(skill, /Pass `--host <platform>`[^\n]*`brief fix-review-lite`/);
-  assert.match(fixRules, /code and integration fixes[\s\S]*whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/);
+  assert.match(
+    fixRules,
+    /code and integration fixes[\s\S]*whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract/,
+  );
   assert.match(fixRules, /launches no subagent and changes no roster, cap or round rule/);
   assert.match(fixRules, /mark the review inline in the verb report/);
   assert.match(rules, /For the final completed review round[^\n]*plan and design batches[^\n]*step 8/);
   assert.match(fixRules, /verb report \(the plan or design handoff\)/);
   assert.match(fixRules, /Verify each claim at source and fix or rule it before the next round or report/);
   assert.match(reviewFixes, /steps 4–6 with the orchestrator’s stated step 3 root cause per group/);
-  assert.match(rules, /After claims settle, record one `note` per batch, including any repeat[^\n]*stable, unique one-based batch ordinal within that review round/);
+  assert.match(
+    rules,
+    /After claims settle, record one `note` per batch, including any repeat[^\n]*stable, unique one-based batch ordinal within that review round/,
+  );
   assert.match(reviewFixes, /self-check for code fixes/);
   assert.match(skill, /plan and design lightweight fix reviews/);
   assert.match(review, /fix procedure/);
@@ -1154,7 +1676,10 @@ test('each preserved rule has one canonical home; review fix procedure and light
 
   // Discard-work gate: canonical home in decision-frame.md#user-gate-boundaries; toolkit links it.
   assert.ok(links(toolkit).includes('decision-frame.md#user-gate-boundaries'));
-  assert.doesNotMatch(toolkit, /Obtain user authority before discarded accepted work|obtain user authority when discarding work|authorize discarded work/);
+  assert.doesNotMatch(
+    toolkit,
+    /Obtain user authority before discarded accepted work|obtain user authority when discarding work|authorize discarded work/,
+  );
 
   // Standalone review adds no gate: canonical home in verbs/review.md; SKILL.md and spec-stage link it.
   assert.ok(links(skill).includes('references/verbs/review.md'));
@@ -1184,7 +1709,10 @@ test('each preserved rule has one canonical home; review fix procedure and light
   const planTemplate = ref('templates/plan.md');
   assert.match(planTemplate, /reading the whole plan only when/i);
   assert.doesNotMatch(planTemplate, /from its start through `## Task Map`, then only its own task/);
-  assert.doesNotMatch(planTemplate, /full checks of modified logical test files or known impacted consumers before aggregate/);
+  assert.doesNotMatch(
+    planTemplate,
+    /full checks of modified logical test files or known impacted consumers before aggregate/,
+  );
   assert.ok(links(implement).includes('../templates/writer-brief.md'));
   assert.doesNotMatch(implement, /Their reply gives status, `reportPath`, a one-line summary and `concerns: <n>`/);
 
@@ -1194,10 +1722,16 @@ test('each preserved rule has one canonical home; review fix procedure and light
 
   // Settled-section regeneration: canonical home in review-rules.md; templates/plan and templates/design link it.
   assert.ok(links(planTemplate).includes('../review-rules.md'));
-  assert.doesNotMatch(planTemplate, /renders current findings and round links from the ledger after each review round and ruling/);
+  assert.doesNotMatch(
+    planTemplate,
+    /renders current findings and round links from the ledger after each review round and ruling/,
+  );
   const designTemplate = ref('templates/design.md');
   assert.ok(links(designTemplate).includes('../review-rules.md'));
-  assert.doesNotMatch(designTemplate, /regenerates the findings section from the ledger after each review round and ruling/);
+  assert.doesNotMatch(
+    designTemplate,
+    /regenerates the findings section from the ledger after each review round and ruling/,
+  );
 
   // Read-command allowlist: Claude and Copilot apply read-commands.
   const config = ref('readme/configuration.md');
@@ -1220,7 +1754,10 @@ test('implement runs the pre-cleanup check by changed-path class', () => {
   assert.match(implement, /matches no criterion's declared `Changes:` or `Tests:`[^.]*all-criteria `check run`/i);
   assert.match(implement, /check run --criteria[^.]*automated criteria whose declared paths match/i);
   assert.match(implement, /review-only criteria keep their user-evidence path/i);
-  assert.match(implement, /start all-criteria and contract \[checks\]\([^)]+\) \(`check run`\) as a background call[^.]*start code review on the same integration HEAD together/i);
+  assert.match(
+    implement,
+    /start all-criteria and contract \[checks\]\([^)]+\) \(`check run`\) as a background call[^.]*start code review on the same integration HEAD together/i,
+  );
 
   const toolkit = read(root + 'references/toolkit.md');
   assert.match(toolkit, /`?trees`? maps each `?removed`? ID to the accepted evidence tree/i);
@@ -1228,7 +1765,10 @@ test('implement runs the pre-cleanup check by changed-path class', () => {
   assert.match(toolkit, /verified at <tree>; tests removed in cleanup/);
 
   const readmeImplement = read(root + 'references/readme/implement.md');
-  assert.match(readmeImplement, /cleanup starts without a full check run unless the verifier commit changed an undeclared path/i);
+  assert.match(
+    readmeImplement,
+    /cleanup starts without a full check run unless the verifier commit changed an undeclared path/i,
+  );
 });
 
 test('readmes state the spec confirm gate at every level', () => {
@@ -1244,7 +1784,11 @@ test('readmes state the spec confirm gate at every level', () => {
     const text = read(file);
     assert.doesNotMatch(text, /Approve spec at medium\+/i, file);
     assert.doesNotMatch(text, /at (?:level )?`?medium`? and above[^.\n]*(?:approve|confirm) the spec/i, file);
-    assert.doesNotMatch(text, /at `?low`?[^.\n]*(?:shows you the spec|links the spec|shows the spec) at (?:the end|handoff)/i, file);
+    assert.doesNotMatch(
+      text,
+      /at `?low`?[^.\n]*(?:shows you the spec|links the spec|shows the spec) at (?:the end|handoff)/i,
+      file,
+    );
     assert.match(text, /confirm(?:s|ed|ing)?[^\n]*every level|at every level[^\n]*confirm(?:s|ed|ing)?/i, file);
   }
   for (const flow of ['plan', 'design', 'implement']) {
@@ -1259,11 +1803,14 @@ test('only a subagent assigned a map may lint it', () => {
   assert.match(callTable, /subagent assigned a map[^\n]*`lint run` on that (?:assigned )?map only/i);
 
   const skill = read(root + 'SKILL.md');
-  const utilityRow = skill.split('\n').find(line => line.startsWith('| Utility subagent')) ?? '';
+  const utilityRow = skill.split('\n').find((line) => line.startsWith('| Utility subagent')) ?? '';
   assert.match(utilityRow, /except `lint run` on an assigned map/i);
 
   const concepts = read(root + 'references/readme/concepts.md');
-  assert.match(concepts, /Explorer subagents[\s\S]*write only an assigned map file[\s\S]*`lint run` on its assigned map only/i);
+  assert.match(
+    concepts,
+    /Explorer subagents[\s\S]*write only an assigned map file[\s\S]*`lint run` on its assigned map only/i,
+  );
   assert.match(concepts, /Utility subagents[\s\S]*except `lint run` on an assigned map/i);
 });
 
@@ -1271,33 +1818,53 @@ test('skill prose and scripts stay host-neutral without subagentModels', () => {
   const skill = read(root + 'SKILL.md');
   const providers = read(root + 'references/providers.md');
   const toolkit = read(root + 'references/toolkit.md');
-  for (const [name, text] of [['SKILL.md', skill], ['providers.md', providers], ['toolkit.md', toolkit]] as const) {
+  for (const [name, text] of [
+    ['SKILL.md', skill],
+    ['providers.md', providers],
+    ['toolkit.md', toolkit],
+  ] as const) {
     assert.doesNotMatch(text, /subagentModels/, `${name} omits subagentModels`);
   }
 
   const launchSection = skill.split('## Launch and continue\n')[1]?.split('\n## ')[0] ?? '';
   assert.ok(launchSection.length > 0, 'SKILL.md has Launch and continue');
-  assert.doesNotMatch(launchSection, /\b(opencode|agy|claude|codex|copilot)\b/i, 'SKILL.md launch rule names no platform');
+  assert.doesNotMatch(
+    launchSection,
+    /\b(opencode|agy|claude|codex|copilot)\b/i,
+    'SKILL.md launch rule names no platform',
+  );
 
-  assert.doesNotMatch(providers, /host-sandboxed|dangerouslyDisableSandbox|excludedCommands/, 'providers.md omits host-sandboxed recovery');
+  assert.doesNotMatch(
+    providers,
+    /host-sandboxed|dangerouslyDisableSandbox|excludedCommands/,
+    'providers.md omits host-sandboxed recovery',
+  );
   assert.doesNotMatch(providers, /closest `Model`|flash_lite/, 'providers.md omits agy Model list');
 
   const scriptsDir = path.join(OVERLAY_ROOT, root, 'scripts');
-  const tsFiles = fs.readdirSync(scriptsDir, { recursive: true })
-    .map(entry => String(entry).replace(/\\/g, '/'))
-    .filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
+  const tsFiles = fs
+    .readdirSync(scriptsDir, { recursive: true })
+    .map((entry) => String(entry).replace(/\\/g, '/'))
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   for (const file of tsFiles) {
     const content = fs.readFileSync(path.join(scriptsDir, file), 'utf8');
     if (file === 'toolkit/fanout/state.ts') {
       const stripped = content.replace(/function normalizeNative\b[\s\S]*?\n\}/, '');
-      assert.doesNotMatch(stripped, /subagentModels/, 'fanout/state.ts names subagentModels only inside normalizeNative');
-      assert.match(content, /function normalizeNative\b[\s\S]*?subagentModels/, 'fanout/state.ts keeps subagentModels in normalizeNative');
+      assert.doesNotMatch(
+        stripped,
+        /subagentModels/,
+        'fanout/state.ts names subagentModels only inside normalizeNative',
+      );
+      assert.match(
+        content,
+        /function normalizeNative\b[\s\S]*?subagentModels/,
+        'fanout/state.ts keeps subagentModels in normalizeNative',
+      );
     } else {
       assert.doesNotMatch(content, /subagentModels/, `${file} omits subagentModels`);
     }
   }
 });
-
 
 test('checks passed condition has one home in brief verifier', () => {
   const ref = (file: string) => read(root + 'references/' + file);
@@ -1308,7 +1875,10 @@ test('checks passed condition has one home in brief verifier', () => {
   assert.match(toolkit, /no bound integration is targeted/);
   for (const guide of [verify, implement]) {
     assert.ok(links(guide).includes('../toolkit.md#brief-verifier'));
-    assert.doesNotMatch(guide, /executed > 0|no bound integration is targeted|zero.command runs|zero commands ran|executed-command condition/);
+    assert.doesNotMatch(
+      guide,
+      /executed > 0|no bound integration is targeted|zero.command runs|zero commands ran|executed-command condition/,
+    );
   }
 });
 

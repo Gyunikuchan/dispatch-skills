@@ -30,42 +30,91 @@ const TOOLKIT = 'references/toolkit.md';
 const BAR = 'references/templates/quality-bar.md';
 
 export const MANIFEST: Record<PathName, PathManifest> = {
-  ask: { guide: 'references/verbs/ask.md', links: {
-    'SKILL.md#routing': unconditional, 'references/grounding.md#publish': conditional('only when'),
-    'references/toolkit.md#ask-run': unconditional, 'references/grounding.md': conditional('when'),
-    'references/decision-frame.md': conditional('When source checks'), 'references/providers.md#native-slots': unconditional,
-    'references/providers.md': unconditional,
-  }, calls: [call('ask run', 1)] },
-  design: { guide: 'references/verbs/design.md', links: {
-    'references/spec-authoring.md#resolve-and-author': conditional('No current spec'), 'references/grounding.md#scope-round': unconditional,
-    [`${BAR}#shared`]: unconditional, [`${BAR}#spec`]: unconditional, [`${BAR}#design`]: unconditional,
-    'references/spec-stage.md#readers-and-document-layers': unconditional, 'references/templates/design.md': unconditional,
-    'references/grounding.md#check-and-recover': unconditional, [`${TOOLKIT}#lint-run`]: unconditional,
-    [`${TOOLKIT}#bind`]: unconditional, 'references/spec-stage.md#run-level': unconditional,
-    'references/review-rules.md': unconditional, 'references/verbs/review.md': unconditional,
-    'references/spec-stage.md#revision-protocol': unconditional, [`${TOOLKIT}#edit`]: unconditional,
-    'references/verbs/implement.md': unconditional, [`${TOOLKIT}#session-commands`]: conditional('For each ready increment'),
-    'references/templates/increment-orchestrator-brief.md': conditional('On a verified host'),
-    'references/providers.md#child-orchestrators': conditional('On a verified host'),
-    'references/grounding.md#design-increments': unconditional, 'references/decision-frame.md#user-gate-boundaries': conditional('user gate'),
-    'references/spec-stage.md#approval': conditional('otherwise'), [`${TOOLKIT}#worktree-deliver`]: conditional('With the opt-in'),
-  }, calls: [call('doctor run', 1), call('lint run', 1), call('review run', 2), call('brief fix-review-lite', 1), record('bind', 1), record('edit', 1), call('worktree deliver', 0)] },
+  ask: {
+    guide: 'references/verbs/ask.md',
+    links: {
+      'SKILL.md#routing': unconditional,
+      'references/grounding.md#publish': conditional('only when'),
+      'references/toolkit.md#ask-run': unconditional,
+      'references/grounding.md': conditional('when'),
+      'references/decision-frame.md': conditional('When source checks'),
+      'references/providers.md#native-slots': unconditional,
+      'references/providers.md': unconditional,
+    },
+    calls: [call('ask run', 1)],
+  },
+  design: {
+    guide: 'references/verbs/design.md',
+    links: {
+      'references/spec-authoring.md#resolve-and-author': conditional('No current spec'),
+      'references/grounding.md#scope-round': unconditional,
+      [`${BAR}#shared`]: unconditional,
+      [`${BAR}#spec`]: unconditional,
+      [`${BAR}#design`]: unconditional,
+      'references/spec-stage.md#readers-and-document-layers': unconditional,
+      'references/templates/design.md': unconditional,
+      'references/grounding.md#check-and-recover': unconditional,
+      [`${TOOLKIT}#lint-run`]: unconditional,
+      [`${TOOLKIT}#bind`]: unconditional,
+      'references/spec-stage.md#run-level': unconditional,
+      'references/review-rules.md': unconditional,
+      'references/verbs/review.md': unconditional,
+      'references/spec-stage.md#revision-protocol': unconditional,
+      [`${TOOLKIT}#edit`]: unconditional,
+      'references/verbs/implement.md': unconditional,
+      [`${TOOLKIT}#session-commands`]: conditional('For each ready increment'),
+      'references/templates/increment-orchestrator-brief.md': conditional('On a verified host'),
+      'references/providers.md#child-orchestrators': conditional('On a verified host'),
+      'references/grounding.md#design-increments': unconditional,
+      'references/decision-frame.md#user-gate-boundaries': conditional('user gate'),
+      'references/spec-stage.md#approval': conditional('otherwise'),
+      [`${TOOLKIT}#worktree-deliver`]: conditional('With the opt-in'),
+    },
+    calls: [
+      call('doctor run', 1),
+      call('lint run', 1),
+      call('review run', 2),
+      call('brief fix-review-lite', 1),
+      record('bind', 1),
+      record('edit', 1),
+      call('worktree deliver', 0),
+    ],
+  },
   // Normal review assumes a code target; plan/design edit records are conditional.
-  review: { guide: 'references/verbs/review.md', links: {
-    'references/spec-stage.md#readers-and-document-layers': unconditional, [`${TOOLKIT}#review-run`]: unconditional,
-    [`${BAR}#shared`]: unconditional, [`${BAR}#spec`]: unconditional, [`${BAR}#plan`]: unconditional,
-    [`${BAR}#testing`]: unconditional, [`${BAR}#design`]: unconditional, [`${BAR}#code`]: unconditional,
-    'references/review-rules.md': unconditional, [`${TOOLKIT}#ruling`]: unconditional,
-    'references/review-rules.md#rulings-and-fix-scope': unconditional, [`${TOOLKIT}#edit`]: conditional('plan and design fixes'),
-    'references/review-coverage.md#failed-slot-coverage': conditional('slot'), 'references/spec-stage.md': unconditional,
-    'references/review-coverage.md#repository-changes-from-native-voices': conditional('repository change'),
-  }, calls: [call('review run', 2), record('ruling', 8), record('edit', 0)] },
+  review: {
+    guide: 'references/verbs/review.md',
+    links: {
+      'references/spec-stage.md#readers-and-document-layers': unconditional,
+      [`${TOOLKIT}#review-run`]: unconditional,
+      [`${BAR}#shared`]: unconditional,
+      [`${BAR}#spec`]: unconditional,
+      [`${BAR}#plan`]: unconditional,
+      [`${BAR}#testing`]: unconditional,
+      [`${BAR}#design`]: unconditional,
+      [`${BAR}#code`]: unconditional,
+      'references/review-rules.md': unconditional,
+      [`${TOOLKIT}#ruling`]: unconditional,
+      'references/review-rules.md#rulings-and-fix-scope': unconditional,
+      [`${TOOLKIT}#edit`]: conditional('plan and design fixes'),
+      'references/review-coverage.md#failed-slot-coverage': conditional('slot'),
+      'references/spec-stage.md': unconditional,
+      'references/review-coverage.md#repository-changes-from-native-voices': conditional('repository change'),
+    },
+    calls: [call('review run', 2), record('ruling', 8), record('edit', 0)],
+  },
   // Step reads make the Decision Frame unconditional, including escalation without risky approval.
-  verify: { guide: 'references/verbs/verify.md', links: {
-    [`${TOOLKIT}#brief-verifier`]: unconditional, [`${TOOLKIT}#check-run`]: unconditional,
-    'SKILL.md#routing': conditional('If `check run` fails'), 'references/decision-frame.md': unconditional,
-    'references/spec-stage.md': unconditional, [`${TOOLKIT}#ledger-append`]: unconditional,
-  }, calls: [call('brief verifier', 1), call('check run', 1), record('integrate', 1)] },
+  verify: {
+    guide: 'references/verbs/verify.md',
+    links: {
+      [`${TOOLKIT}#brief-verifier`]: unconditional,
+      [`${TOOLKIT}#check-run`]: unconditional,
+      'SKILL.md#routing': conditional('If `check run` fails'),
+      'references/decision-frame.md': unconditional,
+      'references/spec-stage.md': unconditional,
+      [`${TOOLKIT}#ledger-append`]: unconditional,
+    },
+    calls: [call('brief verifier', 1), call('check run', 1), record('integrate', 1)],
+  },
   plan: {
     guide: 'references/verbs/plan.md',
     links: {
@@ -91,8 +140,16 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/verbs/implement.md': conditional('Notify affected writers'),
     },
     calls: [
-      call('doctor run', 1), call('brief explorer', 1), call('lint run', 3), call('review run', 2), call('brief fix-review-lite', 1),
-      record('bind', 1), record('level', 1), record('approval', 1), record('ruling', 8), record('edit', 2),
+      call('doctor run', 1),
+      call('brief explorer', 1),
+      call('lint run', 3),
+      call('review run', 2),
+      call('brief fix-review-lite', 1),
+      record('bind', 1),
+      record('level', 1),
+      record('approval', 1),
+      record('ruling', 8),
+      record('edit', 2),
     ],
   },
   implement: {
@@ -142,42 +199,201 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       'references/templates/writer-brief.md': unconditional,
     },
     calls: [
-      call('doctor run', 1), call('lint run', 1), call('check run', 4), call('worktree create', 2), call('brief render', 2),
-      call('worktree submit', 2), call('worktree integrate', 2), call('brief verifier', 1), call('brief test-cleanup', 1),
-      call('worktree commit', 2), call('review run', 2), call('worktree deliver', 1), call('report complete', 1),
-      call('worktree cleanup', 1), call('worktree continue', 0), call('worktree abort', 0), call('worktree abandon', 0),
+      call('doctor run', 1),
+      call('lint run', 1),
+      call('check run', 4),
+      call('worktree create', 2),
+      call('brief render', 2),
+      call('worktree submit', 2),
+      call('worktree integrate', 2),
+      call('brief verifier', 1),
+      call('brief test-cleanup', 1),
+      call('worktree commit', 2),
+      call('review run', 2),
+      call('worktree deliver', 1),
+      call('report complete', 1),
+      call('worktree cleanup', 1),
+      call('worktree continue', 0),
+      call('worktree abort', 0),
+      call('worktree abandon', 0),
       call('worktree close', 0),
-      record('bind', 1), record('approval', 1), record('ruling', 8), record('focus', 1), record('manual-complete', 1), record('integrate', 1), record('edit', 0),
+      record('bind', 1),
+      record('approval', 1),
+      record('ruling', 8),
+      record('focus', 1),
+      record('manual-complete', 1),
+      record('integrate', 1),
+      record('edit', 0),
     ],
   },
 };
 
 /** Every relative link in SKILL.md; true marks a read that the path makes on every normal run. */
 export const SKILL_LINKS: Record<string, Record<PathName, boolean>> = {
-  'references/decision-frame.md': { ask: false, design: true, plan: true, implement: false, review: false, verify: false },
-  'references/decision-frame.md#user-gate-boundaries': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  'references/decision-frame.md': {
+    ask: false,
+    design: true,
+    plan: true,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/decision-frame.md#user-gate-boundaries': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: true,
+    review: false,
+    verify: false,
+  },
   'references/providers.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/providers.md#child-orchestrators': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/providers.md#native-slots': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/review-rules.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/review-rules.md#review-provenance-and-applicability': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
-  'references/self-build.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/spec-stage.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/spec-stage.md#approval': { ask: false, design: true, plan: true, implement: true, review: false, verify: false },
-  'references/spec-stage.md#run-level': { ask: true, design: true, plan: true, implement: true, review: true, verify: true },
-  'references/templates/quality-bar.md#shared': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  'references/providers.md#child-orchestrators': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/providers.md#native-slots': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/review-rules.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/review-rules.md#review-provenance-and-applicability': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: true,
+    review: false,
+    verify: false,
+  },
+  'references/self-build.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/spec-stage.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/spec-stage.md#approval': {
+    ask: false,
+    design: true,
+    plan: true,
+    implement: true,
+    review: false,
+    verify: false,
+  },
+  'references/spec-stage.md#run-level': {
+    ask: true,
+    design: true,
+    plan: true,
+    implement: true,
+    review: true,
+    verify: true,
+  },
+  'references/templates/quality-bar.md#shared': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: true,
+    review: false,
+    verify: false,
+  },
   [TOOLKIT]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
   [`${TOOLKIT}#doctor-run`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  [`${TOOLKIT}#native-slot-replies`]: { ask: true, design: true, plan: true, implement: true, review: true, verify: true },
-  [`${TOOLKIT}#session-commands`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  [`${TOOLKIT}#status-show`]: { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
+  [`${TOOLKIT}#native-slot-replies`]: {
+    ask: true,
+    design: true,
+    plan: true,
+    implement: true,
+    review: true,
+    verify: true,
+  },
+  [`${TOOLKIT}#session-commands`]: {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  [`${TOOLKIT}#status-show`]: {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
   'references/verbs/ask.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/verbs/design.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/verbs/implement.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/verbs/plan.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/verbs/review.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/verbs/verify.md': { ask: false, design: false, plan: false, implement: false, review: false, verify: false },
-  'references/worktree-cleanup.md': { ask: false, design: false, plan: false, implement: true, review: false, verify: false },
+  'references/verbs/design.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/verbs/implement.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/verbs/plan.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/verbs/review.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/verbs/verify.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  'references/worktree-cleanup.md': {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: true,
+    review: false,
+    verify: false,
+  },
 };
 
 /** Figures at BASELINE_COMMIT; reproduce with --check-baseline. */
@@ -194,7 +410,10 @@ export const BASELINE: Record<PathName, Figures> = {
 // SECTION: Sections and bytes
 
 export function slug(heading: string): string {
-  return heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return heading
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /** The heading line through the line before the next heading of the same or a higher level; null when absent. */
@@ -204,12 +423,18 @@ export function sectionOf(text: string, anchor: string, headingLevel?: number): 
   let start = -1;
   let level = 0;
   for (let index = 0; index < lines.length; index++) {
-    if (/^ {0,3}(```|~~~)/.test(lines[index]!)) { fence = !fence; continue; }
+    if (/^ {0,3}(```|~~~)/.test(lines[index]!)) {
+      fence = !fence;
+      continue;
+    }
     if (fence) continue;
     const match = /^(#{1,6})\s+(.*?)\s*$/.exec(lines[index]!);
     if (!match) continue;
     if (start < 0) {
-      if (slug(match[2]!) === anchor && (headingLevel === undefined || match[1]!.length === headingLevel)) { start = index; level = match[1]!.length; }
+      if (slug(match[2]!) === anchor && (headingLevel === undefined || match[1]!.length === headingLevel)) {
+        start = index;
+        level = match[1]!.length;
+      }
     } else if (match[1]!.length <= level) {
       return lines.slice(start, index).join('\n').trimEnd();
     }
@@ -217,14 +442,14 @@ export function sectionOf(text: string, anchor: string, headingLevel?: number): 
   return start < 0 ? null : lines.slice(start).join('\n').trimEnd();
 }
 
-
 /** Resolves a Markdown destination in the skill root, retaining its authored fragment. */
 export function normalizeSkillLink(source: string, target: string): string | null {
   if (target.startsWith('<') && target.endsWith('>')) target = target.slice(1, -1);
   if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) return null;
   const fragment = target.indexOf('#');
   const file = fragment < 0 ? target : target.slice(0, fragment);
-  const resolved = file && !path.posix.isAbsolute(file) ? path.posix.join(path.posix.dirname(source), file) : file || source;
+  const resolved =
+    file && !path.posix.isAbsolute(file) ? path.posix.join(path.posix.dirname(source), file) : file || source;
   return resolved + (fragment < 0 ? '' : target.slice(fragment));
 }
 
@@ -234,8 +459,9 @@ export function validatePathLinks(read: Read): string[] {
   const contents = new Map<string, string | null>();
   const readOnce = (file: string): string | null => {
     if (!contents.has(file)) {
-      try { contents.set(file, read(file)); }
-      catch (error) {
+      try {
+        contents.set(file, read(file));
+      } catch (error) {
         if (!['ENOENT', 'ENOTDIR', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
         contents.set(file, null);
       }
@@ -243,7 +469,7 @@ export function validatePathLinks(read: Read): string[] {
     return contents.get(file)!;
   };
   const sources: [string, string[]][] = [
-    ...Object.values(MANIFEST).map(({guide, links}): [string, string[]] => [guide, Object.keys(links)]),
+    ...Object.values(MANIFEST).map(({ guide, links }): [string, string[]] => [guide, Object.keys(links)]),
     ['SKILL.md', Object.keys(SKILL_LINKS)],
   ];
   for (const [source, declarations] of sources) {
@@ -268,7 +494,8 @@ export function validatePathLinks(read: Read): string[] {
       }
       const body = readOnce(file);
       if (body === null) errors.push(`${source}: missing link file ${target}`);
-      else if (anchor !== undefined && sectionOf(body, anchor) === null) errors.push(`${source}: invalid link anchor ${target}`);
+      else if (anchor !== undefined && sectionOf(body, anchor) === null)
+        errors.push(`${source}: invalid link anchor ${target}`);
     }
   }
   return errors;
@@ -294,9 +521,9 @@ function pathReads(spec: PathManifest, name: string): ReadItem[] {
     const [file, anchor] = target.split('#') as [string, string | undefined];
     items.push(anchor ? { file, anchor } : { file });
   }
-  const whole = new Set(items.filter(item => !item.anchor).map(item => item.file));
+  const whole = new Set(items.filter((item) => !item.anchor).map((item) => item.file));
   const seen = new Set<string>();
-  return items.filter(item => {
+  return items.filter((item) => {
     const key = `${item.file}#${item.anchor ?? ''}`;
     if (seen.has(key) || (item.anchor && whole.has(item.file))) return false;
     seen.add(key);
@@ -306,7 +533,12 @@ function pathReads(spec: PathManifest, name: string): ReadItem[] {
 
 // SECTION: Measure
 
-export function measure<K extends string = PathName>(read: Read, model: Model, manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>, archive = false): Record<K, Figures> {
+export function measure<K extends string = PathName>(
+  read: Read,
+  model: Model,
+  manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>,
+  archive = false,
+): Record<K, Figures> {
   const toolkit = read(TOOLKIT);
   const help = stripGeneratedMarkers(toolkit);
   const section = (heading: string) => {
@@ -316,14 +548,18 @@ export function measure<K extends string = PathName>(read: Read, model: Model, m
       const candidates: string[] = [];
       let fence = false;
       for (const line of help.split(/\r?\n/)) {
-        if (/^ {0,3}(```|~~~)/.test(line)) { fence = !fence; continue; }
+        if (/^ {0,3}(```|~~~)/.test(line)) {
+          fence = !fence;
+          continue;
+        }
         if (fence) continue;
         const match = /^###\s+(.*?)\s*$/.exec(line);
         if (!match) continue;
         const anchor = slug(match[1]!);
         if (anchor.startsWith('brief-fix-')) candidates.push(anchor);
       }
-      if (candidates.length !== 1) throw new Error(`toolkit.md has ${candidates.length} archived repair brief sections; expected one`);
+      if (candidates.length !== 1)
+        throw new Error(`toolkit.md has ${candidates.length} archived repair brief sections; expected one`);
       text = sectionOf(help, candidates[0]!, 3);
     }
     if (text === null) throw new Error(`toolkit.md has no section "${heading}"`);
@@ -357,7 +593,11 @@ export function measure<K extends string = PathName>(read: Read, model: Model, m
         if (entry.kind) add(section(entry.kind), entry.count, false);
       }
     }
-    for (const heading of model === 'preload' ? ['call table', ...headings] : model === 'after' ? ['call table'] : headings) {
+    for (const heading of model === 'preload'
+      ? ['call table', ...headings]
+      : model === 'after'
+        ? ['call table']
+        : headings) {
       addDistinct(section(heading), false);
       if (model !== 'before') add(section(heading), 1, false);
     }
@@ -369,23 +609,33 @@ export function measure<K extends string = PathName>(read: Read, model: Model, m
 // SECTION: Comparison and report
 
 const LABELS: [keyof Figures, string][] = [
-  ['distinct', 'distinct'], ['workload', 'workload'], ['editableDistinct', 'editable distinct'], ['editableWorkload', 'editable workload'],
+  ['distinct', 'distinct'],
+  ['workload', 'workload'],
+  ['editableDistinct', 'editable distinct'],
+  ['editableWorkload', 'editable workload'],
 ];
 
 // NOTE: only workload figures gate growth; distinct bytes rise by the call table, which replaces repeated reads, so they are reported only.
 const GATED = new Set<keyof Figures>(['workload', 'editableWorkload']);
 
-export function checkGrowth(result: Record<PathName, Figures>, baseline: Record<PathName, Figures> = BASELINE): string[] {
+export function checkGrowth(
+  result: Record<PathName, Figures>,
+  baseline: Record<PathName, Figures> = BASELINE,
+): string[] {
   const errors: string[] = [];
   for (const [name, figures] of Object.entries(result) as [PathName, Figures][]) {
     for (const [key, label] of LABELS) {
-      if (GATED.has(key) && figures[key] > baseline[name]![key]) errors.push(`${name} ${label} grew to ${figures[key]} bytes above baseline ${baseline[name]![key]}`);
+      if (GATED.has(key) && figures[key] > baseline[name]![key])
+        errors.push(`${name} ${label} grew to ${figures[key]} bytes above baseline ${baseline[name]![key]}`);
     }
   }
   return errors;
 }
 
-export function formatReport(result: Record<PathName, Figures>, baseline: Record<PathName, Figures> = BASELINE): string {
+export function formatReport(
+  result: Record<PathName, Figures>,
+  baseline: Record<PathName, Figures> = BASELINE,
+): string {
   const lines: string[] = [];
   for (const [name, figures] of Object.entries(result) as [PathName, Figures][]) {
     for (const [key, label] of LABELS) {
@@ -401,9 +651,21 @@ export function formatReport(result: Record<PathName, Figures>, baseline: Record
 }
 
 /** Measures the checkout or a Git revision and checks the selected baseline. */
-export function main(args: string[] = process.argv.slice(2), git: (args: string[]) => string = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }), baseline: Record<PathName, Figures> = BASELINE): number {
-  if (!(args.length === 0 || (args.length === 1 && args[0] === '--check-baseline') || (args.length === 2 && args[0] === '--at' && args[1]))) {
-    process.stderr.write('Usage: path-bytes [--at <commit> | --check-baseline]\n'); return 2;
+export function main(
+  args: string[] = process.argv.slice(2),
+  git: (args: string[]) => string = (args) =>
+    execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+  baseline: Record<PathName, Figures> = BASELINE,
+): number {
+  if (
+    !(
+      args.length === 0 ||
+      (args.length === 1 && args[0] === '--check-baseline') ||
+      (args.length === 2 && args[0] === '--at' && args[1])
+    )
+  ) {
+    process.stderr.write('Usage: path-bytes [--at <commit> | --check-baseline]\n');
+    return 2;
   }
   const archive = args[0] === '--check-baseline';
   const commit = archive ? BASELINE_COMMIT : args[1];
@@ -419,8 +681,8 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
     }
   }
   const read: Read = commit
-    ? rel => git(['show', `${objectId}:skills/dispatch/${rel}`])
-    : rel => fs.readFileSync(path.join(skillDir, rel), 'utf8');
+    ? (rel) => git(['show', `${objectId}:skills/dispatch/${rel}`])
+    : (rel) => fs.readFileSync(path.join(skillDir, rel), 'utf8');
   const result = {} as Record<PathName, Figures>;
   let missing = false;
   for (const [name, spec] of Object.entries(MANIFEST) as [PathName, PathManifest][]) {
@@ -434,7 +696,11 @@ export function main(args: string[] = process.argv.slice(2), git: (args: string[
   }
   process.stdout.write(formatReport(result, baseline));
   if (archive) {
-    const unequal = missing || Object.entries(result).some(([name, figures]) => LABELS.some(([key]) => figures[key] !== baseline[name as PathName][key]));
+    const unequal =
+      missing ||
+      Object.entries(result).some(([name, figures]) =>
+        LABELS.some(([key]) => figures[key] !== baseline[name as PathName][key]),
+      );
     if (unequal) process.stderr.write('Baseline differs from commit measure\n');
     return unequal ? 1 : 0;
   }

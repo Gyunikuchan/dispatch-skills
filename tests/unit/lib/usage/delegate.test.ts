@@ -3,12 +3,29 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readDelegateSession } from '../../../../skills/dispatch/scripts/lib/usage/delegate.ts';
 import type { DelegateQuery, HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
-import type { OpencodeMessage, OpencodeRead, OpencodeReadOptions } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
+import type {
+  OpencodeMessage,
+  OpencodeRead,
+  OpencodeReadOptions,
+} from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import { lines, memoryFs } from './helpers/memory-fs.ts';
 
 test('Copilot delegate windows deduplicate replayed receipts', () => {
-  const event = (atMs: number, sequence: number) => ({ type: 'session.usage_record', timestamp: new Date(atMs).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence }, model: 'copilot-model', inputTokens: 100, outputTokens: 20 } } });
-  const fs = memoryFs({ '/home/.copilot/session-state/sess-1/events.jsonl': lines(event(9000, 1), event(11000, 1), event(12000, 2)) });
+  const event = (atMs: number, sequence: number) => ({
+    type: 'session.usage_record',
+    timestamp: new Date(atMs).toISOString(),
+    data: {
+      usage: {
+        accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence },
+        model: 'copilot-model',
+        inputTokens: 100,
+        outputTokens: 20,
+      },
+    },
+  });
+  const fs = memoryFs({
+    '/home/.copilot/session-state/sess-1/events.jsonl': lines(event(9000, 1), event(11000, 1), event(12000, 2)),
+  });
   const result = readDelegateSession(baseQuery({ platform: 'copilot', fs }));
   assert.equal(result.usage?.input, 100);
   assert.equal(result.usage?.output, 20);
@@ -17,13 +34,31 @@ test('Copilot delegate windows deduplicate replayed receipts', () => {
 });
 
 test('Copilot actor projections retain model-cap subtotals without exposing dropped configuration', () => {
-  const records = Array.from({ length: 34 }, (_, i) => ({ type: 'session.usage_record', timestamp: new Date(12000).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', usageId: `receipt-${i}`, sequence: i }, model: `model-${i}`, reasoningEffort: 'high', inputTokens: 10, outputTokens: 2, copilotUsage: { totalNanoAiu: 10 }, aiCreditsStatus: 'complete', cost: 1 } } }));
+  const records = Array.from({ length: 34 }, (_, i) => ({
+    type: 'session.usage_record',
+    timestamp: new Date(12000).toISOString(),
+    data: {
+      usage: {
+        accounting: { sourceSessionId: 'source', usageId: `receipt-${i}`, sequence: i },
+        model: `model-${i}`,
+        reasoningEffort: 'high',
+        inputTokens: 10,
+        outputTokens: 2,
+        copilotUsage: { totalNanoAiu: 10 },
+        aiCreditsStatus: 'complete',
+        cost: 1,
+      },
+    },
+  }));
   const fs = memoryFs({ '/home/.copilot/session-state/sess-1/events.jsonl': lines(...records) });
   const result = readDelegateSession(baseQuery({ platform: 'copilot', fs }));
   assert.equal(result.usage?.input, 340);
   assert.equal(result.usage?.actors?.length, 33);
-  assert.equal(result.usage?.actors?.reduce((s, a) => s + a.input, 0), 340);
-  const other = result.usage?.actors?.find(a => a.model === 'other');
+  assert.equal(
+    result.usage?.actors?.reduce((s, a) => s + a.input, 0),
+    340,
+  );
+  const other = result.usage?.actors?.find((a) => a.model === 'other');
   assert.equal(other?.input, 20);
   assert.equal(other?.effort, null);
   assert.equal(other?.copilot.billing.totalNanoAiu, 20);
@@ -116,16 +151,19 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
     },
   });
 
-  const baseFs = memoryFs({
-    [sessionFile]: lines(
-      msg('before', 9_999, 100),
-      msg('at-start', 10_000, 1000, 'claude-haiku-5-5', 'low'),
-      msg('at-end', 20_000, 120_000, 'claude-haiku-5-5', 'low'),
-      msg('after', 20_001, 100),
-    ),
-    [nestedSubagent]: lines(msg('sub', 15_000, 500, 'claude-sonnet-5-5', 'high')),
-    [otherProject]: lines(msg('other', 15_000, 9999)),
-  }, { [nestedSubagent]: 15_000 });
+  const baseFs = memoryFs(
+    {
+      [sessionFile]: lines(
+        msg('before', 9_999, 100),
+        msg('at-start', 10_000, 1000, 'claude-haiku-5-5', 'low'),
+        msg('at-end', 20_000, 120_000, 'claude-haiku-5-5', 'low'),
+        msg('after', 20_001, 100),
+      ),
+      [nestedSubagent]: lines(msg('sub', 15_000, 500, 'claude-sonnet-5-5', 'high')),
+      [otherProject]: lines(msg('other', 15_000, 9999)),
+    },
+    { [nestedSubagent]: 15_000 },
+  );
 
   let listRootCalls = 0;
   const fs: HostUsageFs = {
@@ -145,8 +183,24 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
   assert.equal(res.usage?.inputSemantics, 'uncached');
   assert.equal(res.usage?.input, 121_500);
   assert.deepEqual(res.responses, [
-    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 121_000, toolCalls: 0, toolTurns: 0 },
-    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 500, toolCalls: 0, toolTurns: 0 },
+    {
+      role: 'delegate',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 2,
+      uncachedInput: 121_000,
+      toolCalls: 0,
+      toolTurns: 0,
+    },
+    {
+      role: 'subagent',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 1,
+      uncachedInput: 500,
+      toolCalls: 0,
+      toolTurns: 0,
+    },
   ]);
   assert.equal(res.usage?.cacheWrite5m, 36);
   assert.equal(res.usage?.cacheWrite1h, 24);
@@ -180,17 +234,17 @@ test('codex delegate reads session in window, ignores unrelated concurrent rollo
   const startMs = Date.parse('2026-11-14T08:00:10.500Z');
   const endMs = Date.parse('2026-11-14T08:00:20.000Z');
 
-  const fsWithMs = memoryFs({
-    [mainFile]: lines(
-      turnCtx('gpt-6.1-terra', 'high'),
-      tokenCount('2026-11-14T08:00:15.100Z', 100, 120, 20),
-    ),
-    [unrelatedFile]: lines(
-      { type: 'session_meta', payload: { id: 'other-sess', thread_source: 'cli' } },
-      turnCtx('gpt-6.1-terra', 'low'),
-      tokenCount('2026-11-14T08:00:15.100Z', 999, 999, 0),
-    ),
-  }, { [mainFile]: startMs, [unrelatedFile]: startMs });
+  const fsWithMs = memoryFs(
+    {
+      [mainFile]: lines(turnCtx('gpt-6.1-terra', 'high'), tokenCount('2026-11-14T08:00:15.100Z', 100, 120, 20)),
+      [unrelatedFile]: lines(
+        { type: 'session_meta', payload: { id: 'other-sess', thread_source: 'cli' } },
+        turnCtx('gpt-6.1-terra', 'low'),
+        tokenCount('2026-11-14T08:00:15.100Z', 999, 999, 0),
+      ),
+    },
+    { [mainFile]: startMs, [unrelatedFile]: startMs },
+  );
 
   const res = readDelegateSession(baseQuery({ platform: 'codex', startMs, endMs, fs: fsWithMs }));
   assert.equal(res.complete, true);
@@ -200,21 +254,28 @@ test('codex delegate reads session in window, ignores unrelated concurrent rollo
     le100k: { input: 100, output: 10, cacheRead: 20 },
   });
 
-  const fsWholeSec = memoryFs({
-    [mainFile]: lines(
-      turnCtx('gpt-6.1-terra', 'high'),
-      tokenCount('2026-11-14T08:00:10Z', 100, 50, 0),
-    ),
-  }, { [mainFile]: startMs });
+  const fsWholeSec = memoryFs(
+    {
+      [mainFile]: lines(turnCtx('gpt-6.1-terra', 'high'), tokenCount('2026-11-14T08:00:10Z', 100, 50, 0)),
+    },
+    { [mainFile]: startMs },
+  );
 
-  assert.equal(readDelegateSession(baseQuery({ platform: 'codex', startMs, endMs, resumed: true, fs: fsWholeSec })).complete, false);
-  const freshRes = readDelegateSession(baseQuery({ platform: 'codex', startMs, endMs, resumed: false, fs: fsWholeSec }));
+  assert.equal(
+    readDelegateSession(baseQuery({ platform: 'codex', startMs, endMs, resumed: true, fs: fsWholeSec })).complete,
+    false,
+  );
+  const freshRes = readDelegateSession(
+    baseQuery({ platform: 'codex', startMs, endMs, resumed: false, fs: fsWholeSec }),
+  );
   assert.equal(freshRes.complete, true);
   assert.equal(freshRes.usage?.input, 50);
 });
 
 test('opencode delegate reads DB in window, marks truncated or skipped incomplete, and skips query when budget is spent', () => {
-  const makeFs = (readImpl: (dbPath: string, sessionId: string, opts: OpencodeReadOptions) => OpencodeRead): HostUsageFs => ({
+  const makeFs = (
+    readImpl: (dbPath: string, sessionId: string, opts: OpencodeReadOptions) => OpencodeRead,
+  ): HostUsageFs => ({
     ...memoryFs({}),
     opencodeMessages: readImpl,
   });
@@ -291,24 +352,28 @@ test('agy delegate reads mode-profile appDataDir and treats wholeSecond created_
     sqliteGenMetadata: () => [blob],
   });
 
-  const resumedWhole = readDelegateSession(baseQuery({
-    platform: 'agy',
-    appDataDir,
-    startMs,
-    endMs,
-    resumed: true,
-    fs: makeAgyFs('2026-11-14T08:00:10Z'),
-  }));
+  const resumedWhole = readDelegateSession(
+    baseQuery({
+      platform: 'agy',
+      appDataDir,
+      startMs,
+      endMs,
+      resumed: true,
+      fs: makeAgyFs('2026-11-14T08:00:10Z'),
+    }),
+  );
   assert.equal(resumedWhole.complete, false);
 
-  const freshWhole = readDelegateSession(baseQuery({
-    platform: 'agy',
-    appDataDir,
-    startMs,
-    endMs,
-    resumed: false,
-    fs: makeAgyFs('2026-11-14T08:00:10Z'),
-  }));
+  const freshWhole = readDelegateSession(
+    baseQuery({
+      platform: 'agy',
+      appDataDir,
+      startMs,
+      endMs,
+      resumed: false,
+      fs: makeAgyFs('2026-11-14T08:00:10Z'),
+    }),
+  );
   assert.equal(freshWhole.complete, true);
   assert.equal(freshWhole.usage?.input, 200);
   assert.equal(freshWhole.usage?.reasoning, 10);
@@ -327,14 +392,19 @@ test('agy delegate reads mode-profile appDataDir and treats wholeSecond created_
       cache_read_tokens: 50,
     }),
   });
-  assert.equal(readDelegateSession(baseQuery({
-    platform: 'agy',
-    appDataDir,
-    startMs,
-    endMs,
-    resumed: false,
-    fs: noDbFs,
-  })).complete, false);
+  assert.equal(
+    readDelegateSession(
+      baseQuery({
+        platform: 'agy',
+        appDataDir,
+        startMs,
+        endMs,
+        resumed: false,
+        fs: noDbFs,
+      }),
+    ).complete,
+    false,
+  );
 });
 
 test('incomplete reads: missing, unreadable, budget-exhausted, empty window, and traversal id', () => {
@@ -356,22 +426,42 @@ test('incomplete reads: missing, unreadable, budget-exhausted, empty window, and
       message: { id: 'm1', model: 'm', usage: { input_tokens: 10, output_tokens: 2 } },
     }),
   });
-  assert.equal(readDelegateSession(baseQuery({ platform: 'claude', fs: validFileFs, budget: { remaining: 5 } })).complete, false);
+  assert.equal(
+    readDelegateSession(baseQuery({ platform: 'claude', fs: validFileFs, budget: { remaining: 5 } })).complete,
+    false,
+  );
 
   const throwingFs: HostUsageFs = {
     ...validFileFs,
-    read() { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+    read() {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    },
   };
   assert.equal(readDelegateSession(baseQuery({ platform: 'claude', fs: throwingFs })).complete, false);
 
   let accesses = 0;
   const spyFs: HostUsageFs = {
-    list() { accesses++; return []; },
-    stat() { accesses++; return null; },
-    read() { accesses++; return Buffer.alloc(0); },
+    list() {
+      accesses++;
+      return [];
+    },
+    stat() {
+      accesses++;
+      return null;
+    },
+    read() {
+      accesses++;
+      return Buffer.alloc(0);
+    },
     decompress: null,
-    opencodeMessages() { accesses++; return { messages: [], skipped: 0, truncated: null }; },
-    sqliteGenMetadata() { accesses++; return null; },
+    opencodeMessages() {
+      accesses++;
+      return { messages: [], skipped: 0, truncated: null };
+    },
+    sqliteGenMetadata() {
+      accesses++;
+      return null;
+    },
   };
   for (const platform of ['claude', 'codex', 'opencode', 'agy'] as const) {
     assert.equal(readDelegateSession(baseQuery({ platform, sessionId: '../x', fs: spyFs })).complete, false);
@@ -390,16 +480,24 @@ test('readDelegateSession keeps delegate turns and tools separate from children 
     message: {
       id,
       model,
-      content: Array.from({ length: tools }, (_, i) => ({ type: 'tool_use', id: `${id}-t${i}`, name: 'Read', input: {} })),
+      content: Array.from({ length: tools }, (_, i) => ({
+        type: 'tool_use',
+        id: `${id}-t${i}`,
+        name: 'Read',
+        input: {},
+      })),
       usage: { input_tokens: 100, output_tokens: 10 },
     },
   });
 
   // Shared model between delegate root and child subagent
-  const sharedFs = memoryFs({
-    [sessionFile]: lines(msg('d1', 12_000, 'claude-sonnet-5', 2), msg('d2', 14_000, 'claude-sonnet-5', 0)),
-    [childFile]: lines(msg('c1', 13_000, 'claude-sonnet-5', 3)),
-  }, { [childFile]: 13_000 });
+  const sharedFs = memoryFs(
+    {
+      [sessionFile]: lines(msg('d1', 12_000, 'claude-sonnet-5', 2), msg('d2', 14_000, 'claude-sonnet-5', 0)),
+      [childFile]: lines(msg('c1', 13_000, 'claude-sonnet-5', 3)),
+    },
+    { [childFile]: 13_000 },
+  );
   const shared = readDelegateSession(baseQuery({ platform: 'claude', fs: sharedFs }));
   assert.equal(shared.complete, true);
   assert.equal(shared.usage?.turns, 2);
@@ -409,15 +507,34 @@ test('readDelegateSession keeps delegate turns and tools separate from children 
   assert.equal(shared.usage?.models?.['claude-sonnet-5#high']?.toolCalls, 2);
   assert.equal(shared.usage?.models?.['claude-sonnet-5#high']?.toolTurns, 1);
   assert.deepEqual(shared.responses, [
-    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 2, uncachedInput: 200, toolCalls: 2, toolTurns: 1 },
-    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 3, toolTurns: 1 },
+    {
+      role: 'delegate',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 2,
+      uncachedInput: 200,
+      toolCalls: 2,
+      toolTurns: 1,
+    },
+    {
+      role: 'subagent',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 1,
+      uncachedInput: 100,
+      toolCalls: 3,
+      toolTurns: 1,
+    },
   ]);
 
   // Distinct models: root uses model A, child uses model B (gets known-zero turns/tools)
-  const splitFs = memoryFs({
-    [sessionFile]: lines(msg('d1', 12_000, 'model-a', 1)),
-    [childFile]: lines(msg('c1', 13_000, 'model-b', 4)),
-  }, { [childFile]: 13_000 });
+  const splitFs = memoryFs(
+    {
+      [sessionFile]: lines(msg('d1', 12_000, 'model-a', 1)),
+      [childFile]: lines(msg('c1', 13_000, 'model-b', 4)),
+    },
+    { [childFile]: 13_000 },
+  );
   const split = readDelegateSession(baseQuery({ platform: 'claude', fs: splitFs }));
   assert.equal(split.complete, true);
   assert.equal(split.usage?.turns, 1);
@@ -430,8 +547,24 @@ test('readDelegateSession keeps delegate turns and tools separate from children 
   assert.equal(split.usage?.models?.['model-b#high']?.toolCalls, 0);
   assert.equal(split.usage?.models?.['model-b#high']?.toolTurns, 0);
   assert.deepEqual(split.responses, [
-    { role: 'delegate', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 1, toolTurns: 1 },
-    { role: 'subagent', basis: 'claude-assistant-message', coverage: 'complete', observed: 1, uncachedInput: 100, toolCalls: 4, toolTurns: 1 },
+    {
+      role: 'delegate',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 1,
+      uncachedInput: 100,
+      toolCalls: 1,
+      toolTurns: 1,
+    },
+    {
+      role: 'subagent',
+      basis: 'claude-assistant-message',
+      coverage: 'complete',
+      observed: 1,
+      uncachedInput: 100,
+      toolCalls: 4,
+      toolTurns: 1,
+    },
   ]);
 });
 

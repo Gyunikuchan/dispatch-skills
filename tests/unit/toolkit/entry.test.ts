@@ -6,7 +6,12 @@ import { test } from 'node:test';
 import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { main as toolkitMain, TOOL_ACTIONS } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { CALL_TABLE_MAX_BYTES, SESSION_CONTRACTS, renderCallTable, stripGeneratedMarkers } from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
+import {
+  CALL_TABLE_MAX_BYTES,
+  SESSION_CONTRACTS,
+  renderCallTable,
+  stripGeneratedMarkers,
+} from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
 import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
@@ -37,12 +42,28 @@ test('dispatch entry routes sessions and toolkit operations with bounded output'
     assert.equal(status.exit, 0);
     assert.ok(status.path && fs.existsSync(status.path));
 
-    const quota = await invoke(['session', 'quota-reprobe', '--session-dir', created.path, '--provider', 'codex', '--mode', 'cli']);
+    const quota = await invoke([
+      'session',
+      'quota-reprobe',
+      '--session-dir',
+      created.path,
+      '--provider',
+      'codex',
+      '--mode',
+      'cli',
+    ]);
     assert.equal(quota.exit, 0);
-    assert.deepEqual(JSON.parse(f.lines[0]!), { v: 1, action: 'quota-reprobe', key: { provider: 'codex', model: null, mode: 'cli' }, appliesTo: 'future-waves' });
+    assert.deepEqual(JSON.parse(f.lines[0]!), {
+      v: 1,
+      action: 'quota-reprobe',
+      key: { provider: 'codex', model: null, mode: 'cli' },
+      appliesTo: 'future-waves',
+    });
 
     for (const args of [
-      ['start', 'plan'], ['send', '--run', 'x'], ['checkpoint'],
+      ['start', 'plan'],
+      ['send', '--run', 'x'],
+      ['checkpoint'],
       ['session', 'quota-reprobe', '--session-dir', created.path, '--provider', 'unknown', '--mode', 'cli'],
       ['session', 'init', '--unknown', '界'.repeat(2000), '--host', 'claude'],
     ]) {
@@ -52,16 +73,41 @@ test('dispatch entry routes sessions and toolkit operations with bounded output'
       assert.ok(Buffer.byteLength(invalid.summary) <= 1024);
     }
 
-    const broken = await invoke(['session', 'reactivate', '--session-dir', path.join(f.root, '界'.repeat(2000)), '--host', 'claude']);
+    const broken = await invoke([
+      'session',
+      'reactivate',
+      '--session-dir',
+      path.join(f.root, '界'.repeat(2000)),
+      '--host',
+      'claude',
+    ]);
     assert.equal(broken.exit, 2);
     assert.equal(broken.reason, 'fault');
     assert.ok(Buffer.byteLength(broken.summary) <= 1024);
 
-    const explicit = await invoke(['session', 'init', '--objective', 'Explicit', '--session-id', 'chosen', '--host', 'claude']);
+    const explicit = await invoke([
+      'session',
+      'init',
+      '--objective',
+      'Explicit',
+      '--session-id',
+      'chosen',
+      '--host',
+      'claude',
+    ]);
     assert.equal(readManifest(explicit.path!).sessionId, 'chosen');
 
     // Quota preconditions and filesystem faults
-    const quotaArgs = ['session', 'quota-reprobe', '--session-dir', explicit.path!, '--provider', 'codex', '--mode', 'cli'];
+    const quotaArgs = [
+      'session',
+      'quota-reprobe',
+      '--session-dir',
+      explicit.path!,
+      '--provider',
+      'codex',
+      '--mode',
+      'cli',
+    ];
     fs.writeFileSync(path.join(explicit.path!, '.state'), 'blocks quota directory creation');
     f.lines.length = 0;
     assert.equal(await entry.main(quotaArgs, deps), 2);
@@ -77,20 +123,44 @@ test('dispatch entry routes sessions and toolkit operations with bounded output'
     f.lines.length = 0;
     assert.equal(await entry.main(quotaArgs, deps), 1);
     assert.equal(f.output().reason, 'usage');
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('session actions record the declared host, replace it and refuse a missing or unknown host', async () => {
   const f = sessionFixture();
   fs.mkdirSync(path.join(f.root, '.git'));
   const deps = { ...f.deps, cwd: () => f.root };
-  const invoke = async (args: string[]) => { f.lines.length = 0; const exit = await entry.main(args, deps); return { exit, ...f.output() }; };
+  const invoke = async (args: string[]) => {
+    f.lines.length = 0;
+    const exit = await entry.main(args, deps);
+    return { exit, ...f.output() };
+  };
   try {
-    const created = await invoke(['session', 'init', '--objective', 'Host', '--session-id', 'declared', '--host', 'github-copilot']);
+    const created = await invoke([
+      'session',
+      'init',
+      '--objective',
+      'Host',
+      '--session-id',
+      'declared',
+      '--host',
+      'github-copilot',
+    ]);
     assert.equal(created.exit, 0);
     assert.equal(readManifest(created.path!).host, 'copilot');
 
-    const reused = await invoke(['session', 'init', '--objective', 'Host', '--session-id', 'declared', '--host', 'codex']);
+    const reused = await invoke([
+      'session',
+      'init',
+      '--objective',
+      'Host',
+      '--session-id',
+      'declared',
+      '--host',
+      'codex',
+    ]);
     assert.equal(reused.path, created.path);
     assert.equal(readManifest(created.path!).host, 'codex');
 
@@ -111,7 +181,9 @@ test('session actions record the declared host, replace it and refuse a missing 
       if (args.includes('unknown-x')) assert.match(refused.summary, /claude, agy, copilot, opencode, codex/);
     }
     assert.equal(fs.readFileSync(path.join(created.path!, 'manifest.json'), 'utf8'), before);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('ambiguous session identity exposes choices without changing retained work', async () => {
@@ -128,7 +200,10 @@ test('ambiguous session identity exposes choices without changing retained work'
     const manifest = readManifest(f.session);
     const other = path.join(root, '20261022T0000Z-earlier');
     fs.mkdirSync(other);
-    fs.writeFileSync(path.join(other, 'manifest.json'), JSON.stringify({ ...manifest, folderName: path.basename(other) }));
+    fs.writeFileSync(
+      path.join(other, 'manifest.json'),
+      JSON.stringify({ ...manifest, folderName: path.basename(other) }),
+    );
     const files = [f.session, other].flatMap((dir) => {
       const ledger = path.join(dir, 'ledger.jsonl');
       fs.writeFileSync(ledger, 'retained evidence\n');
@@ -139,9 +214,15 @@ test('ambiguous session identity exposes choices without changing retained work'
 
     assert.equal(await entry.main(init, deps), 2);
     assert.deepEqual(fs.readdirSync(root).sort(), entries);
-    assert.deepEqual(files.map((file) => fs.readFileSync(file, 'utf8')), before);
+    assert.deepEqual(
+      files.map((file) => fs.readFileSync(file, 'utf8')),
+      before,
+    );
     const failure = f.output() as ReturnType<typeof f.output> & {
-      help?: string; candidates?: string[]; candidateCount?: number; omitted?: number;
+      help?: string;
+      candidates?: string[];
+      candidateCount?: number;
+      omitted?: number;
     };
     assert.equal(failure.ok, false);
     assert.equal(failure.reason, 'fault');
@@ -156,25 +237,46 @@ test('ambiguous session identity exposes choices without changing retained work'
     assert.equal(await entry.main(['session', 'reactivate', '--session-dir', other, '--host', 'codex'], freshHost), 0);
     assert.equal(f.output().path, other);
     assert.equal(readManifest(other).sessionId, 'test');
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('dispatch entry recognizes symlinked launch paths', () => {
-  assert.equal(entry.isEntry('/linked/dispatch.ts', () => path.resolve('actual/dispatch.ts'), pathToFileURL(path.resolve('actual/dispatch.ts')).href), true);
-  assert.equal(entry.isEntry('/other.ts', () => '/other.ts', 'file:///actual/dispatch.ts'), false);
-  assert.equal(entry.isEntry(undefined, () => { throw new Error('unused'); }), false);
+  assert.equal(
+    entry.isEntry(
+      '/linked/dispatch.ts',
+      () => path.resolve('actual/dispatch.ts'),
+      pathToFileURL(path.resolve('actual/dispatch.ts')).href,
+    ),
+    true,
+  );
+  assert.equal(
+    entry.isEntry('/other.ts', () => '/other.ts', 'file:///actual/dispatch.ts'),
+    false,
+  );
+  assert.equal(
+    entry.isEntry(undefined, () => {
+      throw new Error('unused');
+    }),
+    false,
+  );
 });
 
 test('session instructions always point at grounding and add diagnostics only when enabled', async () => {
   const f = sessionFixture();
   try {
     fs.mkdirSync(path.join(f.root, '.git'));
-    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
     const deps = { ...f.deps, skillRoot: skill, cwd: () => f.root };
     const assertInstructions = (value: { instructions?: unknown }, enabled: boolean) => {
       const instructions = value.instructions;
       if (typeof instructions !== 'string') assert.fail('Session instructions must be present');
-      assert.match(instructions, /When a verb needs a new spec, run `doctor run --host <platform>` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery\./);
+      assert.match(
+        instructions,
+        /When a verb needs a new spec, run `doctor run --host <platform>` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery\./,
+      );
       assert.doesNotMatch(instructions, /Launch explorers only when doctor reports one/);
       if (enabled) assert.match(instructions, /references\/diagnostics\.md.*diagnostics render/);
       else assert.doesNotMatch(instructions, /references\/diagnostics\.md/);
@@ -190,50 +292,92 @@ test('session instructions always point at grounding and add diagnostics only wh
     const enabledVal = JSON.parse(f.lines[0]!);
     assertInstructions(enabledVal, true);
     f.lines.length = 0;
-    assert.equal(await entry.main(['session', 'reactivate', '--session-dir', enabledVal.path, '--host', 'claude'], deps), 0);
+    assert.equal(
+      await entry.main(['session', 'reactivate', '--session-dir', enabledVal.path, '--host', 'claude'], deps),
+      0,
+    );
     assertInstructions(JSON.parse(f.lines[0]!), true);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('disabled diagnostics add neither lifecycle collection requests nor capture artifacts for OpenCode', async () => {
   const f = sessionFixture({ memory: true });
   try {
-    const skill = path.join(f.root, 'skill'); fs.mkdirSync(skill);
+    const skill = path.join(f.root, 'skill');
+    fs.mkdirSync(skill);
     fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: false }));
     f.deps.skillRoot = skill;
     const requests: DelegateRequest[] = [];
     f.deps.delegate = async (provider, request, mode) => {
       requests.push(request);
-      return { outcome: { status: 'ok', text: 'answer', sessionId: null, resume: null }, invocations: [{ provider, model: null, mode, effort: null, launched: true, outcome: 'ok' }] };
+      return {
+        outcome: { status: 'ok', text: 'answer', sessionId: null, resume: null },
+        invocations: [{ provider, model: null, mode, effort: null, launched: true, outcome: 'ok' }],
+      };
     };
     f.deps.handler = async ({ deps }) => {
-      await deps.delegate('opencode', { logPath: path.join(f.session, 'logs', 'opencode[0].log') } as DelegateRequest, 'cli');
+      await deps.delegate(
+        'opencode',
+        { logPath: path.join(f.session, 'logs', 'opencode[0].log') } as DelegateRequest,
+        'cli',
+      );
       return { ok: true, exit: 0, summary: 'done', value: null };
     };
     assert.equal(await toolkitMain(['ask', 'run', '--session', f.session, '--host', 'opencode'], f.deps), 0);
-    assert.deepEqual(requests.map((r) => [r.collectUsage, r.collectLifecycle]), [[undefined, undefined]]);
+    assert.deepEqual(
+      requests.map((r) => [r.collectUsage, r.collectLifecycle]),
+      [[undefined, undefined]],
+    );
     assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 // SECTION: help command and session refusal pointer
-const toolkitText = stripGeneratedMarkers(fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8')).replace(/\r\n/g, '\n');
+const toolkitText = stripGeneratedMarkers(
+  fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8'),
+).replace(/\r\n/g, '\n');
 const sectionOf = (heading: string) => {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(`^(#{2,3}) ${escaped}$`, 'm').exec(toolkitText);
   if (!match) throw new Error(`Missing toolkit heading: ${heading}`);
-  return toolkitText.slice(match.index).split(new RegExp(`\\n#{1,${match[1]!.length}} `))[0]!.trimEnd() + '\n';
+  return (
+    toolkitText
+      .slice(match.index)
+      .split(new RegExp(`\\n#{1,${match[1]!.length}} `))[0]!
+      .trimEnd() + '\n'
+  );
 };
-const slugOf = (heading: string) => heading.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-const markdownFiles = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-  entry.isDirectory() ? markdownFiles(path.join(dir, entry.name)) : entry.name.endsWith('.md') ? [path.join(dir, entry.name)] : []);
+const slugOf = (heading: string) =>
+  heading
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+const markdownFiles = (dir: string): string[] =>
+  fs
+    .readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) =>
+      entry.isDirectory()
+        ? markdownFiles(path.join(dir, entry.name))
+        : entry.name.endsWith('.md')
+          ? [path.join(dir, entry.name)]
+          : [],
+    );
 
 test('help prints exactly one section for each action, record kind, session command and the call table', async () => {
   const f = sessionFixture();
   try {
     const headings = [...toolkitText.matchAll(/^### (.+)$/gm)].map((m) => m[1]!);
     assert.ok(headings.length >= 43);
-    for (const heading of [...TOOL_ACTIONS, ...KINDS, ...Object.keys(SESSION_CONTRACTS).map(action => 'session ' + action), 'call table']) {
+    for (const heading of [
+      ...TOOL_ACTIONS,
+      ...KINDS,
+      ...Object.keys(SESSION_CONTRACTS).map((action) => 'session ' + action),
+      'call table',
+    ]) {
       f.lines.length = 0;
       assert.equal(await entry.main(['help', ...heading.split(' ')], f.deps), 0, heading);
       assert.equal(f.lines.length, 1);
@@ -241,13 +385,18 @@ test('help prints exactly one section for each action, record kind, session comm
       assert.equal(f.lines[0], heading === 'call table' ? renderCallTable() : sectionOf(heading), heading);
       if (heading === 'call table') assert.ok(Buffer.byteLength(f.lines[0]!, 'utf8') <= CALL_TABLE_MAX_BYTES);
     }
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('help prints each toolkit section linked from skill prose and nested subsections of a level-2 section', async () => {
   const headingsByAnchor = new Map([...toolkitText.matchAll(/^(#{2,3}) (.+)$/gm)].map((m) => [slugOf(m[2]!), m[2]!]));
   const anchors = new Set<string>();
-  for (const file of [path.resolve('skills/dispatch/SKILL.md'), ...markdownFiles(path.resolve('skills/dispatch/references'))]) {
+  for (const file of [
+    path.resolve('skills/dispatch/SKILL.md'),
+    ...markdownFiles(path.resolve('skills/dispatch/references')),
+  ]) {
     for (const match of fs.readFileSync(file, 'utf8').matchAll(/toolkit\.md#([a-z0-9-]+)/gi)) anchors.add(match[1]!);
   }
   assert.ok(anchors.size > 0);
@@ -262,12 +411,14 @@ test('help prints each toolkit section linked from skill prose and nested subsec
       assert.equal(f.lines.length, 1);
       assert.equal(f.lines[0], sectionOf(heading), anchor);
       if (anchor === 'session-commands') {
-        for (const sub of Object.keys(SESSION_CONTRACTS).map(action => '### session ' + action)) {
+        for (const sub of Object.keys(SESSION_CONTRACTS).map((action) => '### session ' + action)) {
           assert.ok(f.lines[0]!.includes(sub), sub);
         }
       }
     }
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('help resolves headings regardless of letter case and trailing flags', async () => {
@@ -285,7 +436,9 @@ test('help resolves headings regardless of letter case and trailing flags', asyn
       assert.equal(f.lines.length, 1);
       assert.equal(f.lines[0], sectionOf(heading), args.join(' '));
     }
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('help refuses an unknown or empty heading with the valid headings inside the summary cap', async () => {
@@ -299,19 +452,29 @@ test('help refuses an unknown or empty heading with the valid headings inside th
       assert.equal(out.reason, 'usage');
       assert.equal(out.path, null);
       assert.ok(Buffer.byteLength(out.summary) <= 1024);
-      assert.match(out.summary, /Index, call table, Tool actions.*Native-slot replies, Session commands.*session quota-reprobe/);
+      assert.match(
+        out.summary,
+        /Index, call table, Tool actions.*Native-slot replies, Session commands.*session quota-reprobe/,
+      );
     }
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('help refuses an unreadable toolkit contract as a fault', async () => {
   const f = sessionFixture();
   try {
-    assert.equal(await entry.main(['help', 'doctor', 'run'], { ...f.deps, skillRoot: path.join(f.root, 'missing') }), 2);
+    assert.equal(
+      await entry.main(['help', 'doctor', 'run'], { ...f.deps, skillRoot: path.join(f.root, 'missing') }),
+      2,
+    );
     const out = f.output();
     assert.equal(out.reason, 'fault');
     assert.equal(out.path, null);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('session refusals name the section to read', async () => {
@@ -321,8 +484,16 @@ test('session refusals name the section to read', async () => {
   try {
     const cases: [string[], number, string][] = [
       [['session', 'init', '--unknown', 'x', '--host', 'claude'], 1, 'session init'],
-      [['session', 'reactivate', '--session-dir', path.join(f.root, 'missing'), '--host', 'claude'], 2, 'session reactivate'],
-      [['session', 'quota-reprobe', '--session-dir', f.session, '--provider', 'unknown', '--mode', 'cli'], 1, 'session quota-reprobe'],
+      [
+        ['session', 'reactivate', '--session-dir', path.join(f.root, 'missing'), '--host', 'claude'],
+        2,
+        'session reactivate',
+      ],
+      [
+        ['session', 'quota-reprobe', '--session-dir', f.session, '--provider', 'unknown', '--mode', 'cli'],
+        1,
+        'session quota-reprobe',
+      ],
       [['session', 'bogus'], 1, 'call table'],
     ];
     for (const [args, exit, help] of cases) {
@@ -333,5 +504,7 @@ test('session refusals name the section to read', async () => {
     f.lines.length = 0;
     assert.equal(await entry.main(['session', 'init', '--objective', 'ok', '--host', 'claude'], deps), 0);
     assert.equal('help' in f.output(), false);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });

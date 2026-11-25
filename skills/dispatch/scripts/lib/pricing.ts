@@ -23,7 +23,13 @@ export type AppliedRateBasis = {
   periodFrom: string | null;
 };
 /** USD; `low` equals `high` unless a tier or cache TTL is unknown. */
-export type Cost = { low: number; high: number; priced: boolean; reasons: Set<CostReason>; rateBasis?: AppliedRateBasis };
+export type Cost = {
+  low: number;
+  high: number;
+  priced: boolean;
+  reasons: Set<CostReason>;
+  rateBasis?: AppliedRateBasis;
+};
 type MatchedRate = { entry: PriceEntry; origin: AppliedRateBasis['origin']; match: AppliedRateBasis['match'] };
 export type Pricer = {
   meta: { asOf: string; source: readonly string[] };
@@ -41,10 +47,13 @@ function ratesProblem(v: unknown, where: string): string | undefined {
     if (!RATE_KEYS.includes(key)) return `${where}.${key} unknown key`;
     if (!isRate(rate)) return `${where}.${key} must be a finite number >= 0`;
   }
-  return ['input', 'output'].map((key) => v[key] === undefined ? `${where}.${key} missing` : undefined).find(Boolean);
+  return ['input', 'output'].map((key) => (v[key] === undefined ? `${where}.${key} missing` : undefined)).find(Boolean);
 }
 
-const rateKeys = (r: unknown) => Object.keys(r as object).sort().join();
+const rateKeys = (r: unknown) =>
+  Object.keys(r as object)
+    .sort()
+    .join();
 
 function isIsoDate(v: unknown): v is string {
   if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -100,16 +109,21 @@ function entryProblem(entry: unknown): string | undefined {
   if (!isRecord(entry)) return 'not an object';
   const extra = Object.keys(entry).find((key) => !['rates', 'tiers', 'periods'].includes(key));
   if (extra) return `unknown key ${extra}`;
-  return ratesProblem(entry['rates'], 'rates')
-    ?? tiersProblem(entry['tiers'], entry['rates'], 'tiers')
-    ?? periodsProblem(entry['periods']);
+  return (
+    ratesProblem(entry['rates'], 'rates') ??
+    tiersProblem(entry['tiers'], entry['rates'], 'tiers') ??
+    periodsProblem(entry['periods'])
+  );
 }
 
 /** One message per malformed override entry, naming the key and the reason. */
 export function pricingProblems(override: unknown): string[] {
   if (override === undefined) return [];
   if (!isRecord(override)) return ['pricing: not an object'];
-  return Object.entries(override).flatMap(([key, entry]) => { const problem = entryProblem(entry); return problem ? [`pricing.${key}: ${problem}`] : []; });
+  return Object.entries(override).flatMap(([key, entry]) => {
+    const problem = entryProblem(entry);
+    return problem ? [`pricing.${key}: ${problem}`] : [];
+  });
 }
 
 // SECTION: Matching
@@ -119,13 +133,23 @@ const SUFFIXES = [/\[1m\]$/, /@\d[\d-]*$/, /-v\d+:\d+$/, /-\d{8}$/];
 
 /** Shipped table first, then the override on top; undefined when the shipped table is invalid. */
 export function resolvePricing(table: unknown, override: unknown): Pricer | undefined {
-  if (!isRecord(table) || typeof table['asOf'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(table['asOf'])
-    || !Array.isArray(table['source']) || !table['source'].every((url) => typeof url === 'string')
-    || !isRecord(table['models']) || Object.values(table['models']).some((entry) => entryProblem(entry))) return undefined;
+  if (
+    !isRecord(table) ||
+    typeof table['asOf'] !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(table['asOf']) ||
+    !Array.isArray(table['source']) ||
+    !table['source'].every((url) => typeof url === 'string') ||
+    !isRecord(table['models']) ||
+    Object.values(table['models']).some((entry) => entryProblem(entry))
+  )
+    return undefined;
   const models = new Map<string, MatchedRate>();
   const qualified = new Map<string, MatchedRate>();
   const wildcards = new Map<string, MatchedRate>();
-  const sources = [['shipped', table['models']], ['override', isRecord(override) ? override : {}]] as const;
+  const sources = [
+    ['shipped', table['models']],
+    ['override', isRecord(override) ? override : {}],
+  ] as const;
   for (const [origin, entries] of sources) {
     for (const [key, entry] of Object.entries(entries)) {
       if (entryProblem(entry)) continue;
@@ -153,10 +177,13 @@ export function resolvePricing(table: unknown, override: unknown): Pricer | unde
     }
     return best === undefined ? undefined : models.get(best);
   };
-  return { meta: { asOf: table['asOf'], source: table['source'] as string[] }, price: (model, usage, reasoningInOutput, onDate) => {
-    const id = splitUsageKey(String(model)).model;
-    return priceUsage(id === OTHER_KEY ? undefined : find(id), usage, reasoningInOutput, onDate);
-  } };
+  return {
+    meta: { asOf: table['asOf'], source: table['source'] as string[] },
+    price: (model, usage, reasoningInOutput, onDate) => {
+      const id = splitUsageKey(String(model)).model;
+      return priceUsage(id === OTHER_KEY ? undefined : find(id), usage, reasoningInOutput, onDate);
+    },
+  };
 }
 
 /** Reads `references/pricing.json` and the config `pricing` override; undefined only when the shipped table is unusable. */
@@ -166,9 +193,15 @@ export function loadPricing(skillRoot: string, read: ReadFile = readReal): Price
     if (text === null) return undefined;
     let override: unknown;
     // A missing or broken config leaves the shipped rates in force.
-    try { override = loadConfig(skillRoot, read).config['pricing']; } catch { /* shipped table only */ }
+    try {
+      override = loadConfig(skillRoot, read).config['pricing'];
+    } catch {
+      /* shipped table only */
+    }
     return resolvePricing(JSON.parse(text), override);
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 // SECTION: Pricing
@@ -176,12 +209,13 @@ export function loadPricing(skillRoot: string, read: ReadFile = readReal): Price
 const MTOK = 1_000_000;
 const NONE: Counters = { input: 0, output: 0 };
 const unpriced = (): Cost => ({ low: 0, high: 0, priced: false, reasons: new Set<CostReason>(['unpriced model']) });
-const tokens = (v: unknown): number => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+const tokens = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
 const promptOf = (c: Counters): number => tokens(c.input) + tokens(c.cacheRead) + tokens(c.cacheWrite);
 type RateSet = { rates: Rates; tiers?: Tier[]; from?: string };
-const tierRates = (set: RateSet, tier: number): Rates => tier ? set.tiers![tier - 1]!.rates : set.rates;
+const tierRates = (set: RateSet, tier: number): Rates => (tier ? set.tiers![tier - 1]!.rates : set.rates);
 /** Tier index for a prompt size: 0 is the base rate; tier N applies above its threshold. */
-const tierAt = (set: RateSet, prompt: number): number => set.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
+const tierAt = (set: RateSet, prompt: number): number =>
+  set.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
 
 function activeRateSet(entry: PriceEntry, onDate: string | null): RateSet {
   const { rates, tiers } = entry;
@@ -196,12 +230,27 @@ function activeRateSet(entry: PriceEntry, onDate: string | null): RateSet {
 }
 
 /** Cost of one counter set at one rate object in USD per 1M tokens; undefined when a nonzero counter has no rate. */
-function rated(c: Counters, r: Rates, reasoningApart: boolean): { low: number; high: number; ttl: boolean } | undefined {
-  const read = tokens(c.cacheRead), w5m = tokens(c.cacheWrite5m), w1h = tokens(c.cacheWrite1h);
+function rated(
+  c: Counters,
+  r: Rates,
+  reasoningApart: boolean,
+): { low: number; high: number; ttl: boolean } | undefined {
+  const read = tokens(c.cacheRead),
+    w5m = tokens(c.cacheWrite5m),
+    w1h = tokens(c.cacheWrite1h);
   const rest = Math.max(0, tokens(c.cacheWrite) - w5m - w1h);
-  if ((read && r.cacheRead === undefined) || (w5m && r.cacheWrite5m === undefined) || (w1h && r.cacheWrite1h === undefined)) return undefined;
-  const base = tokens(c.input) * r.input + (tokens(c.output) + (reasoningApart ? tokens(c.reasoning) : 0)) * r.output
-    + read * (r.cacheRead ?? 0) + w5m * (r.cacheWrite5m ?? 0) + w1h * (r.cacheWrite1h ?? 0);
+  if (
+    (read && r.cacheRead === undefined) ||
+    (w5m && r.cacheWrite5m === undefined) ||
+    (w1h && r.cacheWrite1h === undefined)
+  )
+    return undefined;
+  const base =
+    tokens(c.input) * r.input +
+    (tokens(c.output) + (reasoningApart ? tokens(c.reasoning) : 0)) * r.output +
+    read * (r.cacheRead ?? 0) +
+    w5m * (r.cacheWrite5m ?? 0) +
+    w1h * (r.cacheWrite1h ?? 0);
   if (!rest) return { low: base, high: base, ttl: false };
   // An unsplit write needs both TTL rates; they bound its cost.
   if (r.cacheWrite5m === undefined || r.cacheWrite1h === undefined) return undefined;
@@ -209,7 +258,12 @@ function rated(c: Counters, r: Rates, reasoningApart: boolean): { low: number; h
   return { low: base + rest * low, high: base + rest * high, ttl: low !== high };
 }
 
-function priceUsage(matched: MatchedRate | undefined, usage: Counters & { bands?: Bands }, reasoningInOutput: boolean | undefined, onDate: string | undefined): Cost {
+function priceUsage(
+  matched: MatchedRate | undefined,
+  usage: Counters & { bands?: Bands },
+  reasoningInOutput: boolean | undefined,
+  onDate: string | undefined,
+): Cost {
   if (!matched) return unpriced();
   const { entry, origin, match } = matched;
   const effectiveDay = isIsoDate(onDate) ? onDate : null;
@@ -219,11 +273,17 @@ function priceUsage(matched: MatchedRate | undefined, usage: Counters & { bands?
   const spans: { c: Counters; first: number; last: number }[] = [];
   for (const [i, band] of BANDS.entries()) {
     const c = usage?.bands?.[band];
-    if (c) spans.push({ c, first: tierAt(active, i ? BAND_EDGES[i - 1]! + 1 : 0), last: tierAt(active, BAND_EDGES[i] ?? Infinity) });
+    if (c)
+      spans.push({
+        c,
+        first: tierAt(active, i ? BAND_EDGES[i - 1]! + 1 : 0),
+        last: tierAt(active, BAND_EDGES[i] ?? Infinity),
+      });
   }
   if (!spans.length) spans.push({ c: usage ?? NONE, first: 0, last: tierAt(active, promptOf(usage ?? NONE)) });
 
-  let low = 0, high = 0;
+  let low = 0,
+    high = 0;
   const reasons = new Set<CostReason>();
   for (const { c, first, last } of spans) {
     const options = Array.from({ length: last - first + 1 }, (_, i) => rated(c, tierRates(active, first + i), apart));
@@ -246,7 +306,7 @@ export const sumCost = (costs: readonly Cost[]): Cost => ({
   reasons: new Set(costs.flatMap((c) => [...c.reasons])),
 });
 
-const usd = (v: number): string => v === 0 ? '$0' : v < 0.01 ? '$<0.01' : `$${v.toFixed(2)}`;
+const usd = (v: number): string => (v === 0 ? '$0' : v < 0.01 ? '$<0.01' : `$${v.toFixed(2)}`);
 
 /** `—` without a priced unit, else `~$value` or `~$low–$high`. */
 export function formatCost(cost: Cost | undefined): string {

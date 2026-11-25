@@ -10,21 +10,45 @@ const scoped = sessionFixture({ memory: true });
 after(() => scoped.cleanup());
 
 const CONTEXT_MAP = [
-  '# Context map: file', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
-  '## Map', '- File — `src/file.ts:1`', '', '## Flows', '- file: `src/file.ts:1`', '',
-  '## Invariants', '- File exists — `src/file.ts:1` — "File"', '',
-  '## Coverage', '- entry-points: `src/file.ts:1`', '', '## Precedent', '- File: `src/file.ts`', '',
-  '## Surprises', '- none — `src/file.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
+  '# Context map: file',
+  '',
+  '> **Commit:** abcdef0',
+  '>',
+  '> **Tool:** text',
+  '',
+  '## Map',
+  '- File — `src/file.ts:1`',
+  '',
+  '## Flows',
+  '- file: `src/file.ts:1`',
+  '',
+  '## Invariants',
+  '- File exists — `src/file.ts:1` — "File"',
+  '',
+  '## Coverage',
+  '- entry-points: `src/file.ts:1`',
+  '',
+  '## Precedent',
+  '- File: `src/file.ts`',
+  '',
+  '## Surprises',
+  '- none — `src/file.ts:1`',
+  '',
+  '## Not covered',
+  '- Dynamic dispatch',
+  '',
 ].join('\n');
 async function lint(name: string, source: string) {
-  const f = {...scoped, cleanup: () => {}};
+  const f = { ...scoped, cleanup: () => {} };
   f.lines.length = 0;
   try {
     const exit = await main(['lint', 'run', f.artifact(name, source), '--session', f.session], f.deps);
     const output = f.output();
     const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
     return { exit, output, result };
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 }
 describe('lint severity', () => {
   test('lint run rejects malformed Commit metadata and accepts valid or missing metadata', async () => {
@@ -40,11 +64,15 @@ describe('lint severity', () => {
       assert.deepEqual(result.result.errors, []);
     }
 
-    const result = await lint('invalid-commit.context.md', CONTEXT_MAP.replace('> **Commit:** abcdef0', '> **Commit:** abcdef'));
+    const result = await lint(
+      'invalid-commit.context.md',
+      CONTEXT_MAP.replace('> **Commit:** abcdef0', '> **Commit:** abcdef'),
+    );
     assert.equal(result.exit, 4, result.output.summary);
     assert.equal(result.output.reason, 'lint-errors');
-    const issue = result.result.errors.find((issue: { code: string; message: string; line?: number }) =>
-      issue.code === 'context-commit');
+    const issue = result.result.errors.find(
+      (issue: { code: string; message: string; line?: number }) => issue.code === 'context-commit',
+    );
     assert.ok(issue, JSON.stringify(result.result.errors));
     assert.equal(issue.line, 3);
     assert.match(issue.message, /7 to 64/);
@@ -57,11 +85,33 @@ describe('lint severity', () => {
       fs.writeFileSync(path.join(outside, 'secret.ts'), 'export const secret = true;\n');
       fs.symlinkSync(outside, path.join(f.root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
       const map = [
-        '# Context map: linked path', '', '> **Commit:** abcdef0', '>', '> **Tool:** text', '',
-        '## Map', '- Secret — `linked/secret.ts:1`', '', '## Flows', '- secret: `linked/secret.ts:1`', '',
-        '## Invariants', '- Secret exists — `linked/secret.ts:1` — "export const secret = true;"', '',
-        '## Coverage', '- entry-points: `linked/secret.ts:1`', '', '## Precedent', '- Secret: `linked/secret.ts`', '',
-        '## Surprises', '- none — `linked/secret.ts:1`', '', '## Not covered', '- Dynamic dispatch', '',
+        '# Context map: linked path',
+        '',
+        '> **Commit:** abcdef0',
+        '>',
+        '> **Tool:** text',
+        '',
+        '## Map',
+        '- Secret — `linked/secret.ts:1`',
+        '',
+        '## Flows',
+        '- secret: `linked/secret.ts:1`',
+        '',
+        '## Invariants',
+        '- Secret exists — `linked/secret.ts:1` — "export const secret = true;"',
+        '',
+        '## Coverage',
+        '- entry-points: `linked/secret.ts:1`',
+        '',
+        '## Precedent',
+        '- Secret: `linked/secret.ts`',
+        '',
+        '## Surprises',
+        '- none — `linked/secret.ts:1`',
+        '',
+        '## Not covered',
+        '- Dynamic dispatch',
+        '',
       ].join('\n');
       const file = f.artifact('linked.context.md', map);
       const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
@@ -75,7 +125,7 @@ describe('lint severity', () => {
     }
   });
   test('invalid artifact fields persist actionable input failures', async () => {
-    const f = {...scoped, cleanup: () => {}};
+    const f = { ...scoped, cleanup: () => {} };
     try {
       for (const artifact of [f.root + '/missing.plan.md', f.root, f.artifact('unknown.txt', 'text')]) {
         f.lines.length = 0;
@@ -83,6 +133,8 @@ describe('lint severity', () => {
         assert.match(fs.readFileSync(f.output().path!, 'utf8'), /artifact/);
         assert.equal(f.output().reason, 'invalid-input');
       }
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 });

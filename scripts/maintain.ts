@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ACTION_CONTRACTS, GENERATED_MARKER, SESSION_CONTRACTS, renderCallTable } from '../skills/dispatch/scripts/toolkit/contracts.ts';
+import {
+  ACTION_CONTRACTS,
+  GENERATED_MARKER,
+  SESSION_CONTRACTS,
+  renderCallTable,
+} from '../skills/dispatch/scripts/toolkit/contracts.ts';
 import { slug, validatePathLinks } from './path-bytes.ts';
 
 const TOOLKIT = 'references/toolkit.md';
@@ -13,21 +18,27 @@ type ContractRegion = { heading: string; text: string; prefix: string };
 function contractRegions(): Map<string, ContractRegion> {
   return new Map([
     ['call-table', { heading: TABLE_HEADING, text: renderCallTable().slice(TABLE_HEADING.length + 1), prefix: '' }],
-    ...Object.entries(ACTION_CONTRACTS).map(([heading, {arguments: args}]): [string, ContractRegion] =>
-      [`action:${slug(heading)}`, { heading: `### ${heading}`, text: `\`${args}\``, prefix: 'Arguments: ' }]),
-    ...Object.entries(SESSION_CONTRACTS).map(([action, {arguments: args}]): [string, ContractRegion] =>
-      [`session:${action}`, { heading: `### session ${action}`, text: `\`${args}\``, prefix: '' }]),
+    ...Object.entries(ACTION_CONTRACTS).map(([heading, { arguments: args }]): [string, ContractRegion] => [
+      `action:${slug(heading)}`,
+      { heading: `### ${heading}`, text: `\`${args}\``, prefix: 'Arguments: ' },
+    ]),
+    ...Object.entries(SESSION_CONTRACTS).map(([action, { arguments: args }]): [string, ContractRegion] => [
+      `session:${action}`,
+      { heading: `### session ${action}`, text: `\`${args}\``, prefix: '' },
+    ]),
   ]);
 }
 
 /** Validates governed delimiters and replaces only the content between each pair. */
 export function renderContractRegions(markdown: string): { text: string; errors: string[]; drift: string[] } {
   const regions = contractRegions();
-  const errors: string[] = [], drift: string[] = [];
+  const errors: string[] = [],
+    drift: string[] = [];
   const headings = [...markdown.matchAll(/^(#{1,3} [^\r\n]+)\r?\n/gm)];
   const seen = new Set<string>();
   let open: { id: string; index: number; end: number } | undefined;
-  let text = '', cursor = 0;
+  let text = '',
+    cursor = 0;
   for (const marker of markdown.matchAll(GENERATED_MARKER)) {
     const [token, closing, markerId] = marker;
     const id = markerId!;
@@ -48,21 +59,27 @@ export function renderContractRegions(markdown: string): { text: string; errors:
       continue;
     }
     if (region) {
-      const headingIndex = headings.findIndex(heading => heading[1] === region.heading);
+      const headingIndex = headings.findIndex((heading) => heading[1] === region.heading);
       const heading = headings[headingIndex];
       const sectionStart = heading ? heading.index + heading[0].length : -1;
       const sectionEnd = headings[headingIndex + 1]?.index ?? markdown.length;
       const table = id === 'call-table';
       // A session opener needs its own line so Markdown parses the command paragraph.
       const standalone = table || id.startsWith('session:');
-      const delimiterNewline = standalone ? /^\r?\n/.exec(markdown.slice(open.end))?.[0] ?? '' : '';
+      const delimiterNewline = standalone ? (/^\r?\n/.exec(markdown.slice(open.end))?.[0] ?? '') : '';
       const bodyStart = open.end + delimiterNewline.length;
       const before = markdown.slice(sectionStart, open.index);
       const current = markdown.slice(bodyStart, index);
-      const correct = sectionStart >= 0 && open.index >= sectionStart && index < sectionEnd
-        && (!standalone || delimiterNewline !== '') && (table
-        ? before === '' && (current === '' || current.endsWith('\n')) && /^(?:\r?\n)+$/.test(markdown.slice(end, sectionEnd))
-        : before.replace(COMMAND_PREFIX, '') === region.prefix && /^`[^`\r\n]+`$/.test(current));
+      const correct =
+        sectionStart >= 0 &&
+        open.index >= sectionStart &&
+        index < sectionEnd &&
+        (!standalone || delimiterNewline !== '') &&
+        (table
+          ? before === '' &&
+            (current === '' || current.endsWith('\n')) &&
+            /^(?:\r?\n)+$/.test(markdown.slice(end, sectionEnd))
+          : before.replace(COMMAND_PREFIX, '') === region.prefix && /^`[^`\r\n]+`$/.test(current));
       if (!correct) errors.push(`${label}: generated markers at the wrong boundary`);
       else {
         const expected = delimiterNewline === '\r\n' ? region.text.replaceAll('\n', '\r\n') : region.text;
@@ -74,7 +91,8 @@ export function renderContractRegions(markdown: string): { text: string; errors:
     open = undefined;
   }
   if (open) errors.push(`${TOOLKIT}: ${open.id}: missing closing marker`);
-  for (const [id, {heading}] of regions) if (!seen.has(id)) errors.push(`${TOOLKIT}: ${heading}: missing opening marker`);
+  for (const [id, { heading }] of regions)
+    if (!seen.has(id)) errors.push(`${TOOLKIT}: ${heading}: missing opening marker`);
   return { text: errors.length ? markdown : text + markdown.slice(cursor), errors, drift };
 }
 

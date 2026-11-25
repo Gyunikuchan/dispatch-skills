@@ -37,12 +37,7 @@ const X_HOSTS = new Set([
   'vxtwitter.com',
 ]);
 
-const YOUTUBE_HOSTS = new Set([
-  'youtube.com',
-  'www.youtube.com',
-  'm.youtube.com',
-  'music.youtube.com',
-]);
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']);
 
 const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 
@@ -380,7 +375,8 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
   const videoDetails = player ? asRecord(player['videoDetails']) : null;
   if (!player || !videoDetails) {
     const playability = player ? asRecord(player['playabilityStatus']) : null;
-    const reason = (playability ? asString(playability['reason']) ?? asString(playability['status']) : undefined) ?? 'unavailable';
+    const reason =
+      (playability ? (asString(playability['reason']) ?? asString(playability['status'])) : undefined) ?? 'unavailable';
     deps.stderr(`cannot read YouTube video ${id}: ${reason}\n`);
     return 1;
   }
@@ -394,7 +390,7 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
   const microformat = asRecord(player['microformat']);
   const microRenderer = microformat ? asRecord(microformat['playerMicroformatRenderer']) : null;
   const publishDate = microRenderer
-    ? asString(microRenderer['publishDate']) ?? asString(microRenderer['uploadDate'])
+    ? (asString(microRenderer['publishDate']) ?? asString(microRenderer['uploadDate']))
     : undefined;
 
   const metaParts = [
@@ -404,13 +400,7 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
   ];
   if (publishDate) metaParts.push(`Published ${publishDate}`);
 
-  const headerLines = [
-    `# YouTube: ${title}`,
-    metaParts.join(' · '),
-    '',
-    '## Description',
-    description || '(none)',
-  ];
+  const headerLines = [`# YouTube: ${title}`, metaParts.join(' · '), '', '## Description', description || '(none)'];
   const headerText = headerLines.join('\n');
 
   const track = selectCaptionTrack(player);
@@ -532,8 +522,16 @@ export async function main(argv: string[], deps?: Partial<Deps>): Promise<number
     fetch: deps?.fetch ?? globalThis.fetch,
     runYtDlp: deps?.runYtDlp ?? defaultRunYtDlp,
     writeTemp: deps?.writeTemp ?? defaultWriteTemp,
-    stdout: deps?.stdout ?? ((text) => { process.stdout.write(text); }),
-    stderr: deps?.stderr ?? ((text) => { process.stderr.write(text); }),
+    stdout:
+      deps?.stdout ??
+      ((text) => {
+        process.stdout.write(text);
+      }),
+    stderr:
+      deps?.stderr ??
+      ((text) => {
+        process.stderr.write(text);
+      }),
   };
 
   if (argv.length !== 1) {
@@ -543,7 +541,9 @@ export async function main(argv: string[], deps?: Partial<Deps>): Promise<number
 
   const link = parseLink(argv[0]!);
   if (!link) {
-    resolved.stderr(`Usage: unsupported URL ${JSON.stringify(argv[0])}; expected an X/Twitter status or YouTube video URL\n`);
+    resolved.stderr(
+      `Usage: unsupported URL ${JSON.stringify(argv[0])}; expected an X/Twitter status or YouTube video URL\n`,
+    );
     return 2;
   }
 
@@ -552,7 +552,9 @@ export async function main(argv: string[], deps?: Partial<Deps>): Promise<number
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   main(process.argv.slice(2)).then(
-    (code) => { process.exitCode = code; },
+    (code) => {
+      process.exitCode = code;
+    },
     (error: unknown) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 1;

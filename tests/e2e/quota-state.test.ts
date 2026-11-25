@@ -19,9 +19,15 @@ const storeUrl = new URL('../../skills/dispatch/scripts/lib/quota-store.ts', imp
 const policyUrl = new URL('../../skills/dispatch/scripts/policy/quota.ts', import.meta.url).href;
 const entry = fileURLToPath(new URL('../../skills/dispatch/scripts/dispatch.ts', import.meta.url));
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-state-')), repo = path.join(root, 'repo');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-state-')),
+    repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  const sessionDir = initSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') }).path;
+  const sessionDir = initSession({
+    repositoryRoot: repo,
+    sessionId: crypto.randomUUID(),
+    sessionTitle: 'Quota fixture',
+    now: new Date('2026-10-19T00:00:00Z'),
+  }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
   const capture = (keys: QuotaKey[] = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);
@@ -29,20 +35,53 @@ function setup() {
   };
   const subprocess = async (body: string, value: unknown) => {
     const script = `import * as store from ${JSON.stringify(storeUrl)}; import * as policy from ${JSON.stringify(policyUrl)}; const x=JSON.parse(process.argv[1]); ${body}`;
-    const result = await execute(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(value)], { cwd: repo, windowsHide: true, env: { ...process.env, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' } });
+    const result = await execute(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(value)], {
+      cwd: repo,
+      windowsHide: true,
+      env: { ...process.env, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' },
+    });
     return JSON.parse(result.stdout) as ReturnType<typeof readQuotaState> & { generation: string; skipped: boolean };
   };
   const cli = async (provider: string, mode: string, session = sessionDir) => {
     try {
-      const result = await execute(process.execPath, [entry, 'session', 'quota-reprobe', '--session-dir', session, '--provider', provider, '--mode', mode], { cwd: repo, windowsHide: true, env: { ...process.env, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' } });
+      const result = await execute(
+        process.execPath,
+        [entry, 'session', 'quota-reprobe', '--session-dir', session, '--provider', provider, '--mode', mode],
+        { cwd: repo, windowsHide: true, env: { ...process.env, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' } },
+      );
       return { exit: 0, stdout: result.stdout, stderr: result.stderr };
     } catch (error) {
       const result = error as { code: number; stdout: string; stderr: string };
       return { exit: result.code, stdout: result.stdout, stderr: result.stderr };
     }
   };
-  const quotaDir = () => path.join(sessionDir, '.state', 'quota', crypto.createHash('sha256').update(JSON.stringify([key.provider, key.model, key.mode])).digest('hex'));
-  return { root, repo, sessionDir, options, capture, subprocess, cli, quotaDir, cleanup: () => { try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* Windows locked handle */ } } };
+  const quotaDir = () =>
+    path.join(
+      sessionDir,
+      '.state',
+      'quota',
+      crypto
+        .createHash('sha256')
+        .update(JSON.stringify([key.provider, key.model, key.mode]))
+        .digest('hex'),
+    );
+  return {
+    root,
+    repo,
+    sessionDir,
+    options,
+    capture,
+    subprocess,
+    cli,
+    quotaDir,
+    cleanup: () => {
+      try {
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* Windows locked handle */
+      }
+    },
+  };
 }
 
 describe('quota state survives sessions and reprobe races', () => {
@@ -51,15 +90,28 @@ describe('quota state survives sessions and reprobe races', () => {
     try {
       const generation = f.capture().generations[0]!.generation;
       assert.equal(publishQuotaFailure(f.options, key, generation, now).published, true);
-      const state = await f.subprocess('const s=store.readQuotaState(x.options,[x.key],x.now); console.log(JSON.stringify(policy.quotaSnapshot([x.key],s.generations,s.observations,x.now).decisions[0]));', { options: f.options, key, now: now + 1 });
+      const state = await f.subprocess(
+        'const s=store.readQuotaState(x.options,[x.key],x.now); console.log(JSON.stringify(policy.quotaSnapshot([x.key],s.generations,s.observations,x.now).decisions[0]));',
+        { options: f.options, key, now: now + 1 },
+      );
       assert.equal(state.skipped, true);
-      const other = initSession({ repositoryRoot: f.repo, sessionId: crypto.randomUUID(), sessionTitle: 'Other quota fixture', now: new Date('2026-10-19T00:01:00Z') }).path;
+      const other = initSession({
+        repositoryRoot: f.repo,
+        sessionId: crypto.randomUUID(),
+        sessionTitle: 'Other quota fixture',
+        now: new Date('2026-10-19T00:01:00Z'),
+      }).path;
       assert.equal(readQuotaState({ ...f.options, sessionDir: other }, [key], now + 1).observations.length, 0);
       assert.equal(f.capture([key], now + H).snapshot.decisions[0]!.skipped, false);
-      const records = fs.readdirSync(f.quotaDir()).map((name) => fs.readFileSync(path.join(f.quotaDir(), name), 'utf8')).join('');
+      const records = fs
+        .readdirSync(f.quotaDir())
+        .map((name) => fs.readFileSync(path.join(f.quotaDir(), name), 'utf8'))
+        .join('');
       assert.equal(records.includes(f.repo), false);
       assert.equal(records.includes('prompt'), false);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
   test('same bucket publication coalesces and unrelated keys and buckets survive', async () => {
     const f = setup();
@@ -67,8 +119,13 @@ describe('quota state survives sessions and reprobe races', () => {
       const generation = f.capture().generations[0]!.generation;
       assert.equal(publishQuotaFailure(f.options, key, generation, now).published, true);
       const publish = 'console.log(JSON.stringify(store.publishQuotaFailure(x.options,x.key,x.generation,x.at)));';
-      const coalesced = await Promise.all([now + 10, now + 20].map((at) => f.subprocess(publish, { options: f.options, key, generation, at })));
-      assert.equal(coalesced.every((result) => !(result as unknown as { published: boolean }).published), true);
+      const coalesced = await Promise.all(
+        [now + 10, now + 20].map((at) => f.subprocess(publish, { options: f.options, key, generation, at })),
+      );
+      assert.equal(
+        coalesced.every((result) => !(result as unknown as { published: boolean }).published),
+        true,
+      );
       assert.equal(f.capture([key], now + 30).snapshot.decisions[0]!.expiresAt, now + H);
       const other = { ...key, model: '../literal/default' };
       const marker = f.capture([other]).generations[0]!;
@@ -76,18 +133,33 @@ describe('quota state survives sessions and reprobe races', () => {
         f.subprocess(publish, { options: f.options, key: other, generation: marker.generation, at: now }),
         f.subprocess(publish, { options: f.options, key, generation, at: now + H }),
       ]);
-      assert.deepEqual(f.capture([key, other]).snapshot.decisions.map((row) => row.skipped), [true, true]);
+      assert.deepEqual(
+        f.capture([key, other]).snapshot.decisions.map((row) => row.skipped),
+        [true, true],
+      );
       assert.equal(fs.readdirSync(f.quotaDir()).filter((name) => name !== 'generation.json').length, 2);
       assert.equal(f.capture([key], now + H).snapshot.decisions[0]!.skipped, true);
-      assert.equal(fs.readdirSync(path.join(f.sessionDir, '.state', 'quota')).every((name) => /^[a-f0-9]{64}$/.test(name)), true);
-    } finally { f.cleanup(); }
+      assert.equal(
+        fs.readdirSync(path.join(f.sessionDir, '.state', 'quota')).every((name) => /^[a-f0-9]{64}$/.test(name)),
+        true,
+      );
+    } finally {
+      f.cleanup();
+    }
   });
   test('concurrent reprobes and late completions cannot revive an old generation', async () => {
     const f = setup();
     try {
       const old = f.capture().generations[0]!.generation;
       publishQuotaFailure(f.options, key, old, now);
-      const results = await Promise.all([1, 2].map(() => f.subprocess('console.log(JSON.stringify(store.reprobeQuota(x.options,x.key)));', { options: f.options, key })));
+      const results = await Promise.all(
+        [1, 2].map(() =>
+          f.subprocess('console.log(JSON.stringify(store.reprobeQuota(x.options,x.key)));', {
+            options: f.options,
+            key,
+          }),
+        ),
+      );
       const active = f.capture().generations[0]!.generation;
       assert.ok(results.some((result) => result.generation === active));
       assert.notEqual(active, old);
@@ -99,20 +171,27 @@ describe('quota state survives sessions and reprobe races', () => {
       assert.equal(result.exit, 0, result.stderr);
       assert.equal(JSON.parse(result.stdout).appliesTo, 'future-waves');
       assert.equal(f.capture([key], now + 2).snapshot.decisions[0]!.skipped, false);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
   test('invalid arguments unowned sessions and I/O failures cannot create quota writes', async () => {
     const f = setup();
     try {
-      for (const [provider, mode] of [['unknown', 'cli'], ['codex', 'unknown']]) {
+      for (const [provider, mode] of [
+        ['unknown', 'cli'],
+        ['codex', 'unknown'],
+      ]) {
         const result = await f.cli(provider!, mode!);
         assert.equal(result.exit, 1);
         assert.equal(fs.existsSync(path.join(f.sessionDir, '.state', 'quota')), false);
       }
-      const unowned = path.join(f.root, 'unowned'); fs.mkdirSync(unowned);
+      const unowned = path.join(f.root, 'unowned');
+      fs.mkdirSync(unowned);
       assert.equal((await f.cli('codex', 'cli', unowned)).exit, 1);
       assert.deepEqual(fs.readdirSync(unowned), []);
-      const otherRepo = path.join(f.root, 'other-repo'); fs.mkdirSync(otherRepo);
+      const otherRepo = path.join(f.root, 'other-repo');
+      fs.mkdirSync(otherRepo);
       assert.throws(() => reprobeQuota({ ...f.options, repositoryRoot: otherRepo }, key));
       assert.equal(fs.existsSync(path.join(f.sessionDir, '.state', 'quota')), false);
       fs.mkdirSync(path.join(f.sessionDir, '.state'));
@@ -124,6 +203,8 @@ describe('quota state survives sessions and reprobe races', () => {
       assert.equal(failure.published, false);
       assert.ok(failure.warning);
       assert.equal(fs.readFileSync(path.join(f.sessionDir, '.state', 'quota'), 'utf8'), 'unwritable path');
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 });

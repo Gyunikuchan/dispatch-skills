@@ -5,7 +5,10 @@ import type { ProviderSpec, ProviderUsageContext } from './types.ts';
 export function sessionUsageReader(
   platform: DelegateQuery['platform'],
   findSession: (raw: string, context: ProviderUsageContext) => string | null | undefined,
-  options?: (context: ProviderUsageContext, fs: HostUsageFs) => Partial<Pick<DelegateQuery, 'appDataDir' | 'cwd' | 'fs'>>,
+  options?: (
+    context: ProviderUsageContext,
+    fs: HostUsageFs,
+  ) => Partial<Pick<DelegateQuery, 'appDataDir' | 'cwd' | 'fs'>>,
 ): NonNullable<ProviderSpec['sessionUsage']> {
   return (raw, context) => {
     const { transcripts, launchStartMs, launchEndMs } = context;
@@ -21,7 +24,7 @@ export function sessionUsageReader(
       resumed: context.resumed ?? false,
       ...(context.collectResponses ? { collectResponses: true } : {}),
       home: context.platform.home,
-      env: name => context.env[name],
+      env: (name) => context.env[name],
       fs: transcripts.fs,
       budget: transcripts.budget,
       ...options?.(context, transcripts.fs),

@@ -17,15 +17,50 @@ export const BUDGET_OVERRUN_THRESHOLD_MS = 800;
 export const DENSE_FILE_TEST_THRESHOLD = 15;
 const SLOW_TEST_LIMIT = 20;
 
-export interface TestEntry { name: string; durationMs: number; line: number }
-export interface FileEntry { path: string; tests: TestEntry[]; durationMs: number; lines: number; imports: string[] }
-export interface Failure { file: string; name: string; line: number }
-export interface DuplicateTitle { name: string; files: { path: string; line: number }[] }
-export interface SharedImports { imports: string[]; files: string[] }
-export interface MergeCluster { file: string; prefix: string; tests: { name: string; line: number }[] }
-export interface BudgetOverrun { path: string; durationMs: number }
-export interface DenseFile { path: string; testCount: number }
-export interface SlowTest { file: string; name: string; line: number; durationMs: number }
+export interface TestEntry {
+  name: string;
+  durationMs: number;
+  line: number;
+}
+export interface FileEntry {
+  path: string;
+  tests: TestEntry[];
+  durationMs: number;
+  lines: number;
+  imports: string[];
+}
+export interface Failure {
+  file: string;
+  name: string;
+  line: number;
+}
+export interface DuplicateTitle {
+  name: string;
+  files: { path: string; line: number }[];
+}
+export interface SharedImports {
+  imports: string[];
+  files: string[];
+}
+export interface MergeCluster {
+  file: string;
+  prefix: string;
+  tests: { name: string; line: number }[];
+}
+export interface BudgetOverrun {
+  path: string;
+  durationMs: number;
+}
+export interface DenseFile {
+  path: string;
+  testCount: number;
+}
+export interface SlowTest {
+  file: string;
+  name: string;
+  line: number;
+  durationMs: number;
+}
 export interface Candidates {
   duplicateTitles: DuplicateTitle[];
   sharedImports: SharedImports[];
@@ -100,7 +135,11 @@ function clusterPrefixOf(name: string): string | undefined {
   const colon = trimmed.indexOf(':');
   if (colon > 0 && colon < 30) {
     const head = trimmed.slice(0, colon).trim().toLowerCase();
-    const words = trimmed.slice(colon + 1).trim().split(/\s+/).filter(Boolean);
+    const words = trimmed
+      .slice(colon + 1)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
     if (words.length >= 2) return `${head}: ${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}`;
     if (words[0]) return `${head}: ${words[0]!.toLowerCase()}`;
     return head;
@@ -112,9 +151,12 @@ function clusterPrefixOf(name: string): string | undefined {
 export function findCandidates(files: readonly FileEntry[], slowTestMs: number = SLOW_TEST_MS): Candidates {
   const titles = new Map<string, { path: string; line: number }[]>();
   for (const file of files) {
-    for (const test of file.tests) titles.set(test.name, [...(titles.get(test.name) ?? []), { path: file.path, line: test.line }]);
+    for (const test of file.tests)
+      titles.set(test.name, [...(titles.get(test.name) ?? []), { path: file.path, line: test.line }]);
   }
-  const duplicateTitles = [...titles].filter(([, at]) => at.length > 1).map(([name, at]) => ({ name, files: at }))
+  const duplicateTitles = [...titles]
+    .filter(([, at]) => at.length > 1)
+    .map(([name, at]) => ({ name, files: at }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const groups = new Map<string, SharedImports>();
@@ -126,7 +168,8 @@ export function findCandidates(files: readonly FileEntry[], slowTestMs: number =
     group.files.push(file.path);
     groups.set(key, group);
   }
-  const sharedImports = [...groups.values()].filter((group) => group.files.length > 1)
+  const sharedImports = [...groups.values()]
+    .filter((group) => group.files.length > 1)
     .sort((a, b) => (a.files[0] ?? '').localeCompare(b.files[0] ?? ''));
 
   const mergeClusters: MergeCluster[] = [];
@@ -198,7 +241,11 @@ export function collectFailures(tests: readonly TestLine[], rel: (file: string) 
 }
 
 // A nonzero test-run exit with no recorded failure still marks the snapshot failed.
-export function withExitStatus(failures: readonly Failure[], status: number | null, signal: string | null = null): Failure[] {
+export function withExitStatus(
+  failures: readonly Failure[],
+  status: number | null,
+  signal: string | null = null,
+): Failure[] {
   if (status === 0 || failures.length) return [...failures];
   return [{ file: '', name: `node --test exited ${status ?? signal ?? 'abnormally'}`, line: 0 }];
 }
@@ -225,7 +272,11 @@ export function buildInventory(root: string, testFiles: readonly string[], event
   }
   const summary = events.find((event) => event.kind === 'summary');
   return {
-    totals: { files: files.length, tests: files.reduce((sum, file) => sum + file.tests.length, 0), durationMs: summary?.kind === 'summary' ? summary.durationMs : 0 },
+    totals: {
+      files: files.length,
+      tests: files.reduce((sum, file) => sum + file.tests.length, 0),
+      durationMs: summary?.kind === 'summary' ? summary.durationMs : 0,
+    },
     files,
     coverage,
     candidates: findCandidates(files),
@@ -238,7 +289,8 @@ export function buildInventory(root: string, testFiles: readonly string[], event
 const signed = (value: number) => (value > 0 ? `+${value}` : String(value));
 const cell = (before: number, after: number) => `${before} → ${after} (${signed(after - before)})`;
 const failureKey = (failure: Failure) => `${failure.file}\u0000${failure.name}`;
-const formatFailure = (failure: Failure) => `- ${failure.file ? `${failure.file}:${failure.line}` : '(run)'} ${failure.name}`;
+const formatFailure = (failure: Failure) =>
+  `- ${failure.file ? `${failure.file}:${failure.line}` : '(run)'} ${failure.name}`;
 
 /** Formats measured before/after inventory totals, file changes, failures, and informational coverage changes. */
 export function formatDelta(before: Inventory, after: Inventory): string {
@@ -256,14 +308,20 @@ export function formatDelta(before: Inventory, after: Inventory): string {
     const prev = beforeFiles.get(filePath);
     const next = afterFiles.get(filePath);
     if (prev && !next) {
-      fileChanges.push(`- ${filePath}: ${prev.tests.length} → 0 tests (-${prev.tests.length}), ${Math.round(prev.durationMs)} → 0 ms (-${Math.round(prev.durationMs)})`);
+      fileChanges.push(
+        `- ${filePath}: ${prev.tests.length} → 0 tests (-${prev.tests.length}), ${Math.round(prev.durationMs)} → 0 ms (-${Math.round(prev.durationMs)})`,
+      );
     } else if (!prev && next) {
-      fileChanges.push(`+ ${filePath}: 0 → ${next.tests.length} tests (+${next.tests.length}), 0 → ${Math.round(next.durationMs)} ms (+${Math.round(next.durationMs)})`);
+      fileChanges.push(
+        `+ ${filePath}: 0 → ${next.tests.length} tests (+${next.tests.length}), 0 → ${Math.round(next.durationMs)} ms (+${Math.round(next.durationMs)})`,
+      );
     } else if (prev && next) {
       const prevMs = Math.round(prev.durationMs);
       const nextMs = Math.round(next.durationMs);
       if (prev.tests.length !== next.tests.length || prev.lines !== next.lines || prevMs !== nextMs) {
-        fileChanges.push(`~ ${filePath}: tests ${cell(prev.tests.length, next.tests.length)}, lines ${cell(prev.lines, next.lines)}, duration ${cell(prevMs, nextMs)} ms`);
+        fileChanges.push(
+          `~ ${filePath}: tests ${cell(prev.tests.length, next.tests.length)}, lines ${cell(prev.lines, next.lines)}, duration ${cell(prevMs, nextMs)} ms`,
+        );
       }
     }
   }
@@ -305,35 +363,59 @@ export function formatDelta(before: Inventory, after: Inventory): string {
 
 // SECTION: CLI
 
-const USAGE = 'usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--paths <dir,...>] [--compare <before-inventory.json>]';
+const USAGE =
+  'usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--paths <dir,...>] [--compare <before-inventory.json>]';
 
 export function main(argv: string[]): number {
-  let values: { out?: string | undefined; coverage?: boolean | undefined; paths?: string | undefined; compare?: string | undefined };
+  let values: {
+    out?: string | undefined;
+    coverage?: boolean | undefined;
+    paths?: string | undefined;
+    compare?: string | undefined;
+  };
   try {
     ({ values } = parseArgs({
       args: argv,
-      options: { out: { type: 'string' }, coverage: { type: 'boolean' }, paths: { type: 'string' }, compare: { type: 'string' } },
+      options: {
+        out: { type: 'string' },
+        coverage: { type: 'boolean' },
+        paths: { type: 'string' },
+        compare: { type: 'string' },
+      },
       strict: true,
     }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n${USAGE}\n`);
     return 1;
   }
-  if (!values.out) { process.stderr.write(`missing --out\n${USAGE}\n`); return 1; }
+  if (!values.out) {
+    process.stderr.write(`missing --out\n${USAGE}\n`);
+    return 1;
+  }
 
   let beforeInventory: Inventory | undefined;
   if (values.compare) {
     try {
       beforeInventory = JSON.parse(fs.readFileSync(path.resolve(values.compare), 'utf8')) as Inventory;
     } catch (error) {
-      process.stderr.write(`unreadable --compare ${values.compare}: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(
+        `unreadable --compare ${values.compare}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
       return 1;
     }
   }
 
-  const selectedPaths = values.paths ? values.paths.split(',').map((item) => item.trim()).filter(Boolean) : undefined;
+  const selectedPaths = values.paths
+    ? values.paths
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : undefined;
   const testFiles = discoverTestFiles(REPO_ROOT, selectedPaths);
-  if (!testFiles.length) { process.stderr.write(`no test files found\n`); return 1; }
+  if (!testFiles.length) {
+    process.stderr.write(`no test files found\n`);
+    return 1;
+  }
 
   const out = path.resolve(values.out);
   const eventsPath = path.join(out, 'events.jsonl');
@@ -341,26 +423,38 @@ export function main(argv: string[]): number {
   fs.rmSync(eventsPath, { force: true });
 
   const args = [
-    '--test', '--test-concurrency=8',
-    '--import=./tests/helpers/isolated-temp.ts', '--import=./tests/helpers/block-spawn.ts',
+    '--test',
+    '--test-concurrency=8',
+    '--import=./tests/helpers/isolated-temp.ts',
+    '--import=./tests/helpers/block-spawn.ts',
     `--test-reporter=./${toPosix(path.relative(REPO_ROOT, path.join(SCRIPT_DIR, 'timing-reporter.ts')))}`,
-    ...(values.coverage ? ['--experimental-test-coverage', ...COVERAGE_INCLUDE.map((glob) => `--test-coverage-include=${glob}`)] : []),
+    ...(values.coverage
+      ? ['--experimental-test-coverage', ...COVERAGE_INCLUDE.map((glob) => `--test-coverage-include=${glob}`)]
+      : []),
     ...testFiles,
   ];
   // NOTE: a nonzero exit is recorded as a failure, not fatal; the events file records which tests failed.
-  const run = spawnSync(process.execPath, args, { cwd: REPO_ROOT, env: { ...process.env, OPTIMISE_TESTS_OUT: eventsPath }, stdio: 'inherit' });
+  const run = spawnSync(process.execPath, args, {
+    cwd: REPO_ROOT,
+    env: { ...process.env, OPTIMISE_TESTS_OUT: eventsPath },
+    stdio: 'inherit',
+  });
   if (run.error || !fs.existsSync(eventsPath)) {
     process.stderr.write(`test run produced no events (${run.error?.message ?? `exit ${String(run.status)}`})\n`);
     return 1;
   }
-  const events = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as EventLine);
+  const events = fs
+    .readFileSync(eventsPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as EventLine);
   const inventory = buildInventory(REPO_ROOT, testFiles, events);
   inventory.failures = withExitStatus(inventory.failures, run.status, run.signal);
   fs.writeFileSync(path.join(out, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`);
 
   process.stdout.write(
-    `inventory: ${inventory.totals.files} files, ${inventory.totals.tests} tests, ${inventory.failures.length} failures, `
-    + `${Object.keys(inventory.coverage).length} covered files -> ${toPosix(path.relative(process.cwd(), out)) || '.'}\n`,
+    `inventory: ${inventory.totals.files} files, ${inventory.totals.tests} tests, ${inventory.failures.length} failures, ` +
+      `${Object.keys(inventory.coverage).length} covered files -> ${toPosix(path.relative(process.cwd(), out)) || '.'}\n`,
   );
 
   if (beforeInventory) {
@@ -368,13 +462,14 @@ export function main(argv: string[]): number {
     const deltaPath = path.join(out, 'delta.md');
     fs.writeFileSync(deltaPath, delta);
     process.stdout.write(
-      `delta: files ${cell(beforeInventory.totals.files, inventory.totals.files)}, `
-      + `tests ${cell(beforeInventory.totals.tests, inventory.totals.tests)}, `
-      + `duration ${cell(Math.round(beforeInventory.totals.durationMs), Math.round(inventory.totals.durationMs))} ms, `
-      + `failures ${cell(beforeInventory.failures.length, inventory.failures.length)} -> ${toPosix(path.relative(process.cwd(), deltaPath))}\n`,
+      `delta: files ${cell(beforeInventory.totals.files, inventory.totals.files)}, ` +
+        `tests ${cell(beforeInventory.totals.tests, inventory.totals.tests)}, ` +
+        `duration ${cell(Math.round(beforeInventory.totals.durationMs), Math.round(inventory.totals.durationMs))} ms, ` +
+        `failures ${cell(beforeInventory.failures.length, inventory.failures.length)} -> ${toPosix(path.relative(process.cwd(), deltaPath))}\n`,
     );
   }
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  process.exitCode = main(process.argv.slice(2));

@@ -29,11 +29,22 @@ function formatHint(text: string): string {
 }
 
 function verifiedLiveTree(value: unknown): string | undefined {
-  const rows = value && typeof value === 'object' && !Array.isArray(value) ? (value as { checks?: unknown }).checks : undefined;
+  const rows =
+    value && typeof value === 'object' && !Array.isArray(value) ? (value as { checks?: unknown }).checks : undefined;
   if (!Array.isArray(rows) || rows.length === 0) return undefined;
   const first = (rows[0] as { tree?: unknown } | undefined)?.tree;
-  return typeof first === 'string' && first && rows.every((row) =>
-    row && typeof row === 'object' && !Array.isArray(row) && row.clean === true && row.before === row.after && row.exit === 0 && row.tree === first)
+  return typeof first === 'string' &&
+    first &&
+    rows.every(
+      (row) =>
+        row &&
+        typeof row === 'object' &&
+        !Array.isArray(row) &&
+        row.clean === true &&
+        row.before === row.after &&
+        row.exit === 0 &&
+        row.tree === first,
+    )
     ? first
     : undefined;
 }
@@ -68,7 +79,7 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
   // Row 7: freshly appended non-deduped plan/design bind after level selection, with no subsequent approval or ruling.
   const last = fold.records.at(-1);
   const deduped = (result.value as { deduped?: unknown } | undefined)?.deduped === true;
-  const boundTarget = last?.kind === 'bind' ? (last.data?.['plan'] || last.data?.['design']) : undefined;
+  const boundTarget = last?.kind === 'bind' ? last.data?.['plan'] || last.data?.['design'] : undefined;
   if (
     action === 'ledger append' &&
     !deduped &&
@@ -107,7 +118,9 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
   }
 
   // Row 14: non-stale finished candidate ready after the last integrated task's automated criteria have passing clean check evidence on the verified check run tree after its done record and any fix or test-cleanup.
-  const tasks = [...new Set(fold.records.filter((record) => record.kind === 'writer').map((record) => String(record.data['task'])))];
+  const tasks = [
+    ...new Set(fold.records.filter((record) => record.kind === 'writer').map((record) => String(record.data['task']))),
+  ];
   const candidates = tasks.flatMap((task) => {
     const launch = candidate(fold, task);
     return launch ? [{ task, launch }] : [];
@@ -121,7 +134,9 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
       );
       if (lastDone) {
         const taskCritIds = new Set(taskCriteria(plan, String(lastDone.data['task'] ?? '')));
-        const autoChecks = checks(plan).filter((check) => taskCritIds.has(check.criterion) && check.evidenceClass !== 'review');
+        const autoChecks = checks(plan).filter(
+          (check) => taskCritIds.has(check.criterion) && check.evidenceClass !== 'review',
+        );
         if (autoChecks.length > 0) {
           if (action !== 'check run') return undefined;
           const liveTree = verifiedLiveTree(result.value);
@@ -142,14 +157,24 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
           (record) =>
             record.kind === 'edit' &&
             record.seq > baseSeq &&
-            (record.data['artifact'] === 'plan' || (Array.isArray(record.data['affects']) && record.data['affects'].includes(task))),
+            (record.data['artifact'] === 'plan' ||
+              (Array.isArray(record.data['affects']) && record.data['affects'].includes(task))),
         );
       const nonStale = candidates
-        .filter(({ task, launch }) => !isStale(fold, launch.record, taskSection(plan, task)) && !hasPlanOrTaskEdit(launch.record.data['base'].seq, task))
-        .sort((left, right) => left.launch.finished!.seq - right.launch.finished!.seq || left.task.localeCompare(right.task));
+        .filter(
+          ({ task, launch }) =>
+            !isStale(fold, launch.record, taskSection(plan, task)) &&
+            !hasPlanOrTaskEdit(launch.record.data['base'].seq, task),
+        )
+        .sort(
+          (left, right) =>
+            left.launch.finished!.seq - right.launch.finished!.seq || left.task.localeCompare(right.task),
+        );
       if (nonStale.length > 0) {
         const chosen = nonStale[0]!.task;
-        return formatHint(`Integrate ${chosen} — help worktree integrate — worktree integrate ${chosen} --session <session>`);
+        return formatHint(
+          `Integrate ${chosen} — help worktree integrate — worktree integrate ${chosen} --session <session>`,
+        );
       }
     } catch {
       return undefined;

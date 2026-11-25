@@ -22,7 +22,17 @@ function sampleField(kind: string, phase: string | undefined, field: string): un
   }
   if (field === 'before' || field === 'after') return kind === 'evidence' ? COMMIT : HASH;
   if (field === 'commandDigest' || field === 'taskSection') return HASH;
-  if (field === 'tree' || field === 'commit' || field === 'from' || field === 'fromTree' || field === 'to' || field === 'source' || field === 'head' || field === 'candidate') return COMMIT;
+  if (
+    field === 'tree' ||
+    field === 'commit' ||
+    field === 'from' ||
+    field === 'fromTree' ||
+    field === 'to' ||
+    field === 'source' ||
+    field === 'head' ||
+    field === 'candidate'
+  )
+    return COMMIT;
   if (field === 'base') return phase === 'launched' ? { commit: COMMIT, taskSection: HASH, seq: 0 } : COMMIT;
   if (field === 'dest') return { branch: 'main', path: 'repo' };
   if (field === 'artifacts') return kind === 'evidence' ? { spec: HASH, plan: HASH } : ['reports/out.md'];
@@ -53,7 +63,10 @@ function sampleField(kind: string, phase: string | undefined, field: string): un
 describe('contracts and help call table', () => {
   test('recordSchemas covers every ledger kind and phase matching validateRecord', () => {
     const schemas = recordSchemas();
-    assert.deepEqual(schemas.map((schema) => schema.kind), [...KINDS]);
+    assert.deepEqual(
+      schemas.map((schema) => schema.kind),
+      [...KINDS],
+    );
     const writer = schemas.find((schema) => schema.kind === 'writer');
     const integrate = schemas.find((schema) => schema.kind === 'integrate');
     assert.ok(writer?.phased && writer.phases.length === 3);
@@ -72,21 +85,36 @@ describe('contracts and help call table', () => {
           const incomplete = { ...data };
           delete incomplete[reqField];
           assert.throws(
-            () => validateRecord({ kind: schema.kind, by: 'user', quote: 'approved', key: `k:${schema.kind}:no-${reqField}`, data: incomplete }),
+            () =>
+              validateRecord({
+                kind: schema.kind,
+                by: 'user',
+                quote: 'approved',
+                key: `k:${schema.kind}:no-${reqField}`,
+                data: incomplete,
+              }),
             { reason: 'invalid-record' },
             `${schema.kind} rejects missing required field ${reqField}`,
           );
         }
         for (const field of schema.optional) {
           const withOptional = { ...data, [field]: sampleField(schema.kind, undefined, field) };
-          if (schema.kind === 'ruling' && field === 'paths') withOptional['subject'] = 'review:code-integration:R1-F001';
+          if (schema.kind === 'ruling' && field === 'paths')
+            withOptional['subject'] = 'review:code-integration:R1-F001';
           if (schema.kind === 'ruling' && (field === 'impact' || field === 'trigger')) {
             withOptional['subject'] = 'review:plan-1:R1-F001';
             withOptional['impact'] = sampleField(schema.kind, undefined, 'impact');
             withOptional['trigger'] = sampleField(schema.kind, undefined, 'trigger');
           }
           assert.doesNotThrow(
-            () => validateRecord({ kind: schema.kind, by: 'user', quote: 'approved', key: `k:${schema.kind}:${field}`, data: withOptional }),
+            () =>
+              validateRecord({
+                kind: schema.kind,
+                by: 'user',
+                quote: 'approved',
+                key: `k:${schema.kind}:${field}`,
+                data: withOptional,
+              }),
             `${schema.kind} optional field ${field} is accepted`,
           );
         }
@@ -104,7 +132,13 @@ describe('contracts and help call table', () => {
           const incomplete = { ...data };
           delete incomplete[reqField];
           assert.throws(
-            () => validateRecord({ kind: schema.kind, by: 'tool', key: `k:${schema.kind}:${phaseSchema.phase}:no-${reqField}`, data: incomplete }),
+            () =>
+              validateRecord({
+                kind: schema.kind,
+                by: 'tool',
+                key: `k:${schema.kind}:${phaseSchema.phase}:no-${reqField}`,
+                data: incomplete,
+              }),
             { reason: 'invalid-record' },
             `${schema.kind} (${phaseSchema.phase}) rejects missing required field ${reqField}`,
           );
@@ -119,7 +153,13 @@ describe('contracts and help call table', () => {
             withOptional['report'] = 'reports/verify.md';
           }
           assert.doesNotThrow(
-            () => validateRecord({ kind: schema.kind, by: 'tool', key: `k:${schema.kind}:${phaseSchema.phase}:${field}`, data: withOptional }),
+            () =>
+              validateRecord({
+                kind: schema.kind,
+                by: 'tool',
+                key: `k:${schema.kind}:${phaseSchema.phase}:${field}`,
+                data: withOptional,
+              }),
             `${schema.kind} (${phaseSchema.phase}) optional field ${field} is accepted`,
           );
         }
@@ -155,11 +195,19 @@ describe('contracts and help call table', () => {
     assert.match(rendered, /Windows PowerShell 5\.1/);
     assert.match(rendered, /ledger append <record\.json\|-> --session <session>/);
 
-    const rows = rendered.split('\n').filter((line) => line.startsWith('| ')).slice(2);
-    const rowSet = new Set(rows.map((line) => {
-      const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
-      return `${cells[0]}:${cells[1]}`;
-    }));
+    const rows = rendered
+      .split('\n')
+      .filter((line) => line.startsWith('| '))
+      .slice(2);
+    const rowSet = new Set(
+      rows.map((line) => {
+        const cells = line
+          .split('|')
+          .map((cell) => cell.trim())
+          .filter(Boolean);
+        return `${cells[0]}:${cells[1]}`;
+      }),
+    );
 
     for (const action of TOOL_ACTIONS) {
       assert.ok(rowSet.has(`action:${action}`), `missing action row ${action}`);
@@ -172,14 +220,16 @@ describe('contracts and help call table', () => {
         assert.ok(rowSet.has(`record:${schema.kind}`), `missing flat record row ${schema.kind}`);
         const row = rows.find((line) => line.startsWith(`| record | ${schema.kind} |`)) ?? '';
         for (const field of schema.required) assert.ok(row.includes(field), `${schema.kind} row includes ${field}`);
-        for (const field of schema.optional) assert.ok(row.includes(`${field}?`), `${schema.kind} row includes ${field}?`);
+        for (const field of schema.optional)
+          assert.ok(row.includes(`${field}?`), `${schema.kind} row includes ${field}?`);
       } else {
         for (const phaseSchema of schema.phases) {
           const heading = `${schema.kind} (${phaseSchema.phase})`;
           assert.ok(rowSet.has(`record:${heading}`), `missing phased row ${heading}`);
           const row = rows.find((line) => line.startsWith(`| record | ${heading} |`)) ?? '';
           for (const field of phaseSchema.required) assert.ok(row.includes(field), `${heading} row includes ${field}`);
-          for (const field of phaseSchema.optional) assert.ok(row.includes(`${field}?`), `${heading} row includes ${field}?`);
+          for (const field of phaseSchema.optional)
+            assert.ok(row.includes(`${field}?`), `${heading} row includes ${field}?`);
         }
       }
     }

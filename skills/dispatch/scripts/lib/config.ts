@@ -12,13 +12,26 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 export const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'utility-subagents', 'phases', 'diagnostics', 'write-concurrency', 'read-commands', 'pricing'];
+const TABLES = [
+  'read-delegates',
+  'write-subagents',
+  'utility-subagents',
+  'phases',
+  'diagnostics',
+  'write-concurrency',
+  'read-commands',
+  'pricing',
+];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
 const SANDBOXED = ['claude', 'copilot', 'opencode', 'codex'];
 const ALIASES: Readonly<Record<string, string>> = {
-  antigravity: 'agy', claudecode: 'claude', 'claude-code': 'claude', 'github-copilot': 'copilot', 'openai-codex': 'codex',
+  antigravity: 'agy',
+  claudecode: 'claude',
+  'claude-code': 'claude',
+  'github-copilot': 'copilot',
+  'openai-codex': 'codex',
 };
 
 type DispatchConfig = Record<string, unknown>;
@@ -34,10 +47,17 @@ export function stripJsonc(text: string): string {
     const next = text[index + 1];
     if (quote) {
       out += char;
-      if (char === '\\') { out += next ?? ''; index++; } else if (char === quote) quote = '';
+      if (char === '\\') {
+        out += next ?? '';
+        index++;
+      } else if (char === quote) quote = '';
       continue;
     }
-    if (char === '"' || char === "'") { quote = char; out += char; continue; }
+    if (char === '"' || char === "'") {
+      quote = char;
+      out += char;
+      continue;
+    }
     if (char === '/' && next === '/') {
       while (index < text.length && text[index] !== '\n') index++;
       out += '\n';
@@ -61,9 +81,12 @@ function closesNext(text: string, from: number): boolean {
   while (index < text.length) {
     const char = text[index];
     if (char === ' ' || char === '\t' || char === '\r' || char === '\n') index++;
-    else if (char === '/' && text[index + 1] === '/') { while (index < text.length && text[index] !== '\n') index++; }
-    else if (char === '/' && text[index + 1] === '*') { const end = text.indexOf('*/', index + 2); index = end === -1 ? text.length : end + 2; }
-    else return char === '}' || char === ']';
+    else if (char === '/' && text[index + 1] === '/') {
+      while (index < text.length && text[index] !== '\n') index++;
+    } else if (char === '/' && text[index + 1] === '*') {
+      const end = text.indexOf('*/', index + 2);
+      index = end === -1 ? text.length : end + 2;
+    } else return char === '}' || char === ']';
   }
   return false;
 }
@@ -75,7 +98,9 @@ export const parseJsonc = (text: string): unknown => JSON.parse(stripJsonc(text)
 export type ReadFile = (file: string) => string | null;
 // Only ENOENT means absent: an unreadable higher-precedence file must not silently fall through.
 export const readReal: ReadFile = (file) => {
-  try { return fs.readFileSync(file, 'utf8'); } catch (error) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (error) {
     if ((error as { code?: unknown }).code === 'ENOENT') return null;
     throw error;
   }
@@ -88,11 +113,20 @@ export function loadConfig(skillRoot: string, read: ReadFile = readReal): { conf
     const text = read(file);
     if (text === null) continue;
     const parsed = parseJsonc(text);
-    const config = isRecord(parsed) ? { ...parsed, 'write-subagents': parsed['write-subagents'] ?? {}, 'utility-subagents': parsed['utility-subagents'] ?? {}, phases: parsed['phases'] ?? {} } : {};
+    const config = isRecord(parsed)
+      ? {
+          ...parsed,
+          'write-subagents': parsed['write-subagents'] ?? {},
+          'utility-subagents': parsed['utility-subagents'] ?? {},
+          phases: parsed['phases'] ?? {},
+        }
+      : {};
     if (!isRecord(parsed)) throw new Error(`${file}: config must be a JSON object (${HINT}).`);
     return { config, path: file };
   }
-  throw new Error(`Config file not found: tried ${candidates.join(', ')}. Copy ${SAMPLE_NAME} to config.local.jsonc or config.jsonc.`);
+  throw new Error(
+    `Config file not found: tried ${candidates.join(', ')}. Copy ${SAMPLE_NAME} to config.local.jsonc or config.jsonc.`,
+  );
 }
 
 /** Host read-command prefixes for provider allowlists; no config file means none. */
@@ -115,7 +149,8 @@ const canonical = (key: string): string => ALIASES[key.toLowerCase()] ?? key.toL
 const nonNegativeInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
 const positiveInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) > 0;
 
-const goodName = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '' && !value.trim().endsWith(':');
+const goodName = (value: unknown): boolean =>
+  typeof value === 'string' && value.trim() !== '' && !value.trim().endsWith(':');
 
 // Plain words only: an allowlist prefix must not smuggle shell operators, globs or quoting.
 const READ_COMMAND = /^[A-Za-z0-9._/:=@+-]+(?: [A-Za-z0-9._/:=@+-]+)*$/;
@@ -123,17 +158,23 @@ const READ_COMMAND = /^[A-Za-z0-9._/:=@+-]+(?: [A-Za-z0-9._/:=@+-]+)*$/;
 function checkReadCommands(value: unknown, problems: string[]): void {
   if (value === undefined) return;
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string' && READ_COMMAND.test(entry))) {
-    problems.push(`read-commands must be an array of command prefixes made of plain words separated by single spaces (${HINT}).`);
+    problems.push(
+      `read-commands must be an array of command prefixes made of plain words separated by single spaces (${HINT}).`,
+    );
   }
 }
 
 function checkLevelConfig(where: string, value: unknown, problems: string[], utility = false): void {
   const desc = utility ? 'model, context-limit and optional effort' : 'model and optional effort';
-  if (!isRecord(value)) { problems.push(`${where} must be an object with ${desc} (${HINT}).`); return; }
+  if (!isRecord(value)) {
+    problems.push(`${where} must be an object with ${desc} (${HINT}).`);
+    return;
+  }
   const valid = utility ? 'model, effort, context-limit' : 'model, effort';
   const validKeys = utility ? ['model', 'effort', 'context-limit'] : ['model', 'effort'];
   for (const key of Object.keys(value)) {
-    if (!validKeys.includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${valid} (${HINT}).`);
+    if (!validKeys.includes(key))
+      problems.push(`${where} has unrecognized key "${key}". Valid keys: ${valid} (${HINT}).`);
   }
   const model = value['model'];
   if (model === undefined) problems.push(`${where}.model is required (${HINT}).`);
@@ -143,15 +184,21 @@ function checkLevelConfig(where: string, value: unknown, problems: string[], uti
     const dup = model.find((item, index) => model.indexOf(item) !== index);
     if (dup !== undefined) problems.push(`${where}.model has duplicate alias "${String(dup)}" (${HINT}).`);
   }
-  if ('effort' in value && !goodName(value['effort'])) problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${HINT}).`);
-  if (utility && (value['context-limit'] === undefined || !positiveInt(value['context-limit']))) problems.push(`${where}.context-limit must be a positive integer (${HINT}).`);
+  if ('effort' in value && !goodName(value['effort']))
+    problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${HINT}).`);
+  if (utility && (value['context-limit'] === undefined || !positiveInt(value['context-limit'])))
+    problems.push(`${where}.context-limit must be a positive integer (${HINT}).`);
 }
 
 function checkLevelMap(where: string, value: unknown, problems: string[]): void {
-  if (!isRecord(value)) { problems.push(`${where} must be an object keyed by level (${HINT}).`); return; }
+  if (!isRecord(value)) {
+    problems.push(`${where} must be an object keyed by level (${HINT}).`);
+    return;
+  }
   if (!Object.keys(value).length) problems.push(`${where} must define at least one level (${HINT}).`);
   for (const [key, entry] of Object.entries(value)) {
-    if (!LEVELS.includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${LEVELS.join(', ')} (${HINT}).`);
+    if (!LEVELS.includes(key))
+      problems.push(`${where} has unrecognized key "${key}". Valid keys: ${LEVELS.join(', ')} (${HINT}).`);
     else checkLevelConfig(`${where}.${key}`, entry, problems);
   }
 }
@@ -159,7 +206,10 @@ function checkLevelMap(where: string, value: unknown, problems: string[]): void 
 function checkReadProvider(where: string, value: unknown, provider: string, problems: string[]): void {
   const sandboxed = SANDBOXED.includes(provider);
   const valid = sandboxed ? 'sandbox, nativeSubagentsOnly, targets' : 'nativeSubagentsOnly, targets';
-  if (!isRecord(value)) { problems.push(`${where} must be an object with keys ${valid} (${HINT}).`); return; }
+  if (!isRecord(value)) {
+    problems.push(`${where} must be an object with keys ${valid} (${HINT}).`);
+    return;
+  }
   if ('nativeSubagents' in value) {
     problems.push(`${where}.nativeSubagents was removed; delete the key (${HINT}).`);
   }
@@ -168,11 +218,15 @@ function checkReadProvider(where: string, value: unknown, provider: string, prob
     if (key === 'nativeSubagents') continue;
     if (key === 'nativeSubagentsOnly' || (key === 'sandbox' && sandboxed)) {
       if (typeof field !== 'boolean') problems.push(`${where}.${key} must be a boolean (${HINT}).`);
-    } else if (key === 'sandbox') problems.push(`${where}.sandbox is not supported for ${provider}; remove it (${HINT}).`);
+    } else if (key === 'sandbox')
+      problems.push(`${where}.sandbox is not supported for ${provider}; remove it (${HINT}).`);
     else problems.push(`${where} has unrecognized key "${key}". Valid keys: ${valid} (${HINT}).`);
   }
   const targets = value['targets'];
-  if (!Array.isArray(targets) || !targets.length) { problems.push(`${where}.targets must be a non-empty array of level maps (${HINT}).`); return; }
+  if (!Array.isArray(targets) || !targets.length) {
+    problems.push(`${where}.targets must be a non-empty array of level maps (${HINT}).`);
+    return;
+  }
   const seen = new Map<string, number>();
   targets.forEach((target: unknown, index) => {
     checkLevelMap(`${where}.targets[${index}]`, target, problems);
@@ -185,21 +239,42 @@ function checkReadProvider(where: string, value: unknown, provider: string, prob
     if (value['nativeSubagentsOnly'] !== true) return;
     for (const [level, entry] of Object.entries(target)) {
       if (LEVELS.includes(level) && isRecord(entry) && entry['effort'] === undefined) {
-        problems.push(`${where}.targets[${index}].${level}.effort is required when nativeSubagentsOnly is true (${HINT}).`);
+        problems.push(
+          `${where}.targets[${index}].${level}.effort is required when nativeSubagentsOnly is true (${HINT}).`,
+        );
       }
     }
   });
 }
 
-function checkPlatformTable(table: string, value: unknown, problems: string[], one: (where: string, entry: unknown, provider: string) => void): string[] {
-  if (!isRecord(value)) { problems.push(`"${table}" must be an object mapping platform key to settings (${HINT}).`); return []; }
+function checkPlatformTable(
+  table: string,
+  value: unknown,
+  problems: string[],
+  one: (where: string, entry: unknown, provider: string) => void,
+): string[] {
+  if (!isRecord(value)) {
+    problems.push(`"${table}" must be an object mapping platform key to settings (${HINT}).`);
+    return [];
+  }
   const seen = new Map<string, string>();
   for (const [key, entry] of Object.entries(value)) {
-    if (key === 'all') { problems.push(`${table} cannot use reserved pin keyword "all" as a platform key (${HINT}).`); continue; }
+    if (key === 'all') {
+      problems.push(`${table} cannot use reserved pin keyword "all" as a platform key (${HINT}).`);
+      continue;
+    }
     const provider = canonical(key);
-    if (!KNOWN.includes(provider)) { problems.push(`${table}: unknown platform "${key}" (expected ${KNOWN.join(', ')}).`); continue; }
+    if (!KNOWN.includes(provider)) {
+      problems.push(`${table}: unknown platform "${key}" (expected ${KNOWN.join(', ')}).`);
+      continue;
+    }
     const prior = seen.get(provider);
-    if (prior !== undefined) { problems.push(`${table}: duplicate platform "${provider}" (keys "${prior}" and "${key}" normalize to the same provider).`); continue; }
+    if (prior !== undefined) {
+      problems.push(
+        `${table}: duplicate platform "${provider}" (keys "${prior}" and "${key}" normalize to the same provider).`,
+      );
+      continue;
+    }
     seen.set(provider, key);
     one(`${table}.${key}`, entry, provider);
   }
@@ -207,22 +282,45 @@ function checkPlatformTable(table: string, value: unknown, problems: string[], o
 }
 
 function checkPhases(value: unknown, readKeys: readonly string[], problems: string[]): void {
-  if (!isRecord(value)) { problems.push(`"phases" must be an object keyed by review phase (${HINT}).`); return; }
+  if (!isRecord(value)) {
+    problems.push(`"phases" must be an object keyed by review phase (${HINT}).`);
+    return;
+  }
   for (const [phase, policy] of Object.entries(value)) {
     const where = `phases.${phase}`;
-    if (!PHASES.includes(phase)) { problems.push(`phases has unrecognized phase "${phase}". Valid phases: ${PHASES.join(', ')} (${HINT}).`); continue; }
-    if (!isRecord(policy)) { problems.push(`${where} must be an object (${HINT}).`); continue; }
+    if (!PHASES.includes(phase)) {
+      problems.push(`phases has unrecognized phase "${phase}". Valid phases: ${PHASES.join(', ')} (${HINT}).`);
+      continue;
+    }
+    if (!isRecord(policy)) {
+      problems.push(`${where} must be an object (${HINT}).`);
+      continue;
+    }
     for (const key of Object.keys(policy)) {
-      if (![...KNOBS, 'only'].includes(key)) problems.push(`${where} has unrecognized key "${key}". Valid keys: ${[...KNOBS, 'only'].join(', ')} (${HINT}).`);
+      if (![...KNOBS, 'only'].includes(key))
+        problems.push(
+          `${where} has unrecognized key "${key}". Valid keys: ${[...KNOBS, 'only'].join(', ')} (${HINT}).`,
+        );
     }
     for (const knob of KNOBS) {
       const map = policy[knob];
-      if (map === undefined) { problems.push(`${where} is missing required knob "${knob}" (${HINT}).`); continue; }
-      if (!isRecord(map) || !Object.keys(map).length) { problems.push(`${where}.${knob} must be a non-empty object keyed by level (${HINT}).`); continue; }
+      if (map === undefined) {
+        problems.push(`${where} is missing required knob "${knob}" (${HINT}).`);
+        continue;
+      }
+      if (!isRecord(map) || !Object.keys(map).length) {
+        problems.push(`${where}.${knob} must be a non-empty object keyed by level (${HINT}).`);
+        continue;
+      }
       for (const [level, entry] of Object.entries(map)) {
-        if (!LEVELS.includes(level)) problems.push(`${where}.${knob} has unrecognized level "${level}". Valid levels: ${LEVELS.join(', ')} (${HINT}).`);
+        if (!LEVELS.includes(level))
+          problems.push(
+            `${where}.${knob} has unrecognized level "${level}". Valid levels: ${LEVELS.join(', ')} (${HINT}).`,
+          );
         else if (knob === 'rounds' ? !nonNegativeInt(entry) : entry !== 'all' && !nonNegativeInt(entry)) {
-          problems.push(`${where}.${knob}.${level} must be a non-negative integer${knob === 'targets' ? ' or "all"' : ''} (${HINT}).`);
+          problems.push(
+            `${where}.${knob}.${level} must be a non-negative integer${knob === 'targets' ? ' or "all"' : ''} (${HINT}).`,
+          );
         }
       }
     }
@@ -233,7 +331,10 @@ function checkPhases(value: unknown, readKeys: readonly string[], problems: stri
       continue;
     }
     const missing = (only as string[]).filter((key) => !readKeys.includes(canonical(key)));
-    if (missing.length) problems.push(`${where}.only names platform(s) not in read-delegates: ${missing.join(', ')} (configured: ${readKeys.join(', ') || 'none'}).`);
+    if (missing.length)
+      problems.push(
+        `${where}.only names platform(s) not in read-delegates: ${missing.join(', ')} (configured: ${readKeys.join(', ') || 'none'}).`,
+      );
   }
 }
 
@@ -241,24 +342,34 @@ function checkPhases(value: unknown, readKeys: readonly string[], problems: stri
 export function validateConfig(config: unknown): string[] {
   if (!isRecord(config)) return [`Config must be a JSON object with tables: ${TABLES.join(', ')} (${HINT}).`];
   const problems: string[] = [];
-  if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean') problems.push(`diagnostics must be a boolean (${HINT}).`);
-  if (config['write-concurrency'] !== undefined && !positiveInt(config['write-concurrency'])) problems.push(`write-concurrency must be a positive integer (${HINT}).`);
+  if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean')
+    problems.push(`diagnostics must be a boolean (${HINT}).`);
+  if (config['write-concurrency'] !== undefined && !positiveInt(config['write-concurrency']))
+    problems.push(`write-concurrency must be a positive integer (${HINT}).`);
   checkReadCommands(config['read-commands'], problems);
   if ('explore-subagents' in config) problems.push(`explore-subagents was renamed to utility-subagents (${HINT}).`);
   for (const key of Object.keys(config)) {
-    if (key !== 'explore-subagents' && !TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
+    if (key !== 'explore-subagents' && !TABLES.includes(key))
+      problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
   }
   let readKeys: string[] = [];
   const read = config['read-delegates'];
   if (read === undefined) problems.push(`Missing required table "read-delegates" (${HINT}).`);
   else {
-    readKeys = checkPlatformTable('read-delegates', read, problems, (where, entry, provider) => checkReadProvider(where, entry, provider, problems));
-    if (isRecord(read) && !Object.keys(read).length) problems.push(`read-delegates must define at least one platform (${HINT}).`);
+    readKeys = checkPlatformTable('read-delegates', read, problems, (where, entry, provider) =>
+      checkReadProvider(where, entry, provider, problems),
+    );
+    if (isRecord(read) && !Object.keys(read).length)
+      problems.push(`read-delegates must define at least one platform (${HINT}).`);
   }
   const write = config['write-subagents'];
-  if (write !== undefined) checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
+  if (write !== undefined)
+    checkPlatformTable('write-subagents', write, problems, (where, entry) => checkLevelMap(where, entry, problems));
   const utility = config['utility-subagents'];
-  if (utility !== undefined) checkPlatformTable('utility-subagents', utility, problems, (where, entry) => checkLevelConfig(where, entry, problems, true));
+  if (utility !== undefined)
+    checkPlatformTable('utility-subagents', utility, problems, (where, entry) =>
+      checkLevelConfig(where, entry, problems, true),
+    );
   if (config['phases'] !== undefined) checkPhases(config['phases'], readKeys, problems);
   return problems;
 }

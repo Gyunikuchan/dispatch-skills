@@ -5,8 +5,9 @@ import type { HandlerContext } from './cli.ts';
 import { ToolError } from './output.ts';
 
 export function readRequiredReason(ctx: HandlerContext): string {
-  const value=ctx.values['reason'];
-  if(typeof value!=='string'||!value.trim())throw new ToolError(1,'invalid-input','A non-blank --reason is required');
+  const value = ctx.values['reason'];
+  if (typeof value !== 'string' || !value.trim())
+    throw new ToolError(1, 'invalid-input', 'A non-blank --reason is required');
   return value;
 }
 
@@ -29,7 +30,11 @@ type RawSource =
   | { readonly kind: 'direct'; readonly value: Record<string, string> }
   | { readonly kind: 'raw'; readonly text: string; readonly origin: string };
 
-function readFileOrStdin(ctx: HandlerContext, source: unknown, label: string): { readonly text: string; readonly origin: string } {
+function readFileOrStdin(
+  ctx: HandlerContext,
+  source: unknown,
+  label: string,
+): { readonly text: string; readonly origin: string } {
   if (typeof source !== 'string' || !source.trim()) {
     throw new ToolError(1, 'invalid-input', `${label} requires a readable file path or -`);
   }
@@ -61,7 +66,11 @@ function resolveSource(ctx: HandlerContext, spec: JsonPayloadSpec): RawSource {
   const presentDirect = directEntries.filter((entry) => ctx.values[entry.flag] !== undefined);
   const hasDirect = presentDirect.length > 0;
 
-  const modes = (posArg !== undefined ? 1 : 0) + (fileVal !== undefined ? 1 : 0) + (inlineVal !== undefined ? 1 : 0) + (hasDirect ? 1 : 0);
+  const modes =
+    (posArg !== undefined ? 1 : 0) +
+    (fileVal !== undefined ? 1 : 0) +
+    (inlineVal !== undefined ? 1 : 0) +
+    (hasDirect ? 1 : 0);
   if (modes > 1) {
     throw new ToolError(1, 'invalid-input', `${spec.label} accepts only one input form`);
   }
@@ -72,7 +81,10 @@ function resolveSource(ctx: HandlerContext, spec: JsonPayloadSpec): RawSource {
 
   if (hasDirect) {
     if (presentDirect.length !== directEntries.length) {
-      const missing = directEntries.filter((entry) => ctx.values[entry.flag] === undefined).map((entry) => `--${entry.flag}`).join(', ');
+      const missing = directEntries
+        .filter((entry) => ctx.values[entry.flag] === undefined)
+        .map((entry) => `--${entry.flag}`)
+        .join(', ');
       throw new ToolError(1, 'invalid-input', `${spec.label} requires all direct flags together; missing ${missing}`);
     }
     const out: Record<string, string> = {};

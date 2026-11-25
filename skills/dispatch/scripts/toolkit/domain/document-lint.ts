@@ -93,10 +93,16 @@ export const LONG_PARAGRAPH_WORDS = 60;
 export function lintLongParagraphs(lines: readonly StructuralLine[]): { line: number; words: number }[] {
   const out: { line: number; words: number }[] = [];
   let paragraph: { line: number; words: number } | null = null;
-  const finish = () => { if (paragraph && paragraph.words > LONG_PARAGRAPH_WORDS) out.push(paragraph); paragraph = null; };
+  const finish = () => {
+    if (paragraph && paragraph.words > LONG_PARAGRAPH_WORDS) out.push(paragraph);
+    paragraph = null;
+  };
   for (const entry of lines) {
     const text = entry.text;
-    if (!text.trim() || /^(?:#{1,6}\s|\s*(?:[-*+]\s|\d+[.)]\s|\|))/.test(text) || isDetailWrapper(text)) { finish(); continue; }
+    if (!text.trim() || /^(?:#{1,6}\s|\s*(?:[-*+]\s|\d+[.)]\s|\|))/.test(text) || isDetailWrapper(text)) {
+      finish();
+      continue;
+    }
     if (!paragraph && /^\s/.test(text)) continue;
     if (!paragraph) paragraph = { line: entry.line, words: 0 };
     paragraph.words += text.trim().split(/\s+/).length;
@@ -113,7 +119,14 @@ export function lintSectionOrder(lines: readonly StructuralLine[], order: readon
     const heading = entry.text.trimEnd();
     const rank = order.indexOf(heading);
     if (rank === -1) continue;
-    if (latest && rank < latest.rank) out.push(lint('section-order', entry.line, `Move "${heading}" before "${latest.heading}"; sections follow the template order.`));
+    if (latest && rank < latest.rank)
+      out.push(
+        lint(
+          'section-order',
+          entry.line,
+          `Move "${heading}" before "${latest.heading}"; sections follow the template order.`,
+        ),
+      );
     else latest = { rank, heading };
   }
   return out;
@@ -172,20 +185,40 @@ export function boxValues(source: string): Record<string, string> {
   return values;
 }
 
-export function lintSummaryBox(source: string, labels: readonly string[], valueRules: Readonly<Record<string, ValueRule>> = {}): LintDefect[] {
+export function lintSummaryBox(
+  source: string,
+  labels: readonly string[],
+  valueRules: Readonly<Record<string, ValueRule>> = {},
+): LintDefect[] {
   const box = parseSummaryBox(source);
-  if (!box) return [lint('missing-summary-box', null, `Summary box required after the H1: ${labels.map((label) => `> **${label}:**`).join(', ')}.`)];
+  if (!box)
+    return [
+      lint(
+        'missing-summary-box',
+        null,
+        `Summary box required after the H1: ${labels.map((label) => `> **${label}:**`).join(', ')}.`,
+      ),
+    ];
   const out: LintDefect[] = [];
   const label = (line: number | null, message: string) => out.push(lint('summary-label', line, message));
-  for (const entry of box.entries) if (!entry.label) label(entry.line, `Malformed summary line "${entry.raw}"; use > **Label:** value.`);
-  const found = box.entries.flatMap((entry) => entry.label ? [entry.label] : []);
-  if (found.join('\n') !== labels.join('\n')) label(box.entries[0]?.line ?? null, `Summary labels must be exactly ${labels.join(', ')} in order; found ${found.join(', ') || 'none'}.`);
+  for (const entry of box.entries)
+    if (!entry.label) label(entry.line, `Malformed summary line "${entry.raw}"; use > **Label:** value.`);
+  const found = box.entries.flatMap((entry) => (entry.label ? [entry.label] : []));
+  if (found.join('\n') !== labels.join('\n'))
+    label(
+      box.entries[0]?.line ?? null,
+      `Summary labels must be exactly ${labels.join(', ')} in order; found ${found.join(', ') || 'none'}.`,
+    );
   const rules: Record<string, ValueRule> = { ...BOX_VALUE_RULES, ...valueRules };
   for (const entry of box.entries) {
     if (!entry.label) continue;
-    if (!entry.value) { label(entry.line, `Summary label ${entry.label} requires a value.`); continue; }
+    if (!entry.value) {
+      label(entry.line, `Summary label ${entry.label} requires a value.`);
+      continue;
+    }
     const rule = rules[entry.label];
-    if (rule instanceof RegExp && !rule.test(entry.value)) label(entry.line, `Summary ${entry.label} value "${entry.value}" does not match ${String(rule)}.`);
+    if (rule instanceof RegExp && !rule.test(entry.value))
+      label(entry.line, `Summary ${entry.label} value "${entry.value}" does not match ${String(rule)}.`);
     if (typeof rule === 'function') {
       const message = rule(entry.value);
       if (message) label(entry.line, message);
@@ -209,8 +242,13 @@ export function placeholderVocabulary(templates: readonly string[]): Placeholder
   const code = new Set<string>();
   for (const text of templates) {
     const body = /^(`{4,})markdown\s*\n([\s\S]*?)\n\1\s*$/m.exec(text.replace(/\r\n/g, '\n'))?.[2] ?? '';
-    for (const token of body.match(TOKEN) ?? []) { if (!/^<\/?(?:details|summary)>$/.test(token)) all.add(token); }
-    for (const span of body.match(CODE_SPAN) ?? []) for (const token of span.match(TOKEN) ?? []) { if (!/^<\/?(?:details|summary)>$/.test(token)) code.add(token); }
+    for (const token of body.match(TOKEN) ?? []) {
+      if (!/^<\/?(?:details|summary)>$/.test(token)) all.add(token);
+    }
+    for (const span of body.match(CODE_SPAN) ?? [])
+      for (const token of span.match(TOKEN) ?? []) {
+        if (!/^<\/?(?:details|summary)>$/.test(token)) code.add(token);
+      }
   }
   return { all, code };
 }
@@ -220,7 +258,9 @@ export function findPlaceholders(source: string, vocabulary: PlaceholderVocabula
   const { lines, offset } = bodyLines(source);
   const structural = structuralLines(lines.join('\n'));
   return structural.flatMap(({ text, line }) => {
-    const code = (text.match(CODE_SPAN) ?? []).flatMap((span) => span.match(TOKEN) ?? []).filter((token) => vocabulary.code.has(token));
+    const code = (text.match(CODE_SPAN) ?? [])
+      .flatMap((span) => span.match(TOKEN) ?? [])
+      .filter((token) => vocabulary.code.has(token));
     const prose = (text.replace(CODE_SPAN, '').match(TOKEN) ?? []).filter((token) => vocabulary.all.has(token));
     return [...prose, ...code].map((token) => ({ token, line: line + offset }));
   });
@@ -228,7 +268,14 @@ export function findPlaceholders(source: string, vocabulary: PlaceholderVocabula
 
 // SECTION: Filler notes
 
-const FILLER = new Set(['same', 'see above', 'unchanged', 'n/a', 'approved implementation scope', 'included in the selected review scope']);
+const FILLER = new Set([
+  'same',
+  'see above',
+  'unchanged',
+  'n/a',
+  'approved implementation scope',
+  'included in the selected review scope',
+]);
 const DELTA = /^\+\d+ −\d+$/;
 const FIXES_SUFFIX = /(?:^|; )fixes (R\d+-F\d{3,}(?:, R\d+-F\d{3,})*)$/;
 
@@ -248,7 +295,8 @@ export function isFillerNote(note: string, siblings: readonly string[] = []): bo
 }
 
 const BEHAVIOUR_PLACEHOLDER = /^(?:TODO|TBD|implement later|fill in|<[^<>]+>)$/i;
-const FILE_COUNT_SUMMARY = /^\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?(?:(?:\s*[,;]\s*|\s+and\s+)\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?)*(?:\s+(?:touched|changed|modified))?$/i;
+const FILE_COUNT_SUMMARY =
+  /^\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?(?:(?:\s*[,;]\s*|\s+and\s+)\d+\s+(?:(?:new|modified|deleted|changed)\s+)?files?)*(?:\s+(?:touched|changed|modified))?$/i;
 
 export function hasBehaviour(behaviour: readonly string[]): boolean {
   return behaviour.some((bullet) => {

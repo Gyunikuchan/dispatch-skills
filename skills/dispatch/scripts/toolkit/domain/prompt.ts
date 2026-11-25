@@ -25,29 +25,54 @@ export function extractDocumentLayers(specStageMarkdown: string): string {
   return paragraph.join(' ');
 }
 
-export type Settled = { id: string; locus: string; defect: string; ruling: string; reason: string; revision?: string; severity?: string; rejectionConfirmed?: boolean };
+export type Settled = {
+  id: string;
+  locus: string;
+  defect: string;
+  ruling: string;
+  reason: string;
+  revision?: string;
+  severity?: string;
+  rejectionConfirmed?: boolean;
+};
 
 // A user-resolved escalation: reviewers treat it as closed and it carries no locus or ruling.
 export type UserDecision = { id: string; summary: string; quote: string };
 export type SettledEntry = Settled | UserDecision;
 const isDecision = (entry: SettledEntry): entry is UserDecision => 'quote' in entry;
 
-export function settledSection(settled: readonly SettledEntry[], revisions = false, acceptedNew?: ReadonlySet<string>): string {
-  settled=settled.filter(entry=>isDecision(entry) || entry.severity!=='MUST' || entry.rejectionConfirmed===true || entry.rejectionConfirmed===undefined && entry.ruling!=='rejected');
+export function settledSection(
+  settled: readonly SettledEntry[],
+  revisions = false,
+  acceptedNew?: ReadonlySet<string>,
+): string {
+  settled = settled.filter(
+    (entry) =>
+      isDecision(entry) ||
+      entry.severity !== 'MUST' ||
+      entry.rejectionConfirmed === true ||
+      (entry.rejectionConfirmed === undefined && entry.ruling !== 'rejected'),
+  );
   if (!settled.length) return '';
-  const clip = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+  const clip = (value: string, limit: number) => (value.length > limit ? `${value.slice(0, limit - 1)}…` : value);
   const head = (value: string) => value.split(/\r\n|\n|\r/)[0] ?? '';
   // Reviewers must re-read rejected and deferred text in full; accepted rows include the ruling rationale; duplicate rows need only identity.
   const row = (entry: SettledEntry) => {
-    if (isDecision(entry)) return `- ${entry.id} — user decision: ${clip(head(entry.summary), 120)} — quote: "${clip(head(entry.quote), 120)}"`;
+    if (isDecision(entry))
+      return `- ${entry.id} — user decision: ${clip(head(entry.summary), 120)} — quote: "${clip(head(entry.quote), 120)}"`;
     const suffix = revisions && entry.revision ? ` (reviewed revision ${entry.revision})` : '';
-    const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '', reasonLine = entry.reason.split(/\r\n|\n|\r/)[0] ?? '';
-    if (entry.ruling === 'accepted') return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${reasonLine ? `: ${clip(reasonLine, 120)}` : ''}${suffix}`;
+    const firstLine = entry.defect.split(/\r\n|\n|\r/)[0] ?? '',
+      reasonLine = entry.reason.split(/\r\n|\n|\r/)[0] ?? '';
+    if (entry.ruling === 'accepted')
+      return `- ${entry.id} ${entry.locus}: ${entry.severity === 'MUST' ? entry.defect : clip(firstLine, 120)} — accepted${acceptedNew?.has(entry.id) ? ' (new)' : ''}${reasonLine ? `: ${clip(reasonLine, 120)}` : ''}${suffix}`;
     if (entry.ruling === 'duplicate') {
-      const reason = entry.reason || 'no reason recorded', labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
-      const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map(match => match[0]!).filter(id => id !== entry.id);
+      const reason = entry.reason || 'no reason recorded',
+        labeled = /duplicate\s+of\s+(R\d+-F\d+)/i.exec(reason)?.[1];
+      const cited = [...reason.matchAll(/\bR\d+-F\d+\b/g)].map((match) => match[0]!).filter((id) => id !== entry.id);
       const target = labeled && labeled !== entry.id ? labeled : cited[0];
-      return target ? `- ${entry.id} ${entry.locus} — duplicate of ${target}${suffix}` : `- ${entry.id} ${entry.locus} — duplicate: ${clip(reason, 120)}${suffix}`;
+      return target
+        ? `- ${entry.id} ${entry.locus} — duplicate of ${target}${suffix}`
+        : `- ${entry.id} ${entry.locus} — duplicate: ${clip(reason, 120)}${suffix}`;
     }
     return `- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason || 'no reason recorded'}${suffix}`;
   };
@@ -58,19 +83,34 @@ export type InterRound = { diff: string; accepted: readonly { id: string; locus:
 
 /** The section's text serves both prompt builders; the compact confirmation prompt has no template to carry it. */
 export function interRoundSection(info: InterRound, includeAccepted = true): string {
-  const list = !includeAccepted ? [] : info.accepted.length
-    ? ['Check these accepted-finding loci and their interactions first:', ...info.accepted.map(entry => `- ${entry.id} ${entry.locus}`)]
-    : ['No accepted findings since the previous round.'];
+  const list = !includeAccepted
+    ? []
+    : info.accepted.length
+      ? [
+          'Check these accepted-finding loci and their interactions first:',
+          ...info.accepted.map((entry) => `- ${entry.id} ${entry.locus}`),
+        ]
+      : ['No accepted findings since the previous round.'];
   return ['### Since the previous round', `Inter-round diff: ${info.diff}`, ...list].join('\n');
 }
 
 export function askPrompt(question: string, context: string): string {
   return [
-    '# Ask', '', '### Objective', question.trim() || '(empty question)', '',
+    '# Ask',
+    '',
+    '### Objective',
+    question.trim() || '(empty question)',
+    '',
     ...(context.trim() ? ['### Context', context.trim(), ''] : []),
-    '### Evidence', 'Read the workspace read-only. Cite each claim with `<file>:L<line>` or a command you ran.', '',
-    '### Stop condition', 'Stop once the objective is answered or evidence is exhausted; say what remains unknown. CLI delegates receive a `[DEADLINE]` header: return your final answer before it, and if a wrap-up prompt arrives (~5m before the run deadline), stop tool calls and answer from work completed so far.', '',
-    '### Output', 'Plain text: a short answer first, then the supporting claims, one per line.', '',
+    '### Evidence',
+    'Read the workspace read-only. Cite each claim with `<file>:L<line>` or a command you ran.',
+    '',
+    '### Stop condition',
+    'Stop once the objective is answered or evidence is exhausted; say what remains unknown. CLI delegates receive a `[DEADLINE]` header: return your final answer before it, and if a wrap-up prompt arrives (~5m before the run deadline), stop tool calls and answer from work completed so far.',
+    '',
+    '### Output',
+    'Plain text: a short answer first, then the supporting claims, one per line.',
+    '',
   ].join('\n');
 }
 
@@ -95,7 +135,11 @@ export function extractTemplate(markdown: string, section = DEFAULT_SECTION): Te
   for (let index = headingIndex + 1; index < lines.length; index++) {
     const line = lines[index] ?? '';
     const fence = /^(`{3,}|~{3,})/.exec(line)?.[1];
-    if (fence) { open = index; marker = fence; break; }
+    if (fence) {
+      open = index;
+      marker = fence;
+      break;
+    }
     const variable = VARIABLE_BULLET.exec(line)?.[1];
     if (variable) variables.push(variable);
   }
@@ -120,7 +164,8 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
     const fenceMarker = /^(`{3,}|~{3,})\s*\S*\s*$/.exec(line)?.[1];
     if (fenceMarker) {
       if (fence === null) fence = fenceMarker;
-      else if (fenceMarker[0] === fence[0] && fenceMarker.length >= fence.length && /^(`+|~+)\s*$/.test(line)) fence = null;
+      else if (fenceMarker[0] === fence[0] && fenceMarker.length >= fence.length && /^(`+|~+)\s*$/.test(line))
+        fence = null;
     }
     const heading = fence !== null || fenceMarker ? null : /^##\s+(\S.*?)\s*$/.exec(line)?.[1];
     if (heading) {
@@ -135,7 +180,14 @@ function parseKindBlock(markdown: string): { variables: string[]; sections: Map<
     } else current.push(line);
   }
   const sections = new Map<string, string>();
-  for (const [name, body] of raw) sections.set(name, body.join('\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, ''));
+  for (const [name, body] of raw)
+    sections.set(
+      name,
+      body
+        .join('\n')
+        .replace(/^(?:[ \t]*\n)+/, '')
+        .replace(/\s+$/, ''),
+    );
   return { variables, sections };
 }
 
@@ -161,12 +213,16 @@ const REQUIRED_TAGGED = {
 } as const satisfies Record<QualityConsumer, number>;
 
 const FOR_TAG_PATTERN = /^\s*<!--\s*for:\s*([^>]+?)\s*-->\s*$/;
-const DOCUMENT_LAYERS_LINK = '[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.';
+const DOCUMENT_LAYERS_LINK =
+  '[document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.';
 
 function parseAudienceTag(line: string): string[] {
   const match = FOR_TAG_PATTERN.exec(line);
   if (!match) return [];
-  return match[1]!.split(',').map((part) => part.trim()).filter((part) => part.length > 0);
+  return match[1]!
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function audienceAllows(tags: readonly string[] | null, consumer: QualityConsumer): boolean {
@@ -184,34 +240,47 @@ function rotate<T>(items: readonly T[], by: number): T[] {
 
 function rotateLines(markdown: string, by: number, isRotated: (line: string) => boolean): string {
   const lines = markdown.split('\n');
-  const positions = lines.flatMap((line, index) => isRotated(line) ? [index] : []);
-  const rotated = rotate(positions.map((index) => lines[index]!), by);
+  const positions = lines.flatMap((line, index) => (isRotated(line) ? [index] : []));
+  const rotated = rotate(
+    positions.map((index) => lines[index]!),
+    by,
+  );
   for (const [index, position] of positions.entries()) lines[position] = rotated[index]!;
   return lines.join('\n');
 }
 
 /** Joined bodies of the consumer's selected quality sections. */
-export function qualityCriteria(markdown: string, consumer: QualityConsumer, rotation: number, specStageMarkdown: string): string {
+export function qualityCriteria(
+  markdown: string,
+  consumer: QualityConsumer,
+  rotation: number,
+  specStageMarkdown: string,
+): string {
   if (!Object.hasOwn(qualitySections, consumer)) throw new Error(`Unknown quality consumer: ${consumer}`);
   const { sections } = parseKindBlock(markdown);
   const layers = extractDocumentLayers(specStageMarkdown);
   let totalTagged = 0;
-  const rendered = qualitySections[consumer].map((section) => {
-    const raw = sections.get(section);
-    if (raw === undefined) throw new Error(`Missing quality section: ${section}`);
-    if (!raw.trim()) throw new Error(`Empty quality section: ${section}`);
-    const { body, tagged } = filterSection(raw, consumer, section);
-    totalTagged += tagged;
-    let out = body;
-    if (!out.trim()) throw new Error(`Empty quality section: ${section}`);
-    if (section === 'shared' && consumer !== 'explorer') {
-      if (!out.includes(DOCUMENT_LAYERS_LINK)) throw new Error(`Missing document layers link in shared section`);
-      out = out.replace(DOCUMENT_LAYERS_LINK, () => `document layers (${layers})`);
-    }
-    return rotateLines(out.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
-  }).join('\n\n');
+  const rendered = qualitySections[consumer]
+    .map((section) => {
+      const raw = sections.get(section);
+      if (raw === undefined) throw new Error(`Missing quality section: ${section}`);
+      if (!raw.trim()) throw new Error(`Empty quality section: ${section}`);
+      const { body, tagged } = filterSection(raw, consumer, section);
+      totalTagged += tagged;
+      let out = body;
+      if (!out.trim()) throw new Error(`Empty quality section: ${section}`);
+      if (section === 'shared' && consumer !== 'explorer') {
+        if (!out.includes(DOCUMENT_LAYERS_LINK)) throw new Error(`Missing document layers link in shared section`);
+        out = out.replace(DOCUMENT_LAYERS_LINK, () => `document layers (${layers})`);
+      }
+      return rotateLines(out.trim(), rotation, (line) => /^- \*\*[^*]+\*\* —/.test(line));
+    })
+    .join('\n\n');
   const expected = REQUIRED_TAGGED[consumer];
-  if (totalTagged !== expected) throw new Error(`Tagged bullet count mismatch for consumer "${consumer}": expected ${expected}, got ${totalTagged}`);
+  if (totalTagged !== expected)
+    throw new Error(
+      `Tagged bullet count mismatch for consumer "${consumer}": expected ${expected}, got ${totalTagged}`,
+    );
   return rendered;
 }
 
@@ -225,7 +294,8 @@ function filterSection(body: string, consumer: QualityConsumer, _section: string
     if (FOR_TAG_PATTERN.test(line)) {
       const tags = parseAudienceTag(line);
       for (const tag of tags) {
-        if (!Object.hasOwn(qualitySections, tag) && tag !== 'all' && tag !== 'author') throw new Error(`Unknown audience tag: ${tag}`);
+        if (!Object.hasOwn(qualitySections, tag) && tag !== 'all' && tag !== 'author')
+          throw new Error(`Unknown audience tag: ${tag}`);
       }
       if (!tags.length) throw new Error(`Audience tag names no consumer: ${line.trim()}`);
       if (pending) throw new Error(`Audience tag without target: ${line.trim()}`);
@@ -248,7 +318,8 @@ function filterSection(body: string, consumer: QualityConsumer, _section: string
       continue;
     }
     if (pending) {
-      if (!line.startsWith('- ')) throw new Error(`Audience tag must precede a bullet or subsection: ${pending.join(',')}`);
+      if (!line.startsWith('- '))
+        throw new Error(`Audience tag must precede a bullet or subsection: ${pending.join(',')}`);
       const tags = pending;
       pending = null;
       if (!audienceAllows(tags, consumer)) continue;
@@ -272,7 +343,12 @@ function filterSection(body: string, consumer: QualityConsumer, _section: string
 }
 
 /** Selects the consumer's criteria as the frame's single `quality` slot section. */
-export function qualityBar(markdown: string, consumer: QualityConsumer, rotation: number, specStageMarkdown: string): string {
+export function qualityBar(
+  markdown: string,
+  consumer: QualityConsumer,
+  rotation: number,
+  specStageMarkdown: string,
+): string {
   return `## quality\n\n${qualityCriteria(markdown, consumer, rotation, specStageMarkdown)}`;
 }
 
@@ -281,7 +357,12 @@ export function qualityBar(markdown: string, consumer: QualityConsumer, rotation
  * kind block; variables are the union of all declarations. A slot without a section, a section without a
  * slot, or a section declared by more than one input throws.
  */
-export function assembleTemplate(frameMarkdown: string, kindMarkdown: string, section = DEFAULT_SECTION, shared: readonly string[] = []): Template {
+export function assembleTemplate(
+  frameMarkdown: string,
+  kindMarkdown: string,
+  section = DEFAULT_SECTION,
+  shared: readonly string[] = [],
+): Template {
   const frame = extractTemplate(frameMarkdown, section);
   const kind = parseKindBlock(kindMarkdown);
   // Shared blocks parse separately so each file's title line stays out of the previous input's last section.
@@ -299,7 +380,9 @@ export function assembleTemplate(frameMarkdown: string, kindMarkdown: string, se
   if (unused.length) throw new Error(`Kind block declares section(s) with no frame slot: ${unused.join(', ')}`);
   // An empty section removes its whole slot line so assembly adds no phantom blank line.
   const template = frame.template
-    .replace(/^[ \t]*<<slot:([A-Za-z0-9_-]+)>>[ \t]*\n/gm, (line, name: string) => (kind.sections.get(name) ? line : ''))
+    .replace(/^[ \t]*<<slot:([A-Za-z0-9_-]+)>>[ \t]*\n/gm, (line, name: string) =>
+      kind.sections.get(name) ? line : '',
+    )
     .replace(SLOT_PATTERN, (_match, name: string) => kind.sections.get(name) ?? '');
   return { variables: [...new Set([...frame.variables, ...kind.variables])], template };
 }
@@ -307,7 +390,11 @@ export function assembleTemplate(frameMarkdown: string, kindMarkdown: string, se
 // SECTION: Substitution
 
 /** Substitutes declared placeholders; a missing declared value or an undeclared value name throws. */
-export function fillTemplate(template: string, variables: readonly string[], values: Readonly<Record<string, string>>): string {
+export function fillTemplate(
+  template: string,
+  variables: readonly string[],
+  values: Readonly<Record<string, string>>,
+): string {
   const declared = new Set(variables);
   const missing = variables.filter((name) => !Object.hasOwn(values, name));
   if (missing.length) throw new Error(`Missing value(s) for declared variable(s): ${missing.join(', ')}`);

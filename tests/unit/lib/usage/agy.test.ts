@@ -228,25 +228,35 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
   };
 
   const fs = createAgyFs(files, {}, sqliteDbs);
-  const result = agy.read({
-    ...query,
-    sessionId: hostId,
-    startMs: 1000,
-    endMs: 10000,
-    stages: [
-      { stage: 'spec', atMs: 1000 },
-      { stage: 'plan', atMs: 2000 },
-    ],
-  }, fs);
+  const result = agy.read(
+    {
+      ...query,
+      sessionId: hostId,
+      startMs: 1000,
+      endMs: 10000,
+      stages: [
+        { stage: 'spec', atMs: 1000 },
+        { stage: 'plan', atMs: 2000 },
+      ],
+    },
+    fs,
+  );
 
-  const facts = readHostUsage('agy', { ...query, startMs: 1000, env: name => name === 'ANTIGRAVITY_CONVERSATION_ID' ? hostId : undefined }, fs);
-  assert.deepEqual(facts.responses?.map(r => [r.stage, r.agent, r.basis, r.observed, r.uncachedInput]), [
-    ['spec', 'host-1', 'agy-planner-response', 1, 100],
-    ['plan', 'host-1', 'agy-planner-response', 1, 200],
-    ['plan', 'subagent-1', 'agy-planner-response', 1, 50],
-    ['plan', 'subagent-2', 'agy-planner-response', 1, 60],
-    ['plan', 'subagent-3', 'agy-planner-response', 1, 30],
-  ]);
+  const facts = readHostUsage(
+    'agy',
+    { ...query, startMs: 1000, env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? hostId : undefined) },
+    fs,
+  );
+  assert.deepEqual(
+    facts.responses?.map((r) => [r.stage, r.agent, r.basis, r.observed, r.uncachedInput]),
+    [
+      ['spec', 'host-1', 'agy-planner-response', 1, 100],
+      ['plan', 'host-1', 'agy-planner-response', 1, 200],
+      ['plan', 'subagent-1', 'agy-planner-response', 1, 50],
+      ['plan', 'subagent-2', 'agy-planner-response', 1, 60],
+      ['plan', 'subagent-3', 'agy-planner-response', 1, 30],
+    ],
+  );
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(result.rows, [
     {
@@ -368,11 +378,14 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
     [child1Transcript]: lines(childStep),
   });
 
-  const resMissingDb = agy.read({
-    ...query,
-    sessionId: hostId,
-    env: (name) => (name === 'ANTIGRAVITY_MODEL' ? 'gemini-2.5-flash' : undefined),
-  }, fsMissingDb);
+  const resMissingDb = agy.read(
+    {
+      ...query,
+      sessionId: hostId,
+      env: (name) => (name === 'ANTIGRAVITY_MODEL' ? 'gemini-2.5-flash' : undefined),
+    },
+    fsMissingDb,
+  );
 
   assert.equal(resMissingDb.unavailable, undefined);
   assert.deepEqual(resMissingDb.rows, [
@@ -486,11 +499,14 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
     {},
     { [hostDb]: [blobA, blobBMismatched] },
   );
-  const resMismatch = agy.read({
-    ...query,
-    sessionId: hostId,
-    env: (n) => (n === 'ANTIGRAVITY_MODEL' ? 'fallback-model' : undefined),
-  }, fsMismatch);
+  const resMismatch = agy.read(
+    {
+      ...query,
+      sessionId: hostId,
+      env: (n) => (n === 'ANTIGRAVITY_MODEL' ? 'fallback-model' : undefined),
+    },
+    fsMismatch,
+  );
   assert.equal(resMismatch.rows.length, 2);
   assert.equal(resMismatch.rows[0]?.model, 'gemini-4-argon');
   assert.equal(resMismatch.rows[1]?.model, 'fallback-model');
@@ -528,10 +544,13 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
   const oversizedFs = createAgyFs({
     [hostTranscript]: lines(hostStep),
   });
-  const resOversizedHost = agy.read({ ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } }, {
-    ...oversizedFs,
-    stat: (f) => (f.endsWith('transcript.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 } : oversizedFs.stat(f)),
-  });
+  const resOversizedHost = agy.read(
+    { ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } },
+    {
+      ...oversizedFs,
+      stat: (f) => (f.endsWith('transcript.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 } : oversizedFs.stat(f)),
+    },
+  );
   assert.equal(resOversizedHost.unavailable, 'transcript over size cap');
 
   // Subagent oversized
@@ -540,23 +559,36 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
     [child1Descriptor]: JSON.stringify({ conversationId: child1Id }),
     [child1Transcript]: 'x',
   });
-  const resOversizedSub = agy.read({ ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } }, {
-    ...fsOversizedSub,
-    stat: (f) => (f.includes(child1Id) && f.endsWith('transcript.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 } : fsOversizedSub.stat(f)),
-  });
+  const resOversizedSub = agy.read(
+    { ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } },
+    {
+      ...fsOversizedSub,
+      stat: (f) =>
+        f.includes(child1Id) && f.endsWith('transcript.jsonl')
+          ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 }
+          : fsOversizedSub.stat(f),
+    },
+  );
   assert.equal(resOversizedSub.notes?.subagent?.['subagents over size cap'], 1);
 
   // Oversized DB records 'unreadable files' note
   const dbBlob = buildGenMetadataBlob({ input: 150, output: 20 });
-  const fsOversizedDb = createAgyFs({
-    [hostTranscript]: lines(singleStep),
-  }, {}, {
-    [path.join(root, 'conversations', `${hostId}.db`)]: [dbBlob],
-  });
-  const resOversizedDb = agy.read({ ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } }, {
-    ...fsOversizedDb,
-    stat: (f) => (f.endsWith('.db') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 } : fsOversizedDb.stat(f)),
-  });
+  const fsOversizedDb = createAgyFs(
+    {
+      [hostTranscript]: lines(singleStep),
+    },
+    {},
+    {
+      [path.join(root, 'conversations', `${hostId}.db`)]: [dbBlob],
+    },
+  );
+  const resOversizedDb = agy.read(
+    { ...query, sessionId: hostId, budget: { remaining: 256 * 1024 * 1024 } },
+    {
+      ...fsOversizedDb,
+      stat: (f) => (f.endsWith('.db') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 } : fsOversizedDb.stat(f)),
+    },
+  );
   assert.equal(resOversizedDb.notes?.host?.['unreadable files'], 1);
   assert.equal(resOversizedDb.rows.length, 1);
   assert.equal(resOversizedDb.rows[0]?.model, 'unknown');
@@ -568,7 +600,14 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
     [hostTranscript]: hostTranscriptContent,
     [child1Descriptor]: descContent,
   });
-  const resDescBudget = agy.read({ ...query, sessionId: hostId, budget: { remaining: Buffer.byteLength(hostTranscriptContent) + Buffer.byteLength(descContent) - 1 } }, fsDescBudget);
+  const resDescBudget = agy.read(
+    {
+      ...query,
+      sessionId: hostId,
+      budget: { remaining: Buffer.byteLength(hostTranscriptContent) + Buffer.byteLength(descContent) - 1 },
+    },
+    fsDescBudget,
+  );
   assert.equal(resDescBudget.notes?.subagent?.['read budget reached'], 1);
 
   // Large descriptor (>64KiB) capped at 64KiB without exhausting budget when budget has room
@@ -586,11 +625,14 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
   const fsCustom = createAgyFs({
     [customTranscript]: lines(singleStep),
   });
-  const resCustom = agy.read({
-    ...query,
-    sessionId: hostId,
-    env: (n) => (n === 'ANTIGRAVITY_APP_DATA_DIR' ? customRoot : undefined),
-  }, fsCustom);
+  const resCustom = agy.read(
+    {
+      ...query,
+      sessionId: hostId,
+      env: (n) => (n === 'ANTIGRAVITY_APP_DATA_DIR' ? customRoot : undefined),
+    },
+    fsCustom,
+  );
   assert.equal(resCustom.rows.length, 1);
   assert.equal(resCustom.unavailable, undefined);
 
@@ -606,12 +648,30 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
 
 test('agy bounds planner response counts when repeated step indexes or malformed metadata occur', () => {
   const host = '/home/.gemini/antigravity/brain/host/.system_generated/logs/transcript.jsonl';
-  const step = { step_index: 2, type: 'PLANNER_RESPONSE', created_at: new Date(1500).toISOString(), input_tokens: 8, output_tokens: 1 };
-  const facts = readHostUsage('agy', { ...query, env: name => name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'host' : undefined }, memoryFs({
-    [host]: lines(step, { ...step }, { ...step, step_index: 3, created_at: undefined }),
-  }));
+  const step = {
+    step_index: 2,
+    type: 'PLANNER_RESPONSE',
+    created_at: new Date(1500).toISOString(),
+    input_tokens: 8,
+    output_tokens: 1,
+  };
+  const facts = readHostUsage(
+    'agy',
+    { ...query, env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'host' : undefined) },
+    memoryFs({
+      [host]: lines(step, { ...step }, { ...step, step_index: 3, created_at: undefined }),
+    }),
+  );
   assert.deepEqual(facts.responses, [
-    { stage: 'spec', role: 'host', agent: 'host-1', basis: 'agy-planner-response', coverage: 'partial', observed: 1, uncachedInput: 8 },
+    {
+      stage: 'spec',
+      role: 'host',
+      agent: 'host-1',
+      basis: 'agy-planner-response',
+      coverage: 'partial',
+      observed: 1,
+      uncachedInput: 8,
+    },
   ]);
   assert.equal(facts.rows[0]?.input, 16);
 });
@@ -620,30 +680,65 @@ test('agy extracts unified turns, USER_EXPLICIT user turns by stage, and PLANNER
   const host = '/home/.gemini/antigravity/brain/host/.system_generated/logs/transcript.jsonl';
   const child = '/home/.gemini/antigravity/brain/child/.system_generated/logs/transcript.jsonl';
   const desc = '/home/.gemini/antigravity/brain/host/.system_generated/subagents/child.json';
-  const res = agy.read({
-    ...query,
-    stages: [{ stage: 'spec', atMs: 0 }, { stage: 'plan', atMs: 2000 }],
-  }, memoryFs({
-    [host]: lines(
-      { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(1000).toISOString(), content: 'secret prompt' },
-      { step_index: 2, type: 'USER_INPUT', source: 'SYSTEM', created_at: new Date(1200).toISOString() },
-      { step_index: 3, type: 'PLANNER_RESPONSE', created_at: new Date(1500).toISOString(), input_tokens: 10, output_tokens: 2, tool_calls: [{ name: 'read_file' }, { name: 'grep' }] },
-      { step_index: 4, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2500).toISOString() },
-      { step_index: 5, type: 'PLANNER_RESPONSE', created_at: new Date(3000).toISOString(), input_tokens: 20, output_tokens: 4 },
-    ),
-    [desc]: JSON.stringify({ conversationId: 'child' }),
-    [child]: lines(
-      { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2600).toISOString() },
-      { step_index: 2, type: 'PLANNER_RESPONSE', created_at: new Date(2700).toISOString(), input_tokens: 5, output_tokens: 1, tool_calls: [{ name: 'read_file' }] },
-    ),
-  }));
+  const res = agy.read(
+    {
+      ...query,
+      stages: [
+        { stage: 'spec', atMs: 0 },
+        { stage: 'plan', atMs: 2000 },
+      ],
+    },
+    memoryFs({
+      [host]: lines(
+        {
+          step_index: 1,
+          type: 'USER_INPUT',
+          source: 'USER_EXPLICIT',
+          created_at: new Date(1000).toISOString(),
+          content: 'secret prompt',
+        },
+        { step_index: 2, type: 'USER_INPUT', source: 'SYSTEM', created_at: new Date(1200).toISOString() },
+        {
+          step_index: 3,
+          type: 'PLANNER_RESPONSE',
+          created_at: new Date(1500).toISOString(),
+          input_tokens: 10,
+          output_tokens: 2,
+          tool_calls: [{ name: 'read_file' }, { name: 'grep' }],
+        },
+        { step_index: 4, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2500).toISOString() },
+        {
+          step_index: 5,
+          type: 'PLANNER_RESPONSE',
+          created_at: new Date(3000).toISOString(),
+          input_tokens: 20,
+          output_tokens: 4,
+        },
+      ),
+      [desc]: JSON.stringify({ conversationId: 'child' }),
+      [child]: lines(
+        { step_index: 1, type: 'USER_INPUT', source: 'USER_EXPLICIT', created_at: new Date(2600).toISOString() },
+        {
+          step_index: 2,
+          type: 'PLANNER_RESPONSE',
+          created_at: new Date(2700).toISOString(),
+          input_tokens: 5,
+          output_tokens: 1,
+          tool_calls: [{ name: 'read_file' }],
+        },
+      ),
+    }),
+  );
   assert.equal(res.userTurns, 2);
   assert.deepEqual(res.userTurnsByStage, { spec: 1, plan: 1 });
-  assert.deepEqual(res.rows.map(r => [r.role, r.turns, r.toolCalls, r.toolTurns]), [
-    ['host', 1, 2, 1],
-    ['host', 1, 0, 0],
-    ['subagent', 1, 1, 1],
-  ]);
+  assert.deepEqual(
+    res.rows.map((r) => [r.role, r.turns, r.toolCalls, r.toolTurns]),
+    [
+      ['host', 1, 2, 1],
+      ['host', 1, 0, 0],
+      ['subagent', 1, 1, 1],
+    ],
+  );
   assert.ok(!JSON.stringify(res).includes('secret prompt'));
 });
 

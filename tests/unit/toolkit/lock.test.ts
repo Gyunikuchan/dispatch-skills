@@ -5,34 +5,87 @@ import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
 
-test('fan-out claim creates parents refuses a live owner and reclaims a dead owner',async()=>{
- const {withLockFile}=await import('../../../skills/dispatch/scripts/toolkit/lock.ts');
- const f=sessionFixture({ memory: true });try{
-  const file=path.join(f.session,'.state','reviews','plan','claim');
-  assert.equal(await withLockFile(file,'review',f.deps,0,async()=>7),7);
-  assert.equal(fs.existsSync(file),false);
-  fs.writeFileSync(file,JSON.stringify({pid:99,host:f.deps.host,at:'now'}));f.deps.isAlive=()=>true;
-  await assert.rejects(withLockFile(file,'review',f.deps,0,async()=>{throw new Error('launched');}),{exit:3,reason:'lock-held'});
-  assert.deepEqual(f.sleeps,[]);
-  f.deps.isAlive=()=>false;
-  assert.equal(await withLockFile(file,'review',f.deps,0,async broken=>broken?.pid),99);
-  assert.equal(fs.existsSync(file),false);
- }finally{f.cleanup();}
+test('fan-out claim creates parents refuses a live owner and reclaims a dead owner', async () => {
+  const { withLockFile } = await import('../../../skills/dispatch/scripts/toolkit/lock.ts');
+  const f = sessionFixture({ memory: true });
+  try {
+    const file = path.join(f.session, '.state', 'reviews', 'plan', 'claim');
+    assert.equal(await withLockFile(file, 'review', f.deps, 0, async () => 7), 7);
+    assert.equal(fs.existsSync(file), false);
+    fs.writeFileSync(file, JSON.stringify({ pid: 99, host: f.deps.host, at: 'now' }));
+    f.deps.isAlive = () => true;
+    await assert.rejects(
+      withLockFile(file, 'review', f.deps, 0, async () => {
+        throw new Error('launched');
+      }),
+      { exit: 3, reason: 'lock-held' },
+    );
+    assert.deepEqual(f.sleeps, []);
+    f.deps.isAlive = () => false;
+    assert.equal(await withLockFile(file, 'review', f.deps, 0, async (broken) => broken?.pid), 99);
+    assert.equal(fs.existsSync(file), false);
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('session lock waits refuses reclaims and releases on failure', async () => {
- const f=sessionFixture({ memory: true });try {
- const state=path.join(f.session,'.state');fs.mkdirSync(state);const lock=path.join(state,'lock');
- const input=f.artifact('r.json',JSON.stringify({kind:'note',key:'a',by:'tool',data:{text:'ok'}}));
- const run=async()=>{f.lines.length=0;return main(['ledger','append','--session',f.session,input],f.deps);};
- f.deps.isAlive=()=>true;fs.writeFileSync(lock,JSON.stringify({pid:99,host:f.deps.host,at:'now',tool:'test'}));assert.equal(await run(),3);assert.equal(f.sleeps.reduce((a,b)=>a+b,0),10000);assert.match(f.output().summary,/99/);
- f.deps.isAlive=()=>false;assert.equal(await run(),0);assert.equal(fs.existsSync(lock),false);const records=fs.readFileSync(path.join(f.session,'ledger.jsonl'),'utf8').trim().split('\n').map(x=>JSON.parse(x));assert.equal(records[0].kind,'note');assert.equal(records[0].by,'tool');assert.equal(records.length,2);
- fs.writeFileSync(input,'{"kind":"bad"}');assert.equal(await run(),1);assert.equal(fs.existsSync(lock),false);
- fs.writeFileSync(lock,JSON.stringify({pid:99,host:'foreign',at:'now',tool:'test'}));assert.equal(await run(),3);assert.equal(fs.existsSync(lock),true);fs.unlinkSync(lock);
- const breaker=path.join(state,'lock.break');fs.writeFileSync(input,JSON.stringify({kind:'note',key:'b',by:'tool',data:{text:'ok'}}));
- f.deps.isAlive=pid=>pid===999;fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));assert.equal(await run(),3);assert.match(f.output().summary,/999/);assert.equal(fs.existsSync(breaker),true);
- fs.writeFileSync(breaker,JSON.stringify({pid:999,host:f.deps.host,at:'now'}));
- f.deps.isAlive=()=>false;fs.writeFileSync(lock,JSON.stringify({pid:999,host:f.deps.host,at:'now',tool:'test'}));
- assert.equal(await run(),0);assert.deepEqual(fs.readdirSync(state).filter(x=>x.startsWith('lock')).sort(),['lock.break']);assert.equal(JSON.parse(fs.readFileSync(breaker,'utf8')).pid,999);
- }finally{f.cleanup();}
+  const f = sessionFixture({ memory: true });
+  try {
+    const state = path.join(f.session, '.state');
+    fs.mkdirSync(state);
+    const lock = path.join(state, 'lock');
+    const input = f.artifact('r.json', JSON.stringify({ kind: 'note', key: 'a', by: 'tool', data: { text: 'ok' } }));
+    const run = async () => {
+      f.lines.length = 0;
+      return main(['ledger', 'append', '--session', f.session, input], f.deps);
+    };
+    f.deps.isAlive = () => true;
+    fs.writeFileSync(lock, JSON.stringify({ pid: 99, host: f.deps.host, at: 'now', tool: 'test' }));
+    assert.equal(await run(), 3);
+    assert.equal(
+      f.sleeps.reduce((a, b) => a + b, 0),
+      10000,
+    );
+    assert.match(f.output().summary, /99/);
+    f.deps.isAlive = () => false;
+    assert.equal(await run(), 0);
+    assert.equal(fs.existsSync(lock), false);
+    const records = fs
+      .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((x) => JSON.parse(x));
+    assert.equal(records[0].kind, 'note');
+    assert.equal(records[0].by, 'tool');
+    assert.equal(records.length, 2);
+    fs.writeFileSync(input, '{"kind":"bad"}');
+    assert.equal(await run(), 1);
+    assert.equal(fs.existsSync(lock), false);
+    fs.writeFileSync(lock, JSON.stringify({ pid: 99, host: 'foreign', at: 'now', tool: 'test' }));
+    assert.equal(await run(), 3);
+    assert.equal(fs.existsSync(lock), true);
+    fs.unlinkSync(lock);
+    const breaker = path.join(state, 'lock.break');
+    fs.writeFileSync(input, JSON.stringify({ kind: 'note', key: 'b', by: 'tool', data: { text: 'ok' } }));
+    f.deps.isAlive = (pid) => pid === 999;
+    fs.writeFileSync(breaker, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now' }));
+    assert.equal(await run(), 3);
+    assert.match(f.output().summary, /999/);
+    assert.equal(fs.existsSync(breaker), true);
+    fs.writeFileSync(breaker, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now' }));
+    f.deps.isAlive = () => false;
+    fs.writeFileSync(lock, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now', tool: 'test' }));
+    assert.equal(await run(), 0);
+    assert.deepEqual(
+      fs
+        .readdirSync(state)
+        .filter((x) => x.startsWith('lock'))
+        .sort(),
+      ['lock.break'],
+    );
+    assert.equal(JSON.parse(fs.readFileSync(breaker, 'utf8')).pid, 999);
+  } finally {
+    f.cleanup();
+  }
 });

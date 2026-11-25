@@ -5,7 +5,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  findRepoRoot, folderName, FOLDER_NAME, initSession, readManifest, reactivateSession,
+  findRepoRoot,
+  folderName,
+  FOLDER_NAME,
+  initSession,
+  readManifest,
+  reactivateSession,
 } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 const now = new Date('2026-09-29T17:54:00.000Z');
@@ -28,8 +33,14 @@ test('timestamp-slug format without session ID', () => {
 
 test('repository root: ancestor Git metadata identifies the root; absence returns null', () => {
   const existing = new Set([path.resolve('/w/repo/.git')]);
-  assert.equal(findRepoRoot('/w/repo/src/deep', (file) => existing.has(path.resolve(file))), path.resolve('/w/repo'));
-  assert.equal(findRepoRoot('/nowhere', () => false), null);
+  assert.equal(
+    findRepoRoot('/w/repo/src/deep', (file) => existing.has(path.resolve(file))),
+    path.resolve('/w/repo'),
+  );
+  assert.equal(
+    findRepoRoot('/nowhere', () => false),
+    null,
+  );
 });
 
 test('session matching skips corrupt unrelated directories and matches by manifest', () => {
@@ -39,7 +50,10 @@ test('session matching skips corrupt unrelated directories and matches by manife
   const dir = created.path;
   assert.equal(path.basename(dir), '20260929T1754Z-demo');
   assert.equal(readManifest(dir).location, 'workspace');
-  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now }), { path: dir, reused: true });
+  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now }), {
+    path: dir,
+    reused: true,
+  });
 
   // Corrupt or unreadable unrelated directory does not block session matching or initialization.
   const damaged = path.join(path.dirname(dir), '20260929T1754Z-damaged');
@@ -67,13 +81,28 @@ test('held claim waits for the winner and reuses its folder', (t) => {
   fs.mkdirSync(claim);
   const winner = path.join(path.dirname(first), '20260929T1754Z-demo-1');
   fs.mkdirSync(winner);
-  fs.writeFileSync(path.join(winner, 'manifest.json'), fs.readFileSync(path.join(first, 'manifest.json'), 'utf8').replace(/"c1"/g, '"c2"').replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'));
-  assert.equal(initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 50 }).path, fs.realpathSync(winner));
+  fs.writeFileSync(
+    path.join(winner, 'manifest.json'),
+    fs
+      .readFileSync(path.join(first, 'manifest.json'), 'utf8')
+      .replace(/"c1"/g, '"c2"')
+      .replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'),
+  );
+  assert.equal(
+    initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 50 }).path,
+    fs.realpathSync(winner),
+  );
   fs.rmSync(winner, { recursive: true });
   let elapsed = 0;
   t.mock.method(Date, 'now', () => elapsed);
-  t.mock.method(Atomics, 'wait', () => { elapsed += 10; return 'timed-out'; });
-  assert.throws(() => initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 30 }), /still claimed/);
+  t.mock.method(Atomics, 'wait', () => {
+    elapsed += 10;
+    return 'timed-out';
+  });
+  assert.throws(
+    () => initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 30 }),
+    /still claimed/,
+  );
 });
 
 test('session reactivate validates repository and rejects external locations', () => {
@@ -92,4 +121,3 @@ test('session reactivate validates repository and rejects external locations', (
   fs.writeFileSync(path.join(external, 'manifest.json'), fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   assert.throws(() => reactivateSession(external, root), /outside the workspace session root/);
 });
-

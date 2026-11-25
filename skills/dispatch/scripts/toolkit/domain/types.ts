@@ -11,7 +11,6 @@ export type ReviewKind = 'code' | 'plan' | 'design';
 type FindingScope = 'in' | 'adjacent';
 export type FindingOrigin = 'original' | 'fix-induced' | 'unknown';
 
-
 /** Spec §7.7; `dupOf` names the first finding a duplicate repeats. */
 export type Finding = {
   id: FindingId;
@@ -112,7 +111,14 @@ export type ParsedPlan = {
 
 // SECTION: Design
 
-export type DesignIncrement = { id: string; priority: number; summary: string; behaviour: readonly string[]; prerequisites: readonly string[]; paths: readonly string[] };
+export type DesignIncrement = {
+  id: string;
+  priority: number;
+  summary: string;
+  behaviour: readonly string[];
+  prerequisites: readonly string[];
+  paths: readonly string[];
+};
 export type IncrementState = 'complete' | 'active' | 'ready' | 'blocked' | 'invalidated';
 export type ExecutionStatusRow = { id: string; state: IncrementState; nextAction: string };
 

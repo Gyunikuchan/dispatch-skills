@@ -5,14 +5,32 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 type Data = Record<string, unknown>;
-export interface ReporterEvent { type: string; data?: Data }
+export interface ReporterEvent {
+  type: string;
+  data?: Data;
+}
 
-export interface TestLine { kind: 'test'; status: 'pass' | 'fail'; file: string; name: string; nesting: number; line: number; durationMs: number; suite: boolean }
-export interface CoverageLine { kind: 'coverage'; files: { path: string; covered: number; total: number }[] }
-export interface SummaryLine { kind: 'summary'; durationMs: number }
+export interface TestLine {
+  kind: 'test';
+  status: 'pass' | 'fail';
+  file: string;
+  name: string;
+  nesting: number;
+  line: number;
+  durationMs: number;
+  suite: boolean;
+}
+export interface CoverageLine {
+  kind: 'coverage';
+  files: { path: string; covered: number; total: number }[];
+}
+export interface SummaryLine {
+  kind: 'summary';
+  durationMs: number;
+}
 export type EventLine = TestLine | CoverageLine | SummaryLine;
 
-const record = (value: unknown): Data => (typeof value === 'object' && value !== null ? value as Data : {});
+const record = (value: unknown): Data => (typeof value === 'object' && value !== null ? (value as Data) : {});
 const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
 
 // SECTION: Event mapping
@@ -22,8 +40,14 @@ export function toLine(type: string, data: Data): EventLine | undefined {
     const details = record(data['details']);
     if (typeof data['file'] !== 'string') return undefined;
     return {
-      kind: 'test', status: type === 'test:pass' ? 'pass' : 'fail', file: data['file'], name: String(data['name'] ?? ''),
-      nesting: num(data['nesting']), line: num(data['line']), durationMs: num(details['duration_ms']), suite: details['type'] === 'suite',
+      kind: 'test',
+      status: type === 'test:pass' ? 'pass' : 'fail',
+      file: data['file'],
+      name: String(data['name'] ?? ''),
+      nesting: num(data['nesting']),
+      line: num(data['line']),
+      durationMs: num(details['duration_ms']),
+      suite: details['type'] === 'suite',
     };
   }
   if (type === 'test:coverage') {
@@ -31,11 +55,18 @@ export function toLine(type: string, data: Data): EventLine | undefined {
     if (!Array.isArray(files)) return undefined;
     return {
       kind: 'coverage',
-      files: files.map((file) => record(file)).map((file) => ({ path: String(file['path']), covered: num(file['coveredLineCount']), total: num(file['totalLineCount']) })),
+      files: files
+        .map((file) => record(file))
+        .map((file) => ({
+          path: String(file['path']),
+          covered: num(file['coveredLineCount']),
+          total: num(file['totalLineCount']),
+        })),
     };
   }
   // NOTE: only the run-level summary has no file; per-file summaries are skipped.
-  if (type === 'test:summary' && data['file'] === undefined) return { kind: 'summary', durationMs: num(data['duration_ms']) };
+  if (type === 'test:summary' && data['file'] === undefined)
+    return { kind: 'summary', durationMs: num(data['duration_ms']) };
   return undefined;
 }
 

@@ -43,15 +43,13 @@ Shared gated context 日本語.
 - \`node contract-check\`
 `;
 
-const CAPTURE_PLAN = PLAN
-  .replace(
-    '#### [NEW] src/first.ts\n- Purpose: First implementation detail.',
-    '#### [NEW] src/first.ts\n- Purpose: First implementation detail.\n#### [NEW] `tests/with space.test.ts`\n- Purpose: Exercise command capture.',
-  )
-  .replace(
-    '  - Changes: src/first.ts\n  - Tests: src/first.ts\n  - Check: `node first-check`\n  - RED: `node first-red`\n',
-    '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Check: `node first-check`\n  - RED: `node first-red {files}`\n',
-  );
+const CAPTURE_PLAN = PLAN.replace(
+  '#### [NEW] src/first.ts\n- Purpose: First implementation detail.',
+  '#### [NEW] src/first.ts\n- Purpose: First implementation detail.\n#### [NEW] `tests/with space.test.ts`\n- Purpose: Exercise command capture.',
+).replace(
+  '  - Changes: src/first.ts\n  - Tests: src/first.ts\n  - Check: `node first-check`\n  - RED: `node first-red`\n',
+  '  - Changes: src/first.ts, `tests/with space.test.ts`\n  - Tests: `tests/with space.test.ts`\n  - Check: `node first-check`\n  - RED: `node first-red {files}`\n',
+);
 
 const sharedFixture = sessionFixture({ memory: true });
 const bindings = new Map<boolean, string>();
@@ -61,13 +59,15 @@ const designPath = path.join(sharedFixture.root, 'strategy.design.md');
 const ledgerPath = path.join(sharedFixture.session, 'ledger.jsonl');
 sharedFixture.artifact('mission.spec.md', '# Mission\n## Requirements\n### REQ-1 — Works\n');
 let cachedQuality: string | null = null;
-const getQuality = (root: string) => cachedQuality ??= fs.readFileSync(path.join(root, 'references/templates/quality-bar.md'), 'utf8');
+const getQuality = (root: string) =>
+  (cachedQuality ??= fs.readFileSync(path.join(root, 'references/templates/quality-bar.md'), 'utf8'));
 let cachedWriterTemplate: string | null = null;
-const getWriterTemplate = (root: string) => cachedWriterTemplate ??= fs.readFileSync(path.join(root, 'references/templates/writer-brief.md'), 'utf8');
+const getWriterTemplate = (root: string) =>
+  (cachedWriterTemplate ??= fs.readFileSync(path.join(root, 'references/templates/writer-brief.md'), 'utf8'));
 after(() => sharedFixture.cleanup());
 
 async function fixture(design = false, source = PLAN) {
-  const f = {...sharedFixture, cleanup: () => {}};
+  const f = { ...sharedFixture, cleanup: () => {} };
   // Reset scenario state while retaining the same physical session and templates.
   if (fs.existsSync(tornPath)) fs.unlinkSync(tornPath);
   if (design) {
@@ -100,8 +100,16 @@ async function fixture(design = false, source = PLAN) {
     key = 2;
   } else {
     if (fs.existsSync(ledgerPath)) fs.unlinkSync(ledgerPath);
-    await add('bind', {spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})});
-    await add('confirm', {spec: currentHashes(f.root, {spec: 'mission.spec.md'}).spec}, {by: 'user', quote: 'Approved'});
+    await add('bind', {
+      spec: 'mission.spec.md',
+      plan: 'work.plan.md',
+      ...(design ? { design: 'strategy.design.md' } : {}),
+    });
+    await add(
+      'confirm',
+      { spec: currentHashes(f.root, { spec: 'mission.spec.md' }).spec },
+      { by: 'user', quote: 'Approved' },
+    );
     bindings.set(design, fs.readFileSync(ledgerPath, 'utf8'));
   }
   let hashes = source === PLAN ? cachedHashes.get(design) : undefined;
@@ -109,26 +117,41 @@ async function fixture(design = false, source = PLAN) {
     hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
     if (source === PLAN) cachedHashes.set(design, hashes);
   }
-  const approve = () => add('approval', hashes, {by: 'user', quote: 'Approved'});
-  const launch = (task = 'T1') => add('writer', {phase: 'launched', task, path: `.state/worktrees/${task}-1`, base: {commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1}});
+  const approve = () => add('approval', hashes, { by: 'user', quote: 'Approved' });
+  const launch = (task = 'T1') =>
+    add('writer', {
+      phase: 'launched',
+      task,
+      path: `.state/worktrees/${task}-1`,
+      base: { commit: 'a'.repeat(40), taskSection: 'sha256:' + 'b'.repeat(64), seq: 1 },
+    });
   let processes = 0;
-  f.deps.run = async () => { processes++; throw new Error('Brief must not run Git'); };
+  f.deps.run = async () => {
+    processes++;
+    throw new Error('Brief must not run Git');
+  };
   const call = async (level?: string, task = 'T1') => {
     f.lines.length = 0;
-    const host = (f.deps.orchestrator as {platform: string} | null)?.platform ?? 'codex';
-    const exit = await main(['brief', 'render', task, '--session', f.session, '--host', host, ...(level ? ['--level', level] : [])], f.deps);
+    const host = (f.deps.orchestrator as { platform: string } | null)?.platform ?? 'codex';
+    const exit = await main(
+      ['brief', 'render', task, '--session', f.session, '--host', host, ...(level ? ['--level', level] : [])],
+      f.deps,
+    );
     assert.equal(processes, 0);
     const output = f.output();
-    return {exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null};
+    return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
   };
-  return {...f, planPath, hashes, add, approve, launch, call};
+  return { ...f, planPath, hashes, add, approve, launch, call };
 }
 
 function captureSection(brief: string): string {
   const marker = '## RED capture commands\n';
   const start = brief.indexOf(marker);
   assert.notEqual(start, -1, 'brief includes the RED capture section');
-  return brief.slice(start + marker.length).split(/\n## /, 1)[0]!.trim();
+  return brief
+    .slice(start + marker.length)
+    .split(/\n## /, 1)[0]!
+    .trim();
 }
 
 function captureCommand(section: string): string {
@@ -141,12 +164,22 @@ function captureData(command: string): { data: { command: string; cwd: string; l
   const match = /([A-Za-z0-9_-]+)$/.exec(command);
   assert.ok(match, 'outer command ends with a base64url payload');
   return {
-    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as { command: string; cwd: string; logDir: string; criterion: string },
+    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as {
+      command: string;
+      cwd: string;
+      logDir: string;
+      criterion: string;
+    },
   };
 }
 
 /** Shared completeness properties for a rendered brief file: byte count, no placeholders, summary names the path. */
-function assertCompleteBrief(brief: string, value: { bytes: number; briefPath: string }, summary: string, texts: string[]) {
+function assertCompleteBrief(
+  brief: string,
+  value: { bytes: number; briefPath: string },
+  summary: string,
+  texts: string[],
+) {
   assert.equal(value.bytes, Buffer.byteLength(brief));
   assert.doesNotMatch(brief, /\{\{\w+\}\}/);
   assert.doesNotMatch(brief, /]\(/);
@@ -162,7 +195,7 @@ describe('writer brief', () => {
       assert.equal(missing.exit, 4);
       assert.equal(missing.output.reason, 'missing-approval');
       await f.approve();
-      await f.add('level', {level: 'medium'});
+      await f.add('level', { level: 'medium' });
       const unknown = await f.call(undefined, 'UNKNOWN');
       assert.equal(unknown.exit, 1);
       assert.equal(unknown.output.reason, 'invalid-input');
@@ -176,9 +209,11 @@ describe('writer brief', () => {
       assert.equal(refused.output.reason, 'unrecorded-change');
       fs.writeFileSync(f.planPath, PLAN);
       assert.equal((await f.call()).exit, 0);
-      await f.add('level', {level: 'xhigh'}, {by: 'user', quote: 'Use xhigh'});
+      await f.add('level', { level: 'xhigh' }, { by: 'user', quote: 'Use xhigh' });
       assert.equal((await f.call()).exit, 0);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('low level needs no approval and design is included only when bound', async () => {
@@ -186,26 +221,30 @@ describe('writer brief', () => {
       const f = await fixture(design);
       try {
         const directory = path.join(f.session, 'canonical inputs');
-        fs.mkdirSync(directory, {recursive: true});
+        fs.mkdirSync(directory, { recursive: true });
         const bound: Record<string, string> = {};
         const originals: Record<string, string> = {};
-        for (const [kind, name] of Object.entries({spec: 'mission.spec.md', plan: 'work.plan.md', ...(design ? {design: 'strategy.design.md'} : {})})) {
+        for (const [kind, name] of Object.entries({
+          spec: 'mission.spec.md',
+          plan: 'work.plan.md',
+          ...(design ? { design: 'strategy.design.md' } : {}),
+        })) {
           originals[kind] = fs.readFileSync(path.join(f.root, name), 'utf8');
           fs.writeFileSync(path.join(directory, name), originals[kind]!);
           bound[kind] = path.relative(f.root, path.join(directory, name));
         }
         await f.add('bind', bound);
-        await f.add('level', {level: 'low'});
+        await f.add('level', { level: 'low' });
         await f.launch();
         const worktree = path.join(f.session, '.state/worktrees/T1-1');
-        fs.mkdirSync(worktree, {recursive: true});
+        fs.mkdirSync(worktree, { recursive: true });
         const result = await f.call();
         assert.equal(result.exit, 0);
         const brief = fs.readFileSync(result.value.path, 'utf8');
         const addresses = {
           spec: /Read the governing spec whole: `([^`]+)`/.exec(brief)?.[1],
           plan: /Governing plan: `([^`]+)`/.exec(brief)?.[1],
-          ...(design ? {design: /Governing design: `([^`]+)`/.exec(brief)?.[1]} : {}),
+          ...(design ? { design: /Governing design: `([^`]+)`/.exec(brief)?.[1] } : {}),
         };
         for (const [kind, address] of Object.entries(addresses)) {
           assert.ok(address, kind + ' read address');
@@ -219,22 +258,39 @@ describe('writer brief', () => {
           assert.ok(brief.includes(`mission.spec.md\` (governed hash ${f.hashes.spec})`));
           assert.ok(brief.includes(`work.plan.md\` (governed hash ${f.hashes.plan})`));
           assert.ok(brief.includes(`strategy.design.md\` (governed hash ${f.hashes.design})`));
-          assert.match(brief, /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i);
+          assert.match(
+            brief,
+            /These are canonical governed hashes from the orchestrator; raw file SHA-256 values differ\. Do not run the dispatch toolkit\./i,
+          );
         } else {
           assert.doesNotMatch(brief, /Governing design:|strategy\.design\.md/);
-          for (const rule of ['Shared plan context', 'Task scope', 'Criteria', 'Contract commands', 'RED capture commands', 'embedded below', 'Read the whole plan only when', 'Constraints:', 'Invariants:']) assert.ok(brief.includes(rule), rule);
+          for (const rule of [
+            'Shared plan context',
+            'Task scope',
+            'Criteria',
+            'Contract commands',
+            'RED capture commands',
+            'embedded below',
+            'Read the whole plan only when',
+            'Constraints:',
+            'Invariants:',
+          ])
+            assert.ok(brief.includes(rule), rule);
         }
-      } finally { f.cleanup(); }
+      } finally {
+        f.cleanup();
+      }
     }
   });
 
   test('records a stale lock break once before rendering without caller ledger writes or Git', async () => {
     const f = await fixture();
     try {
-      await f.approve(); await f.launch();
+      await f.approve();
+      await f.launch();
       const before = foldLedger(f.session);
       const lock = path.join(f.session, '.state', 'lock');
-      const stale = JSON.stringify({pid: 99, host: f.deps.host, at: 'old', tool: 'interrupted'});
+      const stale = JSON.stringify({ pid: 99, host: f.deps.host, at: 'old', tool: 'interrupted' });
       const ledger = path.join(f.session, 'ledger.jsonl');
       fs.appendFileSync(ledger, '{torn');
       fs.writeFileSync(lock, stale);
@@ -247,17 +303,21 @@ describe('writer brief', () => {
       const note = after.records.at(-1)!;
       assert.equal(note.seq, before.lastSeq + 1);
       assert.equal(note.key, 'stale-lock:' + f.deps.host + ':99:old');
-      assert.equal(note.kind, 'note'); assert.equal(note.by, 'tool');
+      assert.equal(note.kind, 'note');
+      assert.equal(note.by, 'tool');
       assert.equal(note.data['text'], 'Broke stale lock from pid 99 on ' + f.deps.host);
       assert.equal(fs.readFileSync(path.join(f.session, 'ledger.torn-1.jsonl'), 'utf8'), '{torn');
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('gated snapshot supplies scoped context criteria quality and short report', async () => {
     const f = await fixture(false, CAPTURE_PLAN);
     try {
-      await f.approve(); await f.launch();
-      f.deps.hook = point => {
+      await f.approve();
+      await f.launch();
+      f.deps.hook = (point) => {
         assert.equal(point, 'brief:after-gate');
         fs.writeFileSync(f.planPath, CAPTURE_PLAN.replace('node first-red {files}', 'node poison-red {files}'));
       };
@@ -288,11 +348,34 @@ describe('writer brief', () => {
       assert.doesNotMatch(writerQuality, /Treat settled DECs, non-goals, and prior accepted or rejected rulings/);
       const codeBody = quality.split('## code\n')[1]!.split('\n## ')[0]!.trim();
       assert.ok(writerQuality.includes(codeBody));
-      for (const text of [path.resolve(f.session, '.state/worktrees/T1-1'), 'mission.spec.md', f.hashes.spec!, 'work.plan.md', f.hashes.plan!, 'Shared gated context 日本語.', '## Task Map', '### T1', 'Preserve the first invariant', 'First implementation detail', 'SC1', 'node first-check', 'node first-red', 'src/first.ts', 'node contract-check', '**intent**', '**correctness**', 'DONE', 'BLOCKED', 'NEEDS_CONTEXT']) assert.ok(brief.includes(text), text);
+      for (const text of [
+        path.resolve(f.session, '.state/worktrees/T1-1'),
+        'mission.spec.md',
+        f.hashes.spec!,
+        'work.plan.md',
+        f.hashes.plan!,
+        'Shared gated context 日本語.',
+        '## Task Map',
+        '### T1',
+        'Preserve the first invariant',
+        'First implementation detail',
+        'SC1',
+        'node first-check',
+        'node first-red',
+        'src/first.ts',
+        'node contract-check',
+        '**intent**',
+        '**correctness**',
+        'DONE',
+        'BLOCKED',
+        'NEEDS_CONTEXT',
+      ])
+        assert.ok(brief.includes(text), text);
       assert.match(brief, /read.*whole/i);
       assert.match(brief, /failing tests/i);
       assert.match(brief, /Git write commands/);
-      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check']) assert.ok(!brief.includes(forbidden), forbidden);
+      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check'])
+        assert.ok(!brief.includes(forbidden), forbidden);
       const template = getWriterTemplate(f.deps.skillRoot);
       const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
       const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
@@ -306,39 +389,51 @@ describe('writer brief', () => {
       assert.match(template, /Do not add # or ## headings inside that section/i);
       assert.match(template, /outside.*{{reportPath}}.*{{redLogDir}}/is);
       assert.equal(result.value.bytes, Buffer.byteLength(brief));
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('RED capture commands share one bootstrap file', async () => {
-    const source = CAPTURE_PLAN.replace('none | SC1 |', 'none | SC1, SC3 |').replace('## Verification Plan', `- [SC3] Another check
+    const source = CAPTURE_PLAN.replace('none | SC1 |', 'none | SC1, SC3 |').replace(
+      '## Verification Plan',
+      `- [SC3] Another check
   - Changes: src/first.ts
   - Tests: src/first.ts
   - Check: \`node second-check\`
   - RED: \`node second-red\`
   - Evidence: red
-## Verification Plan`);
+## Verification Plan`,
+    );
     const f = await fixture(false, source);
     try {
-      await f.approve(); await f.launch();
+      await f.approve();
+      await f.launch();
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result.output));
       const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
-      const commands = [...section.matchAll(/`(node [^`]+)`/g)].map(match => match[1]!);
+      const commands = [...section.matchAll(/`(node [^`]+)`/g)].map((match) => match[1]!);
       assert.equal(commands.length, 2);
       const capture = path.join(f.session, '.state', 'briefs', 'T1-1.red', 'capture.cjs');
       for (const command of commands) assert.ok(command.includes(capture), command);
       assert.doesNotMatch(section, /node -e/);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('empty test paths produce an inline diagnostic and no capture command', async () => {
     for (const item of [
       { source: CAPTURE_PLAN.replace('  - Tests: `tests/with space.test.ts`\n', ''), pattern: /no test paths/i },
-      { source: CAPTURE_PLAN.replaceAll('tests/with space.test.ts', 'tests/bad;touch marker.test.ts'), pattern: /tests\/bad;touch marker\.test\.ts/ },
+      {
+        source: CAPTURE_PLAN.replaceAll('tests/with space.test.ts', 'tests/bad;touch marker.test.ts'),
+        pattern: /tests\/bad;touch marker\.test\.ts/,
+      },
     ]) {
       const f = await fixture(false, item.source);
       try {
-        await f.approve(); await f.launch();
+        await f.approve();
+        await f.launch();
         const result = await f.call();
         assert.equal(result.exit, 0);
         const section = captureSection(fs.readFileSync(result.value.path, 'utf8'));
@@ -346,21 +441,32 @@ describe('writer brief', () => {
         assert.match(section, /SC1/);
         assert.match(section, item.pattern);
         assert.doesNotMatch(section, /node -e/);
-      } finally { f.cleanup(); }
+      } finally {
+        f.cleanup();
+      }
     }
     // Verify-only and excepted criteria leave the capture slot empty.
     for (const item of [
-      {task: 'T2', source: PLAN},
-      {task: 'T1', source: CAPTURE_PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - RED exception: already-satisfied\n')},
+      { task: 'T2', source: PLAN },
+      {
+        task: 'T1',
+        source: CAPTURE_PLAN.replace(
+          '  - Evidence: red\n',
+          '  - Evidence: red\n  - RED exception: already-satisfied\n',
+        ),
+      },
     ]) {
       const f = await fixture(false, item.source);
       try {
-        await f.approve(); await f.launch(item.task);
+        await f.approve();
+        await f.launch(item.task);
         const result = await f.call(undefined, item.task);
         assert.equal(result.exit, 0);
         const brief = fs.readFileSync(result.value.path, 'utf8');
         assert.equal(captureSection(brief), '');
-      } finally { f.cleanup(); }
+      } finally {
+        f.cleanup();
+      }
     }
   });
 });
@@ -368,49 +474,78 @@ describe('writer brief', () => {
 test('writer brief binds plan constraints, leaves routine choices to the writer and keeps review evidence with the orchestrator', async () => {
   const f = await fixture(false, PLAN);
   try {
-    await f.approve(); await f.launch();
+    await f.approve();
+    await f.launch();
     const rendered = await f.call();
     assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
     const brief = fs.readFileSync(rendered.value.path, 'utf8').replace(/\s+/g, ' ');
-    for (const text of ['`Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding', 'decide routine implementation choices yourself', 'the orchestrator runs post-integration `Evidence: review` checks', 'RED command runs as written in the platform\'s subprocess shell']) assert.equal(brief.split(text).length - 1, 1, text);
+    for (const text of [
+      '`Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding',
+      'decide routine implementation choices yourself',
+      'the orchestrator runs post-integration `Evidence: review` checks',
+      "RED command runs as written in the platform's subprocess shell",
+    ])
+      assert.equal(brief.split(text).length - 1, 1, text);
     // Collapsed plan sections still contribute task behaviour and criterion fields.
     const behaviour = '- First returns the validated value after retrying once.';
-    const collapsed = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`).replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts').replace('### T2 — Second', '</details>\n\n### T2 — Second').replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n').replace('- [SC2]', '  </details>\n\n- [SC2]');
+    const collapsed = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`)
+      .replace('#### [NEW] src/first.ts', '<details>\n<summary>First files</summary>\n\n#### [NEW] src/first.ts')
+      .replace('### T2 — Second', '</details>\n\n### T2 — Second')
+      .replace('- [SC1] First works', '- [SC1] First works\n  <details>\n  <summary>Checks</summary>\n')
+      .replace('- [SC2]', '  </details>\n\n- [SC2]');
     const g = await fixture(false, collapsed);
     try {
-      await g.approve(); await g.launch();
+      await g.approve();
+      await g.launch();
       const collapsedRendered = await g.call();
       assert.equal(collapsedRendered.exit, 0, JSON.stringify(collapsedRendered.output));
       const collapsedBrief = fs.readFileSync(collapsedRendered.value.path, 'utf8');
-      for (const text of ['#### [NEW] src/first.ts', '- Purpose: First implementation detail.', '  - Changes: src/first.ts', '  - Tests: src/first.ts', '  - Check: `node first-check`', '  - RED: `node first-red`', '  - Evidence: red']) assert.ok(collapsedBrief.includes(text), text);
+      for (const text of [
+        '#### [NEW] src/first.ts',
+        '- Purpose: First implementation detail.',
+        '  - Changes: src/first.ts',
+        '  - Tests: src/first.ts',
+        '  - Check: `node first-check`',
+        '  - RED: `node first-red`',
+        '  - Evidence: red',
+      ])
+        assert.ok(collapsedBrief.includes(text), text);
       assert.equal(collapsedBrief.split(behaviour).length - 1, 1);
-    } finally { g.cleanup(); }
-  } finally { f.cleanup(); }
+    } finally {
+      g.cleanup();
+    }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('writer brief states explorer and utility subagent rules', async () => {
   const f = await fixture(false, PLAN);
-  const {skillRoot, orchestrator} = f.deps;
+  const { skillRoot, orchestrator } = f.deps;
   const skill = path.join(f.root, 'explorer-skill');
   const templates = path.join(skill, 'references', 'templates');
-  fs.mkdirSync(templates, {recursive: true});
+  fs.mkdirSync(templates, { recursive: true });
   fs.writeFileSync(path.join(templates, 'writer-brief.md'), getWriterTemplate(skillRoot));
   fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
   fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
   const config = path.join(skill, 'config.jsonc');
   const valid = JSON.stringify({
-    'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
+    'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
     'utility-subagents': {
-      'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
-      'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
+      'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000 },
+      'openai-codex': { model: 'codex-mid', 'context-limit': 300000 },
     },
-    'write-subagents': {claude: {low: {model: 'claude-writer'}}, 'openai-codex': {medium: {model: 'codex-mid'}, high: {model: 'codex-high', effort: 'high'}}},
+    'write-subagents': {
+      claude: { low: { model: 'claude-writer' } },
+      'openai-codex': { medium: { model: 'codex-mid' }, high: { model: 'codex-high', effort: 'high' } },
+    },
   });
   try {
-    await f.approve(); await f.launch();
+    await f.approve();
+    await f.launch();
     f.deps.skillRoot = skill;
     const render = async (host: string) => {
-      f.deps.orchestrator = {platform: host as 'claude', model: null};
+      f.deps.orchestrator = { platform: host as 'claude', model: null };
       const result = await f.call('high');
       assert.equal(result.exit, 0, JSON.stringify(result.output));
       return fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
@@ -456,17 +591,21 @@ test('writer brief states explorer and utility subagent rules', async () => {
 /** Skill root whose claude-code utility entry has a 150,000-token limit, with the explorer templates copied in. */
 function limitSkill(skill: string, skillRoot: string): string {
   const templates = path.join(skill, 'references', 'templates');
-  fs.mkdirSync(templates, {recursive: true});
-  for (const name of ['explorer-brief.md', 'context-map.md']) fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
+  fs.mkdirSync(templates, { recursive: true });
+  for (const name of ['explorer-brief.md', 'context-map.md'])
+    fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
   fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
   fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
-  fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({
-    'read-delegates': {codex: {targets: [{low: {model: 'reader'}}]}},
-    'utility-subagents': {
-      'claude-code': {model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000},
-      'openai-codex': {model: 'codex-mid', 'context-limit': 300000},
-    },
-  }));
+  fs.writeFileSync(
+    path.join(skill, 'config.jsonc'),
+    JSON.stringify({
+      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
+      'utility-subagents': {
+        'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000 },
+        'openai-codex': { model: 'codex-mid', 'context-limit': 300000 },
+      },
+    }),
+  );
   return skill;
 }
 
@@ -475,7 +614,11 @@ describe('explorer brief', () => {
     const f = await fixture();
     try {
       await f.approve();
-      const values = {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'};
+      const values = {
+        objective: 'Map a shared interface change.',
+        questions: '- Which callers and tests cover the interface?',
+        outputPath: '.scratch/session/work.spec.context.md',
+      };
       const valuesPath = path.join(f.session, 'explorer-values.json');
       fs.writeFileSync(valuesPath, JSON.stringify(values));
       f.lines.length = 0;
@@ -485,20 +628,36 @@ describe('explorer brief', () => {
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
       assert.ok(value.briefPath);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
-      assertCompleteBrief(brief, value, output.summary, [values.objective, values.questions, values.outputPath, 'lint run', 'dispatch.ts', '16,384', '# Context map:', '## Not covered', 'Host rule files:']);
+      assertCompleteBrief(brief, value, output.summary, [
+        values.objective,
+        values.questions,
+        values.outputPath,
+        'lint run',
+        'dispatch.ts',
+        '16,384',
+        '# Context map:',
+        '## Not covered',
+        'Host rule files:',
+      ]);
       assert.match(brief, /^- callers and impacted tests of each changed shared helper$/m);
       assert.ok(!brief.includes('Writer focus (task writers only'), 'explorer quality carries no writer directive');
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('explorer brief states the limit and nesting rules', async () => {
     const f = await fixture();
-    const {skillRoot, orchestrator} = f.deps;
+    const { skillRoot, orchestrator } = f.deps;
     const skill = limitSkill(path.join(f.root, 'explorer-skill-sc4'), skillRoot);
     try {
       await f.approve();
       f.deps.skillRoot = skill;
-      const values = {objective: 'Map a shared interface change.', questions: '- Which callers and tests cover the interface?', outputPath: '.scratch/session/work.spec.context.md'};
+      const values = {
+        objective: 'Map a shared interface change.',
+        questions: '- Which callers and tests cover the interface?',
+        outputPath: '.scratch/session/work.spec.context.md',
+      };
       const valuesPath = path.join(f.session, 'explorer-values-sc4.json');
       fs.writeFileSync(valuesPath, JSON.stringify(values));
       f.lines.length = 0;
@@ -531,7 +690,10 @@ describe('explorer brief', () => {
       assert.match(brief, /Not covered/i);
 
       // shared contract assignment
-      assert.match(brief, /shared contract, schema or predicate.*assign one nested explorer.*objective and the covered paths/is);
+      assert.match(
+        brief,
+        /shared contract, schema or predicate.*assign one nested explorer.*objective and the covered paths/is,
+      );
 
       // per-nested-explorer model and token report
       assert.match(brief, /model and tokens.*unavailable/i);
@@ -541,16 +703,28 @@ describe('explorer brief', () => {
       assert.match(brief, /coherent single-topic work stays solo past the limit/i);
       assert.match(brief, /report the expected overrun/i);
       const splitResearchValues = path.join(f.session, 'split-research-sc4.json');
-      fs.writeFileSync(splitResearchValues, JSON.stringify({objective: 'Research logs.', questions: '- Why did step 3 fail?'}));
+      fs.writeFileSync(
+        splitResearchValues,
+        JSON.stringify({ objective: 'Research logs.', questions: '- Why did step 3 fail?' }),
+      );
       f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', splitResearchValues, '--session', f.session, '--host', 'claude'], f.deps), 0);
-      const splitResearchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.equal(
+        await main(['brief', 'explorer', splitResearchValues, '--session', f.session, '--host', 'claude'], f.deps),
+        0,
+      );
+      const splitResearchBrief = fs.readFileSync(
+        JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath,
+        'utf8',
+      );
       assert.match(splitResearchBrief, /Split threshold: 112,500 tokens\./);
       assert.match(splitResearchBrief, /report the expected overrun/i);
 
       // Unresolved entry gives contextLimit null and states not configured
       f.lines.length = 0;
-      const unresExit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'copilot'], f.deps);
+      const unresExit = await main(
+        ['brief', 'explorer', valuesPath, '--session', f.session, '--host', 'copilot'],
+        f.deps,
+      );
       assert.equal(unresExit, 0);
       const unresValue = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
       assert.equal(unresValue.contextLimit, null);
@@ -561,22 +735,37 @@ describe('explorer brief', () => {
       // Default map brief carries the validation-gates coverage item and the map write scope.
       f.deps.skillRoot = skillRoot;
       const gatesValues = path.join(f.session, 'explorer-validation-gates.json');
-      fs.writeFileSync(gatesValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md'}));
+      fs.writeFileSync(
+        gatesValues,
+        JSON.stringify({ objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/work.spec.context.md' }),
+      );
       f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', gatesValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+      assert.equal(
+        await main(['brief', 'explorer', gatesValues, '--session', f.session, '--host', 'codex'], f.deps),
+        0,
+      );
       const gatesBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
       assert.match(gatesBrief, /^- validation gates each new or changed input crosses$/m);
-      assert.match(gatesBrief, /Write only your assigned map .*\.scratch\/session\/work\.spec\.context\.md.*assigned partial maps/i);
+      assert.match(
+        gatesBrief,
+        /Write only your assigned map .*\.scratch\/session\/work\.spec\.context\.md.*assigned partial maps/i,
+      );
       assert.match(gatesBrief, /except host tool caches or indexes/i);
       assert.ok(gatesBrief.includes('lint run'));
       assert.doesNotMatch(gatesBrief, /Apply the shared evidence rule below/);
 
       // Research brief writes no map file and runs no context-map lint.
       const scopeResearchValues = path.join(f.session, 'explorer-scope-research.json');
-      fs.writeFileSync(scopeResearchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
+      fs.writeFileSync(scopeResearchValues, JSON.stringify({ objective: 'Research.', questions: '- Q?' }));
       f.lines.length = 0;
-      assert.equal(await main(['brief', 'explorer', scopeResearchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
-      const scopeResearchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
+      assert.equal(
+        await main(['brief', 'explorer', scopeResearchValues, '--session', f.session, '--host', 'codex'], f.deps),
+        0,
+      );
+      const scopeResearchBrief = fs.readFileSync(
+        JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath,
+        'utf8',
+      );
       assert.ok(scopeResearchBrief.includes('write no map file'));
       assert.ok(scopeResearchBrief.includes('run no context-map lint'));
       assert.doesNotMatch(scopeResearchBrief, /Apply the shared evidence rule below/);
@@ -591,14 +780,14 @@ describe('explorer brief', () => {
 
   test('research brief renders without outputPath and handles array questions and help', async () => {
     const f = await fixture();
-    const {skillRoot, orchestrator} = f.deps;
+    const { skillRoot, orchestrator } = f.deps;
     const skill = limitSkill(path.join(f.root, 'explorer-skill-sc5'), skillRoot);
     try {
       await f.approve();
       f.deps.skillRoot = skill;
 
       // 1. Research brief without outputPath
-      const researchValues = {objective: 'Research logs.', questions: '- Why did step 3 fail?'};
+      const researchValues = { objective: 'Research logs.', questions: '- Why did step 3 fail?' };
       const valuesPath = path.join(f.session, 'research-values.json');
       fs.writeFileSync(valuesPath, JSON.stringify(researchValues));
       f.lines.length = 0;
@@ -614,7 +803,10 @@ describe('explorer brief', () => {
       assert.match(brief, /8,192 UTF-8 bytes/);
 
       // Nesting rule with consolidation of nested replies into one bounded reply
-      assert.match(brief, /nesting:.*nested explorer replies inline.*consolidates the nested replies into its one reply within the 8,192/is);
+      assert.match(
+        brief,
+        /nesting:.*nested explorer replies inline.*consolidates the nested replies into its one reply within the 8,192/is,
+      );
 
       // Launch model and effort
       assert.match(brief, /Launch nested explorers exactly as: launch: model cheap-a, effort medium, else cheap-b\./);
@@ -630,11 +822,17 @@ describe('explorer brief', () => {
       assert.ok(!brief.includes('agent type that can write files'), 'research brief has no writable-agent requirement');
 
       // 2. Questions as array of strings renders one per line
-      const arrayValues = {objective: 'Research array questions.', questions: ['- First question?', '- Second question?']};
+      const arrayValues = {
+        objective: 'Research array questions.',
+        questions: ['- First question?', '- Second question?'],
+      };
       const arrayValuesPath = path.join(f.session, 'array-questions.json');
       fs.writeFileSync(arrayValuesPath, JSON.stringify(arrayValues));
       f.lines.length = 0;
-      const arrayExit = await main(['brief', 'explorer', arrayValuesPath, '--session', f.session, '--host', 'codex'], f.deps);
+      const arrayExit = await main(
+        ['brief', 'explorer', arrayValuesPath, '--session', f.session, '--host', 'codex'],
+        f.deps,
+      );
       assert.equal(arrayExit, 0, JSON.stringify(f.lines));
       const arrayBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
       assert.match(arrayBrief, /- First question\?\r?\n- Second question\?/);
@@ -663,10 +861,10 @@ describe('explorer brief', () => {
       const briefs = path.join(f.session, '.state', 'briefs');
       const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       const cases: Record<string, string>[] = [
-        {questions: '- Q?'},
-        {objective: 'Map.', questions: '- Q?', outputPath: 'out.md', extra: 'x'},
-        {objective: '   ', questions: '- Q?', outputPath: 'out.md'},
-        {objective: 'Map.', questions: '- Q?', outputPath: '   '},
+        { questions: '- Q?' },
+        { objective: 'Map.', questions: '- Q?', outputPath: 'out.md', extra: 'x' },
+        { objective: '   ', questions: '- Q?', outputPath: 'out.md' },
+        { objective: 'Map.', questions: '- Q?', outputPath: '   ' },
       ];
       for (const [index, values] of cases.entries()) {
         const valuesPath = path.join(f.session, `explorer-bad-${index}.json`);
@@ -683,7 +881,9 @@ describe('explorer brief', () => {
       assert.equal(f.output().reason, 'invalid-input');
       const after = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       assert.deepEqual(after, before);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 });
 
@@ -695,7 +895,7 @@ describe('test-cleanup brief', () => {
       const base = 'a'.repeat(40);
       const integrationPath = '.scratch/worktrees/integration';
       const valuesPath = path.join(f.session, 'cleanup-values.json');
-      fs.writeFileSync(valuesPath, JSON.stringify({base, integrationPath}));
+      fs.writeFileSync(valuesPath, JSON.stringify({ base, integrationPath }));
       f.lines.length = 0;
       const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
@@ -703,12 +903,21 @@ describe('test-cleanup brief', () => {
       const value = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
       assert.ok(value.briefPath);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
-      assertCompleteBrief(brief, value, output.summary, [base, integrationPath, 'work.plan.md', 'Run no Git write commands', '- Prune:', '{"removed": ["SC1"], "deleted": 0, "merged": 0}']);
+      assertCompleteBrief(brief, value, output.summary, [
+        base,
+        integrationPath,
+        'work.plan.md',
+        'Run no Git write commands',
+        '- Prune:',
+        '{"removed": ["SC1"], "deleted": 0, "merged": 0}',
+      ]);
       assert.ok(!brief.includes('Writer focus (task writers only'), 'cleanup quality carries no writer directive');
       const match = /`([^`]*work\.plan\.md)`/.exec(brief);
       assert.ok(match, 'bound plan path');
       assert.equal(fs.readFileSync(path.resolve(match[1]!), 'utf8'), fs.readFileSync(f.planPath, 'utf8'));
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 
   test('refuses missing, unknown or unbound plan without writing', async () => {
@@ -718,77 +927,108 @@ describe('test-cleanup brief', () => {
       const briefs = path.join(f.session, '.state', 'briefs');
       const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       const cases: Record<string, string>[] = [
-        {integrationPath: 'integration'},
-        {base: 'a'.repeat(40), integrationPath: 'integration', extra: 'x'},
-        {base: '', integrationPath: 'integration'},
+        { integrationPath: 'integration' },
+        { base: 'a'.repeat(40), integrationPath: 'integration', extra: 'x' },
+        { base: '', integrationPath: 'integration' },
       ];
       for (const [index, values] of cases.entries()) {
         const valuesPath = path.join(f.session, `cleanup-bad-${index}.json`);
         fs.writeFileSync(valuesPath, JSON.stringify(values));
         f.lines.length = 0;
-        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', 'codex'], f.deps);
+        const exit = await main(
+          ['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', 'codex'],
+          f.deps,
+        );
         assert.equal(exit, 1, JSON.stringify(values));
         assert.equal(f.output().reason, 'invalid-input');
       }
-      const g = sessionFixture({memory: true});
+      const g = sessionFixture({ memory: true });
       try {
         const valuesPath = path.join(g.session, 'cleanup-values.json');
-        fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
-        const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', g.session, '--host', 'codex'], g.deps);
+        fs.writeFileSync(valuesPath, JSON.stringify({ base: 'a'.repeat(40), integrationPath: 'integration' }));
+        const exit = await main(
+          ['brief', 'test-cleanup', valuesPath, '--session', g.session, '--host', 'codex'],
+          g.deps,
+        );
         assert.equal(exit, 4);
         assert.equal(g.output().reason, 'lint-errors');
         assert.equal(fs.existsSync(path.join(g.session, '.state', 'briefs')), false);
-      } finally { g.cleanup(); }
+      } finally {
+        g.cleanup();
+      }
       const after = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
       assert.deepEqual(after, before);
-    } finally { f.cleanup(); }
+    } finally {
+      f.cleanup();
+    }
   });
 });
 
 test('brief results name the host model and effort', async () => {
   const f = await fixture(false, PLAN);
-  const {skillRoot, orchestrator} = f.deps;
+  const { skillRoot, orchestrator } = f.deps;
   const skill = path.join(f.root, 'launch-skill');
   const templates = path.join(skill, 'references', 'templates');
-  fs.mkdirSync(templates, {recursive: true});
-  for (const name of ['writer-brief.md', 'explorer-brief.md', 'test-cleanup-brief.md', 'verifier-brief.md', 'quality-bar.md', 'context-map.md']) {
+  fs.mkdirSync(templates, { recursive: true });
+  for (const name of [
+    'writer-brief.md',
+    'explorer-brief.md',
+    'test-cleanup-brief.md',
+    'verifier-brief.md',
+    'quality-bar.md',
+    'context-map.md',
+  ]) {
     fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
   }
   fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
   const configPath = path.join(skill, 'config.jsonc');
-  const writeConfig = () => fs.writeFileSync(configPath, JSON.stringify({
-    'read-delegates': {
-      codex: {targets: [{low: {model: 'reader'}}]},
-      opencode: {targets: [{low: {model: 'reader'}}]},
-      copilot: {targets: [{low: {model: 'reader'}}]},
-      agy: {targets: [{low: {model: 'reader'}}]},
-    },
-    'write-subagents': {
-      codex: {low: {model: 'codex-low', effort: 'low-eff'}, high: {model: ['codex-high-a', 'codex-high-b'], effort: 'high-eff'}},
-      opencode: {low: {model: 'prov/model', effort: 'my-eff'}, high: {model: 'prov/plain'}},
-      agy: {low: {model: 'agy-low', effort: 'low'}},
-      claude: {low: {model: 'claude-haiku-5-5', effort: 'medium'}},
-    },
-    'utility-subagents': {
-      opencode: {model: 'exp/model', effort: 'exp-eff', 'context-limit': 300000},
-      codex: {model: 'codex-exp', 'context-limit': 300000},
-      claude: {model: 'claude-haiku-5-5', effort: 'medium', 'context-limit': 300000},
-    },
-  }));
+  const writeConfig = () =>
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        'read-delegates': {
+          codex: { targets: [{ low: { model: 'reader' } }] },
+          opencode: { targets: [{ low: { model: 'reader' } }] },
+          copilot: { targets: [{ low: { model: 'reader' } }] },
+          agy: { targets: [{ low: { model: 'reader' } }] },
+        },
+        'write-subagents': {
+          codex: {
+            low: { model: 'codex-low', effort: 'low-eff' },
+            high: { model: ['codex-high-a', 'codex-high-b'], effort: 'high-eff' },
+          },
+          opencode: { low: { model: 'prov/model', effort: 'my-eff' }, high: { model: 'prov/plain' } },
+          agy: { low: { model: 'agy-low', effort: 'low' } },
+          claude: { low: { model: 'claude-haiku-5-5', effort: 'medium' } },
+        },
+        'utility-subagents': {
+          opencode: { model: 'exp/model', effort: 'exp-eff', 'context-limit': 300000 },
+          codex: { model: 'codex-exp', 'context-limit': 300000 },
+          claude: { model: 'claude-haiku-5-5', effort: 'medium', 'context-limit': 300000 },
+        },
+      }),
+    );
   try {
     await f.approve();
     await f.launch();
     f.deps.skillRoot = skill;
     const writerValue = async (host: string, level: string) => {
-      await f.add('level', {level}, {by: level === 'low' ? 'orchestrator' : 'orchestrator'});
-      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      await f.add('level', { level }, { by: level === 'low' ? 'orchestrator' : 'orchestrator' });
+      f.deps.orchestrator = { platform: host as never, model: null } as never;
       f.lines.length = 0;
       const exit = await main(['brief', 'render', 'T1', '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
       return {
         summary: out.summary,
-        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {path: string; launch: number; model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
+          path: string;
+          launch: number;
+          model: unknown;
+          effort: unknown;
+          launchAs: string | null;
+          subagentModels?: unknown;
+        }),
       };
     };
     writeConfig();
@@ -799,14 +1039,21 @@ test('brief results name the host model and effort', async () => {
     assert.deepEqual(high.model, ['codex-high-a', 'codex-high-b']);
     assert.equal(high.effort, 'high-eff');
     assert.equal(high.launchAs, 'launch: model codex-high-a, effort high-eff, else codex-high-b');
-    assert.match(high.summary, /^T1 launch \d+: launch: model codex-high-a, effort high-eff \(\+1 fallbacks in result\); /);
+    assert.match(
+      high.summary,
+      /^T1 launch \d+: launch: model codex-high-a, effort high-eff \(\+1 fallbacks in result\); /,
+    );
     assert.equal('subagentModels' in high, false);
     // Level fallback through resolveLevel: medium resolves to the nearest defined below (low).
-    await f.add('level', {level: 'medium'});
-    f.deps.orchestrator = {platform: 'codex', model: null} as never;
+    await f.add('level', { level: 'medium' });
+    f.deps.orchestrator = { platform: 'codex', model: null } as never;
     f.lines.length = 0;
     assert.equal(await main(['brief', 'render', 'T1', '--session', f.session, '--host', 'codex'], f.deps), 0);
-    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {model: unknown; effort: unknown; launchAs: string | null};
+    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {
+      model: unknown;
+      effort: unknown;
+      launchAs: string | null;
+    };
     assert.deepEqual(fallback.model, ['codex-low']);
     assert.equal(fallback.effort, 'low-eff');
     assert.equal(fallback.launchAs, 'launch: model codex-low, effort low-eff');
@@ -815,19 +1062,32 @@ test('brief results name the host model and effort', async () => {
     assert.deepEqual(openLow.model, ['prov/model']);
     assert.equal(openLow.effort, 'my-eff');
     assert.equal(typeof openLow.launch, 'number');
-    assert.equal(openLow.launchAs, 'launch: `subagent` with `model: "prov/model#my-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal(
+      openLow.launchAs,
+      'launch: `subagent` with `model: "prov/model#my-eff"` (user-configured; set it despite the tool\'s default guidance)',
+    );
     assert.equal('subagentModels' in openLow, false);
     assert.ok(openLow.summary.includes(openLow.launchAs));
-    assert.ok(fs.readFileSync(openLow.path, 'utf8').includes('Explorer subagent for this host — launch: `subagent` with `model: "exp/model#exp-eff"`'));
+    assert.ok(
+      fs
+        .readFileSync(openLow.path, 'utf8')
+        .includes('Explorer subagent for this host — launch: `subagent` with `model: "exp/model#exp-eff"`'),
+    );
     // OpenCode writer without effort carries the plain value.
     const openHigh = await writerValue('opencode', 'high');
     assert.deepEqual(openHigh.model, ['prov/plain']);
     assert.equal(openHigh.effort, null);
-    assert.equal(openHigh.launchAs, 'launch: `subagent` with `model: "prov/plain"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal(
+      openHigh.launchAs,
+      'launch: `subagent` with `model: "prov/plain"` (user-configured; set it despite the tool\'s default guidance)',
+    );
     assert.equal('subagentModels' in openHigh, false);
     // agy and claude writers carry their host-specific launchAs lines.
     const agyLow = await writerValue('agy', 'low');
-    assert.equal(agyLow.launchAs, 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-low, effort low');
+    assert.equal(
+      agyLow.launchAs,
+      'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-low, effort low',
+    );
     assert.ok(agyLow.summary.includes(agyLow.launchAs));
     const claudeLow = await writerValue('claude', 'low');
     assert.equal(claudeLow.launchAs, 'launch: model claude-haiku-5-5, effort medium');
@@ -841,24 +1101,35 @@ test('brief results name the host model and effort', async () => {
     // Explorer and test-cleanup read the utility entry.
     const explorerValue = async (host: string) => {
       const valuesPath = path.join(f.session, `explorer-${host}.json`);
-      fs.writeFileSync(valuesPath, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: 'out.md'}));
-      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      fs.writeFileSync(valuesPath, JSON.stringify({ objective: 'Map.', questions: '- Q?', outputPath: 'out.md' }));
+      f.deps.orchestrator = { platform: host as never, model: null } as never;
       f.lines.length = 0;
       const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
       return {
         summary: out.summary,
-        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {briefPath: string; model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
+          briefPath: string;
+          model: unknown;
+          effort: unknown;
+          launchAs: string | null;
+          subagentModels?: unknown;
+        }),
       };
     };
     const expOpen = await explorerValue('opencode');
     assert.deepEqual(expOpen.model, ['exp/model']);
     assert.equal(expOpen.effort, 'exp-eff');
-    assert.equal(expOpen.launchAs, 'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal(
+      expOpen.launchAs,
+      'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)',
+    );
     assert.equal('subagentModels' in expOpen, false);
     assert.ok(expOpen.summary.includes(expOpen.launchAs));
-    assert.ok(fs.readFileSync(expOpen.briefPath, 'utf8').includes(`Launch nested explorers exactly as: ${expOpen.launchAs}.`));
+    assert.ok(
+      fs.readFileSync(expOpen.briefPath, 'utf8').includes(`Launch nested explorers exactly as: ${expOpen.launchAs}.`),
+    );
     const expCodex = await explorerValue('codex');
     assert.deepEqual(expCodex.model, ['codex-exp']);
     assert.equal(expCodex.effort, null);
@@ -868,9 +1139,9 @@ test('brief results name the host model and effort', async () => {
     assert.equal(expClaude.launchAs, 'launch: model claude-haiku-5-5, effort medium');
     assert.ok(expClaude.summary.includes(expClaude.launchAs));
     // No utility entry gives null launch values, independent of writer entries or level.
-    await f.add('level', {level: 'high'});
+    await f.add('level', { level: 'high' });
     const expAgyHigh = await explorerValue('agy');
-    await f.add('level', {level: 'low'});
+    await f.add('level', { level: 'low' });
     const expAgyLow = await explorerValue('agy');
     for (const value of [expAgyHigh, expAgyLow]) {
       assert.equal(value.model, null);
@@ -884,26 +1155,46 @@ test('brief results name the host model and effort', async () => {
     // Test-cleanup shares the utility entry, including launchAs.
     const cleanupValue = async (host: string) => {
       const valuesPath = path.join(f.session, `cleanup-${host}.json`);
-      fs.writeFileSync(valuesPath, JSON.stringify({base: 'a'.repeat(40), integrationPath: 'integration'}));
-      f.deps.orchestrator = {platform: host as never, model: null} as never;
+      fs.writeFileSync(valuesPath, JSON.stringify({ base: 'a'.repeat(40), integrationPath: 'integration' }));
+      f.deps.orchestrator = { platform: host as never, model: null } as never;
       f.lines.length = 0;
       const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
       return {
         summary: out.summary,
-        ...JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {model: unknown; effort: unknown; launchAs: string | null; subagentModels?: unknown},
+        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
+          model: unknown;
+          effort: unknown;
+          launchAs: string | null;
+          subagentModels?: unknown;
+        }),
       };
     };
     const cleanOpen = await cleanupValue('opencode');
     assert.deepEqual(cleanOpen.model, ['exp/model']);
-    assert.equal(cleanOpen.launchAs, 'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)');
+    assert.equal(
+      cleanOpen.launchAs,
+      'launch: `subagent` with `model: "exp/model#exp-eff"` (user-configured; set it despite the tool\'s default guidance)',
+    );
     assert.equal('subagentModels' in cleanOpen, false);
     assert.ok(cleanOpen.summary.includes(cleanOpen.launchAs));
     const verifierValuesPath = path.join(f.session, 'verifier-opencode.json');
-    fs.writeFileSync(verifierValuesPath, JSON.stringify({checkoutPath: 'integration', base: 'a'.repeat(40), specPath: 'work.spec.md', focus: 'Cycle 2. Re-check the proof.'}));
+    fs.writeFileSync(
+      verifierValuesPath,
+      JSON.stringify({
+        checkoutPath: 'integration',
+        base: 'a'.repeat(40),
+        specPath: 'work.spec.md',
+        focus: 'Cycle 2. Re-check the proof.',
+      }),
+    );
     f.lines.length = 0;
-    assert.equal(await main(['brief', 'verifier', verifierValuesPath, '--session', f.session, '--host', 'opencode'], f.deps), 0, JSON.stringify(f.lines));
+    assert.equal(
+      await main(['brief', 'verifier', verifierValuesPath, '--session', f.session, '--host', 'opencode'], f.deps),
+      0,
+      JSON.stringify(f.lines),
+    );
     const verifierOut = f.output();
     const verifier = JSON.parse(fs.readFileSync(verifierOut.path!, 'utf8'));
     assert.deepEqual(verifier.model, cleanOpen.model);
@@ -933,88 +1224,123 @@ test('brief results name the host model and effort', async () => {
   }
 });
 
-  test('task markdown and brief render preserve fenced heading blocks and file entries', async () => {
-    const fencedHeadingPlan = PLAN.replace(
-      '### T1 — First\n- Constraints: Preserve the first invariant.',
-      '### T1 — First\n- Constraints: Preserve the first invariant.\n```markdown\n## Fenced Heading Two\n### Fenced Heading Three\n```',
-    );
-    const parsed = parsePlan(fencedHeadingPlan);
-    assert.equal(parsed.ok, true);
-    const selected = selectTaskBrief(parsed.plan, 'T1');
-    assert.ok(selected);
-    const markdown = taskMarkdown(fencedHeadingPlan, selected);
-    assert.match(markdown, /## Fenced Heading Two/);
-    assert.match(markdown, /### Fenced Heading Three/);
-    assert.match(markdown, /#### \[NEW\] src\/first\.ts/);
-    assert.match(markdown, /- Purpose: First implementation detail\./);
+test('task markdown and brief render preserve fenced heading blocks and file entries', async () => {
+  const fencedHeadingPlan = PLAN.replace(
+    '### T1 — First\n- Constraints: Preserve the first invariant.',
+    '### T1 — First\n- Constraints: Preserve the first invariant.\n```markdown\n## Fenced Heading Two\n### Fenced Heading Three\n```',
+  );
+  const parsed = parsePlan(fencedHeadingPlan);
+  assert.equal(parsed.ok, true);
+  const selected = selectTaskBrief(parsed.plan, 'T1');
+  assert.ok(selected);
+  const markdown = taskMarkdown(fencedHeadingPlan, selected);
+  assert.match(markdown, /## Fenced Heading Two/);
+  assert.match(markdown, /### Fenced Heading Three/);
+  assert.match(markdown, /#### \[NEW\] src\/first\.ts/);
+  assert.match(markdown, /- Purpose: First implementation detail\./);
 
-    const f = await fixture(false, fencedHeadingPlan);
-    try {
-      await f.approve();
-      await f.launch();
-      const result = await f.call();
-      assert.equal(result.exit, 0);
-      const brief = fs.readFileSync(result.value.path, 'utf8');
-      assert.match(brief, /## Fenced Heading Two/);
-      assert.match(brief, /### Fenced Heading Three/);
-      assert.match(brief, /#### \[NEW\] src\/first\.ts/);
-      assert.match(brief, /- Purpose: First implementation detail\./);
-    } finally {
-      f.cleanup();
-    }
+  const f = await fixture(false, fencedHeadingPlan);
+  try {
+    await f.approve();
+    await f.launch();
+    const result = await f.call();
+    assert.equal(result.exit, 0);
+    const brief = fs.readFileSync(result.value.path, 'utf8');
+    assert.match(brief, /## Fenced Heading Two/);
+    assert.match(brief, /### Fenced Heading Three/);
+    assert.match(brief, /#### \[NEW\] src\/first\.ts/);
+    assert.match(brief, /- Purpose: First implementation detail\./);
+  } finally {
+    f.cleanup();
+  }
 
-    // A fenced criterion bullet does not swallow the trailing criterion lines.
-    const fencedCriterionPlan = PLAN.replace(
-      '  - Changes: src/first.ts',
-      '```markdown\n- [SC99] Fenced criterion bullet\n```\n  - Changes: src/first.ts',
-    );
-    const criterionParsed = parsePlan(fencedCriterionPlan);
-    assert.equal(criterionParsed.ok, true);
-    const criterionSelected = selectTaskBrief(criterionParsed.plan, 'T1');
-    assert.ok(criterionSelected);
-    const criterionMarkdown = taskMarkdown(fencedCriterionPlan, criterionSelected);
-    assert.match(criterionMarkdown, /- \[SC99\] Fenced criterion bullet/);
-    assert.match(criterionMarkdown, /node first-check/);
-    assert.match(criterionMarkdown, /node first-red/);
+  // A fenced criterion bullet does not swallow the trailing criterion lines.
+  const fencedCriterionPlan = PLAN.replace(
+    '  - Changes: src/first.ts',
+    '```markdown\n- [SC99] Fenced criterion bullet\n```\n  - Changes: src/first.ts',
+  );
+  const criterionParsed = parsePlan(fencedCriterionPlan);
+  assert.equal(criterionParsed.ok, true);
+  const criterionSelected = selectTaskBrief(criterionParsed.plan, 'T1');
+  assert.ok(criterionSelected);
+  const criterionMarkdown = taskMarkdown(fencedCriterionPlan, criterionSelected);
+  assert.match(criterionMarkdown, /- \[SC99\] Fenced criterion bullet/);
+  assert.match(criterionMarkdown, /node first-check/);
+  assert.match(criterionMarkdown, /node first-red/);
 
-    const g = await fixture(false, fencedCriterionPlan);
-    try {
-      await g.approve();
-      await g.launch();
-      const criterionResult = await g.call();
-      assert.equal(criterionResult.exit, 0);
-      const criterionBrief = fs.readFileSync(criterionResult.value.path, 'utf8');
-      assert.match(criterionBrief, /- \[SC99\] Fenced criterion bullet/);
-      assert.match(criterionBrief, /node first-check/);
-      assert.match(criterionBrief, /node first-red/);
-    } finally {
-      g.cleanup();
-    }
-  });
+  const g = await fixture(false, fencedCriterionPlan);
+  try {
+    await g.approve();
+    await g.launch();
+    const criterionResult = await g.call();
+    assert.equal(criterionResult.exit, 0);
+    const criterionBrief = fs.readFileSync(criterionResult.value.path, 'utf8');
+    assert.match(criterionBrief, /- \[SC99\] Fenced criterion bullet/);
+    assert.match(criterionBrief, /node first-check/);
+    assert.match(criterionBrief, /node first-red/);
+  } finally {
+    g.cleanup();
+  }
+});
 
 test('verifier brief launch works without a bound plan and refuses blanks; verifier brief contract describes proof and boundaries', async () => {
-  const f = sessionFixture({memory:true});
+  const f = sessionFixture({ memory: true });
   try {
-    const values = {checkoutPath:'checkout', base:'base', specPath:'spec.md', focus:'Cycle 2. Re-check the proof. No test edits.'};
+    const values = {
+      checkoutPath: 'checkout',
+      base: 'base',
+      specPath: 'spec.md',
+      focus: 'Cycle 2. Re-check the proof. No test edits.',
+    };
     const file = path.join(f.session, 'values.json');
-    fs.writeFileSync(file, JSON.stringify({...values, focus:' '}));
-    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 1);
-    assert.equal(fs.existsSync(path.join(f.session,'verification')), false);
-    assert.equal(fs.existsSync(path.join(f.session,'.state','briefs')), false);
+    fs.writeFileSync(file, JSON.stringify({ ...values, focus: ' ' }));
+    assert.equal(await main(['brief', 'verifier', file, '--session', f.session, '--host', 'codex'], f.deps), 1);
+    assert.equal(fs.existsSync(path.join(f.session, 'verification')), false);
+    assert.equal(fs.existsSync(path.join(f.session, '.state', 'briefs')), false);
     fs.writeFileSync(file, JSON.stringify(values));
     f.lines.length = 0;
-    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 0, JSON.stringify(f.lines));
+    assert.equal(
+      await main(['brief', 'verifier', file, '--session', f.session, '--host', 'codex'], f.deps),
+      0,
+      JSON.stringify(f.lines),
+    );
     const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
-    assert.ok(fs.existsSync(value.evidenceDir)); assert.ok(value.briefPath); assert.ok('model' in value && 'effort' in value);
+    assert.ok(fs.existsSync(value.evidenceDir));
+    assert.ok(value.briefPath);
+    assert.ok('model' in value && 'effort' in value);
     const brief = fs.readFileSync(value.briefPath, 'utf8');
-    assert.ok(brief.includes(`Your write scope is evidence under \`${value.evidenceDir}\` and, only with \`test edits permitted\` in the focus, gap-filling tests in dedicated test files`));
-    assert.ok(brief.includes(`Store artifacts in \`${value.evidenceDir}/<n>/\`, where \`<n>\` is the cycle number from the focus.`));
-    for (const phrase of ['best-effort', 'substantial', 'NEEDS_APPROVAL', 'not proved', 'dedicated test files', 'Host rule files:', 'checks passed', 'baseline', 'install', values.focus, 'Give each artifact a new path.', 'If a report exists, append `## Cycle <n>` and leave earlier content unchanged']) assert.ok(brief.includes(phrase), phrase);
+    assert.ok(
+      brief.includes(
+        `Your write scope is evidence under \`${value.evidenceDir}\` and, only with \`test edits permitted\` in the focus, gap-filling tests in dedicated test files`,
+      ),
+    );
+    assert.ok(
+      brief.includes(
+        `Store artifacts in \`${value.evidenceDir}/<n>/\`, where \`<n>\` is the cycle number from the focus.`,
+      ),
+    );
+    for (const phrase of [
+      'best-effort',
+      'substantial',
+      'NEEDS_APPROVAL',
+      'not proved',
+      'dedicated test files',
+      'Host rule files:',
+      'checks passed',
+      'baseline',
+      'install',
+      values.focus,
+      'Give each artifact a new path.',
+      'If a report exists, append `## Cycle <n>` and leave earlier content unchanged',
+    ])
+      assert.ok(brief.includes(phrase), phrase);
     const before = fs.readdirSync(path.join(f.session, '.state', 'briefs'));
-    fs.writeFileSync(file, JSON.stringify({...values, focus:' '}));
-    assert.equal(await main(['brief','verifier',file,'--session',f.session,'--host','codex'], f.deps), 1);
+    fs.writeFileSync(file, JSON.stringify({ ...values, focus: ' ' }));
+    assert.equal(await main(['brief', 'verifier', file, '--session', f.session, '--host', 'codex'], f.deps), 1);
     assert.deepEqual(fs.readdirSync(path.join(f.session, '.state', 'briefs')), before);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('rendered briefs state the git-write rule once and carry one host-rule precedence rule', async () => {
@@ -1027,9 +1353,16 @@ test('rendered briefs state the git-write rule once and carry one host-rule prec
     const writerBrief = fs.readFileSync(writerResult.value.path, 'utf8');
 
     const cleanupValues = path.join(f.session, 'cleanup-rules-values.json');
-    fs.writeFileSync(cleanupValues, JSON.stringify({base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration'}));
+    fs.writeFileSync(
+      cleanupValues,
+      JSON.stringify({ base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration' }),
+    );
     f.lines.length = 0;
-    assert.equal(await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    assert.equal(
+      await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps),
+      0,
+      JSON.stringify(f.lines),
+    );
     const cleanupBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
 
     const gitRule = 'Run no Git write commands (add, stash, commit, checkout, reset, restore).';
@@ -1039,28 +1372,56 @@ test('rendered briefs state the git-write rule once and carry one host-rule prec
     assert.doesNotMatch(cleanupBrief, /Read-only Git only\./);
 
     const mapValues = path.join(f.session, 'explorer-prec-map.json');
-    fs.writeFileSync(mapValues, JSON.stringify({objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/map.md'}));
+    fs.writeFileSync(
+      mapValues,
+      JSON.stringify({ objective: 'Map.', questions: '- Q?', outputPath: '.scratch/session/map.md' }),
+    );
     f.lines.length = 0;
     assert.equal(await main(['brief', 'explorer', mapValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
     const mapBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
 
     const researchValues = path.join(f.session, 'explorer-prec-research.json');
-    fs.writeFileSync(researchValues, JSON.stringify({objective: 'Research.', questions: '- Q?'}));
+    fs.writeFileSync(researchValues, JSON.stringify({ objective: 'Research.', questions: '- Q?' }));
     f.lines.length = 0;
-    assert.equal(await main(['brief', 'explorer', researchValues, '--session', f.session, '--host', 'codex'], f.deps), 0);
+    assert.equal(
+      await main(['brief', 'explorer', researchValues, '--session', f.session, '--host', 'codex'], f.deps),
+      0,
+    );
     const researchBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
 
     const precedenceRule = 'Host rules may tighten, never widen, scope, write boundaries, verification and safety.';
-    for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief], ['map explorer', mapBrief], ['research explorer', researchBrief]] as const) {
+    for (const [name, brief] of [
+      ['writer', writerBrief],
+      ['cleanup', cleanupBrief],
+      ['map explorer', mapBrief],
+      ['research explorer', researchBrief],
+    ] as const) {
       assert.doesNotMatch(brief, /a stricter one wins/i, `${name}: drops a stricter one wins`);
-      assert.doesNotMatch(brief, /Plan scope, write boundaries, verification and safety stay fixed\./, `${name}: drops old fixed clause`);
+      assert.doesNotMatch(
+        brief,
+        /Plan scope, write boundaries, verification and safety stay fixed\./,
+        `${name}: drops old fixed clause`,
+      );
       assert.equal(brief.split(precedenceRule).length - 1, 1, `${name}: single host-rule precedence rule`);
-      assert.equal(brief.split('Applicable host rule files govern first.').length - 1, 1, `${name}: single govern-first sentence`);
+      assert.equal(
+        brief.split('Applicable host rule files govern first.').length - 1,
+        1,
+        `${name}: single govern-first sentence`,
+      );
     }
-    for (const [name, brief] of [['writer', writerBrief], ['cleanup', cleanupBrief]] as const) {
-      assert.equal(brief.split('Report host-rule/brief conflicts under concerns or limits.').length - 1, 1, `${name}: single conflict-reporting rule`);
+    for (const [name, brief] of [
+      ['writer', writerBrief],
+      ['cleanup', cleanupBrief],
+    ] as const) {
+      assert.equal(
+        brief.split('Report host-rule/brief conflicts under concerns or limits.').length - 1,
+        1,
+        `${name}: single conflict-reporting rule`,
+      );
     }
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });
 
 test('brief test-cleanup and verifier render updated pruning and gap-filling guidance', async () => {
@@ -1068,9 +1429,16 @@ test('brief test-cleanup and verifier render updated pruning and gap-filling gui
   try {
     await f.approve();
     const cleanupValues = path.join(f.session, 'cleanup-guidance-values.json');
-    fs.writeFileSync(cleanupValues, JSON.stringify({base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration'}));
+    fs.writeFileSync(
+      cleanupValues,
+      JSON.stringify({ base: 'a'.repeat(40), integrationPath: '.scratch/worktrees/integration' }),
+    );
     f.lines.length = 0;
-    assert.equal(await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    assert.equal(
+      await main(['brief', 'test-cleanup', cleanupValues, '--session', f.session, '--host', 'codex'], f.deps),
+      0,
+      JSON.stringify(f.lines),
+    );
     const cleanupBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
 
     assert.match(cleanupBrief, /executing `- Prune:` and ignoring `- Writer focus`/);
@@ -1086,14 +1454,21 @@ test('brief test-cleanup and verifier render updated pruning and gap-filling gui
     assert.match(cleanupBrief, /`removed`[^.\n]*exclud|replaced by a cheaper test/i);
 
     const verifierValues = path.join(f.session, 'verifier-guidance-values.json');
-    fs.writeFileSync(verifierValues, JSON.stringify({
-      checkoutPath: 'checkout',
-      base: 'b'.repeat(40),
-      specPath: 'spec.md',
-      focus: 'Cycle 1. Verify runtime behavior. test edits permitted.',
-    }));
+    fs.writeFileSync(
+      verifierValues,
+      JSON.stringify({
+        checkoutPath: 'checkout',
+        base: 'b'.repeat(40),
+        specPath: 'spec.md',
+        focus: 'Cycle 1. Verify runtime behavior. test edits permitted.',
+      }),
+    );
     f.lines.length = 0;
-    assert.equal(await main(['brief', 'verifier', verifierValues, '--session', f.session, '--host', 'codex'], f.deps), 0, JSON.stringify(f.lines));
+    assert.equal(
+      await main(['brief', 'verifier', verifierValues, '--session', f.session, '--host', 'codex'], f.deps),
+      0,
+      JSON.stringify(f.lines),
+    );
     const verifierBrief = fs.readFileSync(JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).briefPath, 'utf8');
 
     for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:', 'Shape:', 'Naming:']) {
@@ -1107,5 +1482,7 @@ test('brief test-cleanup and verifier render updated pruning and gap-filling gui
     assert.match(verifierBrief, /missed high-signal tests/i);
     assert.match(verifierBrief, /cheapest observing layer/i);
     assert.match(verifierBrief, /post-integration test cleanup/i);
-  } finally { f.cleanup(); }
+  } finally {
+    f.cleanup();
+  }
 });

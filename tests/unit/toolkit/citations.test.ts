@@ -5,7 +5,11 @@ import { lintCitations } from '../../../skills/dispatch/scripts/toolkit/domain/c
 function repoReader(files: Record<string, string | null>) {
   return (relPath: string): string | null => {
     const normalized = relPath.startsWith('./') ? relPath.slice(2) : relPath;
-    return Object.hasOwn(files, relPath) ? files[relPath]! : Object.hasOwn(files, normalized) ? files[normalized]! : null;
+    return Object.hasOwn(files, relPath)
+      ? files[relPath]!
+      : Object.hasOwn(files, normalized)
+        ? files[normalized]!
+        : null;
   };
 }
 
@@ -88,7 +92,7 @@ test('lintCitations validates governed line references', () => {
     'Live `src/missing.ts:1`.',
   ].join('\n');
   assert.deepEqual(
-    lintCitations(listFenceDoc, 'plan', repoReader(baseFiles)).map(d => ({ line: d.line, code: d.code })),
+    lintCitations(listFenceDoc, 'plan', repoReader(baseFiles)).map((d) => ({ line: d.line, code: d.code })),
     [{ line: 14, code: 'broken-citation' }],
   );
 
@@ -100,7 +104,7 @@ test('lintCitations validates governed line references', () => {
   ].join('\n');
   const boundaryDefects = lintCitations(boundaryPlan, 'plan', repoReader(baseFiles));
   assert.deepEqual(
-    boundaryDefects.map(d => ({ code: d.code, severity: d.severity, line: d.line })),
+    boundaryDefects.map((d) => ({ code: d.code, severity: d.severity, line: d.line })),
     [
       { code: 'broken-citation', severity: 'defect', line: 1 },
       { code: 'broken-citation', severity: 'defect', line: 2 },
@@ -132,10 +136,10 @@ test('lintCitations validates governed line references', () => {
   delete removedFiles['configure'];
   const invalidDefects = lintCitations(invalidRefsPlan, 'plan', repoReader(removedFiles));
   assert.deepEqual(
-    invalidDefects.map(d => d.line),
+    invalidDefects.map((d) => d.line),
     [1, 2, 2, 3, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16],
   );
-  assert.ok(invalidDefects.every(d => d.code === 'broken-citation' && d.severity === 'defect'));
+  assert.ok(invalidDefects.every((d) => d.code === 'broken-citation' && d.severity === 'defect'));
 
   // Exact original 1-based line numbers after skipped ## Execution Status (with fenced ## headings) and ## Review Findings & Resolutions
   const designWithSkipped = [
@@ -166,7 +170,7 @@ test('lintCitations validates governed line references', () => {
   ].join('\n');
   const designDefects = lintCitations(designWithSkipped, 'design', repoReader(baseFiles));
   assert.deepEqual(
-    designDefects.map(d => ({ line: d.line, code: d.code })),
+    designDefects.map((d) => ({ line: d.line, code: d.code })),
     [
       { line: 13, code: 'broken-citation' },
       { line: 24, code: 'broken-citation' },
@@ -184,5 +188,8 @@ test('lintCitations validates governed line references', () => {
     'Broken after resolutions: `src/broken-plan.ts:7`.',
   ].join('\n');
   const planDefects = lintCitations(planWithSkipped, 'plan', repoReader(baseFiles));
-  assert.deepEqual(planDefects.map(d => d.line), [3, 7]);
+  assert.deepEqual(
+    planDefects.map((d) => d.line),
+    [3, 7],
+  );
 });

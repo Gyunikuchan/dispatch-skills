@@ -6,4 +6,10 @@ import { copilot } from './copilot.ts';
 import { opencode } from './opencode.ts';
 import type { HostUsageAdapter } from './rows.ts';
 
-export const USAGE_ADAPTERS: Readonly<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, copilot, opencode };
+export const USAGE_ADAPTERS: Readonly<Record<ProviderKey, HostUsageAdapter>> = {
+  agy,
+  claude: claudeCode,
+  codex,
+  copilot,
+  opencode,
+};

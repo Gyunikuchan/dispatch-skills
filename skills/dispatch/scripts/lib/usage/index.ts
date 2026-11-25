@@ -8,7 +8,26 @@ import { readAgySqliteGenMetadata } from './agy.ts';
 import { mergeCopilot } from './rows.ts';
 import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
-import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey, type BandedCounters, type Counters, type HostResponseAggregate, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type HostUsageResult, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
+import {
+  HOST_ROLES,
+  MAX_RESPONSE_AGENTS,
+  splitUsageKey,
+  STAGE_ORDER,
+  usageKey,
+  type BandedCounters,
+  type Counters,
+  type HostResponseAggregate,
+  type HostRole,
+  type HostStage,
+  type HostUsageAdapter,
+  type HostUsageFacts,
+  type HostUsageFs,
+  type HostUsageRow,
+  type HostUsageResult,
+  type Milestone,
+  type PhaseMilestone,
+  type UsageRow,
+} from './rows.ts';
 
 function foldHostRows(
   rows: readonly (UsageRow & { stage: HostStage })[],
@@ -18,8 +37,13 @@ function foldHostRows(
 ): HostUsageRow[] {
   const aliases = new Map<string, string>();
   const serial = { host: 0, subagent: 0 };
-  for (const r of rows) if (r.copilot && r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS) aliases.set(r.responseActor, `${r.role}-${++serial[r.role as HostRole]}`);
-  const groups = new Map<string, { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[]; agent?: string }>();
+  for (const r of rows)
+    if (r.copilot && r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS)
+      aliases.set(r.responseActor, `${r.role}-${++serial[r.role as HostRole]}`);
+  const groups = new Map<
+    string,
+    { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[]; agent?: string }
+  >();
   for (const r of rows) {
     const phase = phaseAt(phases, r.atMs);
     const role = r.role as HostRole;
@@ -42,25 +66,45 @@ function foldHostRows(
     for (const [k, list] of byKey) {
       const folded = foldRows(list);
       const entry = folded.models[k]!;
-      perKey[k] = { ...entry, ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }) };
+      perKey[k] = {
+        ...entry,
+        ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }),
+      };
     }
     const bounded = boundModels(perKey);
     const roleComplete = group.role === 'host' ? hostComplete : subagentComplete;
     for (const [k, value] of Object.entries(bounded)) {
       const { model, effort } = splitUsageKey(k);
       const typed = value as BandedCounters & { reasoningInOutput?: boolean };
-      const inputs = k === OTHER_KEY
-        ? [...byKey].flatMap(([key, list]) => key === OTHER_KEY || !Object.hasOwn(bounded, key) ? list : [])
-        : byKey.get(k)!;
-      const active = inputs.filter(r => !r.skipResponse);
-      const turns = roleComplete && active.every(r => r.turns !== undefined) ? active.reduce((total, r) => total + r.turns!, 0) : undefined;
-      const toolCalls = roleComplete && active.length > 0 && active.every(r => r.toolCalls !== undefined) ? active.reduce((total, r) => total + r.toolCalls!, 0) : undefined;
-      const toolTurns = roleComplete && active.length > 0 && active.every(r => r.toolTurns !== undefined) ? active.reduce((total, r) => total + r.toolTurns!, 0) : undefined;
-      const precise = inputs.every(r => r.depth !== undefined) && (!inputs.some(r => r.copilot) || group.agent !== undefined);
-      const maxDepth = (roleComplete || inputs.every(r => r.copilot)) && precise && group.role === 'subagent' ? inputs.reduce((max, r) => Math.max(max, r.depth!), 0) : undefined;
-      const copilot = mergeCopilot(inputs.map(r => r.copilot));
-      if (copilot && !group.agent) { copilot.actorCoverage = 'partial'; copilot.lineageCoverage = 'unknown'; }
-      const parents = new Set(inputs.map(r => r.parentActor ? aliases.get(r.parentActor) : undefined));
+      const inputs =
+        k === OTHER_KEY
+          ? [...byKey].flatMap(([key, list]) => (key === OTHER_KEY || !Object.hasOwn(bounded, key) ? list : []))
+          : byKey.get(k)!;
+      const active = inputs.filter((r) => !r.skipResponse);
+      const turns =
+        roleComplete && active.every((r) => r.turns !== undefined)
+          ? active.reduce((total, r) => total + r.turns!, 0)
+          : undefined;
+      const toolCalls =
+        roleComplete && active.length > 0 && active.every((r) => r.toolCalls !== undefined)
+          ? active.reduce((total, r) => total + r.toolCalls!, 0)
+          : undefined;
+      const toolTurns =
+        roleComplete && active.length > 0 && active.every((r) => r.toolTurns !== undefined)
+          ? active.reduce((total, r) => total + r.toolTurns!, 0)
+          : undefined;
+      const precise =
+        inputs.every((r) => r.depth !== undefined) && (!inputs.some((r) => r.copilot) || group.agent !== undefined);
+      const maxDepth =
+        (roleComplete || inputs.every((r) => r.copilot)) && precise && group.role === 'subagent'
+          ? inputs.reduce((max, r) => Math.max(max, r.depth!), 0)
+          : undefined;
+      const copilot = mergeCopilot(inputs.map((r) => r.copilot));
+      if (copilot && !group.agent) {
+        copilot.actorCoverage = 'partial';
+        copilot.lineageCoverage = 'unknown';
+      }
+      const parents = new Set(inputs.map((r) => (r.parentActor ? aliases.get(r.parentActor) : undefined)));
       const parent = parents.size === 1 ? [...parents][0] : undefined;
       const row: HostUsageRow = {
         ...(turns === undefined ? {} : { turns }),
@@ -88,11 +132,13 @@ function foldHostRows(
       out.push(row);
     }
   }
-  return out.sort((a, b) =>
-    STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage)
-    || (a.phase ?? '').localeCompare(b.phase ?? '')
-    || HOST_ROLES.indexOf(a.role) - HOST_ROLES.indexOf(b.role)
-    || usageKey(a.model, a.effort).localeCompare(usageKey(b.model, b.effort)));
+  return out.sort(
+    (a, b) =>
+      STAGE_ORDER.indexOf(a.stage) - STAGE_ORDER.indexOf(b.stage) ||
+      (a.phase ?? '').localeCompare(b.phase ?? '') ||
+      HOST_ROLES.indexOf(a.role) - HOST_ROLES.indexOf(b.role) ||
+      usageKey(a.model, a.effort).localeCompare(usageKey(b.model, b.effort)),
+  );
 }
 
 function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]): HostResponseAggregate[] | undefined {
@@ -102,7 +148,16 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
   const aliases = new Map<string, string>();
   const serial = { host: 0, subagent: 0 };
   const hasHostNotes = Object.keys(result.notes?.host ?? {}).length > 0;
-  const groups = new Map<string, { aggregate: HostResponseAggregate; toolCalls: number; toolTurns: number; allToolCalls: boolean; allToolTurns: boolean }>();
+  const groups = new Map<
+    string,
+    {
+      aggregate: HostResponseAggregate;
+      toolCalls: number;
+      toolTurns: number;
+      allToolCalls: boolean;
+      allToolTurns: boolean;
+    }
+  >();
   for (const row of result.rows) {
     if (row.role === 'delegate' || row.skipResponse) continue;
     const role = row.role;
@@ -118,7 +173,12 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
     if (!entry) {
       entry = {
         aggregate: {
-          stage, role, basis: source.basis, coverage, observed: 0, uncachedInput: 0,
+          stage,
+          role,
+          basis: source.basis,
+          coverage,
+          observed: 0,
+          uncachedInput: 0,
           ...(agent === undefined ? {} : { agent }),
         },
         toolCalls: 0,
@@ -146,20 +206,36 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
     return aggregate;
   });
   for (const role of HOST_ROLES) {
-    const incomplete = result.notes?.[role] || (role === 'host' ? result.unavailable : result.notes?.host?.['read budget reached']);
-    if (incomplete && !aggregates.some(group => group.role === role)) {
+    const incomplete =
+      result.notes?.[role] || (role === 'host' ? result.unavailable : result.notes?.host?.['read budget reached']);
+    if (incomplete && !aggregates.some((group) => group.role === role)) {
       aggregates.push({ stage: 'unattributed', role, basis: source.basis, coverage: 'unknown' });
     }
   }
   return aggregates;
 }
-export function hostSessionId(platform: ProviderKey | null, env: (name: string) => string | undefined): string | undefined {
+export function hostSessionId(
+  platform: ProviderKey | null,
+  env: (name: string) => string | undefined,
+): string | undefined {
   const adapter = platform ? USAGE_ADAPTERS[platform] : undefined;
   const sessionId = adapter?.sessionEnv.map(env).find(Boolean);
   return sessionId && validSessionId(sessionId) ? sessionId : undefined;
 }
-type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
-export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = USAGE_ADAPTERS): HostUsageFacts {
+type HostUsageInput = {
+  startMs: number;
+  endMs: number;
+  home: string;
+  env: (name: string) => string | undefined;
+  stages: readonly Milestone[];
+  phases?: readonly PhaseMilestone[];
+};
+export function readHostUsage(
+  platform: ProviderKey | null,
+  input: HostUsageInput,
+  fsPort: HostUsageFs,
+  adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = USAGE_ADAPTERS,
+): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
   if (!adapter) return { platform, rows: [], unavailable: 'no adapter' };
   const sessionId = adapter.sessionEnv.map(input.env).find(Boolean);
@@ -167,32 +243,77 @@ export function readHostUsage(platform: ProviderKey | null, input: HostUsageInpu
   if (!validSessionId(sessionId)) return { platform, rows: [], unavailable: 'invalid host id' };
   if (!Number.isFinite(input.startMs)) return { platform, rows: [], unavailable: 'invalid session start' };
   try {
-    const res = adapter.read({ ...input, sessionId, collectResponses: true, budget: { remaining: MAX_TOTAL_BYTES } }, fsPort);
+    const res = adapter.read(
+      { ...input, sessionId, collectResponses: true, budget: { remaining: MAX_TOTAL_BYTES } },
+      fsPort,
+    );
     const { unavailable, notes } = res;
     const hostComplete = !unavailable && Object.keys(notes?.host ?? {}).length === 0;
     const subagentComplete = hostComplete && Object.keys(notes?.subagent ?? {}).length === 0;
-    const subagentRows = res.rows.filter(r => r.role === 'subagent');
-    const subagentActorsComplete = subagentComplete && subagentRows.every(r => r.responseActor !== undefined);
-    const subagentCount = subagentActorsComplete ? new Set(subagentRows.map(r => r.responseActor!)).size : undefined;
-    const maxSubagentDepth = subagentActorsComplete && subagentRows.every(r => r.depth !== undefined) ? subagentRows.reduce((max, r) => Math.max(max, r.depth!), 0) : undefined;
+    const subagentRows = res.rows.filter((r) => r.role === 'subagent');
+    const subagentActorsComplete = subagentComplete && subagentRows.every((r) => r.responseActor !== undefined);
+    const subagentCount = subagentActorsComplete ? new Set(subagentRows.map((r) => r.responseActor!)).size : undefined;
+    const maxSubagentDepth =
+      subagentActorsComplete && subagentRows.every((r) => r.depth !== undefined)
+        ? subagentRows.reduce((max, r) => Math.max(max, r.depth!), 0)
+        : undefined;
     const responses = foldHostResponses(res, input.stages);
     return {
-      platform, rows: foldHostRows(res.rows, input.phases ?? [], hostComplete, subagentComplete),
+      platform,
+      rows: foldHostRows(res.rows, input.phases ?? [], hostComplete, subagentComplete),
       ...(hostComplete && res.userTurns !== undefined ? { userTurns: res.userTurns } : {}),
-      ...(hostComplete && res.userTurns !== undefined && res.userTurnsByStage !== undefined ? { userTurnsByStage: res.userTurnsByStage } : {}),
+      ...(hostComplete && res.userTurns !== undefined && res.userTurnsByStage !== undefined
+        ? { userTurnsByStage: res.userTurnsByStage }
+        : {}),
       ...(subagentCount === undefined ? {} : { subagentCount }),
       ...(maxSubagentDepth === undefined ? {} : { maxSubagentDepth }),
       ...(unavailable === undefined ? {} : { unavailable }),
       ...(notes === undefined ? {} : { notes }),
       ...(responses === undefined ? {} : { responses }),
     };
-  } catch (error) { return { platform, rows: [], unavailable: readErrorReason(error) }; }
+  } catch (error) {
+    return { platform, rows: [], unavailable: readErrorReason(error) };
+  }
 }
 export const nodeHostUsageFs: HostUsageFs = {
-  list(dir) { try { return fs.readdirSync(dir); } catch (error) { if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return []; throw error; } },
-  stat(file) { try { const s = fs.statSync(file); return { size: s.size, mtimeMs: s.mtimeMs }; } catch (error) { if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return null; throw error; } },
-  read(file, maxBytes) { const fd = fs.openSync(file, 'r'); try { const chunks: Buffer[] = []; let total = 0; while (total < maxBytes) { const data = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes - total)); const count = fs.readSync(fd, data, 0, data.length, null); if (!count) break; chunks.push(data.subarray(0, count)); total += count; } return Buffer.concat(chunks, total); } finally { fs.closeSync(fd); } },
-  decompress: typeof zlib.zstdDecompressSync === 'function' ? (data, maxBytes) => zlib.zstdDecompressSync(data, { maxOutputLength: maxBytes }) : null,
+  list(dir) {
+    try {
+      return fs.readdirSync(dir);
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return [];
+      throw error;
+    }
+  },
+  stat(file) {
+    try {
+      const s = fs.statSync(file);
+      return { size: s.size, mtimeMs: s.mtimeMs };
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return null;
+      throw error;
+    }
+  },
+  read(file, maxBytes) {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (total < maxBytes) {
+        const data = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes - total));
+        const count = fs.readSync(fd, data, 0, data.length, null);
+        if (!count) break;
+        chunks.push(data.subarray(0, count));
+        total += count;
+      }
+      return Buffer.concat(chunks, total);
+    } finally {
+      fs.closeSync(fd);
+    }
+  },
+  decompress:
+    typeof zlib.zstdDecompressSync === 'function'
+      ? (data, maxBytes) => zlib.zstdDecompressSync(data, { maxOutputLength: maxBytes })
+      : null,
   sqliteGenMetadata: (file) => readAgySqliteGenMetadata(file, { throwOnError: true }),
   opencodeMessages: readOpencodeMessages,
 };

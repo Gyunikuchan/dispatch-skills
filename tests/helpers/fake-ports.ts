@@ -11,7 +11,12 @@ export interface TestFs {
   copyFileAtomic(source: string, destination: string): void;
   copyFileExclusive(source: string, destination: string): boolean;
   listFiles(dir: string): string[];
-  inspectPath(file: string): { kind: 'file' | 'directory' | 'symlink'; mode: number; linkTarget: string | null; realPath: string | null } | null;
+  inspectPath(file: string): {
+    kind: 'file' | 'directory' | 'symlink';
+    mode: number;
+    linkTarget: string | null;
+    realPath: string | null;
+  } | null;
   setMode(file: string, mode: number): void;
   writeLinkAtomic(file: string, target: string): void;
   readText(file: string): string;
@@ -40,31 +45,49 @@ function syncDirectory(dir: string): void {
   if (process.platform === 'win32') return;
   try {
     const fd = fs.openSync(dir, 'r');
-    try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EISDIR', 'EPERM'].includes(String((error as { code?: string }).code))) throw error;
+    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EISDIR', 'EPERM'].includes(String((error as { code?: string }).code)))
+      throw error;
   }
 }
 
 // Effect folders appear lazily, so every create-style write makes its parent first.
-const ensureParent = (file: string): void => { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); };
+const ensureParent = (file: string): void => {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+};
 
 function hashFile(file: string): string {
-  const digest = crypto.createHash('sha256'), fd = fs.openSync(file, 'r'), chunk = Buffer.allocUnsafe(64 * 1024);
-  try { let count: number; while ((count = fs.readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, count)); }
-  finally { fs.closeSync(fd); }
+  const digest = crypto.createHash('sha256'),
+    fd = fs.openSync(file, 'r'),
+    chunk = Buffer.allocUnsafe(64 * 1024);
+  try {
+    let count: number;
+    while ((count = fs.readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, count));
+  } finally {
+    fs.closeSync(fd);
+  }
   return digest.digest('hex');
 }
 
 function replaceAtomic(temp: string, file: string): void {
-  try { fs.renameSync(temp, file); }
-  catch (error) {
+  try {
+    fs.renameSync(temp, file);
+  } catch (error) {
     if (process.platform !== 'win32' || (error as { code?: string }).code !== 'EPERM') throw error;
     const info = fs.lstatSync(file);
     if (!info.isFile() || (info.mode & 0o200) !== 0) throw error;
     fs.chmodSync(file, info.mode | 0o200);
-    try { fs.renameSync(temp, file); }
-    catch (retryError) { fs.chmodSync(file, info.mode); throw retryError; }
+    try {
+      fs.renameSync(temp, file);
+    } catch (retryError) {
+      fs.chmodSync(file, info.mode);
+      throw retryError;
+    }
   }
 }
 
@@ -73,35 +96,64 @@ function publishAtomic(file: string, content: string | Buffer): void {
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
   try {
     const fd = fs.openSync(temp, 'wx');
-    try { fs.writeFileSync(fd, content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      fs.writeFileSync(fd, content);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     replaceAtomic(temp, file);
     syncDirectory(path.dirname(file));
   } finally {
-    try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; }
+    try {
+      fs.unlinkSync(temp);
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'ENOENT') throw error;
+    }
   }
 }
 
 const nodeFs: TestFs = {
   *readChunks(file, chunkBytes = 64 * 1024) {
-    if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024) throw new Error('Invalid chunk size.');
+    if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024)
+      throw new Error('Invalid chunk size.');
     const fd = fs.openSync(file, 'r');
     try {
       const chunk = Buffer.allocUnsafe(chunkBytes);
       let count: number;
       while ((count = fs.readSync(fd, chunk)) > 0) yield Buffer.from(chunk.subarray(0, count));
-    } finally { fs.closeSync(fd); }
+    } finally {
+      fs.closeSync(fd);
+    }
   },
   hashFile,
   copyFileExclusive(source, destination) {
     ensureParent(destination);
     const temp = path.join(path.dirname(destination), `.${path.basename(destination)}.${crypto.randomUUID()}.tmp`);
     try {
-      fs.copyFileSync(source, temp, fs.constants.COPYFILE_EXCL); fs.chmodSync(temp, 0o600);
+      fs.copyFileSync(source, temp, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(temp, 0o600);
       const fd = fs.openSync(temp, 'r+');
-      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      try { fs.linkSync(temp, destination); syncDirectory(path.dirname(destination)); return true; }
-      catch (error) { if ((error as { code?: string }).code === 'EEXIST') return false; throw error; }
-    } finally { try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
+      try {
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        fs.linkSync(temp, destination);
+        syncDirectory(path.dirname(destination));
+        return true;
+      } catch (error) {
+        if ((error as { code?: string }).code === 'EEXIST') return false;
+        throw error;
+      }
+    } finally {
+      try {
+        fs.unlinkSync(temp);
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      }
+    }
   },
   copyFileAtomic(source, destination) {
     const temp = path.join(path.dirname(destination), `.${path.basename(destination)}.${crypto.randomUUID()}.tmp`);
@@ -109,11 +161,19 @@ const nodeFs: TestFs = {
       fs.copyFileSync(source, temp, fs.constants.COPYFILE_EXCL);
       fs.chmodSync(temp, 0o600);
       const fd = fs.openSync(temp, 'r+');
-      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      try {
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       replaceAtomic(temp, destination);
       syncDirectory(path.dirname(destination));
     } finally {
-      try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; }
+      try {
+        fs.unlinkSync(temp);
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      }
     }
   },
   listFiles(dir) {
@@ -131,17 +191,46 @@ const nodeFs: TestFs = {
   },
   inspectPath(file) {
     let stat;
-    try { stat = fs.lstatSync(file); } catch (error) { if (['ENOENT', 'ENOTDIR'].includes(String((error as { code?: string }).code))) return null; throw error; }
-    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink()) throw new Error(`Unsupported file type: ${file}`);
+    try {
+      stat = fs.lstatSync(file);
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes(String((error as { code?: string }).code))) return null;
+      throw error;
+    }
+    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink())
+      throw new Error(`Unsupported file type: ${file}`);
     let realPath: string | null;
-    try { realPath = fs.realpathSync(file); } catch { realPath = null; }
-    return { kind: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : 'file', mode: stat.mode & 0o7777, linkTarget: stat.isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }).toString('base64') : null, realPath };
+    try {
+      realPath = fs.realpathSync(file);
+    } catch {
+      realPath = null;
+    }
+    return {
+      kind: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : 'file',
+      mode: stat.mode & 0o7777,
+      linkTarget: stat.isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }).toString('base64') : null,
+      realPath,
+    };
   },
-  setMode: (file, mode) => { fs.chmodSync(file, mode); },
+  setMode: (file, mode) => {
+    fs.chmodSync(file, mode);
+  },
   writeLinkAtomic(file, target) {
-    const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.link.tmp`);
-    try { fs.symlinkSync(Buffer.from(target, 'base64'), temporary); replaceAtomic(temporary, file); syncDirectory(path.dirname(file)); }
-    finally { try { fs.unlinkSync(temporary); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
+    const temporary = path.join(
+      path.dirname(file),
+      `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.link.tmp`,
+    );
+    try {
+      fs.symlinkSync(Buffer.from(target, 'base64'), temporary);
+      replaceAtomic(temporary, file);
+      syncDirectory(path.dirname(file));
+    } finally {
+      try {
+        fs.unlinkSync(temporary);
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      }
+    }
   },
   readText: (file) => fs.readFileSync(file, 'utf8'),
   readBase64: (file) => fs.readFileSync(file).toString('base64'),
@@ -150,37 +239,70 @@ const nodeFs: TestFs = {
   },
   exists: (file) => fs.existsSync(file),
   size: (file) => fs.statSync(file).size,
-  mkdir: (dir, options) => { fs.mkdirSync(dir, options); },
+  mkdir: (dir, options) => {
+    fs.mkdirSync(dir, options);
+  },
   appendDurable(file, text) {
     ensureParent(file);
     const fd = fs.openSync(file, 'a');
-    try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      fs.writeSync(fd, text);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   },
   writeExclusive(file, text) {
     ensureParent(file);
     const fd = fs.openSync(file, 'wx');
-    try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      fs.writeSync(fd, text);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   },
   publishExclusive(file, text) {
     ensureParent(file);
     const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
     try {
       const fd = fs.openSync(temp, 'wx');
-      try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      try { fs.linkSync(temp, file); syncDirectory(path.dirname(file)); return true; }
-      catch (error) { if ((error as { code?: string }).code === 'EEXIST') return false; throw error; }
-    } finally { try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
+      try {
+        fs.writeSync(fd, text);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        fs.linkSync(temp, file);
+        syncDirectory(path.dirname(file));
+        return true;
+      } catch (error) {
+        if ((error as { code?: string }).code === 'EEXIST') return false;
+        throw error;
+      }
+    } finally {
+      try {
+        fs.unlinkSync(temp);
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      }
+    }
   },
   writeAtomic(file, text) {
     publishAtomic(file, text);
   },
   truncate(file, length) {
     const fd = fs.openSync(file, 'r+');
-    try { fs.ftruncateSync(fd, length); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+      fs.ftruncateSync(fd, length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   },
   remove: nodeLinkFs.remove,
 };
-
 
 export interface FakePorts {
   fs: TestFs;

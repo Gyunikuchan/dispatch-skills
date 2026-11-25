@@ -30,25 +30,37 @@ test('brief size reports preserve exact UTF-8 section accounting', async () => {
     ],
   });
   assert.equal(Buffer.byteLength(text), 138);
-  assert.equal(report.sections.reduce((total, section) => total + section.bytes, 0), report.totalBytes);
+  assert.equal(
+    report.sections.reduce((total, section) => total + section.bytes, 0),
+    report.totalBytes,
+  );
 
   assert.deepEqual(measureBrief(''), { totalBytes: 0, sections: [] });
   const unsectioned = measureBrief('plain 💾\ntext');
   assert.deepEqual(unsectioned, { totalBytes: 15, sections: [{ heading: null, occurrence: 1, bytes: 15 }] });
-  assert.equal(unsectioned.sections.reduce((total, section) => total + section.bytes, 0), unsectioned.totalBytes);
+  assert.equal(
+    unsectioned.sections.reduce((total, section) => total + section.bytes, 0),
+    unsectioned.totalBytes,
+  );
 });
 
 test('brief size command reports inputs and errors without writes', async () => {
   const { runBriefSize } = await loadBriefSize();
-  const reads: string[] = [], stdout: string[] = [], stderr: string[] = [];
+  const reads: string[] = [],
+    stdout: string[] = [],
+    stderr: string[] = [];
   const io = {
     readText(file: string) {
       reads.push(file);
       if (file === 'missing.md') throw new Error('file unavailable');
       return file === 'first.md' ? '## First\nα' : 'Preamble';
     },
-    writeStdout(text: string) { stdout.push(text); },
-    writeStderr(text: string) { stderr.push(text); },
+    writeStdout(text: string) {
+      stdout.push(text);
+    },
+    writeStderr(text: string) {
+      stderr.push(text);
+    },
   };
 
   assert.equal(runBriefSize(['first.md', 'second.md'], io), 0);

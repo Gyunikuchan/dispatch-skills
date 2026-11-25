@@ -1,7 +1,18 @@
 // Canonical Markdown form used as the hash input. Formatter-only differences collapse;
 // differences that change CommonMark/GFM structure or literal text stay distinct.
 
-type BlockKind = 'blank' | 'verbatim' | 'html' | 'para' | 'setextText' | 'list' | 'heading' | 'thematic' | 'setext' | 'table' | 'fence';
+type BlockKind =
+  | 'blank'
+  | 'verbatim'
+  | 'html'
+  | 'para'
+  | 'setextText'
+  | 'list'
+  | 'heading'
+  | 'thematic'
+  | 'setext'
+  | 'table'
+  | 'fence';
 
 interface Block {
   kind: BlockKind;
@@ -30,8 +41,10 @@ const LIST = /^([-*+]|\d{1,9}[.)])(?=[ \t]|$)([ \t]*)(.*)$/;
 // CommonMark HTML block starts: types 1-6 may interrupt a paragraph; type 7 (a lone complete tag) may not.
 const HTML_RAW = /^<(pre|script|style|textarea)(?=[\s>]|$)/i;
 const HTML_SPECIAL = /^<(?:!--|\?|![A-Za-z]|!\[CDATA\[)/;
-const HTML_BLOCK_TAG = /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\s>]|\/>|$)/i;
-const HTML_LONE_TAG = /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$/;
+const HTML_BLOCK_TAG =
+  /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\s>]|\/>|$)/i;
+const HTML_LONE_TAG =
+  /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$/;
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const DELIM_CELL = /^:?-+:?$/;
 
@@ -39,8 +52,22 @@ const DELIM_CELL = /^:?-+:?$/;
 
 function make(kind: BlockKind, level: number, width: number, extra: Partial<Block> = {}): Block {
   return {
-    kind, level, width, lines: [], head: '', text: '', brk: null, hard: false, interrupts: false,
-    closed: false, closeWidth: 0, closeWs: '', fenceChar: '', fenceLen: 0, info: '', code: [],
+    kind,
+    level,
+    width,
+    lines: [],
+    head: '',
+    text: '',
+    brk: null,
+    hard: false,
+    interrupts: false,
+    closed: false,
+    closeWidth: 0,
+    closeWs: '',
+    fenceChar: '',
+    fenceLen: 0,
+    info: '',
+    code: [],
     ...extra,
   };
 }
@@ -308,7 +335,7 @@ function tableCells(content: string): { cells: string[]; piped: boolean } {
 }
 
 function isDelimiter(content: string): boolean {
-  return content.includes('|') && tableCells(content).cells.every(cell => DELIM_CELL.test(cell));
+  return content.includes('|') && tableCells(content).cells.every((cell) => DELIM_CELL.test(cell));
 }
 
 function delimiterCell(cell: string): string {
@@ -318,7 +345,7 @@ function delimiterCell(cell: string): string {
 function tableLine(lead: string, content: string, delimiter: boolean): string {
   const { cells, piped } = tableCells(content);
   if (!piped) return lead + inline(cells[0] ?? '');
-  const body = cells.map(cell => (delimiter ? delimiterCell(cell) : inline(cell))).join('|');
+  const body = cells.map((cell) => (delimiter ? delimiterCell(cell) : inline(cell))).join('|');
   return `${lead}|${body}|`;
 }
 
@@ -376,13 +403,23 @@ function dropBlank(items: Block[], k: number): boolean {
   const before = items[p];
   const after = items[n];
   if (!before || !after) return true;
-  const ruleA = (isSpecial(before, 'end') && isPlain(after, 'start')) || (isSpecial(after, 'start') && isPlain(before, 'end'));
+  const ruleA =
+    (isSpecial(before, 'end') && isPlain(after, 'start')) || (isSpecial(after, 'start') && isPlain(before, 'end'));
   if (ruleA) return true;
   const start = paragraphRunStart(items, p);
   const first = items[start];
-  const ruleB = after.kind === 'list' && after.level === 0 && after.width === 0 && after.interrupts
-    && before.kind === 'para' && before.level === 0 && first !== undefined && first.kind === 'para'
-    && first.width === 0 && first.level === 0 && items[start - 1]?.kind !== 'list';
+  const ruleB =
+    after.kind === 'list' &&
+    after.level === 0 &&
+    after.width === 0 &&
+    after.interrupts &&
+    before.kind === 'para' &&
+    before.level === 0 &&
+    first !== undefined &&
+    first.kind === 'para' &&
+    first.width === 0 &&
+    first.level === 0 &&
+    items[start - 1]?.kind !== 'list';
   return ruleB;
 }
 
@@ -466,7 +503,10 @@ export function canonicalMarkdown(text: string): string {
     const opener = fenceOpener(content);
     if (opener) {
       fence = make('fence', level, width, {
-        head: lead, fenceChar: opener.char, fenceLen: opener.len, info: opener.info,
+        head: lead,
+        fenceChar: opener.char,
+        fenceLen: opener.len,
+        info: opener.info,
       });
       blocks.push(fence);
       i++;
@@ -477,7 +517,9 @@ export function canonicalMarkdown(text: string): string {
       const owner = blocks[paragraphRunStart(blocks, blocks.length - 1) - 1];
       if (owner?.kind !== 'list') {
         prev.kind = 'setextText';
-        blocks.push(make('setext', level, width, { lines: [wrap(level, `${lead}${content[0] === '=' ? '===' : '---'}`)] }));
+        blocks.push(
+          make('setext', level, width, { lines: [wrap(level, `${lead}${content[0] === '=' ? '===' : '---'}`)] }),
+        );
         i++;
         continue;
       }
@@ -513,13 +555,15 @@ export function canonicalMarkdown(text: string): string {
       const marker = item[1] ?? '';
       const body = item[3] ?? '';
       const numeric = /^\d/.test(marker);
-      blocks.push(make('list', level, width, {
-        // NOTE: the gap after the marker passes verbatim; its width sets content indent and indented code.
-        head: lead + marker + (item[2] ?? ''),
-        text: body,
-        brk: trailingBreak(body),
-        interrupts: body.trim() !== '' && (!numeric || Number.parseInt(marker, 10) === 1),
-      }));
+      blocks.push(
+        make('list', level, width, {
+          // NOTE: the gap after the marker passes verbatim; its width sets content indent and indented code.
+          head: lead + marker + (item[2] ?? ''),
+          text: body,
+          brk: trailingBreak(body),
+          interrupts: body.trim() !== '' && (!numeric || Number.parseInt(marker, 10) === 1),
+        }),
+      );
       i++;
       continue;
     }
@@ -528,10 +572,15 @@ export function canonicalMarkdown(text: string): string {
     if (next && next.level === level) {
       const nextLead = leading(next.rest);
       const nextContent = next.rest.slice(nextLead.length);
-      if (indentWidth(nextLead) < 4 && isDelimiter(nextContent)
-        && tableCells(content).cells.length === tableCells(nextContent).cells.length) {
+      if (
+        indentWidth(nextLead) < 4 &&
+        isDelimiter(nextContent) &&
+        tableCells(content).cells.length === tableCells(nextContent).cells.length
+      ) {
         blocks.push(make('table', level, width, { lines: [wrap(level, tableLine(lead, content, false))] }));
-        blocks.push(make('table', level, indentWidth(nextLead), { lines: [wrap(level, tableLine(nextLead, nextContent, true))] }));
+        blocks.push(
+          make('table', level, indentWidth(nextLead), { lines: [wrap(level, tableLine(nextLead, nextContent, true))] }),
+        );
         i += 2;
         continue;
       }
@@ -573,8 +622,7 @@ function finish(blocks: Block[]): string {
       const r = renderProse(b, open, later.join('\n'));
       b.lines = [r.line];
       open = r.open;
-    }
-    else if (b.kind === 'blank') b.lines = [wrap(b.level, '')];
+    } else if (b.kind === 'blank') b.lines = [wrap(b.level, '')];
   });
 
   // Collapse runs of blank lines at the same blockquote level into one.

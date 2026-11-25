@@ -10,78 +10,128 @@ test('diagnostics stay observational across CLI recovery and report completion',
   const f = await toolkitRepo();
   try {
     await f.level('low');
-      const skill = path.join(f.session, 'private-skill');
-      fs.cpSync(f.deps.skillRoot, skill, { recursive: true });
-      const configPath = path.join(skill, 'config.local.jsonc');
-      fs.writeFileSync(configPath, JSON.stringify({ diagnostics: true,
+    const skill = path.join(f.session, 'private-skill');
+    fs.cpSync(f.deps.skillRoot, skill, { recursive: true });
+    const configPath = path.join(skill, 'config.local.jsonc');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        diagnostics: true,
         'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } },
         'write-subagents': { codex: { low: { model: 'native', effort: 'low' } } },
         'utility-subagents': { codex: { model: 'native', effort: 'low', 'context-limit': 300000 } },
         phases: { ask: { targets: { low: 1 }, rounds: { low: 1 } } },
-      }));
-      const env = { ...process.env };
-      for (const key of ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
-      const entry = path.join(skill, 'scripts/dispatch.ts');
-      // The host comes from `session init --host`; the fixture session predates it, so copy the recorded host over.
-      const init = spawnSync(process.execPath, [entry, 'session', 'init', '--objective', 'Declared host', '--session-id', 'declared-host', '--host', 'codex'], { cwd: f.root, env, encoding: 'utf8' });
-      assert.equal(init.status, 0, init.stderr + init.stdout);
-      const declared = JSON.parse(fs.readFileSync(path.join(JSON.parse(init.stdout).path, 'manifest.json'), 'utf8')).host;
-      assert.equal(declared, 'codex');
-      const manifestFile = path.join(f.session, 'manifest.json');
-      fs.writeFileSync(manifestFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: declared }));
-      const run = (args: string[], expected = 0) => {
-        const child = f.spawned(args, entry, env);
-        assert.equal(child.status, expected, child.stderr + child.stdout);
-        const lines = child.stdout.trim().split(/\r?\n/);
-        assert.equal(lines.length, 1);
-        const output = JSON.parse(lines[0]!);
-        assert.ok(Buffer.byteLength(output.summary) <= 1024);
-        return { output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
-      };
-      assert.equal(run(['doctor', 'run', '--host', 'codex']).value.config.path, configPath);
-      const question = path.join(f.session, 'question.md');
-      fs.writeFileSync(question, 'Explain the fixture behavior');
-      const pending = run(['ask', 'run', question, '--host', 'codex'], 4);
-      assert.equal(pending.output.reason, 'native-pending');
-      assert.equal(pending.value.native.length, 1);
-      const reply = pending.value.native[0].replyPath;
-      fs.writeFileSync(reply, 'Retained native answer');
-      const captures = path.join(f.session, '.state/diagnostics');
-      assert.ok(fs.readdirSync(captures).length > 0);
-      // An interrupted optional collection must survive process readback as partial evidence.
-      fs.writeFileSync(path.join(captures, 'interrupted.json'), JSON.stringify({ phases: [], invocations: [], reviews: [], capture: { state: 'opened', start: 1 } }));
-      const answered = run(['ask', 'run', question, '--host', 'codex']);
-      assert.deepEqual(answered.value.answers.map((answer: {text: string}) => answer.text), ['Retained native answer']);
-      assert.equal(fs.readFileSync(reply, 'utf8'), 'Retained native answer');
-      fs.writeFileSync(path.join(f.session, '.state/retro.json'), '[]');
-      const rendered = run(['report', 'render']);
-      assert.ok(fs.existsSync(path.resolve(f.session, rendered.value.path)));
-      assert.equal('diagnostics' in rendered.value, true);
-      const report = fs.readFileSync(path.resolve(f.session, rendered.value.diagnostics), 'utf8');
-      assert.match(report, /Collection warning: partial[\s\S]*incomplete 1/i);
-      assert.match(report, /completed/i);
-      assert.doesNotMatch(report, /Explain the fixture behavior|Retained native answer/);
-      const writer = run(['worktree', 'create', 'T1']);
-      fs.writeFileSync(path.resolve(f.session, writer.value.path, 'src/file.ts'), 'delivered\n');
-      run(['worktree', 'submit', 'T1']); run(['worktree', 'integrate', 'T1']);
-      run(['check', 'run']);
-      const proof = path.join(f.session, 'proof.json');
-      fs.writeFileSync(proof, JSON.stringify({kind:'integrate',by:'orchestrator',data:{phase:'verification',cycle:1,outcome:'no-op',head:f.git(['rev-parse','HEAD'],f.integration),reason:'fixture',open:[]}}));
-      run(['ledger','append',proof]); run(['worktree', 'deliver']);
-      const complete = run(['report', 'complete']);
-      assert.ok(fs.existsSync(path.resolve(f.session, complete.value.path)));
-      assert.equal('diagnostics' in complete.value, true);
-      assert.ok(complete.value.statuses.some((status: { criterion: string }) => status.criterion === 'contract'));
-      const pairs = parsePairs({ pairs: [{ name: 'delivered', sides: [{
-        label: 'current', session: f.session, host: 'codex',
-        reportComplete: path.relative(f.session, complete.output.path).split(path.sep).join('/'),
-      }] }] });
-      const comparison = measureRuns(pairs, {
-        baseDir: f.root, home: f.root, env,
-        pricing: { path: 'pricing.json', text: fs.readFileSync(path.join(skill, 'references/pricing.json'), 'utf8') },
-      });
-      assert.deepEqual(comparison.pairs[0]?.sides[0]?.efficiency.verification?.criteria, [{ id: 'SC1', state: 'verified' }]);
-      assert.equal(fs.readFileSync(path.join(f.root, 'src/file.ts'), 'utf8'), 'delivered\n');
-      run(['worktree', 'cleanup']);
-  } finally { f.cleanup(); }
+      }),
+    );
+    const env = { ...process.env };
+    for (const key of ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
+    const entry = path.join(skill, 'scripts/dispatch.ts');
+    // The host comes from `session init --host`; the fixture session predates it, so copy the recorded host over.
+    const init = spawnSync(
+      process.execPath,
+      [entry, 'session', 'init', '--objective', 'Declared host', '--session-id', 'declared-host', '--host', 'codex'],
+      { cwd: f.root, env, encoding: 'utf8' },
+    );
+    assert.equal(init.status, 0, init.stderr + init.stdout);
+    const declared = JSON.parse(fs.readFileSync(path.join(JSON.parse(init.stdout).path, 'manifest.json'), 'utf8')).host;
+    assert.equal(declared, 'codex');
+    const manifestFile = path.join(f.session, 'manifest.json');
+    fs.writeFileSync(
+      manifestFile,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: declared }),
+    );
+    const run = (args: string[], expected = 0) => {
+      const child = f.spawned(args, entry, env);
+      assert.equal(child.status, expected, child.stderr + child.stdout);
+      const lines = child.stdout.trim().split(/\r?\n/);
+      assert.equal(lines.length, 1);
+      const output = JSON.parse(lines[0]!);
+      assert.ok(Buffer.byteLength(output.summary) <= 1024);
+      return { output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
+    };
+    assert.equal(run(['doctor', 'run', '--host', 'codex']).value.config.path, configPath);
+    const question = path.join(f.session, 'question.md');
+    fs.writeFileSync(question, 'Explain the fixture behavior');
+    const pending = run(['ask', 'run', question, '--host', 'codex'], 4);
+    assert.equal(pending.output.reason, 'native-pending');
+    assert.equal(pending.value.native.length, 1);
+    const reply = pending.value.native[0].replyPath;
+    fs.writeFileSync(reply, 'Retained native answer');
+    const captures = path.join(f.session, '.state/diagnostics');
+    assert.ok(fs.readdirSync(captures).length > 0);
+    // An interrupted optional collection must survive process readback as partial evidence.
+    fs.writeFileSync(
+      path.join(captures, 'interrupted.json'),
+      JSON.stringify({ phases: [], invocations: [], reviews: [], capture: { state: 'opened', start: 1 } }),
+    );
+    const answered = run(['ask', 'run', question, '--host', 'codex']);
+    assert.deepEqual(
+      answered.value.answers.map((answer: { text: string }) => answer.text),
+      ['Retained native answer'],
+    );
+    assert.equal(fs.readFileSync(reply, 'utf8'), 'Retained native answer');
+    fs.writeFileSync(path.join(f.session, '.state/retro.json'), '[]');
+    const rendered = run(['report', 'render']);
+    assert.ok(fs.existsSync(path.resolve(f.session, rendered.value.path)));
+    assert.equal('diagnostics' in rendered.value, true);
+    const report = fs.readFileSync(path.resolve(f.session, rendered.value.diagnostics), 'utf8');
+    assert.match(report, /Collection warning: partial[\s\S]*incomplete 1/i);
+    assert.match(report, /completed/i);
+    assert.doesNotMatch(report, /Explain the fixture behavior|Retained native answer/);
+    const writer = run(['worktree', 'create', 'T1']);
+    fs.writeFileSync(path.resolve(f.session, writer.value.path, 'src/file.ts'), 'delivered\n');
+    run(['worktree', 'submit', 'T1']);
+    run(['worktree', 'integrate', 'T1']);
+    run(['check', 'run']);
+    const proof = path.join(f.session, 'proof.json');
+    fs.writeFileSync(
+      proof,
+      JSON.stringify({
+        kind: 'integrate',
+        by: 'orchestrator',
+        data: {
+          phase: 'verification',
+          cycle: 1,
+          outcome: 'no-op',
+          head: f.git(['rev-parse', 'HEAD'], f.integration),
+          reason: 'fixture',
+          open: [],
+        },
+      }),
+    );
+    run(['ledger', 'append', proof]);
+    run(['worktree', 'deliver']);
+    const complete = run(['report', 'complete']);
+    assert.ok(fs.existsSync(path.resolve(f.session, complete.value.path)));
+    assert.equal('diagnostics' in complete.value, true);
+    assert.ok(complete.value.statuses.some((status: { criterion: string }) => status.criterion === 'contract'));
+    const pairs = parsePairs({
+      pairs: [
+        {
+          name: 'delivered',
+          sides: [
+            {
+              label: 'current',
+              session: f.session,
+              host: 'codex',
+              reportComplete: path.relative(f.session, complete.output.path).split(path.sep).join('/'),
+            },
+          ],
+        },
+      ],
+    });
+    const comparison = measureRuns(pairs, {
+      baseDir: f.root,
+      home: f.root,
+      env,
+      pricing: { path: 'pricing.json', text: fs.readFileSync(path.join(skill, 'references/pricing.json'), 'utf8') },
+    });
+    assert.deepEqual(comparison.pairs[0]?.sides[0]?.efficiency.verification?.criteria, [
+      { id: 'SC1', state: 'verified' },
+    ]);
+    assert.equal(fs.readFileSync(path.join(f.root, 'src/file.ts'), 'utf8'), 'delivered\n');
+    run(['worktree', 'cleanup']);
+  } finally {
+    f.cleanup();
+  }
 });

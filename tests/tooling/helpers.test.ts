@@ -13,7 +13,10 @@ const require = createRequire(import.meta.url);
 test('every child_process launcher throws a rule-naming error outside tests/e2e/', () => {
   const shared = require('child_process') as Record<string, (...args: unknown[]) => unknown>;
   for (const name of BLOCKED_LAUNCHERS) {
-    assert.throws(() => shared[name]?.('node', ['-v']), (error: unknown) => error instanceof Error && error.message.startsWith(SPAWN_RULE));
+    assert.throws(
+      () => shared[name]?.('node', ['-v']),
+      (error: unknown) => error instanceof Error && error.message.startsWith(SPAWN_RULE),
+    );
   }
   assert.throws(() => prefixed.spawnSync('node', ['-v']), /tiers 1-5 spawn no processes/);
 });

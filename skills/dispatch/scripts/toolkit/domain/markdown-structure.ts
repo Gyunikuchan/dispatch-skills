@@ -30,7 +30,8 @@ export function structuralLines(source: string): StructuralLine[] {
     if (marker) {
       if (fence === null) fence = marker;
       // A closer is bare (no info string), same character, at least the opener's length (CommonMark).
-      else if (marker[0] === fence[0] && marker.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(original)) fence = null;
+      else if (marker[0] === fence[0] && marker.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(original))
+        fence = null;
       return { line, text: '', original, fenced: true };
     }
     if (fence !== null) return { line, text: '', original, fenced: true };
@@ -39,13 +40,19 @@ export function structuralLines(source: string): StructuralLine[] {
     while (cursor < original.length) {
       if (inComment) {
         const close = original.indexOf('-->', cursor);
-        if (close === -1) { cursor = original.length; break; }
+        if (close === -1) {
+          cursor = original.length;
+          break;
+        }
         inComment = false;
         cursor = close + 3;
         continue;
       }
       const open = commentOpenOutsideCode(original, cursor);
-      if (open === -1) { text += original.slice(cursor); break; }
+      if (open === -1) {
+        text += original.slice(cursor);
+        break;
+      }
       text += original.slice(cursor, open);
       inComment = true;
       cursor = open + 4;
@@ -54,7 +61,8 @@ export function structuralLines(source: string): StructuralLine[] {
   });
 }
 
-export const isDetailWrapper = (text: string): boolean => /^(?:<details>|<\/details>|<summary>.*<\/summary>)$/.test(text.trim());
+export const isDetailWrapper = (text: string): boolean =>
+  /^(?:<details>|<\/details>|<summary>.*<\/summary>)$/.test(text.trim());
 
 type SectionRange = { start: number; end: number };
 
@@ -73,7 +81,11 @@ export function withoutSections(source: string, headings: readonly string[]): st
   const raw = source.split(/\r?\n/);
   const drop = new Set<number>();
   for (const heading of headings) {
-    for (const { start, end } of sectionRanges(lines, heading)) for (let index = start; index < end; index++) drop.add(index);
+    for (const { start, end } of sectionRanges(lines, heading))
+      for (let index = start; index < end; index++) drop.add(index);
   }
-  return raw.filter((_line, index) => !drop.has(index)).join('\n').replace(/\s+$/, '\n');
+  return raw
+    .filter((_line, index) => !drop.has(index))
+    .join('\n')
+    .replace(/\s+$/, '\n');
 }

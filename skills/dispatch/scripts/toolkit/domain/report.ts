@@ -12,8 +12,19 @@ const SECTION_LOCUS = /^§\s+\S.*$/;
 const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[1-9]\d*$/;
 
 const BASE_REVIEW_TAGS = [
-  'intent', 'spec', 'correctness', 'reliability', 'security', 'performance', 'compatibility', 'maintainability',
-  'operability', 'testing', 'usability', 'standards', 'adjacent',
+  'intent',
+  'spec',
+  'correctness',
+  'reliability',
+  'security',
+  'performance',
+  'compatibility',
+  'maintainability',
+  'operability',
+  'testing',
+  'usability',
+  'standards',
+  'adjacent',
 ] as const;
 const PLAN_DESIGN_TAGS: ReadonlySet<string> = new Set([...BASE_REVIEW_TAGS, 'architecture', 'decomposition']);
 export const REVIEW_TAGS_BY_KIND: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
@@ -27,10 +38,13 @@ const LOCUS: Readonly<Record<ReviewKind, RegExp>> = { code: CODE_LOCUS, plan: SE
 const FINDING_FIELDS = ['defect', 'impact', 'locus', 'requiredChange', 'tag', 'trigger'];
 const OPTIONAL_FIELDS = ['origin'];
 const ORIGINS: readonly FindingOrigin[] = ['original', 'fix-induced', 'unknown'];
-const originRank = (origin: FindingOrigin | undefined): number => origin === 'fix-induced' ? 2 : origin === 'original' ? 1 : 0;
+const originRank = (origin: FindingOrigin | undefined): number =>
+  origin === 'fix-induced' ? 2 : origin === 'original' ? 1 : 0;
 /** `fix-induced` wins and a known value replaces `unknown`. */
-const mergeOrigin = (a: FindingOrigin | undefined, b: FindingOrigin | undefined): FindingOrigin | undefined => originRank(b) > originRank(a) ? b : a;
-const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
+const mergeOrigin = (a: FindingOrigin | undefined, b: FindingOrigin | undefined): FindingOrigin | undefined =>
+  originRank(b) > originRank(a) ? b : a;
+const REFUSAL =
+  /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
 
 /** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
 function normalizeLocus(kind: ReviewKind, locus: string): string {
@@ -50,12 +64,26 @@ function unresolvedLocus(reported: unknown): string {
   const text = (typeof reported === 'string' && sanitizeText(reported)) || '(none)';
   if (Buffer.byteLength(text, 'utf8') <= UNRESOLVED_LOCUS_BYTES) return UNRESOLVED_LOCUS + text;
   // NOTE: a byte cut can end inside a character, which decodes to one trailing U+FFFD.
-  return UNRESOLVED_LOCUS + Buffer.from(text, 'utf8').subarray(0, UNRESOLVED_LOCUS_BYTES - 3).toString('utf8').replace(/\uFFFD$/, '') + '…';
+  return (
+    UNRESOLVED_LOCUS +
+    Buffer.from(text, 'utf8')
+      .subarray(0, UNRESOLVED_LOCUS_BYTES - 3)
+      .toString('utf8')
+      .replace(/\uFFFD$/, '') +
+    '…'
+  );
 }
 
 // SECTION: JSON extraction
 
-const parses = (text: string): boolean => {try {JSON.parse(text); return true;} catch {return false;}};
+const parses = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
 const MAX_CANDIDATES = 1024;
 const FENCE = '```';
 
@@ -68,7 +96,11 @@ function endOfPrior(text: string, i: number): number {
 /** A line-start or json-tagged opener; a raw newline cannot occur in a JSON string, so embedded fences never qualify. */
 function fencedBody(text: string): string | null {
   const close = text.length - FENCE.length;
-  for (let open = text.lastIndexOf(FENCE, close - 1); open >= 0; open = open === 0 ? -1 : text.lastIndexOf(FENCE, open - 1)) {
+  for (
+    let open = text.lastIndexOf(FENCE, close - 1);
+    open >= 0;
+    open = open === 0 ? -1 : text.lastIndexOf(FENCE, open - 1)
+  ) {
     const body = text.slice(open + FENCE.length, close);
     let lineStart = open;
     while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) lineStart--;
@@ -84,9 +116,11 @@ function continuesContainer(text: string, lineStart: number): boolean {
   const line = text.slice(text.lastIndexOf('\n', end - 1) + 1, end).trim();
   if (parses(line)) return false;
   if (line.endsWith(',') && parses(line.slice(0, -1))) return true;
-  return /^[{[,][{[,\s]*"[^"]*"\s*:/.test(line)
-    || /^"[^"]*"\s*:\s*(?:$|[{["]|(?:-?\d[\d.eE+-]*|true|false|null)\s*,?$)/.test(line)
-    || /^(?:[{[]|[}\]]\s*,)$/.test(line);
+  return (
+    /^[{[,][{[,\s]*"[^"]*"\s*:/.test(line) ||
+    /^"[^"]*"\s*:\s*(?:$|[{["]|(?:-?\d[\d.eE+-]*|true|false|null)\s*,?$)/.test(line) ||
+    /^(?:[{[]|[}\]]\s*,)$/.test(line)
+  );
 }
 
 /**
@@ -99,7 +133,11 @@ function extractJsonText(raw: string): string {
   if (text.endsWith(FENCE)) return fencedBody(text) ?? text;
   if (!text.endsWith('}')) return text;
   let tried = 0;
-  for (let brace = text.lastIndexOf('{'); brace >= 0 && tried < MAX_CANDIDATES; brace = brace === 0 ? -1 : text.lastIndexOf('{', brace - 1)) {
+  for (
+    let brace = text.lastIndexOf('{');
+    brace >= 0 && tried < MAX_CANDIDATES;
+    brace = brace === 0 ? -1 : text.lastIndexOf('{', brace - 1)
+  ) {
     let lineStart = brace;
     while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) lineStart--;
     if (lineStart > 0 && text[lineStart - 1] !== '\n') continue;
@@ -115,15 +153,25 @@ function extractJsonText(raw: string): string {
 
 type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope';
 type ReportFailure = { kind: ReportFailureKind; detail: string };
-type Confirmation = {requestId: string; decision: 'agree' | 'disagree'; rationale: string};
-type ReportInput = { kind: ReviewKind; source: SlotId; text: string; truncated?: boolean; expectedRequestIds?: readonly string[] };
+type Confirmation = { requestId: string; decision: 'agree' | 'disagree'; rationale: string };
+type ReportInput = {
+  kind: ReviewKind;
+  source: SlotId;
+  text: string;
+  truncated?: boolean;
+  expectedRequestIds?: readonly string[];
+};
 type ReportResult =
   | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: DraftFinding[]; confirmations?: Confirmation[] }
   | { ok: false; failure: ReportFailure };
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 const fail = (kind: ReportFailureKind, detail: string): ReportResult => ({ ok: false, failure: { kind, detail } });
 function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
-  try { return { ok: true, value: JSON.parse(extractJsonText(text)) as unknown }; } catch { return { ok: false }; }
+  try {
+    return { ok: true, value: JSON.parse(extractJsonText(text)) as unknown };
+  } catch {
+    return { ok: false };
+  }
 }
 /**
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
@@ -143,7 +191,8 @@ export function parseReport(input: ReportInput): ReportResult {
     return fail('uncovered-scope', 'no JSON report object found');
   }
   const value = parsed.value;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fail('uncovered-scope', 'report must be a JSON object');
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return fail('uncovered-scope', 'report must be a JSON object');
   const record = value as Record<string, unknown>;
   const status = record['status'];
   const items = record['findings'];
@@ -153,18 +202,37 @@ export function parseReport(input: ReportInput): ReportResult {
     if (nonEmpty(reason)) return fail('blocked', reason.trim());
   }
   const fields = Object.keys(record).sort().join('\0');
-  if (fields !== 'findings\0status' && fields !== 'confirmations\0findings\0status') return fail('uncovered-scope', 'report fields must be status, findings and optional confirmations');
+  if (fields !== 'findings\0status' && fields !== 'confirmations\0findings\0status')
+    return fail('uncovered-scope', 'report fields must be status, findings and optional confirmations');
   const confirmations: Confirmation[] = [];
   if (Object.hasOwn(record, 'confirmations')) {
     if (!Array.isArray(record['confirmations'])) return fail('uncovered-scope', 'confirmations must be an array');
     for (const item of record['confirmations']) {
-      if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).sort().join('\0') !== 'decision\0rationale\0requestId') return fail('uncovered-scope', 'confirmation fields must be exactly requestId, decision, rationale');
-      const {requestId, decision, rationale} = item;
-      if (!nonEmpty(requestId) || (decision !== 'agree' && decision !== 'disagree') || !nonEmpty(rationale) || !sanitizeText(rationale) || confirmations.some(reply => reply.requestId === requestId)) return fail('uncovered-scope', 'confirmation needs a unique requestId, explicit decision and rationale');
-      confirmations.push({requestId, decision, rationale: sanitizeText(rationale)});
+      if (
+        !item ||
+        typeof item !== 'object' ||
+        Array.isArray(item) ||
+        Object.keys(item).sort().join('\0') !== 'decision\0rationale\0requestId'
+      )
+        return fail('uncovered-scope', 'confirmation fields must be exactly requestId, decision, rationale');
+      const { requestId, decision, rationale } = item;
+      if (
+        !nonEmpty(requestId) ||
+        (decision !== 'agree' && decision !== 'disagree') ||
+        !nonEmpty(rationale) ||
+        !sanitizeText(rationale) ||
+        confirmations.some((reply) => reply.requestId === requestId)
+      )
+        return fail('uncovered-scope', 'confirmation needs a unique requestId, explicit decision and rationale');
+      confirmations.push({ requestId, decision, rationale: sanitizeText(rationale) });
     }
   }
-  if (input.expectedRequestIds && (confirmations.length !== input.expectedRequestIds.length || confirmations.some(reply => !input.expectedRequestIds!.includes(reply.requestId)))) return fail('uncovered-scope', 'each assigned confirmation request requires exactly one explicit reply');
+  if (
+    input.expectedRequestIds &&
+    (confirmations.length !== input.expectedRequestIds.length ||
+      confirmations.some((reply) => !input.expectedRequestIds!.includes(reply.requestId)))
+  )
+    return fail('uncovered-scope', 'each assigned confirmation request requires exactly one explicit reply');
   if ((status !== 'CLEAN' && status !== 'FINDINGS') || !Array.isArray(items)) {
     return fail('uncovered-scope', 'report must carry status CLEAN|FINDINGS and a findings array');
   }
@@ -172,28 +240,43 @@ export function parseReport(input: ReportInput): ReportResult {
   const seen = new Map<string, DraftFinding>();
   const pattern = LOCUS[kind];
   for (const [index, item] of items.entries()) {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) return fail('uncovered-scope', `finding ${index} must be a JSON object`);
+    if (typeof item !== 'object' || item === null || Array.isArray(item))
+      return fail('uncovered-scope', `finding ${index} must be a JSON object`);
     const finding = item as Record<string, unknown>;
-    const missing = FINDING_FIELDS.filter(field => !Object.hasOwn(finding, field)), unexpected = Object.keys(finding).filter(field => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.includes(field));
+    const missing = FINDING_FIELDS.filter((field) => !Object.hasOwn(finding, field)),
+      unexpected = Object.keys(finding).filter(
+        (field) => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.includes(field),
+      );
     // NOTE: key names are delegate text, so only the retired field is named and other keys are counted.
-    const others = unexpected.filter(field => field !== 'severity').length;
-    const unsupported = [...(unexpected.includes('severity') ? ['severity'] : []), ...(others ? [others + ' other field(s)'] : [])];
-    if (missing.length || unsupported.length) return fail('uncovered-scope', `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`);
+    const others = unexpected.filter((field) => field !== 'severity').length;
+    const unsupported = [
+      ...(unexpected.includes('severity') ? ['severity'] : []),
+      ...(others ? [others + ' other field(s)'] : []),
+    ];
+    if (missing.length || unsupported.length)
+      return fail(
+        'uncovered-scope',
+        `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`,
+      );
     const { impact, trigger, locus, tag, defect, requiredChange } = finding;
-    if (!IMPACTS.includes(impact as Impact)) return fail('uncovered-scope', `finding ${index} impact must be one of ${IMPACTS.join(', ')}`);
-    if (!TRIGGERS.includes(trigger as Trigger)) return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
+    if (!IMPACTS.includes(impact as Impact))
+      return fail('uncovered-scope', `finding ${index} impact must be one of ${IMPACTS.join(', ')}`);
+    if (!TRIGGERS.includes(trigger as Trigger))
+      return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
     if (!nonEmpty(tag)) return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
     const normalizedTag = tag.trim();
     const known = REVIEW_TAGS_BY_KIND[kind].has(normalizedTag);
     // `spec` shares the intent gate.
-    const category = known ? normalizedTag === 'spec' ? 'intent' : normalizedTag : 'uncategorized';
+    const category = known ? (normalizedTag === 'spec' ? 'intent' : normalizedTag) : 'uncategorized';
     // Markup-inert by construction; the raw spelling stays only in the provider log.
     const originalTag = known ? undefined : normalizedTag.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
-    if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
+    if (!nonEmpty(defect) || !nonEmpty(requiredChange))
+      return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
     const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : '';
     const resolved = pattern.test(normalizedLocus);
     // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
-    if (!sanitizeText(defect) || !sanitizeText(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
+    if (!sanitizeText(defect) || !sanitizeText(requiredChange))
+      return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
     const draft: DraftFinding = {
       impact: impact as Impact,
       trigger: trigger as Trigger,
@@ -208,7 +291,14 @@ export function parseReport(input: ReportInput): ReportResult {
       ...(ORIGINS.includes(finding['origin'] as FindingOrigin) ? { origin: finding['origin'] as FindingOrigin } : {}),
     };
     // Raw tag and unresolved locus, not their lossy sanitized forms, so distinct values never collide.
-    const key = JSON.stringify([draft.severity, resolved ? normalizedLocus : locus, draft.category, draft.defect, draft.requiredChange, known ? null : normalizedTag]);
+    const key = JSON.stringify([
+      draft.severity,
+      resolved ? normalizedLocus : locus,
+      draft.category,
+      draft.defect,
+      draft.requiredChange,
+      known ? null : normalizedTag,
+    ]);
     const kept = seen.get(key);
     if (kept) {
       const merged = mergeOrigin(kept.origin, draft.origin);
@@ -219,8 +309,9 @@ export function parseReport(input: ReportInput): ReportResult {
     findings.push(draft);
   }
   if (status === 'CLEAN' && findings.length) return fail('uncovered-scope', 'CLEAN requires an empty findings array');
-  if (status === 'FINDINGS' && !findings.length) return fail('uncovered-scope', 'FINDINGS requires at least one finding');
-  return { ok: true, status, findings, ...(Object.hasOwn(record,'confirmations') ? {confirmations} : {}) };
+  if (status === 'FINDINGS' && !findings.length)
+    return fail('uncovered-scope', 'FINDINGS requires at least one finding');
+  return { ok: true, status, findings, ...(Object.hasOwn(record, 'confirmations') ? { confirmations } : {}) };
 }
 
 // SECTION: Matching
@@ -228,13 +319,71 @@ export function parseReport(input: ReportInput): ReportResult {
 const MATCH_LINE_WINDOW = 5;
 const MATCH_JACCARD = 0.3;
 const STOPWORDS: ReadonlySet<string> = new Set([
-  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'has', 'had', 'its', 'was', 'were', 'will',
-  'with', 'this', 'that', 'from', 'into', 'when', 'then', 'than', 'them', 'they', 'which', 'while', 'where', 'there',
-  'their', 'these', 'those', 'should', 'would', 'could', 'must', 'does', 'did', 'have', 'been', 'being', 'also', 'only',
-  'each', 'other', 'such', 'what', 'who', 'how', 'why', 'our', 'out', 'use', 'uses', 'used',
+  'the',
+  'and',
+  'for',
+  'are',
+  'but',
+  'not',
+  'you',
+  'all',
+  'any',
+  'can',
+  'has',
+  'had',
+  'its',
+  'was',
+  'were',
+  'will',
+  'with',
+  'this',
+  'that',
+  'from',
+  'into',
+  'when',
+  'then',
+  'than',
+  'them',
+  'they',
+  'which',
+  'while',
+  'where',
+  'there',
+  'their',
+  'these',
+  'those',
+  'should',
+  'would',
+  'could',
+  'must',
+  'does',
+  'did',
+  'have',
+  'been',
+  'being',
+  'also',
+  'only',
+  'each',
+  'other',
+  'such',
+  'what',
+  'who',
+  'how',
+  'why',
+  'our',
+  'out',
+  'use',
+  'uses',
+  'used',
 ]);
 
-const tokens = (text: string) => new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !STOPWORDS.has(token)));
+const tokens = (text: string) =>
+  new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length >= 3 && !STOPWORDS.has(token)),
+  );
 /** Token Jaccard; two empty sets score 0 so location and category alone never match. */
 function similarity(a: string, b: string): number {
   const left = tokens(a);
@@ -254,8 +403,11 @@ function sameLocation(a: string, b: string, caseInsensitive: boolean): boolean {
   const left = code(a);
   const right = code(b);
   if (left && right) {
-    const fold = (file: string) => (caseInsensitive ? file.replace(/\\/g, '/').toLowerCase() : file.replace(/\\/g, '/'));
-    return fold(left[1] ?? '') === fold(right[1] ?? '') && Math.abs(Number(left[2]) - Number(right[2])) <= MATCH_LINE_WINDOW;
+    const fold = (file: string) =>
+      caseInsensitive ? file.replace(/\\/g, '/').toLowerCase() : file.replace(/\\/g, '/');
+    return (
+      fold(left[1] ?? '') === fold(right[1] ?? '') && Math.abs(Number(left[2]) - Number(right[2])) <= MATCH_LINE_WINDOW
+    );
   }
   if (left || right) return false;
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -263,7 +415,11 @@ function sameLocation(a: string, b: string, caseInsensitive: boolean): boolean {
 
 /** Location + category with loose text similarity (spec §7.5). */
 export function matchFinding(a: MatchKey, b: MatchKey, caseInsensitive = false): boolean {
-  return a.category === b.category && sameLocation(a.locus, b.locus, caseInsensitive) && similarity(a.text, b.text) >= MATCH_JACCARD;
+  return (
+    a.category === b.category &&
+    sameLocation(a.locus, b.locus, caseInsensitive) &&
+    similarity(a.text, b.text) >= MATCH_JACCARD
+  );
 }
 
 // SECTION: Collect and dedup
@@ -278,10 +434,26 @@ export function collectFindings(round: number, drafts: readonly DraftFinding[], 
   const out: Finding[] = [];
   drafts.forEach((draft, index) => {
     const id = findingId(round, firstOrdinal + index);
-    const key: MatchKey = { locus: draft.locus, category: draft.category, text: `${draft.defect} ${draft.requiredChange}` };
+    const key: MatchKey = {
+      locus: draft.locus,
+      category: draft.category,
+      text: `${draft.defect} ${draft.requiredChange}`,
+    };
     // Round 1 has no earlier fix; later rounds keep a reviewer's known value and mark every other reply `unknown`.
-    const origin: FindingOrigin = round === 1 ? 'original' : draft.origin === 'original' || draft.origin === 'fix-induced' ? draft.origin : 'unknown';
-    const first = out.find((prior) => prior.dupOf === undefined && matchFinding({ locus: prior.locus, category: prior.category, text: `${prior.defect} ${prior.requiredChange}` }, key));
+    const origin: FindingOrigin =
+      round === 1
+        ? 'original'
+        : draft.origin === 'original' || draft.origin === 'fix-induced'
+          ? draft.origin
+          : 'unknown';
+    const first = out.find(
+      (prior) =>
+        prior.dupOf === undefined &&
+        matchFinding(
+          { locus: prior.locus, category: prior.category, text: `${prior.defect} ${prior.requiredChange}` },
+          key,
+        ),
+    );
     if (first) {
       first.sources = [...new Set([...first.sources, ...draft.sources])];
       first.origin = mergeOrigin(first.origin, origin) ?? 'unknown';

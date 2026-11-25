@@ -2,10 +2,33 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-export type OpencodeMessage = { depth: number; sessionId?: string; createdMs: number; model: string | null; effort: string | null;
-  input: number; output: number; reasoning?: number; cacheRead?: number; cacheWrite?: number; toolCalls?: number };
-export type OpencodeRead = { messages: OpencodeMessage[]; skipped: number; truncated: 'sessions' | 'rows' | null; userMessageTimes?: number[]; userTurnsTruncated?: true };
-export type OpencodeReadOptions = { fromMs: number; toMs: number; maxSessions?: number; maxRows?: number; includeSessionIdentity?: true };
+export type OpencodeMessage = {
+  depth: number;
+  sessionId?: string;
+  createdMs: number;
+  model: string | null;
+  effort: string | null;
+  input: number;
+  output: number;
+  reasoning?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  toolCalls?: number;
+};
+export type OpencodeRead = {
+  messages: OpencodeMessage[];
+  skipped: number;
+  truncated: 'sessions' | 'rows' | null;
+  userMessageTimes?: number[];
+  userTurnsTruncated?: true;
+};
+export type OpencodeReadOptions = {
+  fromMs: number;
+  toMs: number;
+  maxSessions?: number;
+  maxRows?: number;
+  includeSessionIdentity?: true;
+};
 
 const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_ROWS = 100000;
@@ -21,8 +44,10 @@ function getSqlite(): typeof import('node:sqlite') {
   return sqliteModule!;
 }
 
-const token = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-const optionalToken = (value: unknown): number | undefined | false => value === null ? undefined : (token(value) ? value : false);
+const token = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+const optionalToken = (value: unknown): number | undefined | false =>
+  value === null ? undefined : token(value) ? value : false;
 const cap = (value: number | undefined, fallback: number): number =>
   value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.floor(value));
 
@@ -31,7 +56,11 @@ export function opencodeDbPath(home: string, env: (name: string) => string | und
   return path.join(dataHome ? dataHome : path.join(home, '.local', 'share'), 'opencode', 'opencode.db');
 }
 
-export function readOpencodeMessages(dbPath: string, rootSessionId: string, options: OpencodeReadOptions): OpencodeRead {
+export function readOpencodeMessages(
+  dbPath: string,
+  rootSessionId: string,
+  options: OpencodeReadOptions,
+): OpencodeRead {
   // A read-only open of a missing file must not create it; stat keeps the native ENOENT code for callers.
   fs.statSync(dbPath);
   const maxSessions = cap(options.maxSessions, DEFAULT_MAX_SESSIONS);
@@ -47,14 +76,18 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
     while (frontier.length > 0) {
       const placeholders = frontier.map(() => '?').join(',');
       // The extra row only signals that descendants exceed the cap; it never enters the visited set.
-      const children = db.prepare(`SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`)
+      const children = db
+        .prepare(`SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`)
         .all(...frontier, remaining + 1) as Row[];
       if (children.length === 0) break;
       const next: string[] = [];
       for (const child of children) {
         const id = child['id'];
         if (typeof id !== 'string' || depths.has(id)) continue;
-        if (next.length >= remaining) { truncated = 'sessions'; break; }
+        if (next.length >= remaining) {
+          truncated = 'sessions';
+          break;
+        }
         depths.set(id, depth + 1);
         next.push(id);
       }
@@ -66,7 +99,8 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
 
     const ids = [...depths.keys()];
     const placeholders = ids.map(() => '?').join(',');
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(`
       SELECT id, session_id, time_created,
         json_extract(data, '$.tokens.input') AS input,
         json_extract(data, '$.tokens.output') AS output,
@@ -81,11 +115,18 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
         AND time_created >= ? AND time_created <= ?
       ORDER BY time_created, id
       LIMIT ?
-    `).all(...ids, options.fromMs, options.toMs, maxRows + 1) as Row[];
+    `)
+      .all(...ids, options.fromMs, options.toMs, maxRows + 1) as Row[];
 
     const tables = new Set(
-      (db.prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`).all() as Row[])
-        .map(r => r['name'])
+      (
+        db
+          .prepare(
+            `SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`,
+          )
+          .all() as Row[]
+      )
+        .map((r) => r['name'])
         .filter((n): n is string => typeof n === 'string'),
     );
     let toolCounts: Map<string, number> | null = null;
@@ -108,16 +149,25 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
     let skipped = 0;
     for (const row of rows.slice(0, maxRows)) {
       const sessionId = row['session_id'];
-      if (typeof sessionId !== 'string') { skipped++; continue; }
+      if (typeof sessionId !== 'string') {
+        skipped++;
+        continue;
+      }
       const createdMs = row['time_created'];
       const input = row['input'];
       const output = row['output'];
       const messageDepth = depths.get(sessionId);
-      if (messageDepth === undefined || !token(createdMs) || !token(input) || !token(output)) { skipped++; continue; }
+      if (messageDepth === undefined || !token(createdMs) || !token(input) || !token(output)) {
+        skipped++;
+        continue;
+      }
       const reasoning = optionalToken(row['reasoning']);
       const cacheRead = optionalToken(row['cache_read']);
       const cacheWrite = optionalToken(row['cache_write']);
-      if (reasoning === false || cacheRead === false || cacheWrite === false) { skipped++; continue; }
+      if (reasoning === false || cacheRead === false || cacheWrite === false) {
+        skipped++;
+        continue;
+      }
       const providerId = row['provider_id'];
       const modelId = row['model_id'];
       const variant = row['variant'];
@@ -139,14 +189,16 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
     // Session truncation wins: it limits which sessions the row cap is applied to.
     if (rows.length > maxRows && truncated === null) truncated = 'rows';
 
-    const userRows = db.prepare(`
+    const userRows = db
+      .prepare(`
       SELECT time_created
       FROM session_message
       WHERE type = 'user' AND session_id = ?
         AND time_created >= ? AND time_created <= ?
       ORDER BY time_created, id
       LIMIT ?
-    `).all(rootSessionId, options.fromMs, options.toMs, maxRows + 1) as Row[];
+    `)
+      .all(rootSessionId, options.fromMs, options.toMs, maxRows + 1) as Row[];
     const userTurnsTruncated = userRows.length > maxRows;
 
     return {
@@ -155,7 +207,7 @@ export function readOpencodeMessages(dbPath: string, rootSessionId: string, opti
       truncated,
       ...(userTurnsTruncated
         ? { userTurnsTruncated: true as const }
-        : { userMessageTimes: userRows.map(r => r['time_created']).filter(token) }),
+        : { userMessageTimes: userRows.map((r) => r['time_created']).filter(token) }),
     };
   } finally {
     db.close();

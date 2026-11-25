@@ -13,7 +13,11 @@ type CheckoutEntryMap = Record<string, string>;
 type CheckoutState = { cwd: string; head: string; entries: CheckoutEntryMap };
 type CheckoutBaseline = { checkouts: CheckoutState[] };
 export type CheckoutBaselineFile = CheckoutBaseline | { state: 'unavailable'; reason: string };
-type CheckoutReport = { repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState; asOfSeq?: number };
+type CheckoutReport = {
+  repositoryChanges?: RepositoryChange[];
+  repositoryCheck?: RepositoryCheckState;
+  asOfSeq?: number;
+};
 
 const UNAVAILABLE = (reason: string): RepositoryCheckState => ({ state: 'unavailable', reason });
 
@@ -32,7 +36,11 @@ function hashFileContents(full: string): string {
       hash.update(chunk.subarray(0, read));
     }
   } finally {
-    try { fs.closeSync(fd); } catch { /* the content hash already settled; a close failure carries no fingerprint */ }
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* the content hash already settled; a close failure carries no fingerprint */
+    }
   }
   return hash.digest('hex');
 }
@@ -145,7 +153,15 @@ export async function captureCheckouts(
     const headResult = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}']);
     if (headResult.exit) throw new Error('Cannot resolve HEAD in ' + cwd);
     const head = headResult.stdout.trim();
-    const statusResult = await git(deps, cwd, ['--no-optional-locks', 'status', '--porcelain=v2', '-z', '-uall', '--no-renames', '--ignore-submodules=none']);
+    const statusResult = await git(deps, cwd, [
+      '--no-optional-locks',
+      'status',
+      '--porcelain=v2',
+      '-z',
+      '-uall',
+      '--no-renames',
+      '--ignore-submodules=none',
+    ]);
     if (statusResult.exit) throw new Error('Cannot capture status in ' + cwd);
     const flaggedResult = await git(deps, cwd, ['ls-files', '-v', '-z']);
     if (flaggedResult.exit) throw new Error('Cannot list index flags in ' + cwd);
@@ -208,7 +224,7 @@ export async function compareCheckouts(
   } catch (error) {
     return { repositoryCheck: UNAVAILABLE(error instanceof Error ? error.message : String(error)) };
   }
-  const byCwd = new Map(typed.checkouts.map(checkout => [path.resolve(checkout.cwd), checkout]));
+  const byCwd = new Map(typed.checkouts.map((checkout) => [path.resolve(checkout.cwd), checkout]));
   const repositoryChanges: RepositoryChange[] = [];
   for (const next of current.checkouts) {
     const key = path.resolve(next.cwd);
@@ -275,12 +291,13 @@ function checkoutReportAttemptFor(dir: string, generation: number): string {
   const canonical = checkoutReportFileFor(dir, generation);
   if (!fs.existsSync(canonical)) return canonical;
   let attempt = 2;
-  while (fs.existsSync(path.join(reviewGenerationDirectory(dir, generation), 'checkout-report-' + attempt + '.json'))) attempt++;
+  while (fs.existsSync(path.join(reviewGenerationDirectory(dir, generation), 'checkout-report-' + attempt + '.json')))
+    attempt++;
   return path.join(reviewGenerationDirectory(dir, generation), 'checkout-report-' + attempt + '.json');
 }
 
 export function writeCheckoutReport(dir: string, generation: number, checkout: CheckoutReport): void {
-  fs.mkdirSync(reviewGenerationDirectory(dir, generation), {recursive: true});
+  fs.mkdirSync(reviewGenerationDirectory(dir, generation), { recursive: true });
   atomic(checkoutReportAttemptFor(dir, generation), checkout);
 }
 
@@ -289,7 +306,9 @@ export function writeCheckoutReport(dir: string, generation: number, checkout: C
 // fanout.json carries it; only nativeFirst selects the wave path.
 export function generationLaunchedNative(dir: string, generation: number): boolean {
   try {
-    const fanout = JSON.parse(fs.readFileSync(path.join(reviewGenerationDirectory(dir, generation), 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
+    const fanout = JSON.parse(
+      fs.readFileSync(path.join(reviewGenerationDirectory(dir, generation), 'fanout.json'), 'utf8'),
+    ) as { nativeFirst?: true; nativeLaunched?: true };
     return fanout.nativeFirst === true || fanout.nativeLaunched === true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ENOENT';
@@ -299,8 +318,8 @@ export function generationLaunchedNative(dir: string, generation: number): boole
 function taskWorktreeOf(session: string, task: string): string | undefined {
   try {
     const fold = foldLedger(session);
-    const launch = launches(fold, task).findLast(launch => launch.finished);
-    return launch?.finished ? launch.record.data['path'] as string : undefined;
+    const launch = launches(fold, task).findLast((launch) => launch.finished);
+    return launch?.finished ? (launch.record.data['path'] as string) : undefined;
   } catch {
     return undefined;
   }
@@ -328,12 +347,12 @@ export async function writeBaselineIfMissing(
 ): Promise<void> {
   const file = baselineFileFor(dir, generation);
   if (fs.existsSync(file)) return;
-  fs.mkdirSync(reviewGenerationDirectory(dir, generation), {recursive: true});
+  fs.mkdirSync(reviewGenerationDirectory(dir, generation), { recursive: true });
   try {
     const baseline = await captureCheckouts(deps, dirs, sessionDir);
     atomic(file, baseline);
   } catch (error) {
-    atomic(file, {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)});
+    atomic(file, { state: 'unavailable', reason: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -356,34 +375,58 @@ export async function compareForRound(
     raw = fs.readFileSync(file, 'utf8');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline unreadable: ' + (error instanceof Error ? error.message : String(error))}};
+      return {
+        repositoryCheck: {
+          state: 'unavailable',
+          reason: 'checkout baseline unreadable: ' + (error instanceof Error ? error.message : String(error)),
+        },
+      };
     }
     if (!generationLaunchedNative(dir, generation)) return {};
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline missing after native launch'}};
+    return { repositoryCheck: { state: 'unavailable', reason: 'checkout baseline missing after native launch' } };
   }
   let baseline: CheckoutBaselineFile;
   try {
     baseline = JSON.parse(raw) as CheckoutBaselineFile;
   } catch (error) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: ' + (error instanceof Error ? error.message : String(error))}};
+    return {
+      repositoryCheck: {
+        state: 'unavailable',
+        reason: 'checkout baseline malformed: ' + (error instanceof Error ? error.message : String(error)),
+      },
+    };
   }
   // A corrupted baseline (JSON null or another non-object, or an object
   // without checkouts) cannot be compared; report unavailable instead of
   // throwing past the recovery contract.
   if (baseline === null || typeof baseline !== 'object' || Array.isArray(baseline)) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkout baseline object'}};
+    return {
+      repositoryCheck: {
+        state: 'unavailable',
+        reason: 'checkout baseline malformed: expected a checkout baseline object',
+      },
+    };
   }
-  if ((baseline as {state?: string}).state === 'unavailable') {
-    return {repositoryCheck: {state: 'unavailable', reason: (baseline as {reason?: string}).reason ?? 'checkout capture failed'}};
+  if ((baseline as { state?: string }).state === 'unavailable') {
+    return {
+      repositoryCheck: {
+        state: 'unavailable',
+        reason: (baseline as { reason?: string }).reason ?? 'checkout capture failed',
+      },
+    };
   }
-  if (!Array.isArray((baseline as {checkouts?: unknown}).checkouts)) {
-    return {repositoryCheck: {state: 'unavailable', reason: 'checkout baseline malformed: expected a checkouts array'}};
+  if (!Array.isArray((baseline as { checkouts?: unknown }).checkouts)) {
+    return {
+      repositoryCheck: { state: 'unavailable', reason: 'checkout baseline malformed: expected a checkouts array' },
+    };
   }
-  if (absentWorktree) return {repositoryCheck: {state: 'unavailable', reason: 'Absent task worktree'}};
+  if (absentWorktree) return { repositoryCheck: { state: 'unavailable', reason: 'Absent task worktree' } };
   try {
     return await compareCheckouts(deps, baseline, dirs, sessionDir);
   } catch (error) {
-    return {repositoryCheck: {state: 'unavailable', reason: error instanceof Error ? error.message : String(error)}};
+    return {
+      repositoryCheck: { state: 'unavailable', reason: error instanceof Error ? error.message : String(error) },
+    };
   }
 }
 
@@ -400,7 +443,7 @@ export function carryCheckoutBaseline(dir: string, previousGeneration: number): 
   const previousBaseline = baselineFileFor(dir, previousGeneration);
   const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
   try {
-    fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), {recursive: true});
+    fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), { recursive: true });
     const nextValid = (() => {
       try {
         JSON.parse(fs.readFileSync(nextBaseline, 'utf8'));
@@ -420,24 +463,37 @@ export function carryCheckoutBaseline(dir: string, previousGeneration: number): 
           // required capture, so the next generation carries an
           // unavailable marker instead of a fresh capture.
           if (generationLaunchedNative(dir, previousGeneration)) {
-            atomic(nextBaseline, {state: 'unavailable', reason: 'checkout baseline missing after native launch in generation ' + previousGeneration});
+            atomic(nextBaseline, {
+              state: 'unavailable',
+              reason: 'checkout baseline missing after native launch in generation ' + previousGeneration,
+            });
           }
         } else {
-          atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+          atomic(nextBaseline, {
+            state: 'unavailable',
+            reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error)),
+          });
         }
       }
       if (previousRaw !== undefined) {
         try {
           atomic(nextBaseline, JSON.parse(previousRaw) as CheckoutBaselineFile);
         } catch (error) {
-          atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+          atomic(nextBaseline, {
+            state: 'unavailable',
+            reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error)),
+          });
         }
       }
     }
   } catch (error) {
     try {
-      fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), {recursive: true});
-      if (!fs.existsSync(nextBaseline)) atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
+      fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), { recursive: true });
+      if (!fs.existsSync(nextBaseline))
+        atomic(nextBaseline, {
+          state: 'unavailable',
+          reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error)),
+        });
     } catch {
       // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.
     }

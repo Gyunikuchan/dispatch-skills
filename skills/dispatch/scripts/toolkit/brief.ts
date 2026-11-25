@@ -12,21 +12,41 @@ import { capSummary, clipBytes, ToolError } from './output.ts';
 import { readJsonPayload } from './input.ts';
 import { loadConfig, validateConfig } from '../lib/config.ts';
 import { launchLine, summaryLaunch } from '../lib/platform.ts';
-import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility, type LevelMap, type ResolvedSubagent, type ResolvedUtility, type SubagentEntry, type UtilityEntry } from '../policy/roster.ts';
+import {
+  normalizeProvider,
+  resolveLevel,
+  resolveSubagent,
+  resolveUtility,
+  type LevelMap,
+  type ResolvedSubagent,
+  type ResolvedUtility,
+  type SubagentEntry,
+  type UtilityEntry,
+} from '../policy/roster.ts';
 import type { Level } from './types.ts';
 
 type LaunchValues = { model: string[] | null; effort: string | null; launchAs: string | null };
 
 const launchValues = (resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues =>
-  resolved ? {model: resolved.models, effort: resolved.effort, launchAs: launchLine(normalized, resolved.models, resolved.effort)} : {model: null, effort: null, launchAs: null};
+  resolved
+    ? {
+        model: resolved.models,
+        effort: resolved.effort,
+        launchAs: launchLine(normalized, resolved.models, resolved.effort),
+      }
+    : { model: null, effort: null, launchAs: null };
 export function briefSummary(
-  prefix: string, host: string | undefined, values: LaunchValues, file: string, bytes: number,
-  suffix?: {tail: string; shortPath: string},
+  prefix: string,
+  host: string | undefined,
+  values: LaunchValues,
+  file: string,
+  bytes: number,
+  suffix?: { tail: string; shortPath: string },
 ): string {
   let launch = host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : '';
   const absolute = `${prefix}: ${launch}${file} (${bytes} bytes)`;
   if (!suffix) return capSummary(absolute);
-  const {tail, shortPath} = suffix;
+  const { tail, shortPath } = suffix;
   if (Buffer.byteLength(absolute + tail) <= 1024) return absolute + tail;
 
   const ending = `session-relative ${shortPath} (${bytes} bytes)${tail}`;
@@ -42,26 +62,32 @@ export function briefSummary(
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {
   try {
-    if (!host) return {model: null, effort: null, launchAs: null};
+    if (!host) return { model: null, effort: null, launchAs: null };
     const normalized = normalizeProvider(host);
-    const {config} = loadConfig(skillRoot);
-    if (validateConfig(config).length) return {model: null, effort: null, launchAs: null};
+    const { config } = loadConfig(skillRoot);
+    if (validateConfig(config).length) return { model: null, effort: null, launchAs: null };
     const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined;
-    const key = writerTable ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized) : undefined;
+    const key = writerTable
+      ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized)
+      : undefined;
     const entry = key && writerTable ? resolveLevel(writerTable[key], level) : undefined;
     return launchValues(entry ? resolveSubagent(entry) : undefined, normalized);
-  } catch { return {model: null, effort: null, launchAs: null}; }
+  } catch {
+    return { model: null, effort: null, launchAs: null };
+  }
 }
 
 /** Explorer, test-cleanup and writer utility entry; null when the host or config does not resolve. */
 export function resolveHostUtility(skillRoot: string, host: string | undefined): ResolvedUtility | undefined {
   try {
     if (!host) return undefined;
-    const {config} = loadConfig(skillRoot);
+    const { config } = loadConfig(skillRoot);
     if (validateConfig(config).length) return undefined;
     const utility = resolveUtility((config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>);
     return utility[normalizeProvider(host)];
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 /** Explorer and test-cleanup launch values from the `utility` entry; null when the host or config does not resolve. */
@@ -74,16 +100,26 @@ function taskParts(source: string, selected: NonNullable<ReturnType<typeof selec
   const lines = source.split(/\r?\n/);
   const structural = structuralLines(source);
   const taskEnd = structural.findIndex((entry, i) => i >= selected.task.line && /^#{2,3} /.test(entry.text));
-  const section = lines.slice(selected.task.line - 1, taskEnd < 0 ? undefined : taskEnd).join('\n').trim();
-  const criteria = selected.criteria.map(criterion => {
-    const end = structural.findIndex((entry, i) => i >= criterion.line && (/^## /.test(entry.text) || /^- \[SC\d+\]/.test(entry.text)));
-    return lines.slice(criterion.line - 1, end < 0 ? undefined : end).join('\n').trim();
-  }).join('\n\n');
-  return {section, criteria};
+  const section = lines
+    .slice(selected.task.line - 1, taskEnd < 0 ? undefined : taskEnd)
+    .join('\n')
+    .trim();
+  const criteria = selected.criteria
+    .map((criterion) => {
+      const end = structural.findIndex(
+        (entry, i) => i >= criterion.line && (/^## /.test(entry.text) || /^- \[SC\d+\]/.test(entry.text)),
+      );
+      return lines
+        .slice(criterion.line - 1, end < 0 ? undefined : end)
+        .join('\n')
+        .trim();
+    })
+    .join('\n\n');
+  return { section, criteria };
 }
 
 export function taskMarkdown(source: string, brief: NonNullable<ReturnType<typeof selectTaskBrief>>): string {
-  const {section, criteria} = taskParts(source, brief);
+  const { section, criteria } = taskParts(source, brief);
   return [section, criteria].filter(Boolean).join('\n\n');
 }
 
@@ -95,28 +131,39 @@ const CAPTURE_BOOTSTRAP = [
   "const path=require('node:path');",
   "const {spawnSync}=require('node:child_process');",
   "const data=JSON.parse(Buffer.from(process.argv[2],'base64url').toString('utf8'));",
-  "fs.mkdirSync(data.logDir,{recursive:true});",
+  'fs.mkdirSync(data.logDir,{recursive:true});',
   "const stdoutPath=path.join(data.logDir,data.criterion+'.stdout');",
   "const stderrPath=path.join(data.logDir,data.criterion+'.stderr');",
-  "let stdoutFd,stderrFd,result;",
+  'let stdoutFd,stderrFd,result;',
   "try { stdoutFd=fs.openSync(stdoutPath,'w');stderrFd=fs.openSync(stderrPath,'w');try { result=spawnSync(data.command,{cwd:data.cwd,shell:true,stdio:['ignore',stdoutFd,stderrFd]}); } catch(error) { result={status:null,signal:null,error}; } }",
-  "finally { try { if(stdoutFd!==undefined)fs.closeSync(stdoutFd); } finally { if(stderrFd!==undefined)fs.closeSync(stderrFd); } }",
+  'finally { try { if(stdoutFd!==undefined)fs.closeSync(stdoutFd); } finally { if(stderrFd!==undefined)fs.closeSync(stderrFd); } }',
   "const replay=(file,target)=>{const fd=fs.openSync(file,'r');try {const chunk=Buffer.alloc(65536);let size;while((size=fs.readSync(fd,chunk,0,chunk.length,null))>0){let offset=0;while(offset<size)offset+=fs.writeSync(target,chunk,offset,size-offset);}} finally {fs.closeSync(fd);}};",
   "fs.writeFileSync(path.join(data.logDir,data.criterion+'.exit'),JSON.stringify({status:result.status??null,signal:result.signal??null,error:result.error?String(result.error.message??result.error):null})+'\\n');",
-  "replay(stdoutPath,1);replay(stderrPath,2);",
-  "if(result.error)process.stderr.write(String(result.error.message??result.error));",
-  "process.exitCode=result.status??1;",
+  'replay(stdoutPath,1);replay(stderrPath,2);',
+  'if(result.error)process.stderr.write(String(result.error.message??result.error));',
+  'process.exitCode=result.status??1;',
 ].join('');
 
-const CAPTURE_SHELL_META = new Set("!#$&()*;<>?[]\\^{|}~%".split('').concat(String.fromCharCode(96)));
+const CAPTURE_SHELL_META = new Set('!#$&()*;<>?[]\\^{|}~%'.split('').concat(String.fromCharCode(96)));
 
 function safeCapturePath(value: string): boolean {
-  if (!value || value.trim() !== value || value.includes('\\') || path.posix.isAbsolute(value) ||
-    path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value) || value.startsWith('~') ||
-    path.posix.normalize(value) !== value || value.split('/').some(part => !part || part === '.' || part === '..') ||
-    /[\x00-\x1f\x7f]/.test(value) || value.includes('"') || value.includes("'") ||
-    value.includes(String.fromCharCode(96))) return false;
-  return ![...value].some(character => CAPTURE_SHELL_META.has(character));
+  if (
+    !value ||
+    value.trim() !== value ||
+    value.includes('\\') ||
+    path.posix.isAbsolute(value) ||
+    path.win32.isAbsolute(value) ||
+    /^[A-Za-z]:/.test(value) ||
+    value.startsWith('~') ||
+    path.posix.normalize(value) !== value ||
+    value.split('/').some((part) => !part || part === '.' || part === '..') ||
+    /[\x00-\x1f\x7f]/.test(value) ||
+    value.includes('"') ||
+    value.includes("'") ||
+    value.includes(String.fromCharCode(96))
+  )
+    return false;
+  return ![...value].some((character) => CAPTURE_SHELL_META.has(character));
 }
 
 function quoteCapturePath(value: string): string {
@@ -129,29 +176,55 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
   let written = false;
   for (const criterion of selected.criteria) {
     // Keep this eligibility rule aligned with redGaps; verify-only and excepted criteria need no capture.
-    if (!selected.task.criteria.includes(criterion.id) || criterion.evidence !== 'red' || !criterion.red || criterion.redException) continue;
+    if (
+      !selected.task.criteria.includes(criterion.id) ||
+      criterion.evidence !== 'red' ||
+      !criterion.red ||
+      criterion.redException
+    )
+      continue;
     const testFiles = [...new Set(criterion.tests)];
-    const unsafe = testFiles.find(file => !safeCapturePath(file));
+    const unsafe = testFiles.find((file) => !safeCapturePath(file));
     if (unsafe !== undefined) {
-      lines.push('- RED capture omitted for task ' + task + ', criterion ' + criterion.id + ': unsafe test path ' + JSON.stringify(unsafe) + '.');
+      lines.push(
+        '- RED capture omitted for task ' +
+          task +
+          ', criterion ' +
+          criterion.id +
+          ': unsafe test path ' +
+          JSON.stringify(unsafe) +
+          '.',
+      );
       continue;
     }
     if (criterion.red.includes('{files}') && !testFiles.length) {
-      lines.push('- RED capture omitted for task ' + task + ', criterion ' + criterion.id + ': {files} has no test paths.');
+      lines.push(
+        '- RED capture omitted for task ' + task + ', criterion ' + criterion.id + ': {files} has no test paths.',
+      );
       continue;
     }
     const command = criterion.red.replaceAll('{files}', testFiles.map(quoteCapturePath).join(' '));
     if (!written) {
-      fs.mkdirSync(redLogDir, {recursive: true});
+      fs.mkdirSync(redLogDir, { recursive: true });
       fs.writeFileSync(capturePath, CAPTURE_BOOTSTRAP);
       written = true;
     }
     const bootstrap = Buffer.from(CAPTURE_BOOTSTRAP, 'utf8').toString('base64url');
-    const data = Buffer.from(JSON.stringify({command, cwd: worktree, logDir: redLogDir, criterion: criterion.id}), 'utf8').toString('base64url');
-    const shellPath = process.platform === 'win32' && /^[A-Za-z]:/.test(capturePath) ? capturePath.slice(2) : capturePath;
-    const safe = path.isAbsolute(capturePath) && !/[\x00-\x1f\x7f"':]/.test(shellPath) &&
-      ![...shellPath].some(character => !(process.platform === 'win32' && character === '\\') && CAPTURE_SHELL_META.has(character));
-    const wrapper = safe ? 'node ' + quoteCapturePath(capturePath) + ' ' + data : 'node -e "eval(Buffer.from(process.argv[1],\'base64url\').toString())" ' + bootstrap + ' ' + data;
+    const data = Buffer.from(
+      JSON.stringify({ command, cwd: worktree, logDir: redLogDir, criterion: criterion.id }),
+      'utf8',
+    ).toString('base64url');
+    const shellPath =
+      process.platform === 'win32' && /^[A-Za-z]:/.test(capturePath) ? capturePath.slice(2) : capturePath;
+    const safe =
+      path.isAbsolute(capturePath) &&
+      !/[\x00-\x1f\x7f"':]/.test(shellPath) &&
+      ![...shellPath].some(
+        (character) => !(process.platform === 'win32' && character === '\\') && CAPTURE_SHELL_META.has(character),
+      );
+    const wrapper = safe
+      ? 'node ' + quoteCapturePath(capturePath) + ' ' + data
+      : 'node -e "eval(Buffer.from(process.argv[1],\'base64url\').toString())" ' + bootstrap + ' ' + data;
     const tick = String.fromCharCode(96);
     lines.push('- ' + criterion.id + ': ' + tick + wrapper + tick);
   }
@@ -180,7 +253,8 @@ export function fillSlots(label: string, text: string, slots: Record<string, str
 
 export function assertFilled(label: string, text: string): void {
   if (/\{\{\w+\}\}/.test(text)) throw new ToolError(2, 'fault', `Unfilled ${label} brief placeholder`);
-  if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text)) throw new ToolError(2, 'fault', `Rendered ${label} brief contains a relative link`);
+  if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text))
+    throw new ToolError(2, 'fault', `Rendered ${label} brief contains a relative link`);
 }
 
 export function nextBriefPath(directory: string, base: string): string {
@@ -197,27 +271,34 @@ function briefQuality(skillRoot: string, consumer: QualityConsumer): string {
 
 function prepareBriefDirectory(session: string): string {
   const directory = path.join(session, '.state', 'briefs');
-  fs.mkdirSync(directory, {recursive: true});
+  fs.mkdirSync(directory, { recursive: true });
   return directory;
 }
 
-function publishUtilityBrief(ctx: HandlerContext, directory: string, kind: string, text: string, details: Record<string, string | number | null>): HandlerResult {
+function publishUtilityBrief(
+  ctx: HandlerContext,
+  directory: string,
+  kind: string,
+  text: string,
+  details: Record<string, string | number | null>,
+): HandlerResult {
   const file = nextBriefPath(directory, kind);
   fs.writeFileSync(file, text);
   const host = ctx.deps.orchestrator?.platform;
   const launch = utilityLaunchValues(ctx.deps.skillRoot, host);
   const bytes = Buffer.byteLength(text);
-  const value = {briefPath: file, bytes, ...details, ...launch};
-  return {ok: true, exit: 0, value, summary: briefSummary(kind + ' brief', host, launch, file, bytes)};
+  const value = { briefPath: file, bytes, ...details, ...launch };
+  return { ok: true, exit: 0, value, summary: briefSummary(kind + ' brief', host, launch, file, bytes) };
 }
 
 /** Validates a parsed brief values object; an unknown, missing or blank value refuses before anything is written. */
 function validateValues<const Req extends string, const Opt extends string = never>(
   parsed: unknown,
   required: readonly Req[],
-  optional: readonly Opt[] = []
+  optional: readonly Opt[] = [],
 ): Record<Req, string> & Partial<Record<Opt, string>> {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ToolError(1, 'invalid-input', 'Values payload must hold a JSON object');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new ToolError(1, 'invalid-input', 'Values payload must hold a JSON object');
   const record = parsed as Record<string, unknown>;
   const allowed = new Set<string>([...required, ...optional]);
   for (const key of Object.keys(record)) {
@@ -249,47 +330,78 @@ function validateValues<const Req extends string, const Opt extends string = nev
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
   const task = ctx.args[0]!;
-  const gated = await withLedger(ctx.session, 'brief render', ctx.deps, async tx => {
+  const gated = await withLedger(ctx.session, 'brief render', ctx.deps, async (tx) => {
     const bind = latest(tx.fold, 'bind');
     const snapshot = currentSnapshot(ctx.manifest.repositoryRoot, bind);
     const decision = gate(tx.fold, snapshot.hashes);
     if (!decision.allowed) throw new ToolError(4, decision.reason!, decision.reason!);
     const source = snapshot.bytes.plan;
-    if (!bind || source == null || snapshot.bytes.spec == null) throw new ToolError(4, 'lint-errors', 'Bound spec and plan must be readable');
+    if (!bind || source == null || snapshot.bytes.spec == null)
+      throw new ToolError(4, 'lint-errors', 'Bound spec and plan must be readable');
     const parsed = parsePlan(source);
     if (!parsed.ok) throw new ToolError(4, 'lint-errors', JSON.stringify(parsed.defects));
     const selected = selectTaskBrief(parsed.plan, task);
     if (!selected) throw new ToolError(1, 'invalid-input', 'Unknown task ' + task);
     const launch = launches(tx.fold, task).at(-1);
-    if (!launch || launch.finished || launch.abandoned || launch.superseded) throw new ToolError(4, 'no-open-launch', 'No open launch for ' + task);
+    if (!launch || launch.finished || launch.abandoned || launch.superseded)
+      throw new ToolError(4, 'no-open-launch', 'No open launch for ' + task);
     await ctx.deps.hook?.('brief:after-gate');
     const level = (latest(tx.fold, 'level')?.data['level'] ?? 'medium') as Level;
-    return {bind, snapshot, launch, source, parsed, selected, level, postFold: tx.fold};
+    return { bind, snapshot, launch, source, parsed, selected, level, postFold: tx.fold };
   });
-  const {bind, snapshot, launch, source, parsed, selected, level, postFold} = gated;
-  const {section, criteria} = taskParts(source, selected);
+  const { bind, snapshot, launch, source, parsed, selected, level, postFold } = gated;
+  const { section, criteria } = taskParts(source, selected);
   const worktree = path.resolve(ctx.session, launch.record.data['path']);
   const reportPath = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.report.md');
   const redLogDir = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.red');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const quality = briefQuality(ctx.deps.skillRoot, 'writer');
   const slots: Record<string, string> = {
-    task, worktree,
-    specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']), specHash: snapshot.hashes.spec!,
-    planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']), planHash: snapshot.hashes.plan!,
-    design: bind.data['design'] ? 'Governing design: `' + path.resolve(ctx.manifest.repositoryRoot, bind.data['design']) + '` (governed hash ' + snapshot.hashes.design + ').' : '',
-    shared: parsed.plan.sharedContext, section, criteria, quality,
+    task,
+    worktree,
+    specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']),
+    specHash: snapshot.hashes.spec!,
+    planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']),
+    planHash: snapshot.hashes.plan!,
+    design: bind.data['design']
+      ? 'Governing design: `' +
+        path.resolve(ctx.manifest.repositoryRoot, bind.data['design']) +
+        '` (governed hash ' +
+        snapshot.hashes.design +
+        ').'
+      : '',
+    shared: parsed.plan.sharedContext,
+    section,
+    criteria,
+    quality,
     explorer: explorerText(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform),
-    reportPath, redLogDir, redCapture: renderRedCapture(selected, task, worktree, redLogDir),
-    contracts: checks(parsed.plan).find(check => check.criterion === 'contract')!.commands.map(command => '- `' + command + '`').join('\n'),
+    reportPath,
+    redLogDir,
+    redCapture: renderRedCapture(selected, task, worktree, redLogDir),
+    contracts: checks(parsed.plan)
+      .find((check) => check.criterion === 'contract')!
+      .commands.map((command) => '- `' + command + '`')
+      .join('\n'),
   };
   const text = fillSlots('writer', fs.readFileSync(path.join(templates, 'writer-brief.md'), 'utf8'), slots);
   const directory = prepareBriefDirectory(ctx.session);
   const file = path.join(directory, task + '-' + launch.launch + '.md');
   fs.writeFileSync(file, text);
   const launchValues = writerLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform, level);
-  const value = {path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary(task + ' launch ' + launch.launch, ctx.deps.orchestrator?.platform, launchValues, file, value.bytes), postFold};
+  const value = { path: file, task, launch: launch.launch, bytes: Buffer.byteLength(text), ...launchValues };
+  return {
+    ok: true,
+    exit: 0,
+    value,
+    summary: briefSummary(
+      task + ' launch ' + launch.launch,
+      ctx.deps.orchestrator?.platform,
+      launchValues,
+      file,
+      value.bytes,
+    ),
+    postFold,
+  };
 }
 
 function selectExplorerKind(text: string, kind: 'map' | 'research'): string {
@@ -305,7 +417,7 @@ const TEST_CLEANUP_VALUES = ['base', 'integrationPath'] as const;
 
 export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerResult> {
   const values = validateValues(
-    readJsonPayload(ctx, {positional: 'values', inlineFlag: 'json', label: 'explorer values'}),
+    readJsonPayload(ctx, { positional: 'values', inlineFlag: 'json', label: 'explorer values' }),
     EXPLORER_REQUIRED_VALUES,
     EXPLORER_OPTIONAL_VALUES,
   );
@@ -314,7 +426,9 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
 
   const entry = resolveHostUtility(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const contextLimit = entry ? entry.contextLimit : null;
-  const limit = entry ? `${entry.contextLimit.toLocaleString('en-US')} tokens` : 'utility entry not configured; the orchestrator reports a blocker';
+  const limit = entry
+    ? `${entry.contextLimit.toLocaleString('en-US')} tokens`
+    : 'utility entry not configured; the orchestrator reports a blocker';
   // 75% margin: an explorer cannot count the tokens its tool output and reasoning add.
   const splitAt = entry ? `${Math.floor(entry.contextLimit * 0.75).toLocaleString('en-US')} tokens` : limit;
   const nestedLaunch = entry
@@ -331,20 +445,22 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
     splitAt,
     nestedLaunch,
     quality: briefQuality(ctx.deps.skillRoot, 'explorer'),
-    ...(kind === 'map' ? {
-      outputPath: values.outputPath!,
-      cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
-      session: ctx.session,
-      mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
-      contextMapTemplate: fs.readFileSync(path.join(templates, 'context-map.md'), 'utf8'),
-    } : {
-      replyLimit: DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US'),
-    }),
+    ...(kind === 'map'
+      ? {
+          outputPath: values.outputPath!,
+          cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
+          session: ctx.session,
+          mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
+          contextMapTemplate: fs.readFileSync(path.join(templates, 'context-map.md'), 'utf8'),
+        }
+      : {
+          replyLimit: DEFAULT_RESEARCH_REPLY_LIMIT.toLocaleString('en-US'),
+        }),
   };
   const text = fillSlots('explorer', kindTemplate, slots);
   assertFilled('explorer', text);
   const directory = prepareBriefDirectory(ctx.session);
-  return publishUtilityBrief(ctx, directory, 'explorer', text, {kind, contextLimit});
+  return publishUtilityBrief(ctx, directory, 'explorer', text, { kind, contextLimit });
 }
 
 export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<HandlerResult> {
@@ -352,14 +468,18 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
     readJsonPayload(ctx, {
       positional: 'values',
       inlineFlag: 'json',
-      direct: [{flag: 'base', key: 'base'}, {flag: 'integration-path', key: 'integrationPath'}],
+      direct: [
+        { flag: 'base', key: 'base' },
+        { flag: 'integration-path', key: 'integrationPath' },
+      ],
       label: 'test-cleanup values',
     }),
     TEST_CLEANUP_VALUES,
   );
   const fold = foldLedger(ctx.session);
   const bind = latest(fold, 'bind');
-  if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim()) throw new ToolError(4, 'lint-errors', 'No bound plan');
+  if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim())
+    throw new ToolError(4, 'lint-errors', 'No bound plan');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const slots: Record<string, string> = {
     base: values.base,
@@ -370,20 +490,24 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   const text = fillSlots('test-cleanup', fs.readFileSync(path.join(templates, 'test-cleanup-brief.md'), 'utf8'), slots);
   assertFilled('test-cleanup', text);
   const directory = prepareBriefDirectory(ctx.session);
-  return {...publishUtilityBrief(ctx, directory, 'test-cleanup', text, {}), postFold: fold};
+  return { ...publishUtilityBrief(ctx, directory, 'test-cleanup', text, {}), postFold: fold };
 }
 
 const VERIFIER_VALUES = ['checkoutPath', 'base', 'specPath', 'focus'] as const;
 export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerResult> {
   const values = validateValues(
-    readJsonPayload(ctx, {positional: 'values', inlineFlag: 'json', label: 'verifier values'}),
+    readJsonPayload(ctx, { positional: 'values', inlineFlag: 'json', label: 'verifier values' }),
     VERIFIER_VALUES,
   );
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const evidenceDir = path.join(ctx.session, 'verification');
-  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: briefQuality(ctx.deps.skillRoot, 'verifier')});
+  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {
+    ...values,
+    evidenceDir,
+    quality: briefQuality(ctx.deps.skillRoot, 'verifier'),
+  });
   assertFilled('verifier', text);
   const directory = prepareBriefDirectory(ctx.session);
-  fs.mkdirSync(evidenceDir, {recursive: true});
-  return publishUtilityBrief(ctx, directory, 'verifier', text, {evidenceDir});
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  return publishUtilityBrief(ctx, directory, 'verifier', text, { evidenceDir });
 }

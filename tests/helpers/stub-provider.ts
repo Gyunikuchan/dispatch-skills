@@ -7,33 +7,67 @@ export type StubLaunch = { index: number; pid: number; prompt: string };
 export function recordedLaunches(file: string): StubLaunch[] {
   const dir = `${file}.launches`;
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter((name) => /^\d+$/.test(name)).sort((a, b) => Number(a) - Number(b)).flatMap((name) => {
-    try { return [JSON.parse(fs.readFileSync(path.join(dir, name, 'launch.json'), 'utf8')) as StubLaunch]; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-  });
+  return fs
+    .readdirSync(dir)
+    .filter((name) => /^\d+$/.test(name))
+    .sort((a, b) => Number(a) - Number(b))
+    .flatMap((name) => {
+      try {
+        return [JSON.parse(fs.readFileSync(path.join(dir, name, 'launch.json'), 'utf8')) as StubLaunch];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      }
+    });
 }
 export function completedLaunch(file: string, launch: StubLaunch): boolean {
   try {
-    const receipt = JSON.parse(fs.readFileSync(path.join(`${file}.launches`, String(launch.index), 'done.json'), 'utf8')) as { index?: unknown; pid?: unknown };
+    const receipt = JSON.parse(
+      fs.readFileSync(path.join(`${file}.launches`, String(launch.index), 'done.json'), 'utf8'),
+    ) as { index?: unknown; pid?: unknown };
     return receipt.index === launch.index && receipt.pid === launch.pid;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 export async function stub(file: string, args: readonly string[]): Promise<void> {
   const inspectionArgs = args[0] === '--standalone' && args[1] === 'debug' ? args.slice(1) : args;
   if (inspectionArgs[0] === 'debug') {
-    process.stdout.write(JSON.stringify(inspectionArgs[1] === 'config' ? [] : [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }]) + '\n'); return;
+    process.stdout.write(
+      JSON.stringify(
+        inspectionArgs[1] === 'config'
+          ? []
+          : [
+              {
+                id: 'explore',
+                permissions: [
+                  { action: '*', resource: '*', effect: 'deny' },
+                  { action: 'read', resource: '*', effect: 'allow' },
+                ],
+              },
+            ],
+      ) + '\n',
+    );
+    return;
   }
   const scenario = JSON.parse(fs.readFileSync(file, 'utf8')) as Scenario;
   const dir = `${file}.launches`;
   fs.mkdirSync(dir, { recursive: true });
-  let index = 0, recordDir: string;
+  let index = 0,
+    recordDir: string;
   // Exclusive reservations give concurrent processes unique response indexes without rewriting the scenario.
   for (;;) {
     recordDir = path.join(dir, String(index));
-    try { fs.mkdirSync(recordDir); break; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; index++; }
+    try {
+      fs.mkdirSync(recordDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      index++;
+    }
   }
-  const raw = args.join(' '), brief = /Brief file:\s*(.+)$/.exec(raw)?.[1]?.trim();
+  const raw = args.join(' '),
+    brief = /Brief file:\s*(.+)$/.exec(raw)?.[1]?.trim();
   const prompt = brief && fs.existsSync(brief) ? fs.readFileSync(brief, 'utf8') : raw;
   fs.writeFileSync(path.join(recordDir, 'launch.tmp'), JSON.stringify({ index, pid: process.pid, prompt }));
   fs.renameSync(path.join(recordDir, 'launch.tmp'), path.join(recordDir, 'launch.json'));
@@ -42,16 +76,32 @@ export async function stub(file: string, args: readonly string[]): Promise<void>
   if (args.includes('--format') && args[args.indexOf('--format') + 1] === 'json') {
     // OpenCode JSON mode: one text event carries the scenario reply; tool output stays on the event stream.
     const text = typeof output === 'string' ? output : JSON.stringify(output);
-    const event = (type: string, part: Record<string, unknown>) => JSON.stringify({ type, timestamp: 0, sessionID: 'stub-session', part });
+    const event = (type: string, part: Record<string, unknown>) =>
+      JSON.stringify({ type, timestamp: 0, sessionID: 'stub-session', part });
     const stream = [
       event('text', { id: 'stub-text', sessionID: 'stub-session', messageID: 'stub-message', type: 'text', text }),
-      event('step_finish', { id: 'stub-step', sessionID: 'stub-session', messageID: 'stub-message', type: 'step-finish', reason: 'stop', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }),
+      event('step_finish', {
+        id: 'stub-step',
+        sessionID: 'stub-session',
+        messageID: 'stub-message',
+        type: 'step-finish',
+        reason: 'stop',
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
     ].join('\n');
-    await new Promise<void>((resolve, reject) => process.stdout.write(`${stream}\n`, (error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) =>
+      process.stdout.write(`${stream}\n`, (error) => (error ? reject(error) : resolve())),
+    );
   } else {
-    await new Promise<void>((resolve, reject) => process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`, (error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) =>
+      process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(output)}\n`, (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
   }
   fs.writeFileSync(path.join(recordDir, 'done.tmp'), JSON.stringify({ index, pid: process.pid }));
   fs.renameSync(path.join(recordDir, 'done.tmp'), path.join(recordDir, 'done.json'));
 }
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await stub(process.argv[2]!, process.argv.slice(3));
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
+  await stub(process.argv[2]!, process.argv.slice(3));

@@ -2,8 +2,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { DiagnosticModelUsage, DiagnosticUsage } from './rows.ts';
-import { MAX_FILE_BYTES, count, counter, counters, note, readErrorReason, readRoleTranscript, row, stageAt } from './read.ts';
-import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type ReadBudget, type UsageRow } from './rows.ts';
+import {
+  MAX_FILE_BYTES,
+  count,
+  counter,
+  counters,
+  note,
+  readErrorReason,
+  readRoleTranscript,
+  row,
+  stageAt,
+} from './read.ts';
+import {
+  addCounters,
+  type Counters,
+  type HostRole,
+  type HostStage,
+  type HostUsageAdapter,
+  type HostUsageFs,
+  type HostUsageQuery,
+  type HostUsageResult,
+  type ReadBudget,
+  type UsageRow,
+} from './rows.ts';
 
 const ID_REGEX = /^[A-Za-z0-9-]+$/;
 
@@ -20,14 +41,24 @@ type ParsedStep = {
 export const agy: HostUsageAdapter = {
   sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
   read(query, fsPort, delegate) {
-    return collectAgyUsage(query, fsPort, delegate ? {
-      rootRole: 'delegate',
-      ...(delegate.appDataDir ? { appDataDir: delegate.appDataDir } : {}),
-    } : undefined);
+    return collectAgyUsage(
+      query,
+      fsPort,
+      delegate
+        ? {
+            rootRole: 'delegate',
+            ...(delegate.appDataDir ? { appDataDir: delegate.appDataDir } : {}),
+          }
+        : undefined,
+    );
   },
 };
 
-export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, options?: { appDataDir?: string; rootRole?: 'host' | 'delegate' }): HostUsageResult {
+export function collectAgyUsage(
+  query: HostUsageQuery,
+  fsPort: HostUsageFs,
+  options?: { appDataDir?: string; rootRole?: 'host' | 'delegate' },
+): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
@@ -37,7 +68,8 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
     return { ...result, unavailable: 'invalid host id' };
   }
 
-  const root = options?.appDataDir || query.env('ANTIGRAVITY_APP_DATA_DIR') || path.join(query.home, '.gemini', 'antigravity');
+  const root =
+    options?.appDataDir || query.env('ANTIGRAVITY_APP_DATA_DIR') || path.join(query.home, '.gemini', 'antigravity');
   const hostTranscriptFile = path.join(root, 'brain', query.sessionId, '.system_generated', 'logs', 'transcript.jsonl');
 
   let hostStat: { size: number; mtimeMs: number } | null = null;
@@ -152,7 +184,9 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
         const parsed: ParsedStep = {
           step_index: entry.step_index,
           atMs: at,
-          ...(typeof entry.created_at === 'string' && !/\.\d+/.test(entry.created_at) ? { wholeSecond: true as const } : {}),
+          ...(typeof entry.created_at === 'string' && !/\.\d+/.test(entry.created_at)
+            ? { wholeSecond: true as const }
+            : {}),
           input_tokens: entry.input_tokens,
           output_tokens: entry.output_tokens,
           toolCalls: Array.isArray(entry.tool_calls) ? entry.tool_calls.length : 0,
@@ -233,12 +267,7 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
             : r.lastStepIndex !== undefined &&
               r.lastStepIndex >= steps[k - 1]!.step_index &&
               r.lastStepIndex < s.step_index;
-        if (
-          r.input === s.input_tokens &&
-          r.output === s.output_tokens &&
-          intervalMatch &&
-          r.model !== null
-        ) {
+        if (r.input === s.input_tokens && r.output === s.output_tokens && intervalMatch && r.model !== null) {
           k++;
         } else {
           break;
@@ -247,7 +276,12 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
       if (k < steps.length || rows.length !== steps.length) {
         note(notes, role, 'unparsed lines');
       }
-    } else if (rootRole === 'delegate' && steps.length > 0 && !notes[role]?.['read budget reached'] && !notes[role]?.['unreadable files']) {
+    } else if (
+      rootRole === 'delegate' &&
+      steps.length > 0 &&
+      !notes[role]?.['read budget reached'] &&
+      !notes[role]?.['unreadable files']
+    ) {
       note(notes, role, 'unreadable files');
     }
 
@@ -283,7 +317,9 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
         atMs: s.atMs,
         ...(s.wholeSecond ? { wholeSecond: true as const } : {}),
         reasoningInOutput: false,
-        ...(!repeated ? { turns: 1, toolCalls: s.toolCalls, toolTurns: s.toolCalls > 0 ? 1 : 0 } : { skipResponse: true as const }),
+        ...(!repeated
+          ? { turns: 1, toolCalls: s.toolCalls, toolTurns: s.toolCalls > 0 ? 1 : 0 }
+          : { skipResponse: true as const }),
         input: s.input_tokens,
         output: s.output_tokens,
       };
@@ -304,7 +340,8 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   }
 
   const hostEnvModel = query.env('ANTIGRAVITY_MODEL') || query.env('GEMINI_MODEL');
-  const hostFallbackModel = (hostEnvModel ? normalizeAgyModelEffort(hostEnvModel).model ?? hostEnvModel : null) || 'unknown';
+  const hostFallbackModel =
+    (hostEnvModel ? (normalizeAgyModelEffort(hostEnvModel).model ?? hostEnvModel) : null) || 'unknown';
 
   const hostResult = processConversation(query.sessionId, 'host', hostFallbackModel, 0);
   if (notes.host?.['read budget reached']) {
@@ -461,9 +498,10 @@ export function normalizeAgyModelEffort(
     }
   }
 
-  const finalEffort = effortCandidate
-    ?? (rawEffort && VALID_EFFORTS.has(rawEffort.trim().toLowerCase()) ? rawEffort.trim().toLowerCase() : null)
-    ?? rawModelEffortSuffix;
+  const finalEffort =
+    effortCandidate ??
+    (rawEffort && VALID_EFFORTS.has(rawEffort.trim().toLowerCase()) ? rawEffort.trim().toLowerCase() : null) ??
+    rawModelEffortSuffix;
 
   let finalModel: string | null = null;
   if (modelCandidate && modelCandidate.length >= 3 && !/\s/.test(modelCandidate) && !/[()]/.test(modelCandidate)) {
@@ -481,10 +519,11 @@ export function normalizeAgyModelEffort(
 }
 
 function readVarint(buf: Uint8Array, cur: [number]): number {
-  let val = 0, shift = 0;
+  let val = 0,
+    shift = 0;
   while (cur[0] < buf.length) {
     const b = buf[cur[0]++]!;
-    val += (b & 0x7f) * (2 ** shift);
+    val += (b & 0x7f) * 2 ** shift;
     if (!(b & 0x80)) break;
     shift += 7;
     if (shift > 49) break;
@@ -505,7 +544,7 @@ function readSlice(buf: Uint8Array, cur: [number]): Uint8Array {
 
 function skipField(wire: number, buf: Uint8Array, cur: [number]): void {
   if (wire === 0) {
-    while (cur[0] < buf.length && (buf[cur[0]++]! & 0x80)) {}
+    while (cur[0] < buf.length && buf[cur[0]++]! & 0x80) {}
   } else if (wire === 1) {
     cur[0] = Math.min(cur[0] + 8, buf.length);
   } else if (wire === 2) {
@@ -535,19 +574,22 @@ export function decodeAgyGenMetadata(data: Uint8Array): AgyTurnMetadata {
     const cur: [number] = [0];
     while (cur[0] < data.length) {
       const tag = readVarint(data, cur);
-      const fn = tag >>> 3, wire = tag & 7;
+      const fn = tag >>> 3,
+        wire = tag & 7;
       if (fn === 1 && wire === 2) {
         const s1 = readSlice(data, cur);
         const c1: [number] = [0];
         while (c1[0] < s1.length) {
           const t1 = readVarint(s1, c1);
-          const f1 = t1 >>> 3, w1 = t1 & 7;
+          const f1 = t1 >>> 3,
+            w1 = t1 & 7;
           if (f1 === 4 && w1 === 2) {
             const s4 = readSlice(s1, c1);
             const c4: [number] = [0];
             while (c4[0] < s4.length) {
               const t4 = readVarint(s4, c4);
-              const f4 = t4 >>> 3, w4 = t4 & 7;
+              const f4 = t4 >>> 3,
+                w4 = t4 & 7;
               if (w4 === 0) {
                 const val = readVarint(s4, c4);
                 if (count(val)) {
@@ -565,10 +607,12 @@ export function decodeAgyGenMetadata(data: Uint8Array): AgyTurnMetadata {
           } else if (f1 === 20 && w1 === 2) {
             const s20 = readSlice(s1, c1);
             const c20: [number] = [0];
-            let kText = '', vText = '';
+            let kText = '',
+              vText = '';
             while (c20[0] < s20.length) {
               const t20 = readVarint(s20, c20);
-              const f20 = t20 >>> 3, w20 = t20 & 7;
+              const f20 = t20 >>> 3,
+                w20 = t20 & 7;
               if (w20 === 2) {
                 const str = Buffer.from(readSlice(s20, c20)).toString('utf8');
                 if (f20 === 1) kText = str;
@@ -649,9 +693,11 @@ export function readAgySqliteGenMetadata(
       db = new DatabaseSync(dbPath, { readOnly: true });
       const stmt = db.prepare('SELECT data FROM gen_metadata ORDER BY idx');
       const rows = stmt.all() as { data: Uint8Array | Buffer }[];
-      return rows.map((r) => r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data));
+      return rows.map((r) => (r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)));
     } finally {
-      try { db?.close(); } catch {}
+      try {
+        db?.close();
+      } catch {}
     }
   } catch (error) {
     if (options?.throwOnError) throw error;
@@ -669,15 +715,34 @@ export const AGY_ENVELOPE_USAGE = 'agy.usage.envelope';
 
 export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage | undefined {
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
   const envelope = row(parsed);
   // agy reports cache reads beside input_tokens, so input is uncached; agy has no cache-write counter.
-  const out = counters(envelope?.['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_tokens', reasoning: 'thinking_tokens' }, 'agy.usage', 'uncached');
+  const out = counters(
+    envelope?.['usage'],
+    { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_tokens', reasoning: 'thinking_tokens' },
+    'agy.usage',
+    'uncached',
+  );
   if (!out) return undefined;
 
   const usageRow = row(envelope?.['usage']);
-  const rawModel = typeof envelope?.['model'] === 'string' ? envelope['model'] : (typeof usageRow?.['model'] === 'string' ? usageRow['model'] : null);
-  const rawEffort = typeof envelope?.['effort'] === 'string' ? envelope['effort'] : (typeof usageRow?.['effort'] === 'string' ? usageRow['effort'] : null);
+  const rawModel =
+    typeof envelope?.['model'] === 'string'
+      ? envelope['model']
+      : typeof usageRow?.['model'] === 'string'
+        ? usageRow['model']
+        : null;
+  const rawEffort =
+    typeof envelope?.['effort'] === 'string'
+      ? envelope['effort']
+      : typeof usageRow?.['effort'] === 'string'
+        ? usageRow['effort']
+        : null;
 
   const convIdRaw = envelope?.['conversation_id'] ?? envelope?.['conversationId'];
   const convId = typeof convIdRaw === 'string' && /^[A-Za-z0-9-]+$/.test(convIdRaw) ? convIdRaw : null;
@@ -690,7 +755,9 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
     try {
       sqliteBlobs = context.readSqliteGenMetadata
         ? context.readSqliteGenMetadata(dbPath || convId)
-        : dbPath ? readAgySqliteGenMetadata(dbPath, { maxBytes }) : null;
+        : dbPath
+          ? readAgySqliteGenMetadata(dbPath, { maxBytes })
+          : null;
     } catch {}
     if (budget && sqliteBlobs) {
       const blobBytes = sqliteBlobs.reduce((sum, b) => sum + b.byteLength, 0);
@@ -722,27 +789,33 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
           const sum: Counters = { input: 0, output: 0 };
           let canSum = true;
           for (const r of rows) {
-            if (!r.model || r.input === undefined || r.output === undefined) { canSum = false; break; }
-            const target = perModel[r.model] ??= { input: 0, output: 0 };
+            if (!r.model || r.input === undefined || r.output === undefined) {
+              canSum = false;
+              break;
+            }
+            const target = (perModel[r.model] ??= { input: 0, output: 0 });
             addCounters(target, r as Counters);
             addCounters(sum, r as Counters);
           }
-          const matchesEnvelope = canSum
-            && sum.input === out.input
-            && sum.output === out.output
-            && (sum.cacheRead ?? 0) === (out.cacheRead ?? 0)
-            && (sum.reasoning ?? 0) === (out.reasoning ?? 0);
+          const matchesEnvelope =
+            canSum &&
+            sum.input === out.input &&
+            sum.output === out.output &&
+            (sum.cacheRead ?? 0) === (out.cacheRead ?? 0) &&
+            (sum.reasoning ?? 0) === (out.reasoning ?? 0);
           if (matchesEnvelope) out.models = perModel;
         }
       }
     }
     const lastRow = rows.at(-1)!;
-    const lastEffort = lastRow.effort !== null ? lastRow.effort : (lastRow.hasDisplayName ? null : undefined);
+    const lastEffort = lastRow.effort !== null ? lastRow.effort : lastRow.hasDisplayName ? null : undefined;
     if (lastEffort !== undefined) out.actualEffort = lastEffort;
     return out;
   }
 
-  const envelopeModelsRaw = row(envelope?.['models'] ?? envelope?.['model_usage'] ?? envelope?.['modelUsage'] ?? usageRow?.['models']);
+  const envelopeModelsRaw = row(
+    envelope?.['models'] ?? envelope?.['model_usage'] ?? envelope?.['modelUsage'] ?? usageRow?.['models'],
+  );
   if (envelopeModelsRaw && Object.keys(envelopeModelsRaw).length > 0) {
     const perModel: Record<string, DiagnosticModelUsage> = Object.create(null);
     const activeModels: string[] = [];
@@ -752,10 +825,20 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
       if (!mRow) continue;
       const parsed = normalizeAgyModelEffort(mName);
       const normalizedName = parsed.model ?? mName.toLowerCase();
-      const mCounters = counters(mRow, { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_tokens', reasoning: 'thinking_tokens' }, 'agy.usage', 'uncached');
+      const mCounters = counters(
+        mRow,
+        {
+          input: 'input_tokens',
+          output: 'output_tokens',
+          cacheRead: 'cache_read_tokens',
+          reasoning: 'thinking_tokens',
+        },
+        'agy.usage',
+        'uncached',
+      );
       if (mCounters) {
         if (parsed.effort !== null && !keyEfforts.includes(parsed.effort)) keyEfforts.push(parsed.effort);
-        const entry = perModel[normalizedName] ??= { input: 0, output: 0 };
+        const entry = (perModel[normalizedName] ??= { input: 0, output: 0 });
         addCounters(entry, mCounters);
         if (!activeModels.includes(normalizedName)) activeModels.push(normalizedName);
       }
@@ -764,7 +847,7 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
       out.actualModels = activeModels;
       out.models = perModel;
       const norm = normalizeAgyModelEffort(rawModel, rawEffort);
-      const consensusKeyEffort = keyEfforts.length === 1 ? keyEfforts[0]! : (keyEfforts.length > 1 ? null : undefined);
+      const consensusKeyEffort = keyEfforts.length === 1 ? keyEfforts[0]! : keyEfforts.length > 1 ? null : undefined;
       if (norm.effort !== null) {
         out.actualEffort = norm.effort;
       } else if (rawEffort !== null && rawEffort !== undefined) {

@@ -10,7 +10,10 @@ export const OVERLAY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.
 export const REPO_ROOT = OVERLAY_ROOT;
 
 /** One overlay file: `path` is relative to the repository root with forward slashes. */
-export interface FileEntry { path: string; text: string }
+export interface FileEntry {
+  path: string;
+  text: string;
+}
 export type FileTable = readonly FileEntry[];
 
 const TEXT_EXTENSIONS = new Set(['.ts', '.mjs', '.js', '.json', '.md', '.jsonc']);
@@ -21,18 +24,33 @@ export function scanOverlay(root = OVERLAY_ROOT, withText = true): FileEntry[] {
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) { if (!['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(entry.name)) walk(full); continue; }
+      if (entry.isDirectory()) {
+        if (
+          !['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(
+            entry.name,
+          )
+        )
+          walk(full);
+        continue;
+      }
       const rel = path.relative(root, full).replace(/\\/g, '/');
-      out.push({ path: rel, text: withText && TEXT_EXTENSIONS.has(path.extname(entry.name)) ? fs.readFileSync(full, 'utf8') : '' });
+      out.push({
+        path: rel,
+        text: withText && TEXT_EXTENSIONS.has(path.extname(entry.name)) ? fs.readFileSync(full, 'utf8') : '',
+      });
     }
   };
   walk(root);
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export interface ImportRef { specifier: string; typeOnly: boolean }
+export interface ImportRef {
+  specifier: string;
+  typeOnly: boolean;
+}
 
-const STATIC_IMPORT = /(?:^|[\n;])\s*(import|export)\s+(type\s+)?((?:\{[^}]*\}|\*\s+as\s+\w+|\*|\w+(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+))?)\s+from\s+)?['"]([^'"]+)['"]/g;
+const STATIC_IMPORT =
+  /(?:^|[\n;])\s*(import|export)\s+(type\s+)?((?:\{[^}]*\}|\*\s+as\s+\w+|\*|\w+(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+))?)\s+from\s+)?['"]([^'"]+)['"]/g;
 const DYNAMIC_IMPORT = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /** Static, re-export, side-effect, and literal dynamic imports; `typeOnly` when erased at runtime. */
@@ -43,7 +61,11 @@ export function extractImports(text: string): ImportRef[] {
     const specifier = match[4] ?? '';
     if (match[1] === 'export' && !clause) continue;
     const braces = /^\{([^}]*)\}\s+from\s+$/.exec(clause.trim() + ' ');
-    const names = braces?.[1]?.split(',').map((name) => name.trim()).filter(Boolean) ?? [];
+    const names =
+      braces?.[1]
+        ?.split(',')
+        .map((name) => name.trim())
+        .filter(Boolean) ?? [];
     const allTypes = names.length > 0 && names.every((name) => name.startsWith('type '));
     refs.push({ specifier, typeOnly: Boolean(match[2]) || allTypes });
   }

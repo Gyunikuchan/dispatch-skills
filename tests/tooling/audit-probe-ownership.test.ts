@@ -5,9 +5,19 @@ import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { SPECS } from '../../skills/dispatch/scripts/providers/index.ts';
-import { DEFAULT_CONFIG_PATH, loadAuditConfig, readRun, reserveRun, updateRun, type LimitName, type ProbeRecord } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+import {
+  DEFAULT_CONFIG_PATH,
+  loadAuditConfig,
+  readRun,
+  reserveRun,
+  updateRun,
+  type LimitName,
+  type ProbeRecord,
+} from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 // The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
-const probe = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
+const probe = await import(
+  new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
+);
 
 // SECTION: Fakes
 
@@ -19,18 +29,40 @@ function fakeClock() {
   return {
     timers,
     now: () => t,
-    every(ms: number, fn: () => void) { const timer = { at: t + ms, fn, live: true }; timers.push(timer); return () => { timer.live = false; }; },
-    advance(ms: number) { t += ms; for (const timer of timers) if (timer.live && timer.at <= t) { timer.live = false; timer.fn(); } },
+    every(ms: number, fn: () => void) {
+      const timer = { at: t + ms, fn, live: true };
+      timers.push(timer);
+      return () => {
+        timer.live = false;
+      };
+    },
+    advance(ms: number) {
+      t += ms;
+      for (const timer of timers)
+        if (timer.live && timer.at <= t) {
+          timer.live = false;
+          timer.fn();
+        }
+    },
   };
 }
 
 function fakeSpec(extra: Record<string, unknown> = {}) {
   return {
-    id: 'claude', modes: [], modeCascadeOn: [], resumeCommand: () => '',
-    argv: (req: { prompt: string; cwd: string }) => ({ argv: ['fake-cli', req.prompt], stdin: null, env: {}, cwd: req.cwd }),
-    parse: (out: { exit: number | null; stdout: string }) => (out.exit === 0
-      ? { status: 'ok', text: out.stdout, sessionId: null, resume: null }
-      : { status: 'fail', cls: 'model-not-found', detail: 'effort rejected', retryWithoutEffort: true }),
+    id: 'claude',
+    modes: [],
+    modeCascadeOn: [],
+    resumeCommand: () => '',
+    argv: (req: { prompt: string; cwd: string }) => ({
+      argv: ['fake-cli', req.prompt],
+      stdin: null,
+      env: {},
+      cwd: req.cwd,
+    }),
+    parse: (out: { exit: number | null; stdout: string }) =>
+      out.exit === 0
+        ? { status: 'ok', text: out.stdout, sessionId: null, resume: null }
+        : { status: 'fail', cls: 'model-not-found', detail: 'effort rejected', retryWithoutEffort: true },
     ...extra,
   };
 }
@@ -43,24 +75,50 @@ const rows = [
   { provider: 'copilot', mode: 'cli', bin: null, reachable: false, detail: '' },
 ];
 
-const READ_ONLY_AGENTS = [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }];
+const READ_ONLY_AGENTS = [
+  {
+    id: 'explore',
+    permissions: [
+      { action: '*', resource: '*', effect: 'deny' },
+      { action: 'read', resource: '*', effect: 'allow' },
+    ],
+  },
+];
 const RUN = '2026-10-07-0000';
 const probeConfig = { 'read-delegates': { claude: { targets: [{ low: { model: 'small-model', effort: 'low' } }] } } };
 
-type MainOptions = { config?: unknown; previous?: Record<string, ProbeRecord>; modes?: boolean; hang?: boolean; limits?: Partial<Record<LimitName, number>>; args?: string[] };
+type MainOptions = {
+  config?: unknown;
+  previous?: Record<string, ProbeRecord>;
+  modes?: boolean;
+  hang?: boolean;
+  limits?: Partial<Record<LimitName, number>>;
+  args?: string[];
+};
 
 /** Reserves a run in a fresh repo; `limits` overrides the reserved settings, standing in for a later config edit. */
 function reserveMainRun(options: MainOptions = {}) {
-  const root = tempDir(), repo = path.join(root, 'repo');
+  const root = tempDir(),
+    repo = path.join(root, 'repo');
   const config = 'config' in options ? options.config : probeConfig;
   if (config !== undefined) {
     fs.mkdirSync(path.join(repo, 'skills/dispatch'), { recursive: true });
-    fs.writeFileSync(path.join(repo, 'skills/dispatch/config.local.jsonc'), typeof config === 'string' ? config : JSON.stringify(config));
+    fs.writeFileSync(
+      path.join(repo, 'skills/dispatch/config.local.jsonc'),
+      typeof config === 'string' ? config : JSON.stringify(config),
+    );
   }
   const workDir = path.join(repo, `.scratch/audits/${RUN}-work`);
   const settings = loadAuditConfig(DEFAULT_CONFIG_PATH);
-  reserveRun(workDir, { runId: RUN, revision: 'abc', config: { ...settings, limits: { ...settings.limits, ...options.limits } } });
-  if (options.previous) updateRun(workDir, (m) => { Object.assign(m.probes, options.previous); });
+  reserveRun(workDir, {
+    runId: RUN,
+    revision: 'abc',
+    config: { ...settings, limits: { ...settings.limits, ...options.limits } },
+  });
+  if (options.previous)
+    updateRun(workDir, (m) => {
+      Object.assign(m.probes, options.previous);
+    });
   return { root, repo, workDir };
 }
 
@@ -74,8 +132,23 @@ function startMain(run: { root: string; repo: string }, options: MainOptions & {
       fs.writeFileSync(io.logPath, 'partial');
       options.onStart?.();
       // A hung child never settles; the abort stands in for the operator's interrupt.
-      if (options.hang) { if (!options.onStart) queueMicrotask(() => controller.abort()); return { pid: 5001, done: new Promise(() => {}) }; }
-      return { pid: 5001, done: Promise.resolve({ exit: 0, signal: null, stdout: 'ok', stdoutPath: io.logPath, stderrTail: '', durationMs: 5, timedOut: false, truncated: false }) };
+      if (options.hang) {
+        if (!options.onStart) queueMicrotask(() => controller.abort());
+        return { pid: 5001, done: new Promise(() => {}) };
+      }
+      return {
+        pid: 5001,
+        done: Promise.resolve({
+          exit: 0,
+          signal: null,
+          stdout: 'ok',
+          stdoutPath: io.logPath,
+          stderrTail: '',
+          durationMs: 5,
+          timedOut: false,
+          truncated: false,
+        }),
+      };
     },
     signal() {},
   };
@@ -84,8 +157,19 @@ function startMain(run: { root: string; repo: string }, options: MainOptions & {
     { provider: 'claude', mode: 'desktop', path: '/apps/claude', status: 'path' },
   ];
   const done = probe.main({
-    root: run.repo, home: path.join(run.root, 'home'), signal: controller.signal,
-    argv: ['node', 'probe', '--run', RUN, '--only', 'claude', ...(options.modes ? ['--modes'] : []), ...(options.args ?? [])],
+    root: run.repo,
+    home: path.join(run.root, 'home'),
+    signal: controller.signal,
+    argv: [
+      'node',
+      'probe',
+      '--run',
+      RUN,
+      '--only',
+      'claude',
+      ...(options.modes ? ['--modes'] : []),
+      ...(options.args ?? []),
+    ],
     ports: { doctor, process: processPort, clock, specs: { claude: fakeSpec() }, env: {}, platform: currentPlatform() },
   });
   return { done, launches, clock, controller };
@@ -94,16 +178,29 @@ function startMain(run: { root: string; repo: string }, options: MainOptions & {
 async function quietly<T>(body: () => Promise<T>): Promise<T> {
   const write = process.stdout.write;
   process.stdout.write = (() => true) as typeof process.stdout.write;
-  try { return await body(); } finally { process.stdout.write = write; }
+  try {
+    return await body();
+  } finally {
+    process.stdout.write = write;
+  }
 }
 
 function unreadableRun(kind: 'malformed' | 'unsupported' | 'legacy') {
-  const run = kind === 'legacy'
-    ? (() => { const root = tempDir(), repo = path.join(root, 'repo'); return { root, repo, workDir: path.join(repo, `.scratch/audits/${RUN}-work`) }; })()
-    : reserveMainRun();
+  const run =
+    kind === 'legacy'
+      ? (() => {
+          const root = tempDir(),
+            repo = path.join(root, 'repo');
+          return { root, repo, workDir: path.join(repo, `.scratch/audits/${RUN}-work`) };
+        })()
+      : reserveMainRun();
   const manifestPath = path.join(run.workDir, 'manifest.json');
   if (kind === 'malformed') fs.writeFileSync(manifestPath, '{ "version": 1,');
-  if (kind === 'unsupported') fs.writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestPath, 'utf8')), version: 2 }));
+  if (kind === 'unsupported')
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestPath, 'utf8')), version: 2 }),
+    );
   const capture = path.join(run.workDir, 'dispatch', 'claude.read.log');
   fs.mkdirSync(path.dirname(capture), { recursive: true });
   fs.writeFileSync(capture, 'prior evidence');
@@ -127,7 +224,9 @@ test('audit probe competing invocations launch once: the second refuses while th
   const run = reserveMainRun();
   await quietly(async () => {
     let started!: () => void;
-    const launched = new Promise<void>((resolve) => { started = resolve; });
+    const launched = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const first = startMain(run, { hang: true, onStart: () => started() });
     await launched;
     assert.equal(readRun(run.workDir).probes['claude']?.lifecycle, 'running');
@@ -137,18 +236,29 @@ test('audit probe competing invocations launch once: the second refuses while th
     first.controller.abort();
     await first.done;
     assert.equal(first.launches.length, 1);
-    const manifest = readRun(run.workDir) as ReturnType<typeof readRun> & { probeOwner?: { finishedAt: string | null } };
+    const manifest = readRun(run.workDir) as ReturnType<typeof readRun> & {
+      probeOwner?: { finishedAt: string | null };
+    };
     assert.ok(manifest.probeOwner?.finishedAt, 'owner released after the first invocation ends');
   });
 });
 
-test('audit probe claim reserves launch budget before start, so a dead owner\'s reservation is never relaunched', () => {
+test("audit probe claim reserves launch budget before start, so a dead owner's reservation is never relaunched", () => {
   const { workDir } = reserveMainRun();
   const selection = { modes: true, config: probeConfig, limits: limits() };
   const clock = fakeClock();
   const claim = probe.claimProbe(workDir, rows, selection, { clock, alive: () => true, pid: 1 });
-  assert.deepEqual(claim.targets.map((t: { id: string; launchLimit: number }) => [t.id, t.launchLimit]), [['claude/cli', 1], ['claude/desktop', 0]]);
-  assert.throws(() => probe.claimProbe(workDir, rows, selection, { clock, alive: () => true, pid: 2 }), /probe already running/);
+  assert.deepEqual(
+    claim.targets.map((t: { id: string; launchLimit: number }) => [t.id, t.launchLimit]),
+    [
+      ['claude/cli', 1],
+      ['claude/desktop', 0],
+    ],
+  );
+  assert.throws(
+    () => probe.claimProbe(workDir, rows, selection, { clock, alive: () => true, pid: 2 }),
+    /probe already running/,
+  );
   // The owner died before launching: takeover is allowed, but the reservation still spends the budget.
   const retry = probe.claimProbe(workDir, rows, selection, { clock, alive: () => false, pid: 3 });
   assert.ok(retry.targets.every((t: { launchLimit: number }) => t.launchLimit === 0));
@@ -156,25 +266,64 @@ test('audit probe claim reserves launch budget before start, so a dead owner\'s 
 });
 
 /** Runs main for one OpenCode target whose introspection never settles until the returned `settle` is called. */
-async function opencodeMain(onIntrospect: (ctl: { controller: AbortController; clock: ReturnType<typeof fakeClock> }) => void) {
-  const run = reserveMainRun({ config: { 'read-delegates': { opencode: { targets: [{ low: { model: 'local/m', effort: 'low' } }] } } } });
+async function opencodeMain(
+  onIntrospect: (ctl: { controller: AbortController; clock: ReturnType<typeof fakeClock> }) => void,
+) {
+  const run = reserveMainRun({
+    config: { 'read-delegates': { opencode: { targets: [{ low: { model: 'local/m', effort: 'low' } }] } } },
+  });
   const controller = new AbortController();
   const clock = fakeClock();
   let settle!: (value: unknown) => void;
-  const pending = new Promise((resolve) => { settle = resolve; });
+  const pending = new Promise((resolve) => {
+    settle = resolve;
+  });
   const launches: string[] = [];
   let introspections = 0;
-  const introspect = () => () => { introspections++; queueMicrotask(() => onIntrospect({ controller, clock })); return pending; };
+  const introspect = () => () => {
+    introspections++;
+    queueMicrotask(() => onIntrospect({ controller, clock }));
+    return pending;
+  };
   const ports = {
     doctor: () => [{ provider: 'opencode', mode: 'cli', path: '/bin/opencode', status: 'path' }],
-    process: { start(launch: { argv: readonly string[] }) { launches.push(launch.argv.join(' ')); throw new Error('unexpected launch'); }, signal() {} },
-    clock, specs: { opencode: SPECS.opencode }, env: {}, platform: currentPlatform(),
-    introspect: { opencode: introspect }, prepare: { fetchModels: async () => [], acquireGpuLock: async () => () => {} },
+    process: {
+      start(launch: { argv: readonly string[] }) {
+        launches.push(launch.argv.join(' '));
+        throw new Error('unexpected launch');
+      },
+      signal() {},
+    },
+    clock,
+    specs: { opencode: SPECS.opencode },
+    env: {},
+    platform: currentPlatform(),
+    introspect: { opencode: introspect },
+    prepare: { fetchModels: async () => [], acquireGpuLock: async () => () => {} },
   };
-  const result: { interrupted: boolean } = await quietly(() => probe.main({ root: run.repo, home: path.join(run.root, 'home'), signal: controller.signal, argv: ['node', 'probe', '--run', RUN, '--only', 'opencode'], ports }));
+  const result: { interrupted: boolean } = await quietly(() =>
+    probe.main({
+      root: run.repo,
+      home: path.join(run.root, 'home'),
+      signal: controller.signal,
+      argv: ['node', 'probe', '--run', RUN, '--only', 'opencode'],
+      ports,
+    }),
+  );
   const manifest = readRun(run.workDir) as ReturnType<typeof readRun> & { probeOwner?: { finishedAt: string | null } };
-  const lateSettle = async () => { settle(READ_ONLY_AGENTS); await new Promise((resolve) => setImmediate(resolve)); return readRun(run.workDir); };
-  return { result, manifest, record: manifest.probes['opencode'], launches, introspections: () => introspections, lateSettle };
+  const lateSettle = async () => {
+    settle(READ_ONLY_AGENTS);
+    await new Promise((resolve) => setImmediate(resolve));
+    return readRun(run.workDir);
+  };
+  return {
+    result,
+    manifest,
+    record: manifest.probes['opencode'],
+    launches,
+    introspections: () => introspections,
+    lateSettle,
+  };
 }
 
 test('audit probe interrupted during OpenCode introspection keeps the fixture and ignores the late settlement', async () => {
@@ -185,7 +334,11 @@ test('audit probe interrupted during OpenCode introspection keeps the fixture an
   assert.equal(record?.liveness, 'unknown');
   assert.equal(record?.cleanup, 'blocked');
   assert.ok(record?.fixturePath && fs.existsSync(record.fixturePath), 'fixture kept while introspection may be live');
-  assert.deepEqual((await lateSettle()).probes['opencode'], record, 'late settlement does not overwrite the interrupted record');
+  assert.deepEqual(
+    (await lateSettle()).probes['opencode'],
+    record,
+    'late settlement does not overwrite the interrupted record',
+  );
   assert.equal(launches.length, 0);
 
   const timeoutRun = await opencodeMain(({ clock }) => clock.advance(70_000));
@@ -204,19 +357,47 @@ test('audit probe interrupted during OpenCode introspection keeps the fixture an
 
 test('audit probe releases its own unlaunched reservation when the owner exits early', () => {
   const startedAt = '2026-10-07T00:00:00.000Z';
-  const reserved = { lifecycle: 'running', startedAt, attempts: 0, handle: null, liveness: 'exited', exitConfirmed: false, cause: 'launch reserved' };
-  const probes: Record<string, Record<string, unknown>> = { mine: { ...reserved }, launched: { ...reserved, attempts: 1, liveness: 'alive' }, other: { ...reserved, startedAt: 'earlier' } };
+  const reserved = {
+    lifecycle: 'running',
+    startedAt,
+    attempts: 0,
+    handle: null,
+    liveness: 'exited',
+    exitConfirmed: false,
+    cause: 'launch reserved',
+  };
+  const probes: Record<string, Record<string, unknown>> = {
+    mine: { ...reserved },
+    launched: { ...reserved, attempts: 1, liveness: 'alive' },
+    other: { ...reserved, startedAt: 'earlier' },
+  };
   for (const id of Object.keys(probes)) probe.releaseReservation(probes, id, startedAt);
   assert.deepEqual([probes['mine']?.['lifecycle'], probes['mine']?.['liveness']], ['interrupted', 'exited']);
   assert.equal(probe.priorDisposition(probes['mine']), 'launch');
-  assert.deepEqual([probes['launched']?.['lifecycle'], probes['launched']?.['liveness'], probe.priorDisposition(probes['launched'])], ['interrupted', 'unknown', 'blocked']);
-  assert.equal(probes['other']?.['lifecycle'], 'running', 'another owner\'s reservation is untouched');
+  assert.deepEqual(
+    [probes['launched']?.['lifecycle'], probes['launched']?.['liveness'], probe.priorDisposition(probes['launched'])],
+    ['interrupted', 'unknown', 'blocked'],
+  );
+  assert.equal(probes['other']?.['lifecycle'], 'running', "another owner's reservation is untouched");
 });
 
 test('audit probe interruption keeps carried and unresolved prior records instead of overwriting them', () => {
   const target = (id: string) => ({ id, provider: 'claude', mode: 'cli', aliases: [] });
   const carried = { id: 'carried', carried: true, lifecycle: 'complete', liveness: 'exited' };
-  const previous = { carried: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' }, prior: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' } };
-  const out = probe.interruptedRecords([target('carried'), target('prior'), target('fresh')], new Map([['carried', carried]]), previous);
-  assert.deepEqual(out.map((record: { id: string; lifecycle: string }) => [record.id, record.lifecycle]), [['carried', 'complete'], ['fresh', 'interrupted']]);
+  const previous = {
+    carried: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' },
+    prior: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' },
+  };
+  const out = probe.interruptedRecords(
+    [target('carried'), target('prior'), target('fresh')],
+    new Map([['carried', carried]]),
+    previous,
+  );
+  assert.deepEqual(
+    out.map((record: { id: string; lifecycle: string }) => [record.id, record.lifecycle]),
+    [
+      ['carried', 'complete'],
+      ['fresh', 'interrupted'],
+    ],
+  );
 });

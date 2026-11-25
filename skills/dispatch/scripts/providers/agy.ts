@@ -8,11 +8,18 @@ import { classifyFailure, failOutcome } from './response.ts';
 import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, ProviderUsageContext, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 
-const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
+const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = {
+  cli: 'antigravity-cli',
+  desktop: 'antigravity',
+  vscode: 'antigravity-ide',
+};
 
 function usageAppDataDir(context: ProviderUsageContext | undefined): string | undefined {
   const home = context?.platform?.home;
-  return context?.appDataDir ?? (home && context?.mode ? path.join(home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
+  return (
+    context?.appDataDir ??
+    (home && context?.mode ? path.join(home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined)
+  );
 }
 
 const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
@@ -24,7 +31,11 @@ function parseEnvelope(stdout: string): { conversationId: string | null; text: s
   const start = stdout.indexOf('{');
   if (start === -1) return null;
   let value: unknown;
-  try { value = JSON.parse(stdout.slice(start)); } catch { return null; }
+  try {
+    value = JSON.parse(stdout.slice(start));
+  } catch {
+    return null;
+  }
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
   const nested = record['conversation'] as { id?: unknown } | undefined;
@@ -41,11 +52,36 @@ export const agy: ProviderSpec = {
     retainWithoutBaselineProvenance: AGY_ENVELOPE_USAGE,
   },
   modes: [
-    { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'agy.exe' : 'agy', env.os === 'win32' ? 'agy.cmd' : join(env, env.home, '.local', 'bin', 'agy')] },
-    { id: 'desktop', candidates: (env) => env.os === 'darwin'
-      ? ['/Applications/Antigravity.app/Contents/Resources/app/bin/agy']
-      : env.os === 'win32' ? [join(env, env.home, 'AppData', 'Local', 'Programs', 'Antigravity', 'bin', 'agy.cmd')] : ['/usr/share/antigravity/bin/agy'] },
-    { id: 'vscode', candidates: (env) => [join(env, env.home, '.vscode', 'extensions', 'google.antigravity-*', 'bin', env.os === 'win32' ? 'agy.exe' : 'agy')] },
+    {
+      id: 'cli',
+      candidates: (env) => [
+        env.os === 'win32' ? 'agy.exe' : 'agy',
+        env.os === 'win32' ? 'agy.cmd' : join(env, env.home, '.local', 'bin', 'agy'),
+      ],
+    },
+    {
+      id: 'desktop',
+      candidates: (env) =>
+        env.os === 'darwin'
+          ? ['/Applications/Antigravity.app/Contents/Resources/app/bin/agy']
+          : env.os === 'win32'
+            ? [join(env, env.home, 'AppData', 'Local', 'Programs', 'Antigravity', 'bin', 'agy.cmd')]
+            : ['/usr/share/antigravity/bin/agy'],
+    },
+    {
+      id: 'vscode',
+      candidates: (env) => [
+        join(
+          env,
+          env.home,
+          '.vscode',
+          'extensions',
+          'google.antigravity-*',
+          'bin',
+          env.os === 'win32' ? 'agy.exe' : 'agy',
+        ),
+      ],
+    },
   ],
   readOnlyFlags: ['--mode', 'plan'],
   native: 'agy',
@@ -62,10 +98,14 @@ export const agy: ProviderSpec = {
       ...(context?.transcripts?.budget ? { budget: context.transcripts.budget } : {}),
     });
   },
-  sessionUsage: sessionUsageReader('agy', raw => parseEnvelope(raw)?.conversationId ?? null, context => {
-    const appDataDir = usageAppDataDir(context);
-    return appDataDir ? { appDataDir } : {};
-  }),
+  sessionUsage: sessionUsageReader(
+    'agy',
+    (raw) => parseEnvelope(raw)?.conversationId ?? null,
+    (context) => {
+      const appDataDir = usageAppDataDir(context);
+      return appDataDir ? { appDataDir } : {};
+    },
+  ),
   resumeUsage: 'cumulative',
   attemptSession: (out: ProcessResult): string | null =>
     validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),
@@ -89,7 +129,9 @@ export const agy: ProviderSpec = {
     }
     const both = `${out.stderrTail}\n${out.stdout}`;
     const detail = `agy exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
-    const cls = classifyFailure(both) ?? (TOKEN_OR_SUBSCRIPTION.test(both) ? 'auth' : out.exit === 0 ? 'empty-output' : 'not-found');
+    const cls =
+      classifyFailure(both) ??
+      (TOKEN_OR_SUBSCRIPTION.test(both) ? 'auth' : out.exit === 0 ? 'empty-output' : 'not-found');
     return failOutcome(cls, detail);
   },
 };

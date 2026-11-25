@@ -10,13 +10,26 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
   const key: QuotaKey = { provider: 'codex', model: null, mode: 'cli' };
   const marker: QuotaGeneration = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
   const observation: QuotaObservation = { ...marker, bucket: 3, observedAt: 4 * H - 1 };
-  const decide = (now: number, rows: readonly unknown[] = [observation], markers: readonly unknown[] = [marker]) => quotaSnapshot([key], markers, rows, now).decisions[0]!;
+  const decide = (now: number, rows: readonly unknown[] = [observation], markers: readonly unknown[] = [marker]) =>
+    quotaSnapshot([key], markers, rows, now).decisions[0]!;
 
   test('only the exact provider model and mode are suppressed in configured order', () => {
-    const keys = [key, { ...key, provider: 'claude' }, { ...key, model: 'default' }, { ...key, model: '../alias' }, { ...key, mode: 'desktop' }];
+    const keys = [
+      key,
+      { ...key, provider: 'claude' },
+      { ...key, model: 'default' },
+      { ...key, model: '../alias' },
+      { ...key, mode: 'desktop' },
+    ];
     const result = quotaSnapshot(keys, [marker], [observation], 4 * H);
-    assert.deepEqual(result.decisions.map((row) => row.key), keys);
-    assert.deepEqual(result.decisions.map((row) => row.skipped), [true, false, false, false, false]);
+    assert.deepEqual(
+      result.decisions.map((row) => row.key),
+      keys,
+    );
+    assert.deepEqual(
+      result.decisions.map((row) => row.skipped),
+      [true, false, false, false, false],
+    );
     assert.equal(result.policyVersion, 1);
     assert.equal(result.decidedAt, 4 * H);
     assert.equal(result.decisions[0]!.reason, 'quota-cooldown');
@@ -34,11 +47,21 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
   });
 
   test('changed generation and invalid evidence cannot suppress', () => {
-    const invalid = [null, {}, { ...observation, schemaVersion: 2 }, { ...observation, key: { ...key, model: 'default' } },
-      { ...observation, generation: '00000000-0000-4000-8000-000000000002' }, { ...observation, bucket: 2 },
-      { ...observation, observedAt: Number.POSITIVE_INFINITY }, { ...observation, extra: 'x'.repeat(4096) }];
+    const invalid = [
+      null,
+      {},
+      { ...observation, schemaVersion: 2 },
+      { ...observation, key: { ...key, model: 'default' } },
+      { ...observation, generation: '00000000-0000-4000-8000-000000000002' },
+      { ...observation, bucket: 2 },
+      { ...observation, observedAt: Number.POSITIVE_INFINITY },
+      { ...observation, extra: 'x'.repeat(4096) },
+    ];
     for (const row of invalid) assert.equal(decide(4 * H, [row]).skipped, false);
-    assert.equal(decide(4 * H, [observation], [{ ...marker, generation: '00000000-0000-4000-8000-000000000002' }]).skipped, false);
+    assert.equal(
+      decide(4 * H, [observation], [{ ...marker, generation: '00000000-0000-4000-8000-000000000002' }]).skipped,
+      false,
+    );
     assert.equal(decide(4 * H, [observation], [{ ...marker, extra: 'x'.repeat(8192) }]).skipped, false);
     assert.equal(decide(4 * H, [observation], []).skipped, false);
   });

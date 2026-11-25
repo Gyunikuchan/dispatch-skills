@@ -27,7 +27,10 @@ export function fakeGit(state: FakeGitState) {
     if (args.length === 2 && args[0] === 'add' && args[1] === '-A') return output();
     if (args.length === 1 && args[0] === 'write-tree') return output(state.testedTree + '\n');
     if (args[0] === 'diff' && args[1] === '--name-status' && args[2] === '--no-renames' && args[3] === '-z') {
-      return output(state.changes.flatMap(({ status, path: file }) => [status, file]).join('\0') + (state.changes.length ? '\0' : ''));
+      return output(
+        state.changes.flatMap(({ status, path: file }) => [status, file]).join('\0') +
+          (state.changes.length ? '\0' : ''),
+      );
     }
     throw new Error('Unexpected Git argv: ' + JSON.stringify(argv));
   };

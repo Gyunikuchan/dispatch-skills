@@ -8,7 +8,10 @@ export const FILE_BUDGET_MS = 1000;
 const SLOW_FILE_LIMIT = 5;
 
 type Data = Record<string, unknown>;
-export interface ReporterEvent { type: string; data?: Data }
+export interface ReporterEvent {
+  type: string;
+  data?: Data;
+}
 export interface ReporterOptions {
   stderr?: { write(text: string): unknown };
   exit?: (code: number) => void;
@@ -24,13 +27,14 @@ export function formatDuration(ms = 0): string {
 const rel = (file: string, root: string) => path.relative(root, file).replace(/\\/g, '/');
 
 function record(value: unknown): Data {
-  return typeof value === 'object' && value !== null ? value as Data : {};
+  return typeof value === 'object' && value !== null ? (value as Data) : {};
 }
 
 export function formatFailure(data: Data, projectRoot = process.cwd(), expand = true): string {
   const name = typeof data['name'] === 'string' ? data['name'] : 'unnamed test';
   let location = typeof data['file'] === 'string' ? rel(data['file'], projectRoot) : '';
-  if (data['line'] !== undefined) location += `:${String(data['line'])}${data['column'] !== undefined ? `:${String(data['column'])}` : ''}`;
+  if (data['line'] !== undefined)
+    location += `:${String(data['line'])}${data['column'] !== undefined ? `:${String(data['column'])}` : ''}`;
   const lines = [`✖ ${name}`];
   if (location) lines.push(`  Location: ${location}`);
   if (expand) {
@@ -47,17 +51,29 @@ export function isE2eFile(file: string): boolean {
   return file.replace(/\\/g, '/').includes('/tests/e2e/');
 }
 
-export function slowFiles(fileDurations: ReadonlyMap<string, number>): { slowest: [string, number][]; overBudget: string[] } {
+export function slowFiles(fileDurations: ReadonlyMap<string, number>): {
+  slowest: [string, number][];
+  overBudget: string[];
+} {
   const slowest = [...fileDurations].sort((a, b) => b[1] - a[1]).slice(0, SLOW_FILE_LIMIT);
-  const overBudget = [...fileDurations].filter(([file, ms]) => ms > FILE_BUDGET_MS && !isE2eFile(file)).map(([file]) => file);
+  const overBudget = [...fileDurations]
+    .filter(([file, ms]) => ms > FILE_BUDGET_MS && !isE2eFile(file))
+    .map(([file]) => file);
   return { slowest, overBudget };
 }
 
 // SECTION: Reporter flow
 
-export default async function* quietReporter(source: AsyncIterable<ReporterEvent>, options: ReporterOptions = {}): AsyncGenerator<string> {
+export default async function* quietReporter(
+  source: AsyncIterable<ReporterEvent>,
+  options: ReporterOptions = {},
+): AsyncGenerator<string> {
   const stderr = options.stderr ?? process.stderr;
-  const exit = options.exit ?? ((code: number) => { process.exitCode = code; });
+  const exit =
+    options.exit ??
+    ((code: number) => {
+      process.exitCode = code;
+    });
   const root = options.projectRoot ?? process.cwd();
   let total = 0;
   let passed = 0;
@@ -76,19 +92,28 @@ export default async function* quietReporter(source: AsyncIterable<ReporterEvent
     if (file) files.add(file);
     // NOTE: a file's top-level tests run serially, so their summed durations approximate its wall time.
     if ((type === 'test:pass' || type === 'test:fail') && file && (data['nesting'] ?? 0) === 0) {
-      fileDurations.set(file, (fileDurations.get(file) ?? 0) + (typeof details['duration_ms'] === 'number' ? details['duration_ms'] : 0));
+      fileDurations.set(
+        file,
+        (fileDurations.get(file) ?? 0) + (typeof details['duration_ms'] === 'number' ? details['duration_ms'] : 0),
+      );
     }
-    if (type === 'test:pass' && details['type'] !== 'suite') { passed++; total++; }
+    if (type === 'test:pass' && details['type'] !== 'suite') {
+      passed++;
+      total++;
+    }
     if (type === 'test:fail') {
       const error = record(details['error']);
-      const subtests = details['type'] === 'suite' && (error['failureType'] === 'subtestsFailed' || error['message'] === '1 subtest failed');
+      const subtests =
+        details['type'] === 'suite' &&
+        (error['failureType'] === 'subtestsFailed' || error['message'] === '1 subtest failed');
       if (!subtests) failures.push(data);
     }
     if (type === 'test:summary') {
       const counts = record(data['counts']);
       if (file && counts['tests'] === 0) emptyFiles.add(file);
       if (counts['topLevel'] !== undefined || file === undefined) {
-        const pick = (...keys: string[]) => keys.map((key) => counts[key]).find((value): value is number => typeof value === 'number');
+        const pick = (...keys: string[]) =>
+          keys.map((key) => counts[key]).find((value): value is number => typeof value === 'number');
         passed = pick('passed', 'pass') ?? passed;
         failed = pick('failed', 'fail') ?? failed;
         total = pick('tests') ?? total;
@@ -107,13 +132,22 @@ export default async function* quietReporter(source: AsyncIterable<ReporterEvent
   } else if (!emptyFiles.size) {
     yield `✔ All ${total || passed} test(s) passed (${formatDuration(durationMs)}${fileCount}${skipped ? `, ${skipped} skipped` : ''}${todo ? `, ${todo} todo` : ''})\n`;
   }
-  if (emptyFiles.size) stderr.write(`✖ Selected no tests: ${[...emptyFiles].map((file) => rel(file, root)).sort().join(', ')}\n`);
+  if (emptyFiles.size)
+    stderr.write(
+      `✖ Selected no tests: ${[...emptyFiles]
+        .map((file) => rel(file, root))
+        .sort()
+        .join(', ')}\n`,
+    );
   const { slowest, overBudget } = slowFiles(fileDurations);
-  if (slowest.length) yield `  Slowest files: ${slowest.map(([file, ms]) => `${rel(file, root)} ${formatDuration(ms)}`).join(', ')}\n`;
+  if (slowest.length)
+    yield `  Slowest files: ${slowest.map(([file, ms]) => `${rel(file, root)} ${formatDuration(ms)}`).join(', ')}\n`;
   const failedRun = failures.length > 0 || emptyFiles.size > 0 || failed > 0;
   if (overBudget.length) {
-    yield `${failedRun ? '✖' : '⚠'} Over the ${formatDuration(FILE_BUDGET_MS)} per-file budget: ${overBudget.map((file) => rel(file, root)).join(', ')}; `
-      + 'split the file, remove waits and processes, or move a true end-to-end test under tests/e2e/\n';
+    yield (
+      `${failedRun ? '✖' : '⚠'} Over the ${formatDuration(FILE_BUDGET_MS)} per-file budget: ${overBudget.map((file) => rel(file, root)).join(', ')}; ` +
+      'split the file, remove waits and processes, or move a true end-to-end test under tests/e2e/\n'
+    );
   }
   // NOTE: the per-file budget is a hint. It fails only with a test failure; a passing run warns.
   if (failedRun) exit(1);

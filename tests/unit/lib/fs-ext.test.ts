@@ -22,7 +22,10 @@ test('real LinkFs: link to an existing name throws EEXIST; publishExclusive leav
   assert.equal(publishExclusive(nodeLinkFs, final, '{"a":2}'), false);
   assert.equal(nodeLinkFs.readText(final), '{"a":1}');
   const temp = nodeLinkFs.writeTemp(final, 'x');
-  assert.throws(() => nodeLinkFs.link(temp, final), (error: unknown) => isEexist(error));
+  assert.throws(
+    () => nodeLinkFs.link(temp, final),
+    (error: unknown) => isEexist(error),
+  );
   nodeLinkFs.remove(temp);
   assert.deepEqual(nodeLinkFs.list(root), ['claim.json']);
 });

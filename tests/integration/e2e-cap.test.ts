@@ -6,19 +6,24 @@ import { OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
 // Count the real Git/subprocess suites and their shared repository helper.
 // NOTE: 18 covers commit-phase refusals and hooks, which need real Git, toolkit-fix-review-lite (listing, diff and consumer search), and toolkit-input (Windows PowerShell 5.1 & POSIX shell quoting e2e matrix).
 export const E2E_CAP = 18;
-const e2eFiles = () => scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map(file => ({ ...file, path: 'tests/e2e/' + file.path }));
+const e2eFiles = () =>
+  scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map((file) => ({ ...file, path: 'tests/e2e/' + file.path }));
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));
   return e2e.length > cap
-    ? [`e2e cap rule: tests/e2e/ holds ${e2e.length} files (cap ${cap}); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit`]
+    ? [
+        `e2e cap rule: tests/e2e/ holds ${e2e.length} files (cap ${cap}); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit`,
+      ]
     : [];
 }
 
 test('tests/e2e/ stays within the cap and exceeding it fails with the rule and the fix', () => {
   const files = e2eFiles();
-  assert.equal(files.filter(file => file.path.startsWith('tests/e2e/')).length, 18);
+  assert.equal(files.filter((file) => file.path.startsWith('tests/e2e/')).length, 18);
   assert.deepEqual(checkE2eCap(files), []);
   const over = ['a', 'b', 'c', 'd'].map((name) => ({ path: `tests/e2e/${name}.test.ts`, text: '' }));
-  assert.deepEqual(checkE2eCap(over, 3), ['e2e cap rule: tests/e2e/ holds 4 files (cap 3); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit']);
+  assert.deepEqual(checkE2eCap(over, 3), [
+    'e2e cap rule: tests/e2e/ holds 4 files (cap 3); cover the behaviour in tiers 1-5, or raise E2E_CAP in an explicit edit',
+  ]);
 });

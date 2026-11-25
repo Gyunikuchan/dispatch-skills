@@ -21,7 +21,9 @@ export function checkTiming(files: FileTable, allow: readonly string[] = ALLOW_T
     if (!isTestSource(file) || file.startsWith('tests/e2e/') || allowed.has(file)) continue;
     for (const token of TOKENS) {
       if (text.includes(token)) {
-        errors.push(`timing rule: ${file} uses ${token}; non-e2e tests never sleep or time, so inject Ports.clock (or list a justified exception in ALLOW_TIMING)`);
+        errors.push(
+          `timing rule: ${file} uses ${token}; non-e2e tests never sleep or time, so inject Ports.clock (or list a justified exception in ALLOW_TIMING)`,
+        );
       }
     }
   }
@@ -29,10 +31,22 @@ export function checkTiming(files: FileTable, allow: readonly string[] = ALLOW_T
 }
 
 test('non-e2e tests contain no sleeps or timing and violations fail with the rule and the fix', () => {
-  assert.deepEqual(checkTiming(scanOverlay(path.join(OVERLAY_ROOT, 'tests')).map((file) => ({ ...file, path: 'tests/' + file.path }))), []);
+  assert.deepEqual(
+    checkTiming(scanOverlay(path.join(OVERLAY_ROOT, 'tests')).map((file) => ({ ...file, path: 'tests/' + file.path }))),
+    [],
+  );
   const text = `await new Promise((r) => ${TOKENS[0]}(r, 10));`;
-  assert.deepEqual(checkTiming([{ path: 'tests/unit/core/a.test.ts', text }, { path: 'tests/e2e/b.test.ts', text }]), [
-    `timing rule: tests/unit/core/a.test.ts uses ${TOKENS[0]}; non-e2e tests never sleep or time, so inject Ports.clock (or list a justified exception in ALLOW_TIMING)`,
-  ]);
-  assert.deepEqual(checkTiming([{ path: 'tests/unit/core/a.test.ts', text }], ['tests/unit/core/a.test.ts: reason']), []);
+  assert.deepEqual(
+    checkTiming([
+      { path: 'tests/unit/core/a.test.ts', text },
+      { path: 'tests/e2e/b.test.ts', text },
+    ]),
+    [
+      `timing rule: tests/unit/core/a.test.ts uses ${TOKENS[0]}; non-e2e tests never sleep or time, so inject Ports.clock (or list a justified exception in ALLOW_TIMING)`,
+    ],
+  );
+  assert.deepEqual(
+    checkTiming([{ path: 'tests/unit/core/a.test.ts', text }], ['tests/unit/core/a.test.ts: reason']),
+    [],
+  );
 });

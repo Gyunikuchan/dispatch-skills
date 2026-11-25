@@ -23,7 +23,10 @@ const isAbsolute = (file: string): boolean => /^(?:[a-zA-Z]:[/\\]|[/\\])/.test(f
 const sep = (env: PlatformEnv): string => (env.os === 'win32' ? '\\' : '/');
 
 function globMatch(pattern: string, name: string): boolean {
-  const source = pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
   return new RegExp(`^${source}$`, 'i').test(name);
 }
 
@@ -33,10 +36,17 @@ export function expandCandidate(candidate: string, fs: DiscoveryFs): string[] {
   const joiner = candidate.includes('\\') ? '\\' : '/';
   let prefixes = [parts[0] ?? ''];
   for (const part of parts.slice(1)) {
-    if (!part.includes('*')) { prefixes = prefixes.map((prefix) => `${prefix}${joiner}${part}`); continue; }
-    prefixes = prefixes.flatMap((prefix) => fs.list(prefix || joiner).filter((name) => globMatch(part, name))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
-      .map((name) => `${prefix}${joiner}${name}`));
+    if (!part.includes('*')) {
+      prefixes = prefixes.map((prefix) => `${prefix}${joiner}${part}`);
+      continue;
+    }
+    prefixes = prefixes.flatMap((prefix) =>
+      fs
+        .list(prefix || joiner)
+        .filter((name) => globMatch(part, name))
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
+        .map((name) => `${prefix}${joiner}${name}`),
+    );
   }
   return prefixes;
 }
@@ -54,7 +64,11 @@ export type Discovery = {
   readonly probes: number;
 };
 
-export function createDiscovery(specs: Readonly<Record<ProviderId, ProviderSpec>>, env: PlatformEnv, fs: DiscoveryFs): Discovery {
+export function createDiscovery(
+  specs: Readonly<Record<ProviderId, ProviderSpec>>,
+  env: PlatformEnv,
+  fs: DiscoveryFs,
+): Discovery {
   const cache = new Map<string, Resolution>();
   const probed = new Map<string, 'exec' | 'present' | 'absent'>();
   let probes = 0;
@@ -77,34 +91,51 @@ export function createDiscovery(specs: Readonly<Record<ProviderId, ProviderSpec>
       const paths = isAbsolute(candidate) ? expandCandidate(candidate, fs) : onPath(candidate, env);
       for (const file of paths) {
         const state = probe(file);
-        if (state === 'exec') { found = { status: 'path', path: file }; break; }
+        if (state === 'exec') {
+          found = { status: 'path', path: file };
+          break;
+        }
         if (state === 'present') unlaunchable ??= file;
       }
       if (found) break;
     }
-    const result: Resolution = found ?? (unlaunchable ? { status: 'unlaunchable', path: unlaunchable } : { status: 'missing', path: null });
+    const result: Resolution =
+      found ?? (unlaunchable ? { status: 'unlaunchable', path: unlaunchable } : { status: 'missing', path: null });
     cache.set(key, result);
     return result;
   };
   return {
     resolve,
-    doctor: () => (Object.keys(specs) as ProviderId[]).flatMap((provider) =>
-      specs[provider].modes.map((mode): DoctorRow => ({ provider, mode: mode.id, ...resolve(provider, mode.id) }))),
-    get probes() { return probes; },
+    doctor: () =>
+      (Object.keys(specs) as ProviderId[]).flatMap((provider) =>
+        specs[provider].modes.map((mode): DoctorRow => ({ provider, mode: mode.id, ...resolve(provider, mode.id) })),
+      ),
+    get probes() {
+      return probes;
+    },
   };
 }
 
-export function createNodeDiscovery(specs: Readonly<Record<ProviderId, ProviderSpec>>, platform: PlatformEnv): Discovery {
+export function createNodeDiscovery(
+  specs: Readonly<Record<ProviderId, ProviderSpec>>,
+  platform: PlatformEnv,
+): Discovery {
   return createDiscovery(specs, platform, {
     list(dir) {
-      try { return fs.readdirSync(dir); } catch { return []; }
+      try {
+        return fs.readdirSync(dir);
+      } catch {
+        return [];
+      }
     },
     exists: fs.existsSync,
     executable(file) {
       try {
         const stat = fs.statSync(file);
         return stat.isFile() && (platform.os === 'win32' || (stat.mode & 0o111) !== 0);
-      } catch { return false; }
+      } catch {
+        return false;
+      }
     },
   });
 }

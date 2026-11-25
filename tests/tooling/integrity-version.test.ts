@@ -3,12 +3,17 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashes } from '../../scripts/generate-hashes.ts';
-import { checkIntegrity, generateSkillHashes, MANIFEST_NAME, readVersion } from '../../skills/dispatch/scripts/lib/integrity.ts';
+import {
+  checkIntegrity,
+  generateSkillHashes,
+  MANIFEST_NAME,
+  readVersion,
+} from '../../skills/dispatch/scripts/lib/integrity.ts';
 import { tempDir } from '../helpers/fake-ports.ts';
 
-
 test('integrity ignores version key in skill manifest', () => {
-  const root = tempDir(), skill = path.join(root, 'skills/dispatch');
+  const root = tempDir(),
+    skill = path.join(root, 'skills/dispatch');
   fs.mkdirSync(skill, { recursive: true });
   fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.7.1' }));

@@ -7,8 +7,16 @@ import type { RosterSlot } from '../toolkit/domain/types.ts';
 export const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
-  opencode: 'opencode', agy: 'agy', antigravity: 'agy', claude: 'claude', claudecode: 'claude', 'claude-code': 'claude',
-  copilot: 'copilot', 'github-copilot': 'copilot', codex: 'codex', 'openai-codex': 'codex',
+  opencode: 'opencode',
+  agy: 'agy',
+  antigravity: 'agy',
+  claude: 'claude',
+  claudecode: 'claude',
+  'claude-code': 'claude',
+  copilot: 'copilot',
+  'github-copilot': 'copilot',
+  codex: 'codex',
+  'openai-codex': 'codex',
 };
 const SANDBOX_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'copilot', 'opencode', 'codex']);
 
@@ -22,12 +30,18 @@ export type LevelMap<T> = Partial<Record<Level, T>>;
 function selectLevel(defined: readonly Level[], level: Level): Level | undefined {
   const requested = LEVELS.indexOf(level);
   const ordered = [...defined].sort((a, b) => LEVELS.indexOf(a) - LEVELS.indexOf(b));
-  return ordered.findLast((item) => LEVELS.indexOf(item) <= requested) ?? ordered.find((item) => LEVELS.indexOf(item) > requested);
+  return (
+    ordered.findLast((item) => LEVELS.indexOf(item) <= requested) ??
+    ordered.find((item) => LEVELS.indexOf(item) > requested)
+  );
 }
 
 export function resolveLevel<T>(map: LevelMap<T> | undefined, level: Level): T | undefined {
   if (!map) return undefined;
-  const chosen = selectLevel(LEVELS.filter((item) => map[item] !== undefined), level);
+  const chosen = selectLevel(
+    LEVELS.filter((item) => map[item] !== undefined),
+    level,
+  );
   return chosen === undefined ? undefined : map[chosen];
 }
 
@@ -36,16 +50,23 @@ export function resolveLevel<T>(map: LevelMap<T> | undefined, level: Level): T |
 export type SubagentEntry = { model: string | string[]; effort?: string };
 export type ResolvedSubagent = { models: string[]; effort: string | null };
 
-export const resolveSubagent = (entry: SubagentEntry): ResolvedSubagent => ({ models: typeof entry.model === 'string' ? [entry.model] : entry.model, effort: entry.effort ?? null });
+export const resolveSubagent = (entry: SubagentEntry): ResolvedSubagent => ({
+  models: typeof entry.model === 'string' ? [entry.model] : entry.model,
+  effort: entry.effort ?? null,
+});
 
 export type UtilityEntry = SubagentEntry & { 'context-limit': number };
 export type ResolvedUtility = ResolvedSubagent & { contextLimit: number };
 
 /** Per canonical platform: its utility-subagents entry; independent of run level. */
 export function resolveUtility(utility: Record<string, UtilityEntry>): Record<string, ResolvedUtility> {
-  return Object.fromEntries(Object.entries(utility).flatMap(([key, entry]) =>
-    entry && typeof entry['context-limit'] === 'number' ? [[normalizeProvider(key), { ...resolveSubagent(entry), contextLimit: entry['context-limit'] }]] : [],
-  ));
+  return Object.fromEntries(
+    Object.entries(utility).flatMap(([key, entry]) =>
+      entry && typeof entry['context-limit'] === 'number'
+        ? [[normalizeProvider(key), { ...resolveSubagent(entry), contextLimit: entry['context-limit'] }]]
+        : [],
+    ),
+  );
 }
 
 // SECTION: Pins
@@ -56,7 +77,10 @@ export type Pins = { kind: 'providers'; keys: readonly string[] } | { kind: 'cou
 export function parsePins(text: string): Pins {
   const inner = /^\(\s*(.*?)\s*\)$/.exec(text.trim())?.[1];
   if (inner === undefined || !inner) throw new Error(`Pins must be (a,b), (<count>), or (all); got ${text}`);
-  const items = inner.split(',').map((item) => item.trim()).filter(Boolean);
+  const items = inner
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
   const special = items.some((item) => /^-?\d+$/.test(item) || item.toLowerCase() === 'all');
   if (special) {
     if (items.length > 1) throw new Error(`A count or "all" pin must stand alone: ${items.join(', ')}`);
@@ -72,7 +96,11 @@ export function parsePins(text: string): Pins {
 // SECTION: Roster
 
 type TargetEntry = { model?: string | readonly string[]; effort?: string };
-export type ReadDelegate = { targets?: readonly LevelMap<TargetEntry>[]; nativeSubagentsOnly?: boolean; sandbox?: boolean };
+export type ReadDelegate = {
+  targets?: readonly LevelMap<TargetEntry>[];
+  nativeSubagentsOnly?: boolean;
+  sandbox?: boolean;
+};
 export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
 type Overrides = { model?: string; effort?: string };
 export type Orchestrator = { platform: string };
@@ -91,9 +119,20 @@ export type RosterInput = {
   sandboxSupported?: Readonly<Record<string, boolean>>;
 };
 
-export type Underfill = { host: string | null; configured: number | 'all'; resolved: number; excluded: string[]; sandboxUnsupported?: string[] };
+export type Underfill = {
+  host: string | null;
+  configured: number | 'all';
+  resolved: number;
+  excluded: string[];
+  sandboxUnsupported?: string[];
+};
 /** `underfill` is present when native-only providers were excluded, sandbox-unsupported providers were dropped or breadth fell short of a numeric configuration. */
-export type Roster = { rounds: number; targets: readonly RosterSlot[]; reserves: readonly RosterSlot[]; underfill?: Underfill };
+export type Roster = {
+  rounds: number;
+  targets: readonly RosterSlot[];
+  reserves: readonly RosterSlot[];
+  underfill?: Underfill;
+};
 
 type Candidate = Omit<RosterSlot, 'slot' | 'index' | 'reserve'>;
 
@@ -102,7 +141,7 @@ function candidates(input: RosterInput): Candidate[] {
   return Object.entries(input.readDelegates).flatMap(([key, delegate]) => {
     const provider = normalizeProvider(key);
     if (only && !only.has(provider)) return [];
-    const sandbox = SANDBOX_PROVIDERS.has(provider) ? delegate.sandbox ?? true : undefined;
+    const sandbox = SANDBOX_PROVIDERS.has(provider) ? (delegate.sandbox ?? true) : undefined;
     return (delegate.targets ?? []).map((map): Candidate => {
       const entry = resolveLevel(map, input.level) ?? {};
       const candidate: Candidate = { provider, native: delegate.nativeSubagentsOnly === true };
@@ -138,12 +177,14 @@ function collapse(list: readonly Candidate[], overrides: Overrides | undefined):
 /** Positional identity `${provider}[${index}]`, counted per provider across targets then reserves. */
 function identify(targets: readonly Candidate[], reserves: readonly Candidate[]): Roster['targets'][] {
   const counters = new Map<string, number>();
-  const slot = (reserve: boolean) => (item: Candidate): RosterSlot => {
-    const index = counters.get(item.provider) ?? 0;
-    counters.set(item.provider, index + 1);
-    const id: SlotId = `${item.provider}[${index}]`;
-    return { ...item, slot: id, index, reserve };
-  };
+  const slot =
+    (reserve: boolean) =>
+    (item: Candidate): RosterSlot => {
+      const index = counters.get(item.provider) ?? 0;
+      counters.set(item.provider, index + 1);
+      const id: SlotId = `${item.provider}[${index}]`;
+      return { ...item, slot: id, index, reserve };
+    };
   return [targets.map(slot(false)), reserves.map(slot(true))];
 }
 
@@ -162,13 +203,22 @@ export function nativeFirstRoute(
 
 export function resolveRoster(input: RosterInput): Roster {
   const policy = input.policy;
-  const rounds = policy ? resolveLevel(policy.rounds, input.level) ?? 0 : 1;
+  const rounds = policy ? (resolveLevel(policy.rounds, input.level) ?? 0) : 1;
   const pins = input.pins ?? null;
-  const wanted = pins?.kind === 'all' ? 'all' : pins?.kind === 'count' ? pins.count : policy ? resolveLevel(policy.targets, input.level) ?? 0 : 1;
+  const wanted =
+    pins?.kind === 'all'
+      ? 'all'
+      : pins?.kind === 'count'
+        ? pins.count
+        : policy
+          ? (resolveLevel(policy.targets, input.level) ?? 0)
+          : 1;
   // `targets: 0` disables the phase like `rounds: 0`, unless a pin overrides breadth.
   if (rounds <= 0 || (!pins && wanted === 0)) return { rounds: 0, targets: [], reserves: [] };
 
-  const orchestrator = input.orchestrator ? { ...input.orchestrator, platform: normalizeProvider(input.orchestrator.platform) } : null;
+  const orchestrator = input.orchestrator
+    ? { ...input.orchestrator, platform: normalizeProvider(input.orchestrator.platform) }
+    : null;
   // A native-subagents-only platform serves only as the orchestrator's own native subagents.
   const all = candidates(input);
   const usable = all.filter((item) => !item.native || item.provider === orchestrator?.platform);
@@ -182,16 +232,45 @@ export function resolveRoster(input: RosterInput): Roster {
   }
   const explicit = pins !== null;
   const hostProvider = orchestrator?.platform ?? null;
-  const live = usable.filter((item) => explicit || input.liveness === undefined || input.liveness[item.provider] === true || item.native || item.provider === hostProvider);
-  const blocked = (item: Candidate) => !explicit && !item.native && item.provider !== hostProvider && item.sandbox === true && input.sandboxSupported?.[item.provider] === false;
-  const ordered = collapse(demote(live.filter((item) => !blocked(item)), orchestrator), input.overrides);
+  const live = usable.filter(
+    (item) =>
+      explicit ||
+      input.liveness === undefined ||
+      input.liveness[item.provider] === true ||
+      item.native ||
+      item.provider === hostProvider,
+  );
+  const blocked = (item: Candidate) =>
+    !explicit &&
+    !item.native &&
+    item.provider !== hostProvider &&
+    item.sandbox === true &&
+    input.sandboxSupported?.[item.provider] === false;
+  const ordered = collapse(
+    demote(
+      live.filter((item) => !blocked(item)),
+      orchestrator,
+    ),
+    input.overrides,
+  );
   const count = wanted === 'all' ? ordered.length : Math.min(wanted, ordered.length);
   const [targets = [], reserves = []] = identify(ordered.slice(0, count), ordered.slice(count));
-  const excluded = [...new Set(all.filter((item) => item.native && item.provider !== orchestrator?.platform).map((item) => item.provider))];
+  const excluded = [
+    ...new Set(
+      all.filter((item) => item.native && item.provider !== orchestrator?.platform).map((item) => item.provider),
+    ),
+  ];
   const short = wanted !== 'all' && count < wanted;
   const sandboxUnsupported = [...new Set(live.filter(blocked).map((item) => item.provider))];
-  const underfill = excluded.length || short || sandboxUnsupported.length
-    ? { host: orchestrator?.platform ?? null, configured: wanted, resolved: count, excluded, ...(sandboxUnsupported.length ? { sandboxUnsupported } : {}) }
-    : undefined;
+  const underfill =
+    excluded.length || short || sandboxUnsupported.length
+      ? {
+          host: orchestrator?.platform ?? null,
+          configured: wanted,
+          resolved: count,
+          excluded,
+          ...(sandboxUnsupported.length ? { sandboxUnsupported } : {}),
+        }
+      : undefined;
   return { rounds, targets, reserves, ...(underfill ? { underfill } : {}) };
 }

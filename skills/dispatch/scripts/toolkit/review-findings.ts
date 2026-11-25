@@ -18,24 +18,48 @@ type ReviewRow = WalkthroughView['reviewRows'][number];
 export type RoundLink = { review: string; round: number; findings: number; path: string };
 type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
 
-export const line = (value: unknown): string => neutralizeComments(String(value ?? '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ').trim());
-const cell = (value: unknown): string => neutralizeComments(String(value ?? '')
-  .replace(/\r\n?/g, '\n').replace(/\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
+export const line = (value: unknown): string =>
+  neutralizeComments(
+    String(value ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n/g, ' ')
+      .trim(),
+  );
+const cell = (value: unknown): string =>
+  neutralizeComments(
+    String(value ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n/g, ' ')
+      .replace(/\\/g, '\\\\')
+      .replace(/\|/g, '\\|')
+      .trim(),
+  );
 // Only captured responder metadata identifies the model; roster effort needs a matching CLI slot.
 const slotLabel = (round: ReviewRound, id: string): string => {
-  const sourceSlot = round.roster.find(slot => slot.slot === id);
-  const outcome = round.slots.find(slot => slot.slot === id);
-  const responder = outcome?.state === 'done' ? outcome.responder as {slot: string; provider: string; model: string | null; native: boolean; effort?: string} | undefined : undefined;
-  const physicalSlot = responder && round.roster.find(slot => slot.slot === responder.slot);
-  const provider = responder?.provider || sourceSlot?.provider || 'provider unavailable';
-  const model = typeof responder?.model === 'string' && responder.model.trim()
-    ? responder.model
-    : `unknown (${provider}/${responder?.slot ?? id})`;
-  const effort = responder?.native === true
-    ? (typeof responder.effort === 'string' ? responder.effort : undefined)
-    : responder?.native === false && physicalSlot?.provider === responder.provider && (physicalSlot as {native?: boolean}).native !== true
-      ? (physicalSlot as {effort?: string}).effort
+  const sourceSlot = round.roster.find((slot) => slot.slot === id);
+  const outcome = round.slots.find((slot) => slot.slot === id);
+  const responder =
+    outcome?.state === 'done'
+      ? (outcome.responder as
+          | { slot: string; provider: string; model: string | null; native: boolean; effort?: string }
+          | undefined)
       : undefined;
+  const physicalSlot = responder && round.roster.find((slot) => slot.slot === responder.slot);
+  const provider = responder?.provider || sourceSlot?.provider || 'provider unavailable';
+  const model =
+    typeof responder?.model === 'string' && responder.model.trim()
+      ? responder.model
+      : `unknown (${provider}/${responder?.slot ?? id})`;
+  const effort =
+    responder?.native === true
+      ? typeof responder.effort === 'string'
+        ? responder.effort
+        : undefined
+      : responder?.native === false &&
+          physicalSlot?.provider === responder.provider &&
+          (physicalSlot as { native?: boolean }).native !== true
+        ? (physicalSlot as { effort?: string }).effort
+        : undefined;
   return typeof effort === 'string' ? `${model}/${effort}` : model;
 };
 
@@ -61,46 +85,84 @@ export function reviewRows(
       review: round.review,
       round: round.round,
       findings: findings.length,
-      path: reviewPointer(session, reviewFindingsFile(reviewRoundDirectory(reviewDirectory(session, round.review), round.round))),
+      path: reviewPointer(
+        session,
+        reviewFindingsFile(reviewRoundDirectory(reviewDirectory(session, round.review), round.round)),
+      ),
     });
     for (const raw of findings) {
       if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
-      const finding = raw as { id: string; severity?: unknown; sources?: unknown; recurrence?: { of?: unknown }; unresolved?: { of?: unknown }; origin?: unknown };
-      const history = fold.records.filter((record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`);
+      const finding = raw as {
+        id: string;
+        severity?: unknown;
+        sources?: unknown;
+        recurrence?: { of?: unknown };
+        unresolved?: { of?: unknown };
+        origin?: unknown;
+      };
+      const history = fold.records.filter(
+        (record) => record.kind === 'ruling' && record.data['subject'] === `review:${round.review}:${finding.id}`,
+      );
       const ruling = history.at(-1);
       const stored = typeof finding.severity === 'string' ? finding.severity : 'unknown';
       const severity: string = stored in RANK ? effectiveSeverity(finding as { severity: Severity }, history) : stored;
       const rulingValue = ruling?.data['ruling'];
-      const confirmation = confirmations.find(state => state.request.review === round.review && state.request.finding === finding.id);
+      const confirmation = confirmations.find(
+        (state) => state.request.review === round.review && state.request.finding === finding.id,
+      );
       rows.push({
         review: round.review,
         id: finding.id,
         round: round.round,
         severity,
         ...(stored in RANK && RANK[severity as Severity] < RANK[stored as Severity] ? { downgradedFrom: stored } : {}),
-        sources: (Array.isArray(finding.sources) ? finding.sources : []).filter((id): id is string => typeof id === 'string')
+        sources: (Array.isArray(finding.sources) ? finding.sources : [])
+          .filter((id): id is string => typeof id === 'string')
           .map((id) => slotLabel(round, id)),
-        ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue) ? rulingValue as ReviewRow['ruling'] : null,
-        rationale: (confirmation && confirmation.state !== 'confirmed' ? `[${confirmation.state} reviewer confirmation] ` : '') +
+        ruling: ['accepted', 'rejected', 'duplicate', 'deferred'].includes(rulingValue)
+          ? (rulingValue as ReviewRow['ruling'])
+          : null,
+        rationale:
+          (confirmation && confirmation.state !== 'confirmed' ? `[${confirmation.state} reviewer confirmation] ` : '') +
           (typeof ruling?.data['rationale'] === 'string' ? ruling.data['rationale'] : ''),
         ...(typeof finding.recurrence?.of === 'string' ? { recurrence: finding.recurrence.of } : {}),
         ...(typeof finding.unresolved?.of === 'string' ? { unresolved: finding.unresolved.of } : {}),
-        ...(finding.origin === 'original' || finding.origin === 'fix-induced' || finding.origin === 'unknown' ? { origin: finding.origin } : {}),
+        ...(finding.origin === 'original' || finding.origin === 'fix-induced' || finding.origin === 'unknown'
+          ? { origin: finding.origin }
+          : {}),
       });
     }
   }
   return { rows, rounds };
 }
 
-export function renderFindingsSection(rows: readonly ReviewRow[], rounds: readonly RoundLink[], fromDir: string, budget?: string): string {
+export function renderFindingsSection(
+  rows: readonly ReviewRow[],
+  rounds: readonly RoundLink[],
+  fromDir: string,
+  budget?: string,
+): string {
   const out: string[] = [];
   if (rows.length) {
-    out.push('| Review | ID | Round | Severity | Source | Status | Ruling |', '| --- | --- | --- | --- | --- | --- | --- |');
+    out.push(
+      '| Review | ID | Round | Severity | Source | Status | Ruling |',
+      '| --- | --- | --- | --- | --- | --- | --- |',
+    );
     for (const row of rows) {
-      const markers = [row.recurrence && `(recurs ${line(row.recurrence)})`, row.unresolved && `(unresolved ${line(row.unresolved)})`, row.origin && `(origin ${line(row.origin)})`].filter(Boolean);
+      const markers = [
+        row.recurrence && `(recurs ${line(row.recurrence)})`,
+        row.unresolved && `(unresolved ${line(row.unresolved)})`,
+        row.origin && `(origin ${line(row.origin)})`,
+      ].filter(Boolean);
       const rulingStatus = row.ruling ? row.ruling[0]!.toUpperCase() + row.ruling.slice(1) : 'Open';
-      const status = [rulingStatus, ...(row.downgradedFrom ? [`(downgraded from ${line(row.downgradedFrom)})`] : []), ...markers].join(' ');
-      out.push(`| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.sources?.length ? row.sources.join(', ') : '—')} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`);
+      const status = [
+        rulingStatus,
+        ...(row.downgradedFrom ? [`(downgraded from ${line(row.downgradedFrom)})`] : []),
+        ...markers,
+      ].join(' ');
+      out.push(
+        `| ${cell(row.review)} | ${cell(row.id)} | ${row.round} | ${cell(row.severity)} | ${cell(row.sources?.length ? row.sources.join(', ') : '—')} | ${cell(status)} | ${cell(clip(row.rationale, 80))} |`,
+      );
     }
   } else if (!rounds.length) out.push('*No reviews conducted yet.*');
 
@@ -119,20 +181,28 @@ export function renderFindingsFile(findings: readonly Finding[]): string {
   if (!findings.length) return 'No findings.\n';
   const field = (value: unknown) => line(value) || '—';
   const sorted = [...findings].sort((a, b) => RANK[b.severity] - RANK[a.severity]);
-  return sorted.map(finding => [
-    `### ${line(finding.id)} ${line(finding.severity)}`,
-    `- Rating: ${field(finding.impact)}/${field(finding.trigger)}; category ${field(finding.category)}; scope ${field(finding.scope)}; origin ${field(finding.origin)}`,
-    `- Locus: ${field(finding.locus)}`,
-    `- Defect: ${field(finding.defect)}`,
-    `- Required change: ${field(finding.requiredChange)}`,
-    `- Sources: ${field(finding.sources?.join(', '))}`,
-  ].join('\n')).join('\n\n') + '\n';
+  return (
+    sorted
+      .map((finding) =>
+        [
+          `### ${line(finding.id)} ${line(finding.severity)}`,
+          `- Rating: ${field(finding.impact)}/${field(finding.trigger)}; category ${field(finding.category)}; scope ${field(finding.scope)}; origin ${field(finding.origin)}`,
+          `- Locus: ${field(finding.locus)}`,
+          `- Defect: ${field(finding.defect)}`,
+          `- Required change: ${field(finding.requiredChange)}`,
+          `- Sources: ${field(finding.sources?.join(', '))}`,
+        ].join('\n'),
+      )
+      .join('\n\n') + '\n'
+  );
 }
 
 export function rulingsTemplate(review: string, round: number, findings: readonly Finding[]) {
-  return findings.map(({id}) => ({
-    kind: 'ruling', by: 'orchestrator', key: `ruling:${review}:${round}:${id}`,
-    data: {subject: `review:${review}:${id}`, ruling: '', rationale: ''},
+  return findings.map(({ id }) => ({
+    kind: 'ruling',
+    by: 'orchestrator',
+    key: `ruling:${review}:${round}:${id}`,
+    data: { subject: `review:${review}:${id}`, ruling: '', rationale: '' },
   }));
 }
 
@@ -166,12 +236,20 @@ function replaceFindingsSection(source: string, body: string): string {
   return source.slice(0, bodyStart) + `${separator}${rendered}${separator}${separator}` + source.slice(end);
 }
 
-export function refreshFindingsSection(session: string, manifest: Manifest, review: string, onSkip?: (reason: string) => void): FindingsSectionStatus {
-  const skip = (reason: string): FindingsSectionStatus => { onSkip?.(reason); return 'skipped'; };
+export function refreshFindingsSection(
+  session: string,
+  manifest: Manifest,
+  review: string,
+  onSkip?: (reason: string) => void,
+): FindingsSectionStatus {
+  const skip = (reason: string): FindingsSectionStatus => {
+    onSkip?.(reason);
+    return 'skipped';
+  };
   try {
     const fold = foldLedger(session);
     const bound = latest(fold, 'bind');
-    const artifact = (['plan', 'design'] as const).flatMap(kind => {
+    const artifact = (['plan', 'design'] as const).flatMap((kind) => {
       const relative = bound?.data[kind];
       if (typeof relative !== 'string') return [];
       const file = path.resolve(manifest.repositoryRoot, relative);
@@ -182,9 +260,11 @@ export function refreshFindingsSection(session: string, manifest: Manifest, revi
     const source = fs.readFileSync(artifact, 'utf8');
     const confirmations = loadRejections(session, fold, [review]);
     const current = reviewRows(session, fold, confirmations, [review]);
-    const resolvedRounds = current.rounds.map(round => ({ ...round, path: path.resolve(session, round.path) }));
+    const resolvedRounds = current.rounds.map((round) => ({ ...round, path: path.resolve(session, round.path) }));
     // Recomputed from the current ledger with the launch admission policy; showing it grants nothing.
-    const budget = current.rounds.length ? `Budget (${line(review)}): ${renderBudget(admission(session, fold, review, 0).budget)}` : undefined;
+    const budget = current.rounds.length
+      ? `Budget (${line(review)}): ${renderBudget(admission(session, fold, review, 0).budget)}`
+      : undefined;
     const body = renderFindingsSection(current.rows, resolvedRounds, path.dirname(artifact), budget);
     const updated = replaceFindingsSection(source, body);
     if (updated === source) return 'unchanged';

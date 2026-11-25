@@ -4,16 +4,28 @@ import { test } from 'node:test';
 import { parseSpec } from '../../../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 
 const section = (heading: string, body: string) => `## ${heading}\n${body}\n`;
-const REQS = '### REQ-1 — Lint specs\n- Acceptance: lint runs.\n\n### REQ-2 — Name IDs\nSee SC1 and T2 in the plan.\n- Acceptance: IDs parse.\n';
+const REQS =
+  '### REQ-1 — Lint specs\n- Acceptance: lint runs.\n\n### REQ-2 — Name IDs\nSee SC1 and T2 in the plan.\n- Acceptance: IDs parse.\n';
 const DECS = '### DEC-1 — Format (user)\n- Choice: hybrid\n';
 
 function spec(parts: Partial<Record<string, string | null>> = {}, order?: readonly string[]): string {
   const bodies: Record<string, string | null> = {
-    'At a Glance': '- Specs explain the work.', 'Intent & Problem': 'Why.', Background: 'Facts.', Requirements: REQS, 'Non-goals': '- none', Constraints: '- portable',
-    Decisions: DECS, 'Discussion Record': '- agreed', 'Open Questions': '- none', ...parts,
+    'At a Glance': '- Specs explain the work.',
+    'Intent & Problem': 'Why.',
+    Background: 'Facts.',
+    Requirements: REQS,
+    'Non-goals': '- none',
+    Constraints: '- portable',
+    Decisions: DECS,
+    'Discussion Record': '- agreed',
+    'Open Questions': '- none',
+    ...parts,
   };
   const headings = order ?? Object.keys(bodies);
-  return `# Spec\n\n> **Status:** draft\n\n${headings.filter((h) => bodies[h] !== null).map((h) => section(h, bodies[h]!)).join('\n')}`;
+  return `# Spec\n\n> **Status:** draft\n\n${headings
+    .filter((h) => bodies[h] !== null)
+    .map((h) => section(h, bodies[h]!))
+    .join('\n')}`;
 }
 
 const codes = (source: string) => {
@@ -31,7 +43,17 @@ test('spec lint requires every template section', () => {
 });
 
 test('spec lint: section order reports an out-of-order section', () => {
-  const order = ['At a Glance', 'Intent & Problem', 'Requirements', 'Background', 'Non-goals', 'Constraints', 'Decisions', 'Discussion Record', 'Open Questions'];
+  const order = [
+    'At a Glance',
+    'Intent & Problem',
+    'Requirements',
+    'Background',
+    'Non-goals',
+    'Constraints',
+    'Decisions',
+    'Discussion Record',
+    'Open Questions',
+  ];
   assert.deepEqual(codes(spec({}, order)), ['section-order']);
 });
 
@@ -43,12 +65,18 @@ test('spec lint: ids are returned in order', () => {
 });
 
 test('spec lint: validates id forms and ignores prose mentions', () => {
-  assert.deepEqual(codes(spec({ Requirements: '### REQ-1 — A\n- Acceptance: a\n### REQ-3 — B\n- Acceptance: b\n' })), ['id-sequence']);
+  assert.deepEqual(codes(spec({ Requirements: '### REQ-1 — A\n- Acceptance: a\n### REQ-3 — B\n- Acceptance: b\n' })), [
+    'id-sequence',
+  ]);
   assert.deepEqual(codes(spec({ Decisions: '### DEC-1 — A\n### DEC-1 — B\n' })), ['id-sequence']);
   assert.deepEqual(codes(spec({ Requirements: `${REQS}### Requirement three\n- Acceptance: c\n` })), ['malformed-id']);
   assert.deepEqual(codes(spec({ Decisions: `${DECS}### REQ-2 — misplaced\n` })), ['malformed-id']);
   for (const id of ['T1', 'SC2', 'I01', 'R1', 'R1-F2']) {
-    assert.deepEqual(codes(spec({ Requirements: `${REQS}### ${id} — Collides\n- Acceptance: c\n` })), ['colliding-id'], id);
+    assert.deepEqual(
+      codes(spec({ Requirements: `${REQS}### ${id} — Collides\n- Acceptance: c\n` })),
+      ['colliding-id'],
+      id,
+    );
   }
   assert.deepEqual(codes(spec({ Decisions: `${DECS}### T1 — Collides\n` })), ['colliding-id']);
   assert.ok(parseSpec(spec({ 'Intent & Problem': 'Cites SC1, T2, I01, and R1-F1.' })).ok);
@@ -64,7 +92,8 @@ test('spec lint reports invalid IDs, missing acceptance, and malformed headings 
   const result = parseSpec(source);
   assert.ok(!result.ok);
   const found: string[] = [...result.defects, ...result.warnings].map((d) => d.code);
-  for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance']) assert.ok(found.includes(code), `${code} in ${found.join(',')}`);
+  for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance'])
+    assert.ok(found.includes(code), `${code} in ${found.join(',')}`);
   assert.ok(result.warnings.some((d) => d.code === 'missing-acceptance' && d.message.startsWith('REQ-3 ')));
 
   const decSource = `${spec()}\n## Decisions\n### Decision two\n- Choice: x\n`;
@@ -73,18 +102,27 @@ test('spec lint reports invalid IDs, missing acceptance, and malformed headings 
   assert.ok(foundDec.includes('malformed-id'), foundDec.join(','));
 });
 
-
 test('spec human layout: At a Glance is required first and long paragraphs warn', () => {
   const missing = parseSpec(spec({ 'At a Glance': null }));
   assert.ok(missing.ok);
-  assert.ok(missing.warnings.some(item => item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning'));
-  const moved = spec().replace('## At a Glance\n- Specs explain the work.\n', '').replace('## Background', '## At a Glance\n- Specs explain the work.\n\n## Background');
+  assert.ok(
+    missing.warnings.some(
+      (item) =>
+        item.code === 'missing-section' && item.message.includes('## At a Glance') && item.severity === 'warning',
+    ),
+  );
+  const moved = spec()
+    .replace('## At a Glance\n- Specs explain the work.\n', '')
+    .replace('## Background', '## At a Glance\n- Specs explain the work.\n\n## Background');
   const reordered = parseSpec(moved);
   assert.ok(reordered.ok);
-  assert.ok(reordered.warnings.some(item => item.code === 'section-order' && item.severity === 'warning'));
+  assert.ok(reordered.warnings.some((item) => item.code === 'section-order' && item.severity === 'warning'));
   const source = spec({ Background: Array(61).fill('word').join(' ') });
   const long = parseSpec(source);
   assert.ok(long.ok);
-  assert.deepEqual(long.warnings.filter(item => item.code === 'long-paragraph').map(item => [item.line, item.severity]), [[source.split('\n').findIndex(line => line.startsWith('word ')) + 1, 'warning']]);
+  assert.deepEqual(
+    long.warnings.filter((item) => item.code === 'long-paragraph').map((item) => [item.line, item.severity]),
+    [[source.split('\n').findIndex((line) => line.startsWith('word ')) + 1, 'warning']],
+  );
   assert.deepEqual(long.spec.reqIds, ['REQ-1', 'REQ-2']);
 });

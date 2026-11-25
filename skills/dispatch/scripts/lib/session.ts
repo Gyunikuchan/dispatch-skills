@@ -8,8 +8,14 @@ import path from 'node:path';
 const MANIFEST = 'manifest.json';
 const SLUG_MAX = 40;
 const CHAT_ID_ENV_VARS = [
-  'DISPATCH_CHAT_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'OPENAI_CODEX_THREAD_ID',
-  'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'CLAUDE_CODE_SESSION_ID', 'COPILOT_CLI_SESSION_ID',
+  'DISPATCH_CHAT_ID',
+  'CODEX_THREAD_ID',
+  'CODEX_SESSION_ID',
+  'OPENAI_CODEX_THREAD_ID',
+  'ANTIGRAVITY_CONVERSATION_ID',
+  'ANTIGRAVITY_SESSION_ID',
+  'CLAUDE_CODE_SESSION_ID',
+  'COPILOT_CLI_SESSION_ID',
 ] as const;
 
 type Location = 'workspace' | 'published' | 'moving-to-workspace' | 'moving-to-published';
@@ -19,12 +25,19 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/;
 /** Shell-safe session ids only: ids ride on argv and the win32 batch launcher. */
 const VALID_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export const validSessionId = (id: string | null | undefined): string | null =>
-  (typeof id === 'string' && VALID_SESSION_ID.test(id) ? id : null);
+  typeof id === 'string' && VALID_SESSION_ID.test(id) ? id : null;
 const WIN = process.platform === 'win32';
 
 export type Manifest = {
-  schemaVersion: 1; folderName: string; sessionId: string; safeSessionId: string; repositoryRoot: string;
-  sessionTitle: string; createdAt: string; lastUsedAt: string; location: Location;
+  schemaVersion: 1;
+  folderName: string;
+  sessionId: string;
+  safeSessionId: string;
+  repositoryRoot: string;
+  sessionTitle: string;
+  createdAt: string;
+  lastUsedAt: string;
+  location: Location;
   host?: string; // canonical ProviderKey; absent before host declaration
 };
 
@@ -48,10 +61,17 @@ export function canonicalRepositoryRoot(root: string): string {
 
 // SECTION: Naming grammar
 
-const safePathId = (value: string): string => (SAFE_ID.test(value) ? value : crypto.createHash('sha256').update(value).digest('hex').slice(0, 12));
+const safePathId = (value: string): string =>
+  SAFE_ID.test(value) ? value : crypto.createHash('sha256').update(value).digest('hex').slice(0, 12);
 
 function safeTitle(value: string): string {
-  const title = value.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, SLUG_MAX).replace(/-+$/g, '');
+  const title = value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, SLUG_MAX)
+    .replace(/-+$/g, '');
   return title || 'session';
 }
 
@@ -69,13 +89,16 @@ export function platformSessionId(env: (name: string) => string | undefined): st
 
 // SECTION: Roots and manifest
 
-const samePath = (a: string, b: string): boolean => (WIN ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+const samePath = (a: string, b: string): boolean =>
+  WIN ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b);
 
 function isRealDirectory(dir: string): boolean {
   try {
     const stat = fs.lstatSync(dir);
     return stat.isDirectory() && !stat.isSymbolicLink() && samePath(fs.realpathSync(dir), dir);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function ensureDir(dir: string): string {
@@ -84,16 +107,28 @@ function ensureDir(dir: string): string {
   return fs.realpathSync(dir);
 }
 
-const workspaceSessionRoot = (repositoryRoot: string): string => ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
+const workspaceSessionRoot = (repositoryRoot: string): string =>
+  ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
 
 export function readManifest(dir: string): Manifest {
   const file = path.join(dir, MANIFEST);
   let value: unknown;
-  try { value = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { throw new Error(`Session manifest is missing or invalid: ${file}`); }
+  try {
+    value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    throw new Error(`Session manifest is missing or invalid: ${file}`);
+  }
   const manifest = value as Partial<Manifest> | null;
   const name = path.basename(path.resolve(dir));
-  if (!manifest || manifest.schemaVersion !== 1 || manifest.folderName !== name || !FOLDER_NAME.test(name) || typeof manifest.sessionId !== 'string'
-    || manifest.safeSessionId !== safePathId(manifest.sessionId) || typeof manifest.repositoryRoot !== 'string') {
+  if (
+    !manifest ||
+    manifest.schemaVersion !== 1 ||
+    manifest.folderName !== name ||
+    !FOLDER_NAME.test(name) ||
+    typeof manifest.sessionId !== 'string' ||
+    manifest.safeSessionId !== safePathId(manifest.sessionId) ||
+    typeof manifest.repositoryRoot !== 'string'
+  ) {
     throw new Error(`Session manifest has an unsupported or unsafe identity: ${file}`);
   }
   return manifest as Manifest;
@@ -103,7 +138,11 @@ function writeManifest(dir: string, manifest: Manifest): void {
   const target = path.join(dir, MANIFEST);
   const temp = `${target}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  try { fs.renameSync(temp, target); } finally { fs.rmSync(temp, { force: true }); }
+  try {
+    fs.renameSync(temp, target);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
 }
 
 export class AmbiguousSessionIdentity extends Error {
@@ -117,15 +156,22 @@ export class AmbiguousSessionIdentity extends Error {
 
 function matchingSession(root: string, sessionId: string, repo: string): string | undefined {
   let names: string[];
-  try { names = fs.readdirSync(root); } catch { return undefined; }
-  const found = names.filter((name) => FOLDER_NAME.test(name)).map((name) => path.join(root, name)).filter((dir) => {
-    try {
-      const manifest = readManifest(dir);
-      return manifest.sessionId === sessionId && manifest.repositoryRoot === repo;
-    } catch {
-      return false;
-    }
-  });
+  try {
+    names = fs.readdirSync(root);
+  } catch {
+    return undefined;
+  }
+  const found = names
+    .filter((name) => FOLDER_NAME.test(name))
+    .map((name) => path.join(root, name))
+    .filter((dir) => {
+      try {
+        const manifest = readManifest(dir);
+        return manifest.sessionId === sessionId && manifest.repositoryRoot === repo;
+      } catch {
+        return false;
+      }
+    });
   if (found.length > 1) throw new AmbiguousSessionIdentity(sessionId, found);
   return found[0];
 }
@@ -150,7 +196,9 @@ export function initSession(options: InitOptions): { path: string; reused: boole
   const found = matchingSession(root, options.sessionId, repo);
   if (found !== undefined) return { path: fs.realpathSync(found), reused: true };
   const claim = path.join(root, `.claim-${safePathId(options.sessionId)}`);
-  try { fs.mkdirSync(claim, { mode: 0o700 }); } catch (error) {
+  try {
+    fs.mkdirSync(claim, { mode: 0o700 });
+  } catch (error) {
     if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
     // Another creator holds the claim: reuse its folder once published, or retry after it releases.
     const appeared = waitForClaim(root, options.sessionId, repo, claim, options.waitMs ?? CLAIM_WAIT_MS);
@@ -164,15 +212,24 @@ export function initSession(options: InitOptions): { path: string; reused: boole
     for (let n = 0; ; n++) {
       const name = n === 0 ? baseName : `${baseName}-${n}`;
       const dir = path.join(root, name);
-      try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (error) {
+      try {
+        fs.mkdirSync(dir, { mode: 0o700 });
+      } catch (error) {
         if ((error as { code?: unknown }).code === 'EEXIST') continue;
         throw error;
       }
       const instant = options.now.toISOString();
       try {
         writeManifest(dir, {
-          schemaVersion: 1, folderName: name, sessionId: options.sessionId, safeSessionId: safePathId(options.sessionId), repositoryRoot: repo,
-          sessionTitle: baseTitle, createdAt: instant, lastUsedAt: instant, location: 'workspace',
+          schemaVersion: 1,
+          folderName: name,
+          sessionId: options.sessionId,
+          safeSessionId: safePathId(options.sessionId),
+          repositoryRoot: repo,
+          sessionTitle: baseTitle,
+          createdAt: instant,
+          lastUsedAt: instant,
+          location: 'workspace',
         });
       } catch (error) {
         // A folder without a manifest would break later identity matching.
@@ -195,7 +252,8 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
     const found = matchingSession(root, sessionId, repo);
     if (found !== undefined) return fs.realpathSync(found);
     if (!fs.existsSync(claim)) return null;
-    if (Date.now() >= deadline) throw new Error(`Session initialization is still claimed at ${claim}; inspect the path and retry.`);
+    if (Date.now() >= deadline)
+      throw new Error(`Session initialization is still claimed at ${claim}; inspect the path and retry.`);
     Atomics.wait(pause, 0, 0, 10);
   }
 }
@@ -203,8 +261,10 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
 /** Validates that a session belongs to the repository workspace root and sits under `.scratch/dispatch-skills`. */
 export function reactivateSession(sessionDir: string, repositoryRoot: string): string {
   const manifest = readManifest(sessionDir);
-  if (manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot)) throw new Error(`Session belongs to a different repository: ${sessionDir}`);
+  if (manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot))
+    throw new Error(`Session belongs to a different repository: ${sessionDir}`);
   const expected = path.join(workspaceSessionRoot(repositoryRoot), manifest.folderName);
-  if (!samePath(sessionDir, expected)) throw new Error(`Session directory is outside the workspace session root: ${sessionDir}`);
+  if (!samePath(sessionDir, expected))
+    throw new Error(`Session directory is outside the workspace session root: ${sessionDir}`);
   return fs.realpathSync(sessionDir);
 }

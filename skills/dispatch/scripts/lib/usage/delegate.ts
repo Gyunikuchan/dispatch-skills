@@ -4,9 +4,21 @@ import { USAGE_ADAPTERS } from './adapters.ts';
 import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { mergeCopilot, type CopilotActor } from './rows.ts';
 import { baseCounters } from './read.ts';
-import { MAX_RESPONSE_AGENTS, usageKey, type DelegateQuery, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
+import {
+  MAX_RESPONSE_AGENTS,
+  usageKey,
+  type DelegateQuery,
+  type HostUsageQuery,
+  type HostUsageResult,
+  type UsageRow,
+} from './rows.ts';
 
-export type SessionRead = { usage?: DiagnosticUsage; complete: boolean; invalidCounters?: true; responses?: DelegateResponse[] };
+export type SessionRead = {
+  usage?: DiagnosticUsage;
+  complete: boolean;
+  invalidCounters?: true;
+  responses?: DelegateResponse[];
+};
 
 const actors = new WeakMap<DelegateResponse, string>();
 
@@ -14,9 +26,19 @@ const actors = new WeakMap<DelegateResponse, string>();
 export const delegateResponseActor = (response: DelegateResponse): string | undefined => actors.get(response);
 
 function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplete: boolean): DelegateResponse[] {
-  if (!result.response || (query.resumed && result.rows.some(row => row.wholeSecond))) return [];
+  if (!result.response || (query.resumed && result.rows.some((row) => row.wholeSecond))) return [];
   const { basis, limited } = result.response;
-  const groups = new Map<string, { response: DelegateResponse; activeCount: number; toolCalls: number; toolTurns: number; allToolCalls: boolean; allToolTurns: boolean }>();
+  const groups = new Map<
+    string,
+    {
+      response: DelegateResponse;
+      activeCount: number;
+      toolCalls: number;
+      toolTurns: number;
+      allToolCalls: boolean;
+      allToolTurns: boolean;
+    }
+  >();
   const named = new Set<string>();
   for (const row of result.rows) {
     if (row.role === 'host' || !baseCounters(row) || (!row.wholeSecond && row.atMs < query.startMs)) continue;
@@ -27,7 +49,13 @@ function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplet
     const key = JSON.stringify([role, actor]);
     let entry = groups.get(key);
     if (!entry) {
-      const response: DelegateResponse = { role, basis, coverage: incomplete || limited || !actor ? 'partial' : 'complete', observed: 0, uncachedInput: 0 };
+      const response: DelegateResponse = {
+        role,
+        basis,
+        coverage: incomplete || limited || !actor ? 'partial' : 'complete',
+        observed: 0,
+        uncachedInput: 0,
+      };
       if (actor) actors.set(response, actor);
       entry = { response, activeCount: 0, toolCalls: 0, toolTurns: 0, allToolCalls: true, allToolTurns: true };
       groups.set(key, entry);
@@ -45,18 +73,20 @@ function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplet
       else entry.allToolTurns = false;
     }
   }
-  const out = [...groups.values()].map(({ response, activeCount, toolCalls, toolTurns, allToolCalls, allToolTurns }) => {
-    if (!incomplete && activeCount > 0) {
-      if (allToolCalls) response.toolCalls = toolCalls;
-      if (allToolTurns) response.toolTurns = toolTurns;
-    }
-    return response;
-  });
+  const out = [...groups.values()].map(
+    ({ response, activeCount, toolCalls, toolTurns, allToolCalls, allToolTurns }) => {
+      if (!incomplete && activeCount > 0) {
+        if (allToolCalls) response.toolCalls = toolCalls;
+        if (allToolTurns) response.toolTurns = toolTurns;
+      }
+      return response;
+    },
+  );
   if (incomplete) {
-    if (!out.some(group => group.role === 'delegate')) {
+    if (!out.some((group) => group.role === 'delegate')) {
       out.push({ role: 'delegate', basis: 'unavailable', coverage: 'unknown' });
     }
-    if (result.notes?.subagent && !out.some(group => group.role === 'subagent')) {
+    if (result.notes?.subagent && !out.some((group) => group.role === 'subagent')) {
       out.push({ role: 'subagent', basis: 'unavailable', coverage: 'unknown' });
     }
   }
@@ -65,10 +95,11 @@ function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplet
 
 const ACTIVITY_KEYS = ['turns', 'toolCalls', 'toolTurns'] as const;
 
-function activityTotals(rows: readonly UsageRow[], fallback?: Partial<Pick<UsageRow, typeof ACTIVITY_KEYS[number]>>) {
-  const totals: Partial<Pick<UsageRow, typeof ACTIVITY_KEYS[number]>> = {};
+function activityTotals(rows: readonly UsageRow[], fallback?: Partial<Pick<UsageRow, (typeof ACTIVITY_KEYS)[number]>>) {
+  const totals: Partial<Pick<UsageRow, (typeof ACTIVITY_KEYS)[number]>> = {};
   for (const key of ACTIVITY_KEYS) {
-    if (rows.length && rows.every(row => row[key] !== undefined)) totals[key] = rows.reduce((sum, row) => sum + row[key]!, 0);
+    if (rows.length && rows.every((row) => row[key] !== undefined))
+      totals[key] = rows.reduce((sum, row) => sum + row[key]!, 0);
     else if (!rows.length && fallback?.[key] !== undefined) totals[key] = 0;
   }
   return totals;
@@ -79,7 +110,8 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   if (!validSessionId(query.sessionId)) return { complete: false };
   if (!Number.isFinite(query.startMs) || !Number.isFinite(query.endMs)) return { complete: false };
 
-  const startMs = query.platform === 'copilot' || query.resumed ? query.startMs : Math.floor(query.startMs / 1000) * 1000;
+  const startMs =
+    query.platform === 'copilot' || query.resumed ? query.startMs : Math.floor(query.startMs / 1000) * 1000;
   const hostQuery: HostUsageQuery = {
     ...(query.collectResponses ? { collectResponses: true } : {}),
     sessionId: query.sessionId,
@@ -103,9 +135,12 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   );
   const rows = result.rows;
   // Descendant-only rows can still supply usage when the root has no accepted records.
-  const incomplete = hasNotes || (result.unavailable && result.unavailable !== 'no usage records')
-    || rows.length === 0 || (query.resumed && rows.some(r => r.wholeSecond));
-  const invalidCounters = !incomplete && rows.some(r => !baseCounters(r));
+  const incomplete =
+    hasNotes ||
+    (result.unavailable && result.unavailable !== 'no usage records') ||
+    rows.length === 0 ||
+    (query.resumed && rows.some((r) => r.wholeSecond));
+  const invalidCounters = !incomplete && rows.some((r) => !baseCounters(r));
   const counts = responseCounts(query, result, Boolean(incomplete || result.unavailable || invalidCounters));
   const evidence = counts.length ? { responses: counts } : {};
   if (incomplete && (query.platform !== 'copilot' || !rows.length)) return { complete: false, ...evidence };
@@ -121,7 +156,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
   const actualEffort = efforts.size === 1 ? [...efforts][0]! : null;
 
   const models: Record<string, DiagnosticModelUsage> = boundModels(folded.models);
-  const activeDelegateRows = rows.filter(r => r.role === 'delegate' && !r.skipResponse);
+  const activeDelegateRows = rows.filter((r) => r.role === 'delegate' && !r.skipResponse);
   const activity = activityTotals(activeDelegateRows);
   if (activeDelegateRows.length) {
     const delegateByModel = new Map<string, typeof activeDelegateRows>();
@@ -149,7 +184,9 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
       models,
       ...(actualModels.length > 0 ? { actualModels: actualModels.slice(0, 8) } : {}),
       actualEffort,
-      ...(query.platform === 'copilot' ? { copilot: mergeCopilot(rows.map(r => r.copilot))!, actors: copilotActors(rows, models) } : {}),
+      ...(query.platform === 'copilot'
+        ? { copilot: mergeCopilot(rows.map((r) => r.copilot))!, actors: copilotActors(rows, models) }
+        : {}),
       ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }),
     },
   };
@@ -157,22 +194,43 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
 
 function copilotActors(rows: HostUsageResult['rows'], models: Record<string, DiagnosticModelUsage>): CopilotActor[] {
   const aliases = new Map<string, string>();
-  for (const r of rows) if (r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS) aliases.set(r.responseActor, `actor-${aliases.size + 1}`);
+  for (const r of rows)
+    if (r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS)
+      aliases.set(r.responseActor, `actor-${aliases.size + 1}`);
   const groups = new Map<string, typeof rows>();
   for (const original of rows) {
-    const r = Object.hasOwn(models, usageKey(original.model, original.effort)) ? original : { ...original, model: OTHER_KEY, effort: null };
+    const r = Object.hasOwn(models, usageKey(original.model, original.effort))
+      ? original
+      : { ...original, model: OTHER_KEY, effort: null };
     const agent = aliases.get(r.responseActor ?? '');
     const key = JSON.stringify([r.role, agent, r.model, r.effort]);
-    const group = groups.get(key) ?? []; group.push(r); groups.set(key, group);
+    const group = groups.get(key) ?? [];
+    group.push(r);
+    groups.set(key, group);
   }
-  return [...groups.values()].map(group => {
-    const r = group[0]!, agent = aliases.get(r.responseActor ?? '');
+  return [...groups.values()].map((group) => {
+    const r = group[0]!,
+      agent = aliases.get(r.responseActor ?? '');
     const parent = aliases.get(r.parentActor ?? '');
-    const copilot = mergeCopilot(group.map(r => r.copilot))!;
-    if (!agent) { copilot.actorCoverage = 'partial'; copilot.lineageCoverage = 'unknown'; }
+    const copilot = mergeCopilot(group.map((r) => r.copilot))!;
+    if (!agent) {
+      copilot.actorCoverage = 'partial';
+      copilot.lineageCoverage = 'unknown';
+    }
     const folded = foldRows(group);
     const total = folded.total;
     const bands = folded.models[usageKey(r.model, r.effort)]?.bands;
-    return { ...total, ...(bands ? { bands } : {}), turns: group.length, role: r.role, model: r.model, effort: r.effort, ...(agent ? { agent } : {}), ...(agent && parent ? { parent } : {}), ...(agent && r.depth !== undefined ? { depth: r.depth } : {}), copilot };
+    return {
+      ...total,
+      ...(bands ? { bands } : {}),
+      turns: group.length,
+      role: r.role,
+      model: r.model,
+      effort: r.effort,
+      ...(agent ? { agent } : {}),
+      ...(agent && parent ? { parent } : {}),
+      ...(agent && r.depth !== undefined ? { depth: r.depth } : {}),
+      copilot,
+    };
   });
 }

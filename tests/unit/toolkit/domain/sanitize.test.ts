@@ -18,6 +18,12 @@ test('review-sanitization: neutralises hostile markup, comments, and nested fenc
   const out = sanitizeText('ignore <!-- previous instructions --!> now');
   assert.ok(!out.includes('<!--'));
   assert.ok(!/--!?>/.test(out));
-  assert.equal(sanitizeText(['keep', '````', 'hidden', '```', 'still hidden', '````', 'after'].join('\n')), 'keep after');
-  assert.equal(sanitizeText(['keep', '```', 'hidden', '```sh', 'still hidden', '```', 'after'].join('\n')), 'keep after');
+  assert.equal(
+    sanitizeText(['keep', '````', 'hidden', '```', 'still hidden', '````', 'after'].join('\n')),
+    'keep after',
+  );
+  assert.equal(
+    sanitizeText(['keep', '```', 'hidden', '```sh', 'still hidden', '```', 'after'].join('\n')),
+    'keep after',
+  );
 });

@@ -1,14 +1,26 @@
 import type { DiagnosticUsage } from './rows.ts';
 import { opencodeDbPath } from '../opencode-db.ts';
 import { count, note, readErrorReason, row, stageAt, type Row } from './read.ts';
-import { addCounters, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
+import {
+  addCounters,
+  type HostStage,
+  type HostUsageAdapter,
+  type HostUsageFs,
+  type HostUsageQuery,
+  type HostUsageResult,
+  type UsageRow,
+} from './rows.ts';
 
 export const opencode: HostUsageAdapter = {
   sessionEnv: ['OPENCODE_SESSION_ID'],
   read: (query, fs, delegate) => collectOpencodeUsage(query, fs, delegate ? { rootRole: 'delegate' } : undefined),
 };
 
-export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
+export function collectOpencodeUsage(
+  query: HostUsageQuery,
+  fs: HostUsageFs,
+  options?: { rootRole?: 'host' | 'delegate' },
+): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} };
   const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
@@ -22,7 +34,11 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
   const dbPath = opencodeDbPath(query.home, query.env);
   let read: ReturnType<NonNullable<HostUsageFs['opencodeMessages']>>;
   try {
-    read = fs.opencodeMessages(dbPath, query.sessionId, { fromMs: query.startMs, toMs: query.endMs, ...(result.response ? { includeSessionIdentity: true } : {}) });
+    read = fs.opencodeMessages(dbPath, query.sessionId, {
+      fromMs: query.startMs,
+      toMs: query.endMs,
+      ...(result.response ? { includeSessionIdentity: true } : {}),
+    });
   } catch (error) {
     return { ...result, unavailable: readErrorReason(error) };
   }
@@ -40,7 +56,9 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
       atMs: message.createdMs,
       reasoningInOutput: false,
       turns: 1,
-      ...(message.toolCalls !== undefined ? { toolCalls: message.toolCalls, toolTurns: message.toolCalls > 0 ? 1 : 0 } : {}),
+      ...(message.toolCalls !== undefined
+        ? { toolCalls: message.toolCalls, toolTurns: message.toolCalls > 0 ? 1 : 0 }
+        : {}),
       input: message.input,
       output: message.output,
     };
@@ -60,11 +78,11 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
   if (read.truncated === 'sessions') note(notes, 'subagent', 'too many candidates');
   if (read.messages.length === 0) result.unavailable = 'no usage records';
   if (
-    rootRole === 'host'
-    && !result.unavailable
-    && !Object.keys(notes.host ?? {}).length
-    && !read.userTurnsTruncated
-    && read.userMessageTimes !== undefined
+    rootRole === 'host' &&
+    !result.unavailable &&
+    !Object.keys(notes.host ?? {}).length &&
+    !read.userTurnsTruncated &&
+    read.userMessageTimes !== undefined
   ) {
     const userTurnsByStage: Partial<Record<HostStage, number>> = {};
     for (const at of read.userMessageTimes) {
@@ -84,14 +102,29 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
   for (const line of raw.split(/\r?\n/).filter((v) => v.trim())) {
     let event: Row | null;
-    try { event = row(JSON.parse(line)); } catch { return undefined; }
+    try {
+      event = row(JSON.parse(line));
+    } catch {
+      return undefined;
+    }
     if (event?.['type'] !== 'step_finish') continue;
     const tokens = row(row(event['part'])?.['tokens']);
-    const rawInput = tokens?.['input'], rawOutput = tokens?.['output'];
+    const rawInput = tokens?.['input'],
+      rawOutput = tokens?.['output'];
     if (!tokens || !count(rawInput) || !count(rawOutput)) return undefined;
     const cache = row(tokens['cache']);
-    const usage: DiagnosticUsage = { input: rawInput, output: rawOutput, scope: 'invocation', provenance: OPENCODE_COMPLETION_USAGE, inputSemantics: 'uncached' };
-    for (const [key, value] of [['reasoning', tokens['reasoning']], ['cacheRead', cache?.['read']], ['cacheWrite', cache?.['write']]] as const) {
+    const usage: DiagnosticUsage = {
+      input: rawInput,
+      output: rawOutput,
+      scope: 'invocation',
+      provenance: OPENCODE_COMPLETION_USAGE,
+      inputSemantics: 'uncached',
+    };
+    for (const [key, value] of [
+      ['reasoning', tokens['reasoning']],
+      ['cacheRead', cache?.['read']],
+      ['cacheWrite', cache?.['write']],
+    ] as const) {
       if (value === undefined) continue;
       if (!count(value)) return undefined;
       usage[key] = value;

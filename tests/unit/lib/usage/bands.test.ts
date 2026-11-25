@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BAND_EDGES, MAX_MODEL_KEYS, OTHER_KEY, bandOf, boundModels, foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
+import {
+  BAND_EDGES,
+  MAX_MODEL_KEYS,
+  OTHER_KEY,
+  bandOf,
+  boundModels,
+  foldRows,
+} from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
 import { BANDS } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { tokenTotal, type UsageRow } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 
@@ -63,7 +70,10 @@ test('key bound: keeps 32 largest keys and merges overflow and existing other in
   assert.equal(MAX_MODEL_KEYS, 32);
   assert.equal(OTHER_KEY, 'other');
 
-  const input: Record<string, { input: number; output: number; bands?: { le100k: { input: number; output: number } } }> = {};
+  const input: Record<
+    string,
+    { input: number; output: number; bands?: { le100k: { input: number; output: number } } }
+  > = {};
   for (let i = 1; i <= 34; i++) {
     const key = `m${String(i).padStart(2, '0')}#high`;
     const tokens = i <= 4 ? 10 : i * 100;

@@ -1,4 +1,13 @@
-import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundDirectory, reviewRoundFile, reviewFindingsFile, readStoredJson, type ReviewTarget, reviewRoundEntries } from './review-state.ts';
+import {
+  INTEGRATION_REVIEW,
+  reviewDirectory,
+  reviewRoundDirectory,
+  reviewRoundFile,
+  reviewFindingsFile,
+  readStoredJson,
+  type ReviewTarget,
+  reviewRoundEntries,
+} from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { collectFindings, isUnresolvedLocus, matchFinding, parseReport } from './domain/report.ts';
@@ -11,93 +20,235 @@ import type { Fold } from './ledger.ts';
 import { parseRepositoryNoteKey } from './ledger.ts';
 import { coverageState, type CoverageApplies, type CoverageDecision, type CoverageState } from './coverage.ts';
 import { ToolError } from './output.ts';
-import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
-type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
+import {
+  loadRejections,
+  rejectionState,
+  type RejectionRequest,
+  type RejectionReply,
+  type ConfirmationRound,
+} from './confirmations.ts';
+type ReviewedFinding = Finding & { recurrence?: { of: string }; unresolved?: { of: string } };
 export type RepositoryChange = { cwd: string; paths: string[] };
 export type RepositoryCheckState = { state: 'unavailable'; reason: string };
 export type FindingsValue = {
-  review: string; round: number; cap: number; level: string; findings: ReviewedFinding[];
-  units: FindingUnit[]; clusters: {file: string; findings: string[]}[]; failed: Extract<SlotOutcome, {state: 'failed'}>[];
+  review: string;
+  round: number;
+  cap: number;
+  level: string;
+  findings: ReviewedFinding[];
+  units: FindingUnit[];
+  clusters: { file: string; findings: string[] }[];
+  failed: Extract<SlotOutcome, { state: 'failed' }>[];
   confirmations?: RejectionReply[];
-  repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState;
+  repositoryChanges?: RepositoryChange[];
+  repositoryCheck?: RepositoryCheckState;
 };
-export type Finalized = FindingsValue & {escalations: RecordInput[]};
-const key = (finding: Finding) => ({locus: finding.locus, category: finding.category, text: finding.defect + ' ' + finding.requiredChange});
+export type Finalized = FindingsValue & { escalations: RecordInput[] };
+const key = (finding: Finding) => ({
+  locus: finding.locus,
+  category: finding.category,
+  text: finding.defect + ' ' + finding.requiredChange,
+});
 export function finalizeRound(input: {
-  review: string; round: number; generation: number; cap: number; level: string; startSeq: number;
-  replies: readonly SlotOutcome[]; redGaps?: readonly Finding[]; prior: readonly FindingsValue[];
-  priorTargets: Record<number, ReviewTarget>; changedSince?: Record<number, readonly string[]>;
-  owners?: Record<string, readonly string[]>; escalationRecords?: readonly LedgerRecord[]; rulings: readonly LedgerRecord[];
-  kind: ReviewKind; artifact: string; target: ReviewTarget;
-  requests?: readonly RejectionRequest[]; confirmationRounds?: readonly ConfirmationRound[]; spec?: {path:string;hash:string}; roster?: ConfirmationRound['metadata']['roster'];
-  repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState;
+  review: string;
+  round: number;
+  generation: number;
+  cap: number;
+  level: string;
+  startSeq: number;
+  replies: readonly SlotOutcome[];
+  redGaps?: readonly Finding[];
+  prior: readonly FindingsValue[];
+  priorTargets: Record<number, ReviewTarget>;
+  changedSince?: Record<number, readonly string[]>;
+  owners?: Record<string, readonly string[]>;
+  escalationRecords?: readonly LedgerRecord[];
+  rulings: readonly LedgerRecord[];
+  kind: ReviewKind;
+  artifact: string;
+  target: ReviewTarget;
+  requests?: readonly RejectionRequest[];
+  confirmationRounds?: readonly ConfirmationRound[];
+  spec?: { path: string; hash: string };
+  roster?: ConfirmationRound['metadata']['roster'];
+  repositoryChanges?: RepositoryChange[];
+  repositoryCheck?: RepositoryCheckState;
 }): Finalized {
   const confirmations: RejectionReply[] = [];
-  const drafts = input.replies.flatMap(reply => {
+  const drafts = input.replies.flatMap((reply) => {
     if (reply.state !== 'done') return [];
-    const requests=(input.requests ?? []).filter(request=>request.sourceSlots.includes(reply.slot));
-    const parsed = parseReport({kind: input.kind, source: reply.slot, text: reply.text,expectedRequestIds:requests.map(request=>request.requestId)});
+    const requests = (input.requests ?? []).filter((request) => request.sourceSlots.includes(reply.slot));
+    const parsed = parseReport({
+      kind: input.kind,
+      source: reply.slot,
+      text: reply.text,
+      expectedRequestIds: requests.map((request) => request.requestId),
+    });
     if (!parsed.ok) throw new Error('Saved report is invalid: ' + parsed.failure.detail);
-    for(const confirmation of parsed.confirmations ?? []) {
-      const request=requests.find(request=>request.requestId===confirmation.requestId)!;
-      confirmations.push({...request,sourceSlot:reply.slot,responder:reply.responder,decision:confirmation.decision,replyRationale:confirmation.rationale});
+    for (const confirmation of parsed.confirmations ?? []) {
+      const request = requests.find((request) => request.requestId === confirmation.requestId)!;
+      confirmations.push({
+        ...request,
+        sourceSlot: reply.slot,
+        responder: reply.responder,
+        decision: confirmation.decision,
+        replyRationale: confirmation.rationale,
+      });
     }
     return parsed.findings;
   });
-  const findings: ReviewedFinding[] = [...collectFindings(input.round, drafts).filter(finding => !finding.dupOf), ...(input.redGaps ?? [])];
+  const findings: ReviewedFinding[] = [
+    ...collectFindings(input.round, drafts).filter((finding) => !finding.dupOf),
+    ...(input.redGaps ?? []),
+  ];
   const escalations: RecordInput[] = [];
-  if(input.spec && input.roster) {
-    const current:ConfirmationRound={review:input.review,metadata:{round:input.round,cap:input.cap,generation:input.generation,startSeq:input.startSeq,target:input.target,spec:input.spec,roster:input.roster,requests:input.requests ?? []},findings:{review:input.review,round:input.round,cap:input.cap,level:input.level,findings:[],clusters:[],units:[],failed:[],confirmations}};
-    for(const state of rejectionState([...(input.confirmationRounds ?? []),current],input.rulings,input.escalationRecords ?? []))if(state.state!=='confirmed' && (state.noResponses>=2 || state.disagreements>=2 && confirmations.some(reply=>reply.finding===state.request.finding && reply.decision==='disagree'))) {
-      const id='rejection:'+input.review+':'+state.request.finding;
-      escalations.push({kind:'escalation',by:'tool',key:id+':R'+input.round+':g'+input.generation,data:{id,state:'open',summary:state.noResponses>=2?'An assigned source did not reply to MUST rejection '+state.request.finding+' in two consecutive past-cap rounds':'Reviewer disputed MUST rejection '+state.request.finding+' '+state.disagreements+' consecutive times'}});
-    }
+  if (input.spec && input.roster) {
+    const current: ConfirmationRound = {
+      review: input.review,
+      metadata: {
+        round: input.round,
+        cap: input.cap,
+        generation: input.generation,
+        startSeq: input.startSeq,
+        target: input.target,
+        spec: input.spec,
+        roster: input.roster,
+        requests: input.requests ?? [],
+      },
+      findings: {
+        review: input.review,
+        round: input.round,
+        cap: input.cap,
+        level: input.level,
+        findings: [],
+        clusters: [],
+        units: [],
+        failed: [],
+        confirmations,
+      },
+    };
+    for (const state of rejectionState(
+      [...(input.confirmationRounds ?? []), current],
+      input.rulings,
+      input.escalationRecords ?? [],
+    ))
+      if (
+        state.state !== 'confirmed' &&
+        (state.noResponses >= 2 ||
+          (state.disagreements >= 2 &&
+            confirmations.some((reply) => reply.finding === state.request.finding && reply.decision === 'disagree')))
+      ) {
+        const id = 'rejection:' + input.review + ':' + state.request.finding;
+        escalations.push({
+          kind: 'escalation',
+          by: 'tool',
+          key: id + ':R' + input.round + ':g' + input.generation,
+          data: {
+            id,
+            state: 'open',
+            summary:
+              state.noResponses >= 2
+                ? 'An assigned source did not reply to MUST rejection ' +
+                  state.request.finding +
+                  ' in two consecutive past-cap rounds'
+                : 'Reviewer disputed MUST rejection ' +
+                  state.request.finding +
+                  ' ' +
+                  state.disagreements +
+                  ' consecutive times',
+          },
+        });
+      }
   }
   for (const finding of findings) {
-    const previous = [...input.prior].reverse().flatMap(round => round.findings.map(value => ({round: round.round, value}))).find(prior => matchFinding(key(prior.value), key(finding)));
+    const previous = [...input.prior]
+      .reverse()
+      .flatMap((round) => round.findings.map((value) => ({ round: round.round, value })))
+      .find((prior) => matchFinding(key(prior.value), key(finding)));
     if (!previous) continue;
-    const ruling = input.rulings.findLast(row => row.seq <= input.startSeq && row.data['subject'] === 'review:' + input.review + ':' + previous.value.id);
+    const ruling = input.rulings.findLast(
+      (row) => row.seq <= input.startSeq && row.data['subject'] === 'review:' + input.review + ':' + previous.value.id,
+    );
     const priorTarget = input.priorTargets[previous.round];
-    let changed = typeof input.target === 'string' ? input.target !== priorTarget : typeof priorTarget !== 'string' && input.target.head !== priorTarget?.head;
+    let changed =
+      typeof input.target === 'string'
+        ? input.target !== priorTarget
+        : typeof priorTarget !== 'string' && input.target.head !== priorTarget?.head;
     if (input.kind === 'code' && input.artifact === 'integration') {
       const file = finding.locus.replace(/:L\d+$/, '');
-      const owned = Object.values(input.owners ?? {}).find(paths => paths.includes(file)) ?? [file];
-      changed = (input.changedSince?.[previous.round] ?? []).some(file => owned.includes(file));
+      const owned = Object.values(input.owners ?? {}).find((paths) => paths.includes(file)) ?? [file];
+      changed = (input.changedSince?.[previous.round] ?? []).some((file) => owned.includes(file));
     }
     if (changed && ruling?.data['ruling'] === 'accepted') {
-      finding.recurrence = {of: previous.value.id};
+      finding.recurrence = { of: previous.value.id };
       const id = 'recurrence:' + input.review + ':' + finding.id + ':g' + input.generation;
-      escalations.push({kind: 'escalation', by: 'tool', key: id, data: {id, state: 'open', summary: finding.defect}});
-    } else finding.unresolved = {of: previous.value.id};
+      escalations.push({
+        kind: 'escalation',
+        by: 'tool',
+        key: id,
+        data: { id, state: 'open', summary: finding.defect },
+      });
+    } else finding.unresolved = { of: previous.value.id };
   }
   const clusters = new Map<string, string[]>();
   for (const finding of findings) {
     const file = input.kind === 'code' ? finding.locus.replace(/:L\d+$/, '') : input.artifact;
     clusters.set(file, [...(clusters.get(file) ?? []), finding.id]);
   }
-  return {review: input.review, round: input.round, cap: input.cap, level: input.level, findings,
-    units: [], clusters: [...clusters].map(([file, findings]) => ({file, findings})),
-    failed: input.replies.filter((reply): reply is Extract<SlotOutcome, {state: 'failed'}> => reply.state === 'failed'), confirmations, escalations,
-    ...(input.repositoryChanges ? {repositoryChanges: input.repositoryChanges} : {}),
-    ...(input.repositoryCheck ? {repositoryCheck: input.repositoryCheck} : {})};
+  return {
+    review: input.review,
+    round: input.round,
+    cap: input.cap,
+    level: input.level,
+    findings,
+    units: [],
+    clusters: [...clusters].map(([file, findings]) => ({ file, findings })),
+    failed: input.replies.filter(
+      (reply): reply is Extract<SlotOutcome, { state: 'failed' }> => reply.state === 'failed',
+    ),
+    confirmations,
+    escalations,
+    ...(input.repositoryChanges ? { repositoryChanges: input.repositoryChanges } : {}),
+    ...(input.repositoryCheck ? { repositoryCheck: input.repositoryCheck } : {}),
+  };
 }
-type FindingUnit = {unit: string; findings: string[]; hot: boolean; hotStreak: number; bytes?: number; delta?: number; growthStreak?: number};
-type UnitFinding = {id: string; locus: string; defect?: string};
-type UnitRound = {findings: readonly UnitFinding[]; text?: string; startSeq: number};
-export function findingUnits(input: {kind: ReviewKind; round: number; rounds: readonly UnitRound[]; planPath: string; ruling: (id: string, seq: number) => string | undefined}): FindingUnit[] {
+type FindingUnit = {
+  unit: string;
+  findings: string[];
+  hot: boolean;
+  hotStreak: number;
+  bytes?: number;
+  delta?: number;
+  growthStreak?: number;
+};
+type UnitFinding = { id: string; locus: string; defect?: string };
+type UnitRound = { findings: readonly UnitFinding[]; text?: string; startSeq: number };
+export function findingUnits(input: {
+  kind: ReviewKind;
+  round: number;
+  rounds: readonly UnitRound[];
+  planPath: string;
+  ruling: (id: string, seq: number) => string | undefined;
+}): FindingUnit[] {
   const normalize = (s: string) => s.toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
   const sections = (text: string | undefined) => {
     if (text === undefined) return [];
     const lines = text.split(/(?<=\n)/);
-    const headings = structuralLines(text).flatMap(line => {
+    const headings = structuralLines(text).flatMap((line) => {
       const m = /^(#{2,3})\s+(.+?)\s*#*\s*$/.exec(line.text);
       if (!m) return [];
       const id = m[1] === '###' ? /^(T\d+|AD-\d+|I\d+)\b/i.exec(m[2]!)?.[1]?.toUpperCase() : undefined;
-      return [{level: m[1]!.length, title: m[2]!, id, line: line.line - 1}];
+      return [{ level: m[1]!.length, title: m[2]!, id, line: line.line - 1 }];
     });
-    return headings.map((h, i) => ({...h, unit: h.id ?? '§ ' + h.title, bytes: Buffer.byteLength(lines.slice(h.line, headings.slice(i + 1).find(next => next.level <= h.level)?.line ?? lines.length).join(''))}));
+    return headings.map((h, i) => ({
+      ...h,
+      unit: h.id ?? '§ ' + h.title,
+      bytes: Buffer.byteLength(
+        lines.slice(h.line, headings.slice(i + 1).find((next) => next.level <= h.level)?.line ?? lines.length).join(''),
+      ),
+    }));
   };
-  const allSections = input.rounds.map(r => sections(r.text));
+  const allSections = input.rounds.map((r) => sections(r.text));
   const classify = (finding: UnitFinding, index: number): string => {
     if (input.kind === 'code') {
       if (finding.defect?.startsWith('missing-red:')) return input.planPath.replace(/\\/g, '/');
@@ -111,39 +262,56 @@ export function findingUnits(input: {kind: ReviewKind; round: number; rounds: re
     if (namedSpec) return 'spec:' + namedSpec[1]!.trim();
     const headings = allSections[index] ?? [];
     for (const match of locus.matchAll(/\b(T\d+|AD-\d+|I\d+)\b/gi)) {
-      const heading = headings.find(h => h.id === match[1]!.toUpperCase());
+      const heading = headings.find((h) => h.id === match[1]!.toUpperCase());
       if (heading) return heading.unit;
     }
     if (/\bSC\d+\b/i.test(locus)) return '§ Success Criteria';
     const folded = normalize(locus.replace(/^#{2,3}\s+/, ''));
-    const heading = headings.find(h => {
-      const title = normalize(h.title), short = h.id ? title.replace(/^(?:t\d+|ad-\d+|i\d+)\s*-\s*/, '') : title;
+    const heading = headings.find((h) => {
+      const title = normalize(h.title),
+        short = h.id ? title.replace(/^(?:t\d+|ad-\d+|i\d+)\s*-\s*/, '') : title;
       return !!folded && (folded === title || (!!short && folded === short));
     });
     return heading?.unit ?? 'artifact';
   };
   const grouped = input.rounds.map((r, i) => {
     const units = new Map<string, string[]>();
-    for (const f of r.findings) {const unit = classify(f, i); units.set(unit, [...(units.get(unit) ?? []), f.id]);}
+    for (const f of r.findings) {
+      const unit = classify(f, i);
+      units.set(unit, [...(units.get(unit) ?? []), f.id]);
+    }
     return units;
   });
-  const hot = (unit: string, index: number) => index > 0 && unit !== 'artifact' && unit !== 'unresolved' && !!grouped[index]?.has(unit) && (grouped[index-1]?.get(unit) ?? []).some(id => input.ruling(id, input.rounds[index]!.startSeq) === 'accepted');
+  const hot = (unit: string, index: number) =>
+    index > 0 &&
+    unit !== 'artifact' &&
+    unit !== 'unresolved' &&
+    !!grouped[index]?.has(unit) &&
+    (grouped[index - 1]?.get(unit) ?? []).some((id) => input.ruling(id, input.rounds[index]!.startSeq) === 'accepted');
   const size = (unit: string, index: number): number | undefined => {
     const text = input.rounds[index]?.text;
     if (text === undefined) return undefined;
-    return unit === 'artifact' ? Buffer.byteLength(text) : allSections[index]?.find(h => h.unit.toLowerCase() === unit.toLowerCase())?.bytes ?? 0;
+    return unit === 'artifact'
+      ? Buffer.byteLength(text)
+      : (allSections[index]?.find((h) => h.unit.toLowerCase() === unit.toLowerCase())?.bytes ?? 0);
   };
   const index = input.round - 1;
   return [...(grouped[index] ?? new Map())].map(([unit, findings]) => {
-    let hotStreak = 0; for (let i = index; i >= 0 && hot(unit, i); i--) hotStreak++;
-    const result: FindingUnit = {unit, findings, hot: hotStreak > 0, hotStreak};
+    let hotStreak = 0;
+    for (let i = index; i >= 0 && hot(unit, i); i--) hotStreak++;
+    const result: FindingUnit = { unit, findings, hot: hotStreak > 0, hotStreak };
     if (input.kind !== 'code' && !unit.startsWith('spec:')) {
       const bytes = size(unit, index);
       if (bytes !== undefined) {
         result.bytes = bytes;
         if (index > 0 && size(unit, index - 1) !== undefined) result.delta = bytes - size(unit, index - 1)!;
         let growth = 0;
-        for (let i = index; i > 0; i--) {const a = size(unit, i), b = size(unit, i - 1); if (a === undefined || b === undefined || a <= b) break; growth++;}
+        for (let i = index; i > 0; i--) {
+          const a = size(unit, i),
+            b = size(unit, i - 1);
+          if (a === undefined || b === undefined || a <= b) break;
+          growth++;
+        }
         result.growthStreak = growth;
       }
     }
@@ -158,25 +326,46 @@ const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
  */
 function ceilingState(records: readonly LedgerRecord[], review: string, cap1: number) {
   const prefix = 'ceiling:' + review + ':';
-  const opened = new Map<string, number>(), state = new Map<string, string>(), grants = new Set<string>(), defers = new Set<string>();
+  const opened = new Map<string, number>(),
+    state = new Map<string, string>(),
+    grants = new Set<string>(),
+    defers = new Set<string>();
   for (const row of records) {
     if (row.kind !== 'escalation') continue;
     const id = row.data['id'];
     if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
     state.set(id, row.data['state']);
     if (row.by === 'tool' && row.data['state'] === 'open' && !opened.has(id)) opened.set(id, row.seq);
-    if (row.by !== 'user' || row.data['state'] !== 'resolved' || !row.quote?.trim() || row.seq <= (opened.get(id) ?? Infinity)) continue;
+    if (
+      row.by !== 'user' ||
+      row.data['state'] !== 'resolved' ||
+      !row.quote?.trim() ||
+      row.seq <= (opened.get(id) ?? Infinity)
+    )
+      continue;
     const summary = String(row.data['summary'] ?? '');
     if (CEILING_GRANT.test(summary)) grants.add(id);
     else if (summary.startsWith('close:') || summary.startsWith('defer:')) defers.add(id);
   }
   const ceiling = cap1 + 2 + 2 * grants.size;
-  return {ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open')};
+  return { ceiling, deferred: defers.has(prefix + ceiling), open: [...state.values()].includes('open') };
 }
 type BudgetCoverage =
-  | {state: 'readable'; open: string[]; decision: CoverageDecision; use?: 'free' | 'grant'}
-  | {state: 'unreadable'};
-export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asOfSeq: number; state: 'allowed' | 'requires-continuation' | 'requires-ceiling-resolution' | 'escalation-open' | 'requires-coverage-decision'; coverage?: BudgetCoverage};
+  | { state: 'readable'; open: string[]; decision: CoverageDecision; use?: 'free' | 'grant' }
+  | { state: 'unreadable' };
+export type ReviewBudget = {
+  cap: number;
+  ceiling: number;
+  nextRound: number;
+  asOfSeq: number;
+  state:
+    | 'allowed'
+    | 'requires-continuation'
+    | 'requires-ceiling-resolution'
+    | 'escalation-open'
+    | 'requires-coverage-decision';
+  coverage?: BudgetCoverage;
+};
 /** The single admission policy: launch refuses by `state`; status and summaries only report it, opening and granting nothing. */
 // Every content report for a round with its durable identity: findings.json
 // first, then each generation in numeric order and each attempt file in
@@ -186,17 +375,28 @@ type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repo
 export function contentReports(session: string, review: string, round: number): ReportContent[] {
   const out: ReportContent[] = [];
   const dir = reviewRoundDirectory(reviewDirectory(session, review), round);
-  const findings = readStoredJson<FindingsValue & {asOfSeq?: number; budget?: {asOfSeq?: number}}>(reviewFindingsFile(dir));
-  const findingsHas = (Array.isArray(findings?.repositoryChanges) && findings.repositoryChanges.length > 0) || !!findings?.repositoryCheck;
+  const findings = readStoredJson<FindingsValue & { asOfSeq?: number; budget?: { asOfSeq?: number } }>(
+    reviewFindingsFile(dir),
+  );
+  const findingsHas =
+    (Array.isArray(findings?.repositoryChanges) && findings.repositoryChanges.length > 0) ||
+    !!findings?.repositoryCheck;
   // The finalized findings copy carries the same durable identity as its
   // per-generation checkout report: finalize persists asOfSeq into
   // findings.json, so one per-report decision closes both copies. The budget
   // fallback covers older and hand-written files.
-  const findingsSeq = typeof findings?.asOfSeq === 'number' ? findings.asOfSeq
-    : typeof findings?.budget?.asOfSeq === 'number' ? findings.budget.asOfSeq : 0;
-  if (findingsHas) out.push({ seq: findingsSeq,
-    ...(findings?.repositoryChanges ? {repositoryChanges: findings.repositoryChanges} : {}),
-    ...(findings?.repositoryCheck ? {repositoryCheck: findings.repositoryCheck} : {}) });
+  const findingsSeq =
+    typeof findings?.asOfSeq === 'number'
+      ? findings.asOfSeq
+      : typeof findings?.budget?.asOfSeq === 'number'
+        ? findings.budget.asOfSeq
+        : 0;
+  if (findingsHas)
+    out.push({
+      seq: findingsSeq,
+      ...(findings?.repositoryChanges ? { repositoryChanges: findings.repositoryChanges } : {}),
+      ...(findings?.repositoryCheck ? { repositoryCheck: findings.repositoryCheck } : {}),
+    });
   let entries: string[] = [];
   try {
     entries = fs.readdirSync(dir);
@@ -204,13 +404,20 @@ export function contentReports(session: string, review: string, round: number): 
     return out;
   }
   const genNumber = (name: string): number => Number(name.slice(4));
-  for (const entry of entries.filter(name => /^gen-\d+$/.test(name)).sort((left, right) => genNumber(left) - genNumber(right))) {
+  for (const entry of entries
+    .filter((name) => /^gen-\d+$/.test(name))
+    .sort((left, right) => genNumber(left) - genNumber(right))) {
     for (const report of checkoutReportsFor(dir, entry)) {
-      const reportHas = (Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0) || !!report?.repositoryCheck;
+      const reportHas =
+        (Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0) || !!report?.repositoryCheck;
       if (!reportHas) continue;
-      out.push({ seq: typeof report?.asOfSeq === 'number' ? report.asOfSeq : 0,
-        ...(Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0 ? {repositoryChanges: report.repositoryChanges as RepositoryChange[]} : {}),
-        ...(report?.repositoryCheck ? {repositoryCheck: report.repositoryCheck as RepositoryCheckState} : {}) });
+      out.push({
+        seq: typeof report?.asOfSeq === 'number' ? report.asOfSeq : 0,
+        ...(Array.isArray(report?.repositoryChanges) && report.repositoryChanges.length > 0
+          ? { repositoryChanges: report.repositoryChanges as RepositoryChange[] }
+          : {}),
+        ...(report?.repositoryCheck ? { repositoryCheck: report.repositoryCheck as RepositoryCheckState } : {}),
+      });
     }
   }
   return out;
@@ -218,37 +425,39 @@ export function contentReports(session: string, review: string, round: number): 
 
 /** Numeric identities of every content report for a round, ascending. */
 export function reportSeqs(session: string, review: string, round: number): number[] {
-  return [...new Set(contentReports(session, review, round).map(report => report.seq))].sort((left, right) => left - right);
+  return [...new Set(contentReports(session, review, round).map((report) => report.seq))].sort(
+    (left, right) => left - right,
+  );
 }
 
 /** Closing decisions for a round: per-report suffixed keys. */
-export function closingNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq: number}[] {
-  const out: {seq: number; reportSeq: number}[] = [];
+export function closingNotesFor(fold: Fold, review: string, round: number): { seq: number; reportSeq: number }[] {
+  const out: { seq: number; reportSeq: number }[] = [];
   for (const row of fold.records) {
     if (row.kind !== 'note' || typeof row.key !== 'string') continue;
     const parsed = parseRepositoryNoteKey(row.key);
     if (!parsed || parsed.kind !== 'changes' || parsed.review !== review || parsed.round !== round) continue;
-    out.push({seq: row.seq, reportSeq: parsed.reportSeq});
+    out.push({ seq: row.seq, reportSeq: parsed.reportSeq });
   }
   return out;
 }
 
 /** Quoted user rerun decisions for a round, per-report suffixed. */
-export function rerunNotesFor(fold: Fold, review: string, round: number): {seq: number; reportSeq: number}[] {
-  const out: {seq: number; reportSeq: number}[] = [];
+export function rerunNotesFor(fold: Fold, review: string, round: number): { seq: number; reportSeq: number }[] {
+  const out: { seq: number; reportSeq: number }[] = [];
   for (const row of fold.records) {
     if (row.kind !== 'note' || typeof row.key !== 'string') continue;
     const parsed = parseRepositoryNoteKey(row.key);
     if (!parsed || parsed.kind !== 'rerun' || parsed.review !== review || parsed.round !== round) continue;
     if (row.by !== 'user' || !row.quote?.trim()) continue;
-    out.push({seq: row.seq, reportSeq: parsed.reportSeq});
+    out.push({ seq: row.seq, reportSeq: parsed.reportSeq });
   }
   return out;
 }
 
 // A suffixed note covers only its named report and needs a strictly later
 // note sequence, so an equal-seq report under a reused number stays open.
-export function coversReport(note: {seq: number; reportSeq: number}, seq: number): boolean {
+export function coversReport(note: { seq: number; reportSeq: number }, seq: number): boolean {
   return note.reportSeq === seq && note.seq > seq;
 }
 
@@ -256,12 +465,17 @@ export function coversReport(note: {seq: number; reportSeq: number}, seq: number
 export function isReportsClosed(fold: Fold, review: string, round: number, seqs: readonly number[]): boolean {
   if (!seqs.length) return false;
   const notes = closingNotesFor(fold, review, round);
-  return seqs.every(seq => notes.some(note => coversReport(note, seq)));
+  return seqs.every((seq) => notes.some((note) => coversReport(note, seq)));
 }
 
 // The report a rerun decision acknowledges is its explicit suffix. A later
 // report under the same number matches no stale decision.
-export function rerunCoverSeq(session: string, review: string, round: number, note: {seq: number; reportSeq: number}): number {
+export function rerunCoverSeq(
+  session: string,
+  review: string,
+  round: number,
+  note: { seq: number; reportSeq: number },
+): number {
   return note.reportSeq;
 }
 
@@ -272,10 +486,10 @@ export function rerunGranted(session: string, fold: Fold, review: string, round:
   const seqs = reportSeqs(session, review, round);
   if (!seqs.length) return false;
   const notes = closingNotesFor(fold, review, round);
-  const uncovered = seqs.filter(seq => !notes.some(note => coversReport(note, seq)));
+  const uncovered = seqs.filter((seq) => !notes.some((note) => coversReport(note, seq)));
   if (!uncovered.length) return false;
   const current = Math.max(...uncovered);
-  return rerunNotesFor(fold, review, round).some(note => rerunCoverSeq(session, review, round, note) === current);
+  return rerunNotesFor(fold, review, round).some((note) => rerunCoverSeq(session, review, round, note) === current);
 }
 
 // Rerun admission counts per-report suffixed decisions: the shared
@@ -298,7 +512,7 @@ export function repositoryRerunRounds(fold: Fold, review: string): number[] {
 // Every unacknowledged report file of one generation: the first write lands in
 // checkout-report.json and each retry in checkout-report-<k>.json, so a later
 // clean comparison never erases an earlier report. Numeric attempt order.
-type CheckoutReportRead = {repositoryChanges?: unknown; repositoryCheck?: unknown; asOfSeq?: number};
+type CheckoutReportRead = { repositoryChanges?: unknown; repositoryCheck?: unknown; asOfSeq?: number };
 export function checkoutReportsFor(dir: string, gen: string): CheckoutReportRead[] {
   const attemptNumber = (file: string): number =>
     file === 'checkout-report.json' ? 1 : Number(file.slice('checkout-report-'.length, -'.json'.length));
@@ -306,19 +520,26 @@ export function checkoutReportsFor(dir: string, gen: string): CheckoutReportRead
   try {
     files = fs.readdirSync(path.join(dir, gen));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return [];
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return [];
   }
   return files
-    .filter(file => /^checkout-report(-\d+)?\.json$/.test(file))
+    .filter((file) => /^checkout-report(-\d+)?\.json$/.test(file))
     .sort((left, right) => attemptNumber(left) - attemptNumber(right))
-    .map(file => readStoredJson<CheckoutReportRead>(path.join(dir, gen, file)))
+    .map((file) => readStoredJson<CheckoutReportRead>(path.join(dir, gen, file)))
     .filter((report): report is CheckoutReportRead => report !== null);
 }
 
-export function admission(session: string, fold: Fold, review: string, cap: number, applies?: CoverageApplies): {budget: ReviewBudget; rounds: number} {
+export function admission(
+  session: string,
+  fold: Fold,
+  review: string,
+  cap: number,
+  applies?: CoverageApplies,
+): { budget: ReviewBudget; rounds: number } {
   const directory = reviewDirectory(session, review);
   const roundDir = (round: number) => reviewRoundDirectory(directory, round);
-  const numbers = reviewRoundEntries(fs.readdirSync(directory)).map(entry => entry.number);
+  const numbers = reviewRoundEntries(fs.readdirSync(directory)).map((entry) => entry.number);
   const last = numbers.at(-1) ?? 0;
   // An all-failed round has no findings.json but keeps its failed report: a
   // quoted rerun note naming it completes its number, so the next call starts
@@ -326,21 +547,37 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
   let completed = last > 0 && fs.existsSync(reviewFindingsFile(roundDir(last)));
   if (!completed && last > 0 && repositoryRerunRounds(fold, review).includes(last)) {
     const seqs = reportSeqs(session, review, last);
-    if (seqs.length && !isReportsClosed(fold, review, last, seqs) && rerunGranted(session, fold, review, last)) completed = true;
+    if (seqs.length && !isReportsClosed(fold, review, last, seqs) && rerunGranted(session, fold, review, last))
+      completed = true;
   }
   const n = completed ? last + 1 : last || 1;
-  const cap1 = readStoredJson<{cap: number}>(reviewRoundFile(roundDir(1)))?.cap ?? cap, ceiling = ceilingState(fold.records, review, cap1);
-  const rulings = fold.records.filter(row => row.kind === 'ruling'), startSeq = readStoredJson<{startSeq?: number}>(reviewRoundFile(roundDir(n - 1)))?.startSeq ?? 0;
-  const rejections = loadRejections(session, fold, [review]), pending = rejections.some(state => state.state === 'pending');
-  const fixed = numbers.some(number => readStoredJson<FindingsValue>(reviewFindingsFile(roundDir(number)))?.findings.some(finding => {
-    const history = rulings.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id), ruling = history.at(-1);
-    return effectiveSeverity(finding, history) === 'MUST' && ruling?.data['ruling'] === 'accepted' && (number === n - 1 || ruling.seq > startSeq);
-  }));
+  const cap1 = readStoredJson<{ cap: number }>(reviewRoundFile(roundDir(1)))?.cap ?? cap,
+    ceiling = ceilingState(fold.records, review, cap1);
+  const rulings = fold.records.filter((row) => row.kind === 'ruling'),
+    startSeq = readStoredJson<{ startSeq?: number }>(reviewRoundFile(roundDir(n - 1)))?.startSeq ?? 0;
+  const rejections = loadRejections(session, fold, [review]),
+    pending = rejections.some((state) => state.state === 'pending');
+  const fixed = numbers.some((number) =>
+    readStoredJson<FindingsValue>(reviewFindingsFile(roundDir(number)))?.findings.some((finding) => {
+      const history = rulings.filter((row) => row.data['subject'] === 'review:' + review + ':' + finding.id),
+        ruling = history.at(-1);
+      return (
+        effectiveSeverity(finding, history) === 'MUST' &&
+        ruling?.data['ruling'] === 'accepted' &&
+        (number === n - 1 || ruling.seq > startSeq)
+      );
+    }),
+  );
   const past = completed && n > ceiling.ceiling;
   // Close and defer grant no rounds; a pending MUST rejection keeps its confirmation round.
-  let state: ReviewBudget['state'] = rejections.some(state => state.state === 'escalated') || (completed && ceiling.open) ? 'escalation-open'
-    : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending)) ? 'requires-continuation'
-    : past && !ceiling.deferred ? 'requires-ceiling-resolution' : 'allowed';
+  let state: ReviewBudget['state'] =
+    rejections.some((state) => state.state === 'escalated') || (completed && ceiling.open)
+      ? 'escalation-open'
+      : n > cap1 && ((!fixed && !pending) || (past && ceiling.deferred && !pending))
+        ? 'requires-continuation'
+        : past && !ceiling.deferred
+          ? 'requires-ceiling-resolution'
+          : 'allowed';
   // A user rerun note admits its named round + 1 once above the cap and below the
   // ceiling. Escalation and ceiling checks above stay first; other rounds keep no grant.
   if (state === 'requires-continuation' && n > cap1 && n <= ceiling.ceiling) {
@@ -358,16 +595,26 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
   // SECTION: Coverage rows (code-integration only); escalation, ceiling and accepted-MUST rules stay first.
   let coverage: BudgetCoverage | undefined, use: 'free' | 'grant' | undefined, folded: CoverageState | undefined;
   if (review === INTEGRATION_REVIEW) {
-    try { folded = coverageState(session, fold, review, applies); }
-    catch (error) { if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error; coverage = {state: 'unreadable'}; }
+    try {
+      folded = coverageState(session, fold, review, applies);
+    } catch (error) {
+      if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error;
+      coverage = { state: 'unreadable' };
+    }
   }
   if (folded) {
-    const saved = folded.incomplete === n ? readStoredJson<{coverageUse?: 'free' | 'grant'}>(reviewRoundFile(roundDir(n)))?.coverageUse : undefined;
+    const saved =
+      folded.incomplete === n
+        ? readStoredJson<{ coverageUse?: 'free' | 'grant' }>(reviewRoundFile(roundDir(n)))?.coverageUse
+        : undefined;
     if ((state === 'allowed' || state === 'requires-continuation') && !past) {
-      if (saved) {state = 'allowed'; use = saved;}
-      else if (!fixed && !pending && folded.open.length && n !== last) {
-        const grant = folded.unusedGrant ? 'grant' as const : undefined;
-        if (folded.decision === 'user') [state, use] = grant ? ['allowed', grant] : ['requires-coverage-decision', undefined];
+      if (saved) {
+        state = 'allowed';
+        use = saved;
+      } else if (!fixed && !pending && folded.open.length && n !== last) {
+        const grant = folded.unusedGrant ? ('grant' as const) : undefined;
+        if (folded.decision === 'user')
+          [state, use] = grant ? ['allowed', grant] : ['requires-coverage-decision', undefined];
         else if (n <= cap1) state = 'allowed';
         else if (!folded.freeUsed) [state, use] = ['allowed', 'free'];
         else if (grant) [state, use] = ['allowed', grant];
@@ -375,10 +622,27 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
       }
     }
     // NOTE: past the ceiling no round can run, so only the user's accept can settle a slot that delivery refuses.
-    else if (state === 'requires-continuation' && past && folded.open.length && folded.decision !== 'majority') state = 'requires-coverage-decision';
-    if (folded.open.length || folded.incomplete !== null) coverage = {state: 'readable', open: folded.open, decision: folded.decision, ...(use ? {use} : {})};
+    else if (state === 'requires-continuation' && past && folded.open.length && folded.decision !== 'majority')
+      state = 'requires-coverage-decision';
+    if (folded.open.length || folded.incomplete !== null)
+      coverage = { state: 'readable', open: folded.open, decision: folded.decision, ...(use ? { use } : {}) };
   }
-  return {budget: {cap: cap1, ceiling: ceiling.ceiling, nextRound: n, asOfSeq: fold.lastSeq, state, ...(coverage ? {coverage} : {})}, rounds: numbers.length};
+  return {
+    budget: {
+      cap: cap1,
+      ceiling: ceiling.ceiling,
+      nextRound: n,
+      asOfSeq: fold.lastSeq,
+      state,
+      ...(coverage ? { coverage } : {}),
+    },
+    rounds: numbers.length,
+  };
 }
-export const renderBudget = (budget: ReviewBudget) => `next round ${budget.nextRound} ${budget.state} (cap ${budget.cap}, ceiling ${budget.ceiling})`
-  + (!budget.coverage ? '' : budget.coverage.state === 'unreadable' ? '; coverage unreadable' : `; coverage ${budget.coverage.decision}, open: ${budget.coverage.open.join(', ') || 'none'}`);
+export const renderBudget = (budget: ReviewBudget) =>
+  `next round ${budget.nextRound} ${budget.state} (cap ${budget.cap}, ceiling ${budget.ceiling})` +
+  (!budget.coverage
+    ? ''
+    : budget.coverage.state === 'unreadable'
+      ? '; coverage unreadable'
+      : `; coverage ${budget.coverage.decision}, open: ${budget.coverage.open.join(', ') || 'none'}`);

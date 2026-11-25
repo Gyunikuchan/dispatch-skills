@@ -3,10 +3,8 @@ import type { Fold } from './ledger.ts';
 import type { Check } from './plan-view.ts';
 
 /** Criteria whose tests a cleanup commit removed keep their evidence at their recorded tree. */
-type CleanupBinding = {from:string; fromTree:string; removed:string[]; trees:Record<string,string>};
-type CleanupEvidenceResult =
-  | { ok: true; trees: Record<string, string> }
-  | { ok: false; stale: string[] };
+type CleanupBinding = { from: string; fromTree: string; removed: string[]; trees: Record<string, string> };
+type CleanupEvidenceResult = { ok: true; trees: Record<string, string> } | { ok: false; stale: string[] };
 type CurrentTree = { headTree: string; testedTree: string };
 type EvidenceRecord = Fold['records'][number];
 export type CriterionStatus = {
@@ -20,8 +18,20 @@ export type CriterionStatus = {
 
 export function strictEvidence(fold: Fold, check: Check): EvidenceRecord | undefined {
   if (check.evidenceClass === 'review') return undefined;
-  const row = fold.records.findLast((r) => r.kind === 'evidence' && r.data['criterion'] === check.criterion && r.data['commandDigest'] === check.commandDigest);
-  return row && row.data['exit'] === 0 && row.data['clean'] === true && row.data['before'] === row.data['after'] && typeof row.data['tree'] === 'string' && row.data['tree'] ? row : undefined;
+  const row = fold.records.findLast(
+    (r) =>
+      r.kind === 'evidence' &&
+      r.data['criterion'] === check.criterion &&
+      r.data['commandDigest'] === check.commandDigest,
+  );
+  return row &&
+    row.data['exit'] === 0 &&
+    row.data['clean'] === true &&
+    row.data['before'] === row.data['after'] &&
+    typeof row.data['tree'] === 'string' &&
+    row.data['tree']
+    ? row
+    : undefined;
 }
 
 const normalizePath = (value: string) => value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
@@ -88,44 +98,73 @@ function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree): Evide
 export function eligibility(fold: Fold, checks: readonly Check[], current: CurrentTree) {
   return checks.map((check) => ({
     criterion: check.criterion,
-    state: eligibleEvidence(fold, check, current) ? 'verified' as const : 'missing' as const,
+    state: eligibleEvidence(fold, check, current) ? ('verified' as const) : ('missing' as const),
   }));
 }
 
 export function latestCleanup(fold: Fold): EvidenceRecord | undefined {
-  return fold.records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='test-cleanup');
+  return fold.records.findLast((r) => r.kind === 'integrate' && r.data['phase'] === 'test-cleanup');
 }
 
 export function cleanupBinding(fold: Fold): CleanupBinding | null {
-  const record=latestCleanup(fold);
-  return record ? {from:record.data['from'],fromTree:record.data['fromTree'],removed:record.data['removed'],trees:record.data['trees']??{}} : null;
+  const record = latestCleanup(fold);
+  return record
+    ? {
+        from: record.data['from'],
+        fromTree: record.data['fromTree'],
+        removed: record.data['removed'],
+        trees: record.data['trees'] ?? {},
+      }
+    : null;
 }
 
-function boundEvidence(fold: Fold, check: Check, current: CurrentTree | null, cleanup: CleanupBinding | null | undefined): EvidenceRecord | undefined {
-  const row=current ? eligibleEvidence(fold,check,current) : undefined;
-  if(row || !cleanup?.removed.includes(check.criterion)) return row;
-  const tree=cleanup.trees&&Object.hasOwn(cleanup.trees,check.criterion)?cleanup.trees[check.criterion]:undefined;
-  if(!tree) return undefined;
-  return eligibleEvidence(fold,check,{headTree:tree,testedTree:tree});
+function boundEvidence(
+  fold: Fold,
+  check: Check,
+  current: CurrentTree | null,
+  cleanup: CleanupBinding | null | undefined,
+): EvidenceRecord | undefined {
+  const row = current ? eligibleEvidence(fold, check, current) : undefined;
+  if (row || !cleanup?.removed.includes(check.criterion)) return row;
+  const tree =
+    cleanup.trees && Object.hasOwn(cleanup.trees, check.criterion) ? cleanup.trees[check.criterion] : undefined;
+  if (!tree) return undefined;
+  return eligibleEvidence(fold, check, { headTree: tree, testedTree: tree });
 }
 
-export function verifiedStage(fold:Fold, checks:readonly Check[], current:CurrentTree, cleanup?:CleanupBinding|null):boolean {
-  return checks.filter(check=>check.evidenceClass!=='review').every(check=>!!boundEvidence(fold,check,current,cleanup));
+export function verifiedStage(
+  fold: Fold,
+  checks: readonly Check[],
+  current: CurrentTree,
+  cleanup?: CleanupBinding | null,
+): boolean {
+  return checks
+    .filter((check) => check.evidenceClass !== 'review')
+    .every((check) => !!boundEvidence(fold, check, current, cleanup));
 }
 
-export function criterionStatuses(fold: Fold, checks: readonly Check[], current: CurrentTree | null, cleanup?: CleanupBinding | null): CriterionStatus[] {
+export function criterionStatuses(
+  fold: Fold,
+  checks: readonly Check[],
+  current: CurrentTree | null,
+  cleanup?: CleanupBinding | null,
+): CriterionStatus[] {
   return checks.map((check) => {
-    const evidence = boundEvidence(fold,check,current,cleanup);
+    const evidence = boundEvidence(fold, check, current, cleanup);
     if (evidence) {
       return {
         criterion: check.criterion,
         state: 'verified',
-        ...(cleanup?.removed.includes(check.criterion) ? {reason:'verified at '+cleanup.trees[check.criterion]+'; tests removed in cleanup'} : {}),
+        ...(cleanup?.removed.includes(check.criterion)
+          ? { reason: 'verified at ' + cleanup.trees[check.criterion] + '; tests removed in cleanup' }
+          : {}),
         ...(typeof evidence.data['path'] === 'string' ? { evidence: evidence.data['path'] } : {}),
       };
     }
 
-    const manual = fold.records.findLast((record) => record.kind === 'manual-complete' && record.data['criterion'] === check.criterion);
+    const manual = fold.records.findLast(
+      (record) => record.kind === 'manual-complete' && record.data['criterion'] === check.criterion,
+    );
     if (manual) {
       return {
         criterion: check.criterion,
@@ -136,7 +175,9 @@ export function criterionStatuses(fold: Fold, checks: readonly Check[], current:
       };
     }
 
-    const waiver = fold.records.findLast((record) => record.kind === 'waiver' && record.data['criterion'] === check.criterion);
+    const waiver = fold.records.findLast(
+      (record) => record.kind === 'waiver' && record.data['criterion'] === check.criterion,
+    );
     if (waiver) {
       return {
         criterion: check.criterion,

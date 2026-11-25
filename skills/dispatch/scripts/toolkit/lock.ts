@@ -4,8 +4,11 @@ import { ToolError } from './output.ts';
 
 type LockOwner = { pid: number; host: string; at: string; tool?: string };
 export type LockDeps = {
-  pid: number; host: string; clock: () => number;
-  sleep: (ms: number) => Promise<void>; isAlive: (pid: number) => boolean;
+  pid: number;
+  host: string;
+  clock: () => number;
+  sleep: (ms: number) => Promise<void>;
+  isAlive: (pid: number) => boolean;
 };
 
 function read(file: string): string | null {
@@ -20,9 +23,17 @@ function read(file: string): string | null {
 function owner(bytes: string): LockOwner | null {
   try {
     const value = JSON.parse(bytes);
-    return value && typeof value === 'object' && !Array.isArray(value) &&
-      Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.host === 'string' && value.host.trim() &&
-      typeof value.at === 'string' && value.at.trim() ? value : null;
+    return value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Number.isSafeInteger(value.pid) &&
+      value.pid > 0 &&
+      typeof value.host === 'string' &&
+      value.host.trim() &&
+      typeof value.at === 'string' &&
+      value.at.trim()
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -50,11 +61,22 @@ function activeBreaker(breaker: string, deps: LockDeps): { file: string; bytes: 
   }
 }
 
-export async function withLock<T>(session: string, tool: string, deps: LockDeps, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
+export async function withLock<T>(
+  session: string,
+  tool: string,
+  deps: LockDeps,
+  fn: (broken: LockOwner | null) => Promise<T>,
+): Promise<T> {
   return withLockFile(path.join(session, '.state', 'lock'), tool, deps, 10000, fn);
 }
 
-export async function withLockFile<T>(lock: string, tool: string, deps: LockDeps, waitMs: number, fn: (broken: LockOwner | null) => Promise<T>): Promise<T> {
+export async function withLockFile<T>(
+  lock: string,
+  tool: string,
+  deps: LockDeps,
+  waitMs: number,
+  fn: (broken: LockOwner | null) => Promise<T>,
+): Promise<T> {
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   const breaker = lock + '.break';
   const ours = JSON.stringify({ pid: deps.pid, host: deps.host, at: new Date(deps.clock()).toISOString(), tool });
@@ -86,7 +108,11 @@ export async function withLockFile<T>(lock: string, tool: string, deps: LockDeps
     if (waited >= waitMs || deps.clock() - start >= waitMs) {
       const holder = owner(held ?? '');
       const file = current.bytes !== null ? current.file : lock;
-      throw new ToolError(3, 'lock-held', holder ? 'lock held by pid ' + holder.pid + ' on ' + holder.host : 'lock holder unreadable at ' + file);
+      throw new ToolError(
+        3,
+        'lock-held',
+        holder ? 'lock held by pid ' + holder.pid + ' on ' + holder.host : 'lock holder unreadable at ' + file,
+      );
     }
     await deps.sleep(100);
     waited += 100;

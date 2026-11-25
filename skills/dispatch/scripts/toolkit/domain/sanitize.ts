@@ -1,10 +1,12 @@
 // Delegate text sanitization before relay or render,
 // plus comment-marker neutralisation so delegate text can never open hidden Markdown/HTML regions.
 
-const TOOL_CALL_LINE = /^\s*(?:<\/?(?:invoke|parameter|function_calls|tool_use)\b|(?:invoke|parameter|function_calls|tool_use)\s*\(|[A-Z][A-Za-z]*\(.*\)\s*$|\$\s|>\s*\$)/;
+const TOOL_CALL_LINE =
+  /^\s*(?:<\/?(?:invoke|parameter|function_calls|tool_use)\b|(?:invoke|parameter|function_calls|tool_use)\s*\(|[A-Z][A-Za-z]*\(.*\)\s*$|\$\s|>\s*\$)/;
 const TOOL_MARKUP = /<\/?(?:invoke|parameter|function_calls|tool_use)\b.*$/;
 // ANSI CSI/OSC sequences and C0/C1 controls other than tab and newline.
-const CONTROL = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+const CONTROL =
+  /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
 /** Replaces HTML comment delimiters with inert entities so rendered Markdown never hides text. */
 export function neutralizeComments(text: string): string {

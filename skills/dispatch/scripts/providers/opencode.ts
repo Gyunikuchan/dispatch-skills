@@ -13,21 +13,33 @@ import { validSessionId } from '../lib/session.ts';
 export const PROXY_TRAP = 'http://127.0.0.1:0';
 const PROXY_KEYS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
 const VARIANT_UNAVAILABLE = /Variant unavailable/i;
-const STANDALONE_UNSUPPORTED = /(?:--standalone[\s\S]{0,100}(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)|(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)[\s\S]{0,100}--standalone)/i;
+const STANDALONE_UNSUPPORTED =
+  /(?:--standalone[\s\S]{0,100}(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)|(?:unknown|unrecognized|unsupported|invalid|unexpected|not supported|not recognized|not available)[\s\S]{0,100}--standalone)/i;
 
 type EventRow = Record<string, unknown>;
-const row = (v: unknown): EventRow | null => v && typeof v === 'object' && !Array.isArray(v) ? v as EventRow : null;
+const row = (v: unknown): EventRow | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as EventRow) : null);
 
 /** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
-function parseEvents(raw: string): { text: string; errors: string[]; sessionId: string | null; capacity: boolean; retryAfterMs?: number } {
-  const texts: string[] = [], errors: string[] = [];
+function parseEvents(raw: string): {
+  text: string;
+  errors: string[];
+  sessionId: string | null;
+  capacity: boolean;
+  retryAfterMs?: number;
+} {
+  const texts: string[] = [],
+    errors: string[] = [];
   let previousTextPartId: string | undefined;
   let sessionId: string | null = null;
   let capacity = false;
   let retryAfterMs: number | undefined;
   for (const line of raw.split(/\r?\n/).filter((value) => value.trim())) {
     let event: EventRow | null;
-    try { event = row(JSON.parse(line)); } catch { continue; }
+    try {
+      event = row(JSON.parse(line));
+    } catch {
+      continue;
+    }
     if (typeof event?.['sessionID'] === 'string') sessionId = event['sessionID'] as string;
     if (event?.['type'] === 'text') {
       const part = row(event['part']);
@@ -51,10 +63,18 @@ function parseEvents(raw: string): { text: string; errors: string[]; sessionId: 
       }
     }
   }
-  return { text: texts.join('').trim(), errors, sessionId, capacity, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) };
+  return {
+    text: texts.join('').trim(),
+    errors,
+    sessionId,
+    capacity,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  };
 }
 
-export const unsupportedStandaloneDiagnostic = (text: string): boolean => STANDALONE_UNSUPPORTED.test(text) || /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
+export const unsupportedStandaloneDiagnostic = (text: string): boolean =>
+  STANDALONE_UNSUPPORTED.test(text) ||
+  /(?:unknown|unrecognized|unsupported|invalid|unexpected)\s+arguments?:?\s+['"`]*(?:--)?standalone\b/i.test(text);
 
 const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
 
@@ -65,11 +85,18 @@ function isLocalHost(host: string): boolean {
 }
 
 function endpointHost(endpoint: string): string | null {
-  try { return new URL(endpoint).hostname; } catch { return null; }
+  try {
+    return new URL(endpoint).hostname;
+  } catch {
+    return null;
+  }
 }
 
 /** Bubblewrap: read-only root, private /tmp, writable OpenCode state; the delegate cannot write the project. */
-export function bwrapArgv(req: Pick<LaunchRequest, 'platform' | 'cwd' | 'briefFile'>, inner: readonly string[]): string[] {
+export function bwrapArgv(
+  req: Pick<LaunchRequest, 'platform' | 'cwd' | 'briefFile'>,
+  inner: readonly string[],
+): string[] {
   const home = req.platform.home;
   const xdg = req.platform.xdg ?? {};
   // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf.
@@ -80,22 +107,54 @@ export function bwrapArgv(req: Pick<LaunchRequest, 'platform' | 'cwd' | 'briefFi
   ];
   const briefDir = req.briefFile ? [req.briefFile.replace(/[/\\][^/\\]*$/, '')] : [];
   return [
-    'bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--tmpfs', '/run',
+    'bwrap',
+    '--unshare-user',
+    '--unshare-ipc',
+    '--unshare-pid',
+    '--unshare-uts',
+    '--ro-bind',
+    '/',
+    '/',
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/tmp',
+    '--tmpfs',
+    '/run',
     ...briefDir.flatMap((dir) => ['--ro-bind', dir, dir]),
     ...state.flatMap((dir) => ['--bind', dir, dir]),
-    '--die-with-parent', '--chdir', req.cwd, '--', ...inner,
+    '--die-with-parent',
+    '--chdir',
+    req.cwd,
+    '--',
+    ...inner,
   ];
 }
 
 export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch> {
-  if (!req.agent || (req.readOnlyVerified !== true && req.readOnlyBestEffort !== true)) return { kind: 'fail', outcome: failOutcome('config', 'read-only-agent-unavailable: verified native agent required') };
+  if (!req.agent || (req.readOnlyVerified !== true && req.readOnlyBestEffort !== true))
+    return {
+      kind: 'fail',
+      outcome: failOutcome('config', 'read-only-agent-unavailable: verified native agent required'),
+    };
   const host = req.endpoint ? endpointHost(req.endpoint) : null;
   if (!req.endpoint || !host || !isLocalHost(host)) return { kind: 'launch', env: {}, release: () => {} };
   const models = await ports.fetchModels(req.endpoint);
-  if (models === null) return { kind: 'fail', outcome: failOutcome('model-not-loaded', `SERVER_OFFLINE: ${req.endpoint}/models did not answer`) };
-  if (!models.length || req.model && !models.includes(req.model.split('/').slice(1).join('/') || req.model)) return { kind: 'fail', outcome: failOutcome('model-not-loaded', `${req.endpoint} reports no models loaded`) };
+  if (models === null)
+    return {
+      kind: 'fail',
+      outcome: failOutcome('model-not-loaded', `SERVER_OFFLINE: ${req.endpoint}/models did not answer`),
+    };
+  if (!models.length || (req.model && !models.includes(req.model.split('/').slice(1).join('/') || req.model)))
+    return { kind: 'fail', outcome: failOutcome('model-not-loaded', `${req.endpoint} reports no models loaded`) };
   let release: () => void | Promise<void>;
-  try { release = await ports.acquireGpuLock(); } catch (error) { return { kind: 'fail', outcome: failOutcome('timeout', String(error)) }; }
+  try {
+    release = await ports.acquireGpuLock();
+  } catch (error) {
+    return { kind: 'fail', outcome: failOutcome('timeout', String(error)) };
+  }
   // Local dispatch has no legitimate WAN use: every proxy points at a dead port, with only the backend exempt.
   const exempt = [...new Set([host, 'localhost', '127.0.0.1', '::1'])].join(',');
   const env: Record<string, string> = { NO_PROXY: exempt, no_proxy: exempt };
@@ -111,23 +170,59 @@ export const opencode: ProviderSpec = {
     try {
       const type = row(JSON.parse(line))?.['type'];
       return type === 'step_start' ? 'step-start' : type === 'step_finish' ? 'step-end' : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   },
   modes: [
-    { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'opencode.cmd' : 'opencode', env.os === 'win32' ? 'opencode.exe' : join(env, env.home, '.opencode', 'bin', 'opencode')] },
-    { id: 'desktop', candidates: (env) => env.os === 'darwin'
-      ? ['/Applications/OpenCode.app/Contents/MacOS/opencode-cli-*']
-      : env.os === 'win32' ? [join(env, env.home, 'AppData', 'Local', 'OpenCode', 'opencode-cli-*.exe')] : ['/usr/lib/opencode/opencode-cli-*'] },
-    { id: 'vscode', candidates: (env) => [join(env, env.home, '.vscode', 'extensions', 'sst-dev.opencode-*', 'bin', env.os === 'win32' ? 'opencode.exe' : 'opencode')] },
+    {
+      id: 'cli',
+      candidates: (env) => [
+        env.os === 'win32' ? 'opencode.cmd' : 'opencode',
+        env.os === 'win32' ? 'opencode.exe' : join(env, env.home, '.opencode', 'bin', 'opencode'),
+      ],
+    },
+    {
+      id: 'desktop',
+      candidates: (env) =>
+        env.os === 'darwin'
+          ? ['/Applications/OpenCode.app/Contents/MacOS/opencode-cli-*']
+          : env.os === 'win32'
+            ? [join(env, env.home, 'AppData', 'Local', 'OpenCode', 'opencode-cli-*.exe')]
+            : ['/usr/lib/opencode/opencode-cli-*'],
+    },
+    {
+      id: 'vscode',
+      candidates: (env) => [
+        join(
+          env,
+          env.home,
+          '.vscode',
+          'extensions',
+          'sst-dev.opencode-*',
+          'bin',
+          env.os === 'win32' ? 'opencode.exe' : 'opencode',
+        ),
+      ],
+    },
   ],
   readOnlyFlags: ['run'],
-  sandbox: { flags: ['bwrap'], inactive: /bwrap: [^\n]*(?:No permissions|Operation not permitted|setting up uid map)/i, supported: (env) => env.os === 'linux' && env.bubblewrap },
+  sandbox: {
+    flags: ['bwrap'],
+    inactive: /bwrap: [^\n]*(?:No permissions|Operation not permitted|setting up uid map)/i,
+    supported: (env) => env.os === 'linux' && env.bubblewrap,
+  },
   native: 'opencode',
   modeCascadeOn: [],
   usage: opencodeUsage,
-  sessionUsage: sessionUsageReader('opencode', raw => parseEvents(raw).sessionId, (context, fs) => (
-    !fs.opencodeMessages && context.readOpencodeMessages ? { fs: { ...fs, opencodeMessages: context.readOpencodeMessages } } : {}
-  )),
+  sessionUsage: sessionUsageReader(
+    'opencode',
+    (raw) => parseEvents(raw).sessionId,
+    (context, fs) =>
+      !fs.opencodeMessages && context.readOpencodeMessages
+        ? { fs: { ...fs, opencodeMessages: context.readOpencodeMessages } }
+        : {},
+  ),
   zeroUsageProvenance: OPENCODE_COMPLETION_USAGE,
   resumeUsage: 'per-launch',
   outputCapBytes: 64 * 1024 * 1024,
@@ -152,11 +247,22 @@ export const opencode: ProviderSpec = {
       return { status: 'ok', text: events.text, sessionId: id, resume: handle };
     }
     const detail = `opencode exit ${String(out.exit)}: ${diagnostics.slice(0, 300)}`;
-    if (unsupportedStandaloneDiagnostic(diagnostics)) return failOutcome('config', 'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.');
+    if (unsupportedStandaloneDiagnostic(diagnostics))
+      return failOutcome(
+        'config',
+        'OpenCode binary does not support --standalone; upgrade to a supported v2 binary. Shared-service fallback is disabled.',
+      );
     // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
-    if (VARIANT_UNAVAILABLE.test(diagnostics) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
+    if (VARIANT_UNAVAILABLE.test(diagnostics) && req.effort)
+      return {
+        status: 'fail',
+        cls: 'config',
+        detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`,
+        retryWithoutEffort: true,
+      };
     const cls = classifyFailure(diagnostics) ?? (events.capacity ? 'capacity' : 'empty-output');
-    if (cls === 'capacity' && events.retryAfterMs !== undefined) return { status: 'fail', cls, detail, retryAfterMs: events.retryAfterMs };
+    if (cls === 'capacity' && events.retryAfterMs !== undefined)
+      return { status: 'fail', cls, detail, retryAfterMs: events.retryAfterMs };
     return failOutcome(cls, detail);
   },
   prepare: prepareOpencode,

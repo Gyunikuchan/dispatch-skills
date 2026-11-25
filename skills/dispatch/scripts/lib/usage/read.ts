@@ -1,12 +1,34 @@
-import { BASE_OPTIONAL_COUNTER_KEYS, type Counters, type DiagnosticUsage, type HostNote, type HostNotes, type HostRole, type HostUnavailable, type HostUsageFs, type HostUsageResult, type Milestone, type PhaseMilestone, type ReadBudget } from './rows.ts';
+import {
+  BASE_OPTIONAL_COUNTER_KEYS,
+  type Counters,
+  type DiagnosticUsage,
+  type HostNote,
+  type HostNotes,
+  type HostRole,
+  type HostUnavailable,
+  type HostUsageFs,
+  type HostUsageResult,
+  type Milestone,
+  type PhaseMilestone,
+  type ReadBudget,
+} from './rows.ts';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
-export function readTranscript(fs: HostUsageFs, file: string, budget: ReadBudget): { text?: string; stop?: 'file cap' | 'budget' | 'zstd' } {
-  const stat = fs.stat(file); if (!stat) return {};
+export function readTranscript(
+  fs: HostUsageFs,
+  file: string,
+  budget: ReadBudget,
+): { text?: string; stop?: 'file cap' | 'budget' | 'zstd' } {
+  const stat = fs.stat(file);
+  if (!stat) return {};
   const limit = Math.min(MAX_FILE_BYTES, budget.remaining);
-  const stop = () => { const reason = limit === MAX_FILE_BYTES ? 'file cap' : 'budget'; if (reason === 'budget') budget.remaining = 0; return { stop: reason } as const; };
+  const stop = () => {
+    const reason = limit === MAX_FILE_BYTES ? 'file cap' : 'budget';
+    if (reason === 'budget') budget.remaining = 0;
+    return { stop: reason } as const;
+  };
   if (limit <= 0) return stop();
   const compressed = file.endsWith('.zst');
   if (compressed && stat.size > MAX_FILE_BYTES * 2) return { stop: 'file cap' };
@@ -16,40 +38,72 @@ export function readTranscript(fs: HostUsageFs, file: string, budget: ReadBudget
   if (compressed && input.length > MAX_FILE_BYTES * 2) return { stop: 'file cap' };
   if (!compressed && input.length > limit) return stop();
   let decoded: Buffer;
-  try { decoded = compressed ? fs.decompress!(input, limit) : input; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') { budget.remaining -= limit; return stop(); } throw error; }
-  if (decoded.length > limit) { budget.remaining -= limit; return stop(); }
-  budget.remaining -= decoded.length; return { text: decoded.toString('utf8') };
+  try {
+    decoded = compressed ? fs.decompress!(input, limit) : input;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+      budget.remaining -= limit;
+      return stop();
+    }
+    throw error;
+  }
+  if (decoded.length > limit) {
+    budget.remaining -= limit;
+    return stop();
+  }
+  budget.remaining -= decoded.length;
+  return { text: decoded.toString('utf8') };
 }
 export function readRoleTranscript(
-  fs: HostUsageFs, file: string, budget: ReadBudget, result: HostUsageResult, role: HostRole,
+  fs: HostUsageFs,
+  file: string,
+  budget: ReadBudget,
+  result: HostUsageResult,
+  role: HostRole,
   oversizedSubagent: HostNote = 'subagents over size cap',
 ): string | undefined {
   try {
     const { text, stop } = readTranscript(fs, file, budget);
     if (text !== undefined) return text;
-    const notes = result.notes ??= {};
+    const notes = (result.notes ??= {});
     if (stop === 'budget') note(notes, role, 'read budget reached');
-    else if (role === 'host') result.unavailable = stop === 'zstd' ? 'zstd unavailable' : stop ? 'transcript over size cap' : 'read-error:ENOENT';
+    else if (role === 'host')
+      result.unavailable =
+        stop === 'zstd' ? 'zstd unavailable' : stop ? 'transcript over size cap' : 'read-error:ENOENT';
     else note(notes, role, stop === 'zstd' ? 'zstd unavailable' : stop ? oversizedSubagent : 'unreadable files');
   } catch (error) {
     if (role === 'host') result.unavailable = readErrorReason(error);
-    else note(result.notes ??= {}, role, 'unreadable files');
+    else note((result.notes ??= {}), role, 'unreadable files');
   }
   return undefined;
 }
 
-export function stageAt(stages: readonly Milestone[], ms: number) { let selected = stages[0]; for (const stage of stages) if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) selected = stage; return selected?.stage ?? 'spec'; }
+export function stageAt(stages: readonly Milestone[], ms: number) {
+  let selected = stages[0];
+  for (const stage of stages)
+    if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) selected = stage;
+  return selected?.stage ?? 'spec';
+}
 export function phaseAt(phases: readonly PhaseMilestone[], ms: number): string | undefined {
   let selected: PhaseMilestone | undefined;
   for (const phase of phases) if (phase.atMs <= ms && (!selected || phase.atMs >= selected.atMs)) selected = phase;
   return selected?.phase;
 }
-export function readErrorReason(error: unknown): HostUnavailable { const code = (error as NodeJS.ErrnoException)?.code; return (['ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'EMFILE'].includes(code ?? '') ? `read-error:${code}` : 'read-error:EUNKNOWN') as HostUnavailable; }
-export function note(notes: HostNotes, role: HostRole, name: HostNote, count = 1) { const target = notes[role] ??= {}; target[name] = (target[name] ?? 0) + count; }
-export const counter = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+export function readErrorReason(error: unknown): HostUnavailable {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return (
+    ['ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'EMFILE'].includes(code ?? '') ? `read-error:${code}` : 'read-error:EUNKNOWN'
+  ) as HostUnavailable;
+}
+export function note(notes: HostNotes, role: HostRole, name: HostNote, count = 1) {
+  const target = (notes[role] ??= {});
+  target[name] = (target[name] ?? 0) + count;
+}
+export const counter = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
 export type Row = Record<string, unknown>;
-export const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
+export const row = (v: unknown): Row | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Row) : null);
 export const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
 export function baseCounters(value: unknown): Counters | undefined {
   const r = row(value);
@@ -61,9 +115,14 @@ export function baseCounters(value: unknown): Counters | undefined {
     if (!count(n)) return undefined;
     out[key] = n;
   }
-  const short = r['cacheWrite5m'], long = r['cacheWrite1h'];
+  const short = r['cacheWrite5m'],
+    long = r['cacheWrite1h'];
   // An invalid split does not invalidate the observed total cache writes.
-  if ((short === undefined || count(short)) && (long === undefined || count(long)) && (short ?? 0) + (long ?? 0) <= (out.cacheWrite ?? 0)) {
+  if (
+    (short === undefined || count(short)) &&
+    (long === undefined || count(long)) &&
+    (short ?? 0) + (long ?? 0) <= (out.cacheWrite ?? 0)
+  ) {
     if (short !== undefined) out.cacheWrite5m = short;
     if (long !== undefined) out.cacheWrite1h = long;
   }
@@ -71,17 +130,36 @@ export function baseCounters(value: unknown): Counters | undefined {
 }
 
 export function hasUsageTokens(counters: Counters): boolean {
-  return counters.input > 0 || counters.output > 0 || (counters.cacheRead ?? 0) > 0
-    || (counters.cacheWrite ?? 0) > 0 || (counters.reasoning ?? 0) > 0;
+  return (
+    counters.input > 0 ||
+    counters.output > 0 ||
+    (counters.cacheRead ?? 0) > 0 ||
+    (counters.cacheWrite ?? 0) > 0 ||
+    (counters.reasoning ?? 0) > 0
+  );
 }
 
-export function counters(value: unknown, names: Record<string, string>, provenance: string, inputSemantics: DiagnosticUsage['inputSemantics']): DiagnosticUsage | undefined {
+export function counters(
+  value: unknown,
+  names: Record<string, string>,
+  provenance: string,
+  inputSemantics: DiagnosticUsage['inputSemantics'],
+): DiagnosticUsage | undefined {
   const r = row(value);
   if (!r || !count(r[names['input']!]) || !count(r[names['output']!])) return undefined;
-  const out: DiagnosticUsage = { input: r[names['input']!] as number, output: r[names['output']!] as number, scope: 'invocation', provenance, inputSemantics };
+  const out: DiagnosticUsage = {
+    input: r[names['input']!] as number,
+    output: r[names['output']!] as number,
+    scope: 'invocation',
+    provenance,
+    inputSemantics,
+  };
   for (const key of BASE_OPTIONAL_COUNTER_KEYS) {
     const field = names[key];
-    if (field && r[field] !== undefined) { if (!count(r[field])) return undefined; out[key] = r[field]; }
+    if (field && r[field] !== undefined) {
+      if (!count(r[field])) return undefined;
+      out[key] = r[field];
+    }
   }
   return out;
 }

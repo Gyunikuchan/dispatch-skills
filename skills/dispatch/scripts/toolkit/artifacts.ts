@@ -20,5 +20,7 @@ export function readArtifact(root: string, relative: string): string | null {
     const file = path.resolve(root, relative);
     if (!fs.statSync(file).isFile()) return null;
     return fs.readFileSync(file, 'utf8');
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }

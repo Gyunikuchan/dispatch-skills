@@ -12,7 +12,8 @@ function linesOf(text: string): Line[] {
   for (let start = 0; start < text.length;) {
     const newline = text.indexOf('\n', start);
     const end = newline < 0 ? text.length : newline + 1;
-    const contentEnd = newline < 0 ? text.length : newline > start && text[newline - 1] === '\r' ? newline - 1 : newline;
+    const contentEnd =
+      newline < 0 ? text.length : newline > start && text[newline - 1] === '\r' ? newline - 1 : newline;
     lines.push({ start, end, content: text.slice(start, contentEnd) });
     start = end;
   }

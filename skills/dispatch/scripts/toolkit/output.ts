@@ -4,9 +4,24 @@ import path from 'node:path';
 import type { Fold } from './ledger.ts';
 import type { RecoverySelection } from './review-state.ts';
 
-export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold; recoverySelection?: RecoverySelection };
+export type HandlerResult = {
+  ok: boolean;
+  summary: string;
+  value: unknown;
+  exit: number;
+  reason?: string;
+  postFold?: Fold;
+  recoverySelection?: RecoverySelection;
+};
 
-export type ToolResult = { ok: boolean; summary: string; path: string | null; reason?: string; hint?: string; exit: number };
+export type ToolResult = {
+  ok: boolean;
+  summary: string;
+  path: string | null;
+  reason?: string;
+  hint?: string;
+  exit: number;
+};
 export class ToolError extends Error {
   readonly exit: number;
   readonly reason: string;
@@ -18,8 +33,16 @@ export class ToolError extends Error {
   }
 }
 
-export const result=(value: unknown, postFold?: Fold): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value),...(postFold?{postFold}:{})});
-export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
+export const result = (value: unknown, postFold?: Fold): HandlerResult => ({
+  ok: true,
+  value,
+  exit: 0,
+  summary: JSON.stringify(value),
+  ...(postFold ? { postFold } : {}),
+});
+export function refuse(reason: string, message = reason): never {
+  throw new ToolError(4, reason, message);
+}
 
 export function capSummary(text: string): string {
   if (Buffer.byteLength(text, 'utf8') <= 1024) return text;
@@ -52,10 +75,16 @@ export function clipBytes(text: string, max: number): string {
 
 export function summaryWithItems(head: string, items: readonly string[]): string {
   if (!items.length) return head;
-  const clipped = items.map(item => clipBytes(item, SUMMARY_ITEM_BYTES));
+  const clipped = items.map((item) => clipBytes(item, SUMMARY_ITEM_BYTES));
   for (let shown = Math.min(SUMMARY_ITEM_LIMIT, clipped.length); shown > 0; shown--) {
     const omitted = clipped.length - shown;
-    const text = head + '; first ' + shown + ': ' + clipped.slice(0, shown).join('; ') + (omitted > 0 ? '; +' + omitted + ' more in result' : '');
+    const text =
+      head +
+      '; first ' +
+      shown +
+      ': ' +
+      clipped.slice(0, shown).join('; ') +
+      (omitted > 0 ? '; +' + omitted + ' more in result' : '');
     if (Buffer.byteLength(text, 'utf8') <= 1024) return text;
   }
   return head;
@@ -66,7 +95,9 @@ export function writePrivateOutput(target: string, text: string, flag: 'w' | 'wx
   try {
     fs.writeFileSync(temp, text, { flag, mode: 0o600 });
     fs.renameSync(temp, target);
-  } finally { fs.rmSync(temp, { force: true }); }
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
 }
 
 export function writeResult(session: string, tool: string, action: string, value: unknown): string {

@@ -14,7 +14,11 @@ function useTemp(dir: string): void {
 
 function removeOnExit(dir: string): void {
   process.on('exit', () => {
-    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* NOTE: a held Windows handle leaves it for the OS. */ }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      /* NOTE: a held Windows handle leaves it for the OS. */
+    }
   });
 }
 

@@ -10,15 +10,25 @@ export function checkSnapshots(files: FileTable): string[] {
   for (const { path: file } of files) {
     if (file.startsWith(GOLDEN_DIR)) continue;
     const name = file.split('/').pop() ?? '';
-    const snapshot = name.endsWith('.snap') || name.includes('.golden.') || (file.startsWith('tests/') && name.endsWith('.md'));
-    if (snapshot) errors.push(`snapshot rule: ${file} is a full-file snapshot; assert observable fields inline instead, or move a review-prompt golden file under ${GOLDEN_DIR}`);
+    const snapshot =
+      name.endsWith('.snap') || name.includes('.golden.') || (file.startsWith('tests/') && name.endsWith('.md'));
+    if (snapshot)
+      errors.push(
+        `snapshot rule: ${file} is a full-file snapshot; assert observable fields inline instead, or move a review-prompt golden file under ${GOLDEN_DIR}`,
+      );
   }
   return errors;
 }
 
 test('snapshots stay confined to the review-prompt golden dir and violations fail with the rule and the fix', () => {
   assert.deepEqual(checkSnapshots(scanOverlay(undefined, false)), []);
-  const files = ['tests/unit/a.snap', 'tests/unit/b.golden.json', 'tests/fixtures/plan.md', `${GOLDEN_DIR}ok.md`, 'skills/dispatch/SKILL.md'];
+  const files = [
+    'tests/unit/a.snap',
+    'tests/unit/b.golden.json',
+    'tests/fixtures/plan.md',
+    `${GOLDEN_DIR}ok.md`,
+    'skills/dispatch/SKILL.md',
+  ];
   const errors = checkSnapshots(files.map((path) => ({ path, text: '' })));
   assert.equal(errors.length, 3);
   assert.match(errors[0] ?? '', /^snapshot rule: tests\/unit\/a\.snap .*assert observable fields inline/);

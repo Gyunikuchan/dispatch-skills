@@ -11,40 +11,72 @@ import { consumerSearchArgs } from '../../skills/dispatch/scripts/toolkit/domain
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
 type Second = Awaited<ReturnType<Repo['second']>>;
 
-const REPORT = JSON.stringify({status: 'FINDINGS', findings: [{impact: 'degrades', trigger: 'realistic', tag: 'reliability', locus: '§ Work', defect: 'Writes overlap', requiredChange: 'Serialize writes'}]});
+const REPORT = JSON.stringify({
+  status: 'FINDINGS',
+  findings: [
+    {
+      impact: 'degrades',
+      trigger: 'realistic',
+      tag: 'reliability',
+      locus: '§ Work',
+      defect: 'Writes overlap',
+      requiredChange: 'Serialize writes',
+    },
+  ],
+});
 
 // Names a naive pathspec or grep would mishandle: a leading dash, a glob class, and a bare paren.
 const LISTED = ['-x', 'foo(', 'a.b[1].txt'];
 
 // The hit file names from `git grep -n` output, one per matching line.
 const hitFiles = (stdout: string): Set<string> =>
-  new Set(stdout.split('\n').filter(Boolean).map(line => line.slice(0, line.indexOf(':'))));
+  new Set(
+    stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.slice(0, line.indexOf(':'))),
+  );
 
 // A repository whose second session briefs the plan; the test writes its files before reviewAndAccept.
-async function startRepo(): Promise<{f: Repo; g: Second}> {
+async function startRepo(): Promise<{ f: Repo; g: Second }> {
   const f = await toolkitRepo();
   f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'skill', {
-    'read-delegates': {claude: {targets: [{low: {model: 'fake'}}]}, agy: {targets: [{low: {model: 'fake'}}]}},
-    phases: {'plan-review': {targets: {low: 0, medium: 2}, rounds: {low: 0, medium: 2}}},
+    'read-delegates': {
+      claude: { targets: [{ low: { model: 'fake' } }] },
+      agy: { targets: [{ low: { model: 'fake' } }] },
+    },
+    phases: { 'plan-review': { targets: { low: 0, medium: 2 }, rounds: { low: 0, medium: 2 } } },
   });
-  f.deps.liveness = {claude: true, agy: true, codex: true, copilot: true, opencode: true};
+  f.deps.liveness = { claude: true, agy: true, codex: true, copilot: true, opencode: true };
   f.deps.orchestrator = null;
   f.deps.modes = () => ['cli'] as never;
-  f.deps.delegate = async () => ({outcome: {status: 'ok', text: REPORT, resume: null, sessionId: null}, invocations: []});
+  f.deps.delegate = async () => ({
+    outcome: { status: 'ok', text: REPORT, resume: null, sessionId: null },
+    invocations: [],
+  });
   // The second session lives under the sessions root, which the brief excludes from search.
   const g = await f.second('20261023T0001Z-brief');
-  return {f, g};
+  return { f, g };
 }
 
 // Reviews the plan from the second session and accepts its only finding; the caller then appends the fix.
 async function reviewAndAccept(f: Repo, g: Second): Promise<void> {
   const reviewed = await g.run(['review', 'run', 'work.plan.md', '--kind', 'plan', '--level', 'medium']);
   assert.equal(reviewed.exit, 0, JSON.stringify(reviewed.output));
-  await appendRecord(g.session, {kind: 'ruling', by: 'orchestrator', key: 'accept-R1-F001', data: {subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Serialize writes'}}, f.deps);
+  await appendRecord(
+    g.session,
+    {
+      kind: 'ruling',
+      by: 'orchestrator',
+      key: 'accept-R1-F001',
+      data: { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Serialize writes' },
+    },
+    f.deps,
+  );
 }
 
 test('brief fix-review-lite on a real repository lists, diffs and searches literal names', async () => {
-  const {f, g} = await startRepo();
+  const { f, g } = await startRepo();
   try {
     fs.writeFileSync(path.join(f.root, '-x'), 'untracked\n');
     fs.writeFileSync(path.join(f.root, 'foo('), 'untracked\n');
@@ -55,7 +87,7 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
     fs.writeFileSync(path.join(f.root, 'src/secrets.ts'), "export const secret = '-x';\n");
     fs.writeFileSync(path.join(f.root, '.env'), 'TOKEN=-x\n');
     // A sensitive listed path with a space: excluded from search as a glob, and withheld as unsafe.
-    fs.mkdirSync(path.join(f.root, 'ops'), {recursive: true});
+    fs.mkdirSync(path.join(f.root, 'ops'), { recursive: true });
     fs.writeFileSync(path.join(f.root, 'ops/my secrets.env'), 'TOKEN=-x\n');
     fs.appendFileSync(path.join(f.root, '.gitignore'), 'skipped.txt\n');
     fs.writeFileSync(path.join(f.root, 'skipped.txt'), '-x\n');
@@ -63,7 +95,10 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
 
     await reviewAndAccept(f, g);
     // Citations cover a listed untracked name, a listed tracked name with a glob class, and an ignored file.
-    fs.appendFileSync(path.join(f.root, 'work.plan.md'), '\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1`, `skipped.txt:1` and `missing.ts:1`.\n');
+    fs.appendFileSync(
+      path.join(f.root, 'work.plan.md'),
+      '\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1`, `skipped.txt:1` and `missing.ts:1`.\n',
+    );
 
     const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
@@ -84,16 +119,18 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
     assert.match(diff, /^\+See `-x:1`, `foo\(:1`, `a\.b\[1\]\.txt:1`/m);
 
     // Excludes come from the rendered command, so the check covers what the explorer runs.
-    const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map(match => match[1]!).sort();
+    const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map((match) => match[1]!).sort();
     assert.deepEqual(excludes, ['.env', '.scratch/dispatch-skills', 'ops/my?secrets.env', 'src/secrets.ts']);
-    const search = (name: string) => spawnSync('git', consumerSearchArgs(excludes, name), {cwd: f.root, encoding: 'utf8', windowsHide: true});
+    const search = (name: string) =>
+      spawnSync('git', consumerSearchArgs(excludes, name), { cwd: f.root, encoding: 'utf8', windowsHide: true });
 
     const dash = search('-x');
     assert.equal(dash.status, 0, dash.stderr);
     const dashHits = hitFiles(dash.stdout);
     assert.ok(dashHits.has('src/consumer.ts'));
-    for (const hit of ['.env', 'ops/my secrets.env', 'src/secrets.ts', 'skipped.txt']) assert.ok(!dashHits.has(hit), hit);
-    assert.ok(![...dashHits].some(hit => hit.startsWith('.scratch/')), 'sessions root excluded');
+    for (const hit of ['.env', 'ops/my secrets.env', 'src/secrets.ts', 'skipped.txt'])
+      assert.ok(!dashHits.has(hit), hit);
+    assert.ok(![...dashHits].some((hit) => hit.startsWith('.scratch/')), 'sessions root excluded');
 
     const bracket = search('a.b[1].txt');
     assert.equal(bracket.status, 0, bracket.stderr);
@@ -108,9 +145,9 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
 });
 
 test('brief fix-review-lite keeps a listed unrenderable citation out of the consumer search hits', async () => {
-  const {f, g} = await startRepo();
+  const { f, g } = await startRepo();
   try {
-    fs.mkdirSync(path.join(f.root, '{{x}}'), {recursive: true});
+    fs.mkdirSync(path.join(f.root, '{{x}}'), { recursive: true });
     fs.writeFileSync(path.join(f.root, '{{x}}/a.md'), 'marker -x\n');
     fs.writeFileSync(path.join(f.root, 'src/consumer.ts'), "export const names = ['-x'];\n");
     await reviewAndAccept(f, g);
@@ -119,10 +156,14 @@ test('brief fix-review-lite keeps a listed unrenderable citation out of the cons
     const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
     const text = fs.readFileSync(brief.value.briefPath, 'utf8');
-    const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map(match => match[1]!).sort();
+    const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map((match) => match[1]!).sort();
     assert.deepEqual(excludes, ['.scratch/dispatch-skills', '??x??/a.md']);
 
-    const search = spawnSync('git', consumerSearchArgs(excludes, '-x'), {cwd: f.root, encoding: 'utf8', windowsHide: true});
+    const search = spawnSync('git', consumerSearchArgs(excludes, '-x'), {
+      cwd: f.root,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
     assert.equal(search.status, 0, search.stderr);
     const hits = hitFiles(search.stdout);
     assert.ok(hits.has('src/consumer.ts'));
@@ -132,9 +173,9 @@ test('brief fix-review-lite keeps a listed unrenderable citation out of the cons
   }
 });
 
-test('brief fix-review-lite withholds a symlink that resolves outside the repository', async t => {
+test('brief fix-review-lite withholds a symlink that resolves outside the repository', async (t) => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'fix-review-lite-outside-'));
-  const {f, g} = await startRepo();
+  const { f, g } = await startRepo();
   try {
     const target = path.join(outside, 'secret.ts');
     fs.writeFileSync(target, 'export const x = 1;\n');
@@ -157,6 +198,6 @@ test('brief fix-review-lite withholds a symlink that resolves outside the reposi
     assert.ok(!text.includes('`linked.ts:1`'));
   } finally {
     f.cleanup();
-    fs.rmSync(outside, {recursive: true, force: true});
+    fs.rmSync(outside, { recursive: true, force: true });
   }
 });

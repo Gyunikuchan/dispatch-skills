@@ -8,7 +8,11 @@ import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import { normalizeAgyModelEffort, decodeAgyGenMetadata, readAgySqliteGenMetadata } from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
+import {
+  normalizeAgyModelEffort,
+  decodeAgyGenMetadata,
+  readAgySqliteGenMetadata,
+} from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
 import { sessionFacts } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
@@ -18,8 +22,40 @@ import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
 
 test('Copilot provider collection uses proven session identity', () => {
-  const fs = memoryFs({ '/home/.copilot/session-state/proven/events.jsonl': lines({ type: 'session.usage_record', timestamp: new Date(1000).toISOString(), data: {   usage: { accounting: { sourceSessionId: 'source', sequence: 1, usageId: 'usage' }, model: 'custom/model', reasoningEffort: 'max', inputTokens: 100, cacheReadTokens: 10, cacheWriteTokens: 20, outputTokens: 10 } } }) });
-  const context = { mode: 'cli' as const, platform: { os: 'linux' as const, arch: 'x64', wsl: false, bubblewrap: true, argvLimit: 10000, home: '/home', path: [], pathExt: [] }, env: { COPILOT_AGENT_SESSION_ID: 'inherited' }, launchStartMs: 0, launchEndMs: 2000, transcripts: { fs, budget: { remaining: 10000 } } };
+  const fs = memoryFs({
+    '/home/.copilot/session-state/proven/events.jsonl': lines({
+      type: 'session.usage_record',
+      timestamp: new Date(1000).toISOString(),
+      data: {
+        usage: {
+          accounting: { sourceSessionId: 'source', sequence: 1, usageId: 'usage' },
+          model: 'custom/model',
+          reasoningEffort: 'max',
+          inputTokens: 100,
+          cacheReadTokens: 10,
+          cacheWriteTokens: 20,
+          outputTokens: 10,
+        },
+      },
+    }),
+  });
+  const context = {
+    mode: 'cli' as const,
+    platform: {
+      os: 'linux' as const,
+      arch: 'x64',
+      wsl: false,
+      bubblewrap: true,
+      argvLimit: 10000,
+      home: '/home',
+      path: [],
+      pathExt: [],
+    },
+    env: { COPILOT_AGENT_SESSION_ID: 'inherited' },
+    launchStartMs: 0,
+    launchEndMs: 2000,
+    transcripts: { fs, budget: { remaining: 10000 } },
+  };
   assert.equal(copilot.sessionUsage!('Session ID: proven', context)?.usage, undefined);
   assert.deepEqual(fs.reads, []);
   const result = copilot.sessionUsage!('', { ...context, sessionId: 'proven' });
@@ -38,7 +74,8 @@ const fixture = (provider: string): { cliVersion: string; stdout: string } => {
 };
 
 test('Codex completed turn maps token usage to uncached input', () => {
-  const f = fixture('codex'), result = codex.usage!(f.stdout);
+  const f = fixture('codex'),
+    result = codex.usage!(f.stdout);
   assert.deepEqual(result, {
     input: 54559,
     output: 1468,
@@ -57,7 +94,9 @@ test('repeated completed summaries never add counters', () => {
 });
 
 test('malformed or truncated structured output is unavailable', () => {
-  for (const p of [codex, claude]) for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}']) assert.equal(p.usage!(raw), undefined);
+  for (const p of [codex, claude])
+    for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}'])
+      assert.equal(p.usage!(raw), undefined);
 });
 
 test('Claude whole-tree thinking counters remain separate and reject unsafe sums', () => {
@@ -74,13 +113,19 @@ test('Claude whole-tree thinking counters remain separate and reject unsafe sums
 });
 
 test('Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
-  const f = fixture('claude'), base = claude.usage!(f.stdout);
+  const f = fixture('claude'),
+    base = claude.usage!(f.stdout);
   assert.equal(base?.input, 2759);
   assert.equal(base?.actualModels?.[0], 'claude-haiku-4-5-20251001');
   assert.equal(base?.inputSemantics, 'uncached');
 
   const event = JSON.parse(f.stdout);
-  event.modelUsage['claude-opus-4-1'] = { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 30, cacheCreationInputTokens: 40 };
+  event.modelUsage['claude-opus-4-1'] = {
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadInputTokens: 30,
+    cacheCreationInputTokens: 40,
+  };
   const result = claude.usage!(JSON.stringify(event));
   assert.deepEqual(result?.models, {
     'claude-haiku-4-5-20251001': { input: 2759, output: 16, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
@@ -92,9 +137,25 @@ test('Claude modelUsage keeps per-model counters beside the aggregate; Codex rep
 
 test('agy usage maps the print JSON usage block to uncached counters', () => {
   // Shape of a recorded agy `--output-format json` envelope; counts are synthetic.
-  const stdout = JSON.stringify({ conversation_id: 'c1', status: 'success', response: 'ok', duration_seconds: 12, num_turns: 3, usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824, total_tokens: 409 } });
-  assert.deepEqual(agy.usage?.(stdout), { input: 364, output: 45, cacheRead: 7824, reasoning: 39, scope: 'invocation', provenance: 'agy.usage', inputSemantics: 'uncached' });
-  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}']) assert.equal(agy.usage?.(raw), undefined);
+  const stdout = JSON.stringify({
+    conversation_id: 'c1',
+    status: 'success',
+    response: 'ok',
+    duration_seconds: 12,
+    num_turns: 3,
+    usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824, total_tokens: 409 },
+  });
+  assert.deepEqual(agy.usage?.(stdout), {
+    input: 364,
+    output: 45,
+    cacheRead: 7824,
+    reasoning: 39,
+    scope: 'invocation',
+    provenance: 'agy.usage',
+    inputSemantics: 'uncached',
+  });
+  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}'])
+    assert.equal(agy.usage?.(raw), undefined);
 });
 
 const opencodeProbe = fs.readFileSync(new URL('./fixtures/opencode-format-json.jsonl', import.meta.url), 'utf8');
@@ -103,24 +164,47 @@ test('opencode json usage parses probe fixture', () => {
   // Copy of the sanitized live probe: `tokens.input` excludes cache reads (installed v2.2.5 maps
   // nonCachedInputTokens to input and cache.read to cacheReadInputTokens).
   assert.deepEqual(opencode.usage?.(opencodeProbe), {
-    input: 1491, output: 8, reasoning: 40, cacheRead: 70, cacheWrite: 0,
-    scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached',
+    input: 1491,
+    output: 8,
+    reasoning: 40,
+    cacheRead: 70,
+    cacheWrite: 0,
+    scope: 'invocation',
+    provenance: 'opencode.step.finish',
+    inputSemantics: 'uncached',
   });
 });
 
 const codexStarted = () => JSON.stringify({ type: 'turn.started' });
-const codexCompleted = (input: number, output: number) => JSON.stringify({
-  type: 'turn.completed',
-  usage: { input_tokens: input, output_tokens: output, cached_input_tokens: 0, cache_write_input_tokens: 0, reasoning_output_tokens: 0 },
-});
+const codexCompleted = (input: number, output: number) =>
+  JSON.stringify({
+    type: 'turn.completed',
+    usage: {
+      input_tokens: input,
+      output_tokens: output,
+      cached_input_tokens: 0,
+      cache_write_input_tokens: 0,
+      reasoning_output_tokens: 0,
+    },
+  });
 
 test('codex sums distinct turns with uncached input', () => {
-  const usage = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(200, 20)].join('\n'));
+  const usage = codex.usage!(
+    [codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(200, 20)].join('\n'),
+  );
   assert.deepEqual(usage, {
-    input: 300, output: 30, cacheRead: 0, cacheWrite: 0, reasoning: 0,
-    scope: 'invocation', provenance: 'codex.turn.completed', inputSemantics: 'uncached',
+    input: 300,
+    output: 30,
+    cacheRead: 0,
+    cacheWrite: 0,
+    reasoning: 0,
+    scope: 'invocation',
+    provenance: 'codex.turn.completed',
+    inputSemantics: 'uncached',
   });
-  const equalTurns = codex.usage!([codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'));
+  const equalTurns = codex.usage!(
+    [codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'),
+  );
   assert.equal(equalTurns?.input, 200);
   assert.equal(equalTurns?.output, 20);
 });
@@ -177,10 +261,22 @@ function buildGenMetadataBlob(options: {
 test('agy model and effort normalization and gen_metadata attribution', () => {
   // 1. normalizeAgyModelEffort
   // display-name effort precedence over rawEffort and rawModel suffix
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash (Medium)'), { model: 'gemini-3.8-flash', effort: 'medium' });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash'), { model: 'gemini-3.8-flash', effort: 'high' });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', null, 'Gemini 3.8 Flash'), { model: 'gemini-3.8-flash', effort: 'low' });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash', null, null), { model: 'gemini-3.8-flash', effort: null });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash (Medium)'), {
+    model: 'gemini-3.8-flash',
+    effort: 'medium',
+  });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash'), {
+    model: 'gemini-3.8-flash',
+    effort: 'high',
+  });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', null, 'Gemini 3.8 Flash'), {
+    model: 'gemini-3.8-flash',
+    effort: 'low',
+  });
+  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash', null, null), {
+    model: 'gemini-3.8-flash',
+    effort: null,
+  });
 
   // backend suffixes -trial, -tiered, -control, -n
   assert.deepEqual(normalizeAgyModelEffort('gemini-4-argon-trial'), { model: 'gemini-4-argon', effort: null });
@@ -189,9 +285,18 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
   assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-n'), { model: 'gemini-3.8-flash', effort: null });
 
   // Claude / Gemini / GPT-OSS naming
-  assert.deepEqual(normalizeAgyModelEffort('c0', 'low', 'Claude Opus 5.5 (Low)'), { model: 'claude-opus-5-5', effort: 'low' });
-  assert.deepEqual(normalizeAgyModelEffort(null, null, 'Gemini 4 Argon (Medium)'), { model: 'gemini-4-argon', effort: 'medium' });
-  assert.deepEqual(normalizeAgyModelEffort(null, null, 'GPT-OSS 120B (High)'), { model: 'gpt-oss-120b', effort: 'high' });
+  assert.deepEqual(normalizeAgyModelEffort('c0', 'low', 'Claude Opus 5.5 (Low)'), {
+    model: 'claude-opus-5-5',
+    effort: 'low',
+  });
+  assert.deepEqual(normalizeAgyModelEffort(null, null, 'Gemini 4 Argon (Medium)'), {
+    model: 'gemini-4-argon',
+    effort: 'medium',
+  });
+  assert.deepEqual(normalizeAgyModelEffort(null, null, 'GPT-OSS 120B (High)'), {
+    model: 'gpt-oss-120b',
+    effort: 'high',
+  });
   // rawModel containing display name with parenthesized effort
   assert.deepEqual(normalizeAgyModelEffort('Gemini 4 Argon (Medium)'), { model: 'gemini-4-argon', effort: 'medium' });
 
@@ -223,7 +328,10 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
   assert.doesNotThrow(() => decodeAgyGenMetadata(new Uint8Array([0xff, 0xff, 0xff])));
   assert.deepEqual(decodeAgyGenMetadata(new Uint8Array(0)), { model: null, effort: null });
   // varint negative/overflow does not hang
-  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array([0x0a, 0xfa, 0xff, 0xff, 0xff, 0x0f])), { model: null, effort: null });
+  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array([0x0a, 0xfa, 0xff, 0xff, 0xff, 0x0f])), {
+    model: null,
+    effort: null,
+  });
 
   // 3. readAgySqliteGenMetadata
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-usage-test-'));
@@ -254,8 +362,18 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
     const db1 = new DatabaseSync(conv1Path);
     db1.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
     const insert1 = db1.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
-    const turn0 = buildGenMetadataBlob({ input: 100, output: 10, displayName: 'Gemini 4 Argon (High)', modelSlug: 'gemini-4-argon' });
-    const turn1 = buildGenMetadataBlob({ input: 264, output: 35, displayName: 'Gemini 4 Argon', modelSlug: 'gemini-4-argon' });
+    const turn0 = buildGenMetadataBlob({
+      input: 100,
+      output: 10,
+      displayName: 'Gemini 4 Argon (High)',
+      modelSlug: 'gemini-4-argon',
+    });
+    const turn1 = buildGenMetadataBlob({
+      input: 264,
+      output: 35,
+      displayName: 'Gemini 4 Argon',
+      modelSlug: 'gemini-4-argon',
+    });
     insert1.run(0, turn0);
     insert1.run(1, turn1);
     db1.close();
@@ -435,32 +553,44 @@ test('delegate session id extraction across providers and agy budget skip', () =
       message: { id: 'm1', model: 'claude-haiku-5-5', usage: { input_tokens: 15, output_tokens: 3 } },
     }),
   });
-  const claudeRes = claude.sessionUsage?.(
-    JSON.stringify({ type: 'result', session_id: 'c-sess-1', result: 'ok' }),
-    { mode: 'cli', platform, env: {}, cwd: '/repo', launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: claudeFs, budget: { remaining: 100_000 } } },
-  );
+  const claudeRes = claude.sessionUsage?.(JSON.stringify({ type: 'result', session_id: 'c-sess-1', result: 'ok' }), {
+    mode: 'cli',
+    platform,
+    env: {},
+    cwd: '/repo',
+    launchStartMs: startMs,
+    launchEndMs: endMs,
+    transcripts: { fs: claudeFs, budget: { remaining: 100_000 } },
+  });
   assert.equal(claudeRes?.complete, true);
   assert.equal(claudeRes?.usage?.input, 15);
 
   // Codex thread.started.thread_id
   const codexFile = '/home/.codex/sessions/2026/11/14/rollout-2026-11-14T08-00-00-x-sess-1.jsonl';
-  const codexFs = memoryFs({
-    [codexFile]: lines(
-      { type: 'turn_context', payload: { model: 'gpt-6.1-terra', effort: 'high' } },
-      {
-        type: 'event_msg',
-        timestamp: '2026-11-14T08:00:12.100Z',
-        payload: {
-          type: 'token_count',
-          info: { total_token_usage: { total_tokens: 25 }, last_token_usage: { input_tokens: 20, output_tokens: 5 } },
+  const codexFs = memoryFs(
+    {
+      [codexFile]: lines(
+        { type: 'turn_context', payload: { model: 'gpt-6.1-terra', effort: 'high' } },
+        {
+          type: 'event_msg',
+          timestamp: '2026-11-14T08:00:12.100Z',
+          payload: {
+            type: 'token_count',
+            info: { total_token_usage: { total_tokens: 25 }, last_token_usage: { input_tokens: 20, output_tokens: 5 } },
+          },
         },
-      },
-    ),
-  }, { [codexFile]: startMs });
-  const codexRes = codex.sessionUsage?.(
-    lines({ type: 'thread.started', thread_id: 'x-sess-1' }),
-    { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: codexFs, budget: { remaining: 100_000 } } },
+      ),
+    },
+    { [codexFile]: startMs },
   );
+  const codexRes = codex.sessionUsage?.(lines({ type: 'thread.started', thread_id: 'x-sess-1' }), {
+    mode: 'cli',
+    platform,
+    env: {},
+    launchStartMs: startMs,
+    launchEndMs: endMs,
+    transcripts: { fs: codexFs, budget: { remaining: 100_000 } },
+  });
   assert.equal(codexRes?.complete, true);
   assert.equal(codexRes?.usage?.input, 20);
 
@@ -475,7 +605,14 @@ test('delegate session id extraction across providers and agy budget skip', () =
   };
   const opencodeRes = opencode.sessionUsage?.(
     lines({ type: 'step_finish', sessionID: 'o-sess-1', part: { tokens: { input: 30, output: 6 } } }),
-    { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: opencodeFs, budget: { remaining: 100_000 } } },
+    {
+      mode: 'cli',
+      platform,
+      env: {},
+      launchStartMs: startMs,
+      launchEndMs: endMs,
+      transcripts: { fs: opencodeFs, budget: { remaining: 100_000 } },
+    },
   );
   assert.equal(opencodeRes?.complete, true);
   assert.equal(opencodeRes?.usage?.input, 30);
@@ -508,10 +645,14 @@ test('delegate session id extraction across providers and agy budget skip', () =
     { conversation_id: 'a-sess-1', response: 'ok' },
     { conversation: { id: 'a-sess-1' }, response: 'ok' },
   ]) {
-    const agyRes = agy.sessionUsage?.(
-      JSON.stringify(payload),
-      { mode: 'cli', platform, env: {}, launchStartMs: startMs, launchEndMs: endMs, transcripts: { fs: agyFs, budget: { remaining: 100_000 } } },
-    );
+    const agyRes = agy.sessionUsage?.(JSON.stringify(payload), {
+      mode: 'cli',
+      platform,
+      env: {},
+      launchStartMs: startMs,
+      launchEndMs: endMs,
+      transcripts: { fs: agyFs, budget: { remaining: 100_000 } },
+    });
     assert.equal(agyRes?.complete, true);
     assert.equal(agyRes?.usage?.input, 40);
   }
@@ -524,7 +665,10 @@ test('delegate session id extraction across providers and agy budget skip', () =
       mode: 'cli',
       platform,
       env: {},
-      readSqliteGenMetadata: () => { sqliteCalls++; return []; },
+      readSqliteGenMetadata: () => {
+        sqliteCalls++;
+        return [];
+      },
       transcripts: { fs: agyFs, budget: { remaining: 0 } },
     },
   );
@@ -544,8 +688,18 @@ test('agy fallback models omits models map on mismatched sums or undecodable mod
     pathExt: [],
   };
 
-  const blobA = buildGenMetadataBlob({ input: 100, output: 10, modelSlug: 'gemini-4-argon', displayName: 'Gemini 4 Argon (High)' });
-  const blobB = buildGenMetadataBlob({ input: 50, output: 5, modelSlug: 'gemini-3.8-flash', displayName: 'Gemini 3.8 Flash (Low)' });
+  const blobA = buildGenMetadataBlob({
+    input: 100,
+    output: 10,
+    modelSlug: 'gemini-4-argon',
+    displayName: 'Gemini 4 Argon (High)',
+  });
+  const blobB = buildGenMetadataBlob({
+    input: 50,
+    output: 5,
+    modelSlug: 'gemini-3.8-flash',
+    displayName: 'Gemini 3.8 Flash (Low)',
+  });
   const blobNoModel = buildGenMetadataBlob({ input: 50, output: 5 });
 
   // Multi-model sums differ from envelope totals (150 != 200)
@@ -566,29 +720,59 @@ test('agy fallback models omits models map on mismatched sums or undecodable mod
 });
 
 test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeTool -> sanitizeFacts without leaking session data', async () => {
-    const claudeFile = '/home/.claude/projects/-repo/c-wrapup-1.jsonl';
-    const platform: PlatformEnv = {
-      os: process.platform as PlatformEnv['os'],
-      arch: 'x64',
-      wsl: false,
-      bubblewrap: false,
-      argvLimit: 100000,
-      home: '/home',
-      path: [],
-      pathExt: [],
-    };
-    const startMs = Date.parse('2026-11-14T08:00:10.500Z');
-    const endMs = Date.parse('2026-11-14T08:00:20.000Z');
-    const sessionRead = claude.sessionUsage?.(
-      JSON.stringify({ type: 'result', session_id: 'c-wrapup-1', result: 'secret text' }),
-      { mode: 'cli', platform, env: {}, cwd: '/repo', launchStartMs: startMs, launchEndMs: endMs, collectResponses: true, transcripts: { fs: memoryFs({
-        [claudeFile]: lines(
-          { type: 'assistant', timestamp: '2026-11-14T08:00:12.100Z', message: { id: 'm1', model: 'claude-haiku-5-5', content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/secret/private.ts' } }], usage: { input_tokens: 15, output_tokens: 3 } } },
-          { type: 'assistant', timestamp: '2026-11-14T08:00:13.100Z', message: { id: 'm2', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'secret transcript answer' }], usage: { input_tokens: 20, output_tokens: 5 } } },
-        ),
-      }), budget: { remaining: 100_000 } } },
-    );
-    assert.equal(sessionRead?.complete, true);
+  const claudeFile = '/home/.claude/projects/-repo/c-wrapup-1.jsonl';
+  const platform: PlatformEnv = {
+    os: process.platform as PlatformEnv['os'],
+    arch: 'x64',
+    wsl: false,
+    bubblewrap: false,
+    argvLimit: 100000,
+    home: '/home',
+    path: [],
+    pathExt: [],
+  };
+  const startMs = Date.parse('2026-11-14T08:00:10.500Z');
+  const endMs = Date.parse('2026-11-14T08:00:20.000Z');
+  const sessionRead = claude.sessionUsage?.(
+    JSON.stringify({ type: 'result', session_id: 'c-wrapup-1', result: 'secret text' }),
+    {
+      mode: 'cli',
+      platform,
+      env: {},
+      cwd: '/repo',
+      launchStartMs: startMs,
+      launchEndMs: endMs,
+      collectResponses: true,
+      transcripts: {
+        fs: memoryFs({
+          [claudeFile]: lines(
+            {
+              type: 'assistant',
+              timestamp: '2026-11-14T08:00:12.100Z',
+              message: {
+                id: 'm1',
+                model: 'claude-haiku-5-5',
+                content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/secret/private.ts' } }],
+                usage: { input_tokens: 15, output_tokens: 3 },
+              },
+            },
+            {
+              type: 'assistant',
+              timestamp: '2026-11-14T08:00:13.100Z',
+              message: {
+                id: 'm2',
+                model: 'claude-haiku-5-5',
+                content: [{ type: 'text', text: 'secret transcript answer' }],
+                usage: { input_tokens: 20, output_tokens: 5 },
+              },
+            },
+          ),
+        }),
+        budget: { remaining: 100_000 },
+      },
+    },
+  );
+  assert.equal(sessionRead?.complete, true);
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
@@ -597,24 +781,49 @@ test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeToo
     f.deps.skillRoot = skill;
     f.deps.delegate = async () => ({
       outcome: { status: 'ok', text: 'done', sessionId: 'c-wrapup-1', resume: 'c-wrapup-1' },
-      invocations: [{
-        provider: 'claude', model: 'claude-haiku-5-5', effort: null, mode: 'cli',
-        launched: true, outcome: 'ok', wrapUp: true,
-        ...(sessionRead?.usage ? { usage: sessionRead.usage } : {}),
-        ...(sessionRead?.responses ? { responses: sessionRead.responses } : {}),
-      }],
+      invocations: [
+        {
+          provider: 'claude',
+          model: 'claude-haiku-5-5',
+          effort: null,
+          mode: 'cli',
+          launched: true,
+          outcome: 'ok',
+          wrapUp: true,
+          ...(sessionRead?.usage ? { usage: sessionRead.usage } : {}),
+          ...(sessionRead?.responses ? { responses: sessionRead.responses } : {}),
+        },
+      ],
     });
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
     await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
 
-    const facts = sanitizeFacts(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete')) as unknown as {
-      invocations: Array<{ wrapUp?: boolean; usage?: { turns?: number; toolCalls?: number; toolTurns?: number; models?: Record<string, { turns?: number; toolCalls?: number; toolTurns?: number }> }; responses?: Array<{ toolCalls?: number; toolTurns?: number }> }>;
+    const facts = sanitizeFacts(
+      sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete'),
+    ) as unknown as {
+      invocations: Array<{
+        wrapUp?: boolean;
+        usage?: {
+          turns?: number;
+          toolCalls?: number;
+          toolTurns?: number;
+          models?: Record<string, { turns?: number; toolCalls?: number; toolTurns?: number }>;
+        };
+        responses?: Array<{ toolCalls?: number; toolTurns?: number }>;
+      }>;
     };
     const inv = facts.invocations[0]!;
     assert.equal(inv.wrapUp, true);
     assert.deepEqual([inv.usage?.turns, inv.usage?.toolCalls, inv.usage?.toolTurns], [2, 1, 1]);
-    assert.deepEqual([inv.usage?.models?.['claude-haiku-5-5#']?.turns, inv.usage?.models?.['claude-haiku-5-5#']?.toolCalls, inv.usage?.models?.['claude-haiku-5-5#']?.toolTurns], [2, 1, 1]);
+    assert.deepEqual(
+      [
+        inv.usage?.models?.['claude-haiku-5-5#']?.turns,
+        inv.usage?.models?.['claude-haiku-5-5#']?.toolCalls,
+        inv.usage?.models?.['claude-haiku-5-5#']?.toolTurns,
+      ],
+      [2, 1, 1],
+    );
     assert.deepEqual([inv.responses?.[0]?.toolCalls, inv.responses?.[0]?.toolTurns], [1, 1]);
     assert.doesNotMatch(JSON.stringify(facts), /c-wrapup-1|secret|private\.ts/);
   } finally {

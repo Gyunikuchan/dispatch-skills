@@ -3,8 +3,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { test } from 'node:test';
 
-import { loadConfig, loadReadCommands, parseJsonc, stripJsonc, validateConfig } from '../../../skills/dispatch/scripts/lib/config.ts';
-
+import {
+  loadConfig,
+  loadReadCommands,
+  parseJsonc,
+  stripJsonc,
+  validateConfig,
+} from '../../../skills/dispatch/scripts/lib/config.ts';
 
 // SECTION: Configuration loading and validation
 
@@ -15,16 +20,31 @@ test('config resolution is first-existing-wins with no merge', () => {
   };
   const local = loadConfig('/s', (file) => files[file] ?? null);
   assert.equal(local.path, path.join('/s', 'config.local.jsonc'));
-  assert.deepEqual(local.config, { 'read-delegates': { claude: [] }, 'write-subagents': {}, 'utility-subagents': {}, phases: {} });
-  const only = loadConfig('/s', (file) => (file.endsWith(`${path.sep}config.jsonc`) ? files[file] ?? null : null));
+  assert.deepEqual(local.config, {
+    'read-delegates': { claude: [] },
+    'write-subagents': {},
+    'utility-subagents': {},
+    phases: {},
+  });
+  const only = loadConfig('/s', (file) => (file.endsWith(`${path.sep}config.jsonc`) ? (files[file] ?? null) : null));
   assert.deepEqual(only.config['phases'], { x: 1 });
   assert.throws(() => loadConfig('/s', () => null), /Config file not found.*config\.sample\.jsonc/);
   // A read error other than absence propagates instead of falling through to config.jsonc.
-  assert.throws(() => loadConfig('/s', (file) => { if (file.endsWith('config.local.jsonc')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return files[file] ?? null; }), /EACCES/);
+  assert.throws(
+    () =>
+      loadConfig('/s', (file) => {
+        if (file.endsWith('config.local.jsonc')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        return files[file] ?? null;
+      }),
+    /EACCES/,
+  );
 });
 
 test('JSONC comments and trailing commas strip without touching strings', () => {
-  assert.deepEqual(parseJsonc('{ // c\n "a": "x // not a comment", /* b */ "b": [1, 2,], }'), { a: 'x // not a comment', b: [1, 2] });
+  assert.deepEqual(parseJsonc('{ // c\n "a": "x // not a comment", /* b */ "b": [1, 2,], }'), {
+    a: 'x // not a comment',
+    b: [1, 2],
+  });
   assert.equal(stripJsonc('"a,}"'), '"a,}"');
 });
 
@@ -32,7 +52,12 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   const problems = validateConfig({ 'read-delegates': { claude: [] }, bogus: 1 });
   assert.ok(problems.some((problem) => /Unrecognized top-level key "bogus".*config\.sample\.jsonc/.test(problem)));
   assert.ok(validateConfig({}).some((problem) => /Missing required table "read-delegates"/.test(problem)));
-  assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'))), []);
+  assert.deepEqual(
+    validateConfig(
+      parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8')),
+    ),
+    [],
+  );
 });
 
 test('utility-subagents validates entries, requires context-limit, and reports old key', () => {
@@ -46,7 +71,9 @@ test('utility-subagents validates entries, requires context-limit, and reports o
   assert.deepEqual(validateConfig(valid), []);
 
   // Shipped sample limit values: 150,000 for claude and 300,000 for every other listed platform
-  const sample = parseJsonc(fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8')) as Record<string, any>;
+  const sample = parseJsonc(
+    fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'),
+  ) as Record<string, any>;
   const utilitySample = sample['utility-subagents'];
   assert.ok(utilitySample, 'sample has utility-subagents');
   assert.equal(utilitySample.claude['context-limit'], 150000);
@@ -62,7 +89,10 @@ test('utility-subagents validates entries, requires context-limit, and reports o
     [{ codex: { bogus: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "bogus"/],
     [{ codex: { low: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "low"/],
     [{ codex: { model: ' ' } }, /utility-subagents\.codex\.model must be a nonblank string/],
-    [{ codex: { model: 'fast-explorer', deep: true, 'context-limit': 300000 } }, /utility-subagents\.codex has unrecognized key "deep"\. Valid keys: model, effort, context-limit/],
+    [
+      { codex: { model: 'fast-explorer', deep: true, 'context-limit': 300000 } },
+      /utility-subagents\.codex has unrecognized key "deep"\. Valid keys: model, effort, context-limit/,
+    ],
     [{ codex: { model: 'fast-explorer' } }, /utility-subagents\.codex\.context-limit/],
     [{ codex: { model: 'fast-explorer', 'context-limit': 0 } }, /utility-subagents\.codex\.context-limit/],
     [{ codex: { model: 'fast-explorer', 'context-limit': -100 } }, /utility-subagents\.codex\.context-limit/],
@@ -75,7 +105,9 @@ test('utility-subagents validates entries, requires context-limit, and reports o
 
   // context-limit in write-subagents entry is an unrecognized key
   assert.match(
-    validateConfig({ ...minimal, 'write-subagents': { codex: { low: { model: 'm', 'context-limit': 300000 } } } }).join(' '),
+    validateConfig({ ...minimal, 'write-subagents': { codex: { low: { model: 'm', 'context-limit': 300000 } } } }).join(
+      ' ',
+    ),
     /write-subagents\.codex\.low has unrecognized key "context-limit"/,
   );
 
@@ -84,7 +116,10 @@ test('utility-subagents validates entries, requires context-limit, and reports o
   assert.deepEqual(loaded.config['utility-subagents'], {});
 
   // old key explore-subagents gets one problem naming utility-subagents
-  const oldProblems = validateConfig({ ...minimal, 'explore-subagents': { codex: { model: 'fast-explorer', effort: 'low' } } });
+  const oldProblems = validateConfig({
+    ...minimal,
+    'explore-subagents': { codex: { model: 'fast-explorer', effort: 'low' } },
+  });
   assert.equal(oldProblems.length, 1);
   assert.match(oldProblems[0]!, /explore-subagents.*utility-subagents/);
 });
@@ -97,7 +132,10 @@ test('write-concurrency validates positive integers and accepts omission', () =>
   assert.deepEqual(validateConfig(minimal), []);
   assert.deepEqual(validateConfig({ ...minimal, 'write-concurrency': 3 }), []);
   for (const value of [0, -1, 1.5, '2', true]) {
-    assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
+    assert.match(
+      validateConfig({ ...minimal, 'write-concurrency': value }).join(' '),
+      /write-concurrency must be a positive integer/,
+    );
   }
 });
 
@@ -106,7 +144,9 @@ test('write-concurrency validates positive integers and accepts omission', () =>
 test('config rejects removed nativeSubagents with delete instruction', () => {
   const targets = [{ low: { model: 'm' } }];
   const problems = validateConfig({ ...minimal, 'read-delegates': { codex: { nativeSubagents: false, targets } } });
-  assert.deepEqual(problems, ['read-delegates.codex.nativeSubagents was removed; delete the key (diff against config.sample.jsonc).']);
+  assert.deepEqual(problems, [
+    'read-delegates.codex.nativeSubagents was removed; delete the key (diff against config.sample.jsonc).',
+  ]);
 });
 
 // SECTION: Read commands
@@ -119,10 +159,17 @@ test('read-commands accepts plain command prefixes and rejects shell syntax', ()
 });
 
 test('loadReadCommands returns none without a config and rejects an invalid list', () => {
-  assert.deepEqual(loadReadCommands('/skill', () => null), []);
-  const config = (commands: unknown) => (file: string) => file.endsWith('config.jsonc') ? JSON.stringify({ ...minimal, 'read-commands': commands }) : null;
+  assert.deepEqual(
+    loadReadCommands('/skill', () => null),
+    [],
+  );
+  const config = (commands: unknown) => (file: string) =>
+    file.endsWith('config.jsonc') ? JSON.stringify({ ...minimal, 'read-commands': commands }) : null;
   assert.deepEqual(loadReadCommands('/skill', config(['codegraph explore'])), ['codegraph explore']);
-  assert.deepEqual(loadReadCommands('/skill', (file) => file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null), []);
+  assert.deepEqual(
+    loadReadCommands('/skill', (file) => (file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null)),
+    [],
+  );
   assert.throws(() => loadReadCommands('/skill', config(['a | b'])), /read-commands must be an array/);
 });
 
@@ -132,7 +179,9 @@ test('pricing override is a known table that validation never inspects', () => {
   for (const pricing of [{ 'lmstudio/*': { rates: { input: 0, output: 0 } } }, { bad: 5 }, 'x', 7]) {
     assert.deepEqual(validateConfig({ ...minimal, pricing }), []);
   }
-  const files: Record<string, string> = { [path.join('/s', 'config.jsonc')]: JSON.stringify({ ...minimal, pricing: { a: 1 } }) };
+  const files: Record<string, string> = {
+    [path.join('/s', 'config.jsonc')]: JSON.stringify({ ...minimal, pricing: { a: 1 } }),
+  };
   assert.deepEqual(loadConfig('/s', (file) => files[file] ?? null).config['pricing'], { a: 1 });
   const unset: Record<string, string> = { [path.join('/s', 'config.jsonc')]: JSON.stringify(minimal) };
   assert.equal('pricing' in loadConfig('/s', (file) => unset[file] ?? null).config, false);

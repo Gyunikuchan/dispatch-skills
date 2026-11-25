@@ -17,27 +17,50 @@ export const CALL_TABLE_INTRO: readonly string[] = [
 ];
 
 export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
-  'ask run': { arguments: "ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]" },
-  'review run': { arguments: "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]" },
+  'ask run': {
+    arguments:
+      "ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]",
+  },
+  'review run': {
+    arguments:
+      "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]",
+  },
   'report render': { arguments: 'report render --session <session>' },
   'report complete': { arguments: 'report complete --session <session>' },
   'brief render': { arguments: 'brief render <task> --session <session> --host <platform>' },
-  'brief explorer': { arguments: 'brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>' },
+  'brief explorer': {
+    arguments: 'brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>',
+  },
   'brief fix-review-lite': { arguments: 'brief fix-review-lite <artifact> --session <session> --host <platform>' },
-  'brief test-cleanup': { arguments: 'brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>' },
+  'brief test-cleanup': {
+    arguments:
+      'brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>',
+  },
   'worktree integrate': { arguments: 'worktree integrate <task> --session <session> [--ack-stale <rationale>]' },
   'worktree continue': { arguments: 'worktree continue <task> --session <session>' },
-  'worktree commit': { arguments: 'worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]' },
+  'worktree commit': {
+    arguments:
+      'worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]',
+  },
   'worktree abort': { arguments: 'worktree abort <task> --session <session> --reason <reason>' },
-  'worktree deliver': { arguments: 'worktree deliver --session <session> [--commit <message-file|-> | --message <text>]' },
+  'worktree deliver': {
+    arguments: 'worktree deliver --session <session> [--commit <message-file|-> | --message <text>]',
+  },
   'worktree close': { arguments: 'worktree close --session <session> --reason <reason>' },
   'worktree cleanup': { arguments: 'worktree cleanup --session <session>' },
   'worktree create': { arguments: 'worktree create <task> --session <session> [--relaunch]' },
   'worktree submit': { arguments: 'worktree submit <task> --session <session>' },
   'worktree abandon': { arguments: 'worktree abandon <task> --session <session> --reason <reason>' },
-  'check run': { arguments: 'check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]' },
-  'brief verifier': { arguments: 'brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>' },
-  'ledger append': { arguments: 'ledger append <record.json|-> --session <session> | ledger append - --cleanup <skip|zero> --session <session>' },
+  'check run': {
+    arguments: 'check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]',
+  },
+  'brief verifier': {
+    arguments: 'brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>',
+  },
+  'ledger append': {
+    arguments:
+      'ledger append <record.json|-> --session <session> | ledger append - --cleanup <skip|zero> --session <session>',
+  },
   'ledger query': { arguments: 'ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]' },
   'doctor run': { arguments: 'doctor run --session <session> --host <platform> [--level <level>] [--probe]' },
   'status show': { arguments: 'status show --session <session> [--resume]' },
@@ -49,7 +72,7 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
 function actionFlags(contracts: Readonly<Record<string, ActionContract>>): ReadonlyMap<string, readonly string[]> {
   const result = new Map<string, string[]>();
   for (const [action, contract] of Object.entries(contracts)) {
-    const flags = new Set(Array.from(contract.arguments.matchAll(/--([a-z][a-z-]*)\b/g), match => match[1]!));
+    const flags = new Set(Array.from(contract.arguments.matchAll(/--([a-z][a-z-]*)\b/g), (match) => match[1]!));
     for (const flag of flags) {
       const actions = result.get(flag) ?? [];
       actions.push(action);
@@ -64,7 +87,9 @@ export const ACTION_FLAGS = actionFlags(ACTION_CONTRACTS);
 export const SESSION_CONTRACTS: Readonly<Record<SessionAction, ActionContract>> = {
   init: { arguments: 'session init --objective "<objective>" --host <platform> [--session-id <id>]' },
   reactivate: { arguments: 'session reactivate --session-dir <session> --host <platform>' },
-  'quota-reprobe': { arguments: 'session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]' },
+  'quota-reprobe': {
+    arguments: 'session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]',
+  },
 };
 
 const escapePipes = (text: string) => text.replaceAll('|', '\\|');
@@ -76,7 +101,9 @@ export function renderCallTable(): string {
   const rows: string[] = [
     '| Type | Heading | Arguments |',
     '| --- | --- | --- |',
-    ...Object.entries(ACTION_CONTRACTS).map(([heading, contract]) => `| action | ${heading} | \`${escapePipes(contract.arguments)}\` |`),
+    ...Object.entries(ACTION_CONTRACTS).map(
+      ([heading, contract]) => `| action | ${heading} | \`${escapePipes(contract.arguments)}\` |`,
+    ),
   ];
   for (const schema of recordSchemas()) {
     if (!schema.phased) {

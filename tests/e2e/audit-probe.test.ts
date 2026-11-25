@@ -5,11 +5,17 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
-import { DEFAULT_CONFIG_PATH, loadAuditConfig, reserveRun } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+import {
+  DEFAULT_CONFIG_PATH,
+  loadAuditConfig,
+  reserveRun,
+} from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 // The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
-const probe = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
+const probe = await import(
+  new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
+);
 
 // Local controlled child scripts stand in for provider CLIs; installed CLIs are never launched.
 const HUNG = "process.stdout.write('partial\\n'); setInterval(() => {}, 1000);";
@@ -17,27 +23,58 @@ const FLOOD = "process.stdout.write('y'.repeat(200000)); setInterval(() => {}, 1
 
 function workspace(childSource: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-probe-e2e-'));
-  const child = path.join(root, 'child.mjs'); fs.writeFileSync(child, childSource);
+  const child = path.join(root, 'child.mjs');
+  fs.writeFileSync(child, childSource);
   const spec = {
-    id: 'claude', modes: [], modeCascadeOn: [], resumeCommand: () => '',
+    id: 'claude',
+    modes: [],
+    modeCascadeOn: [],
+    resumeCommand: () => '',
     argv: (req: { cwd: string }) => ({ argv: [process.execPath, child], stdin: null, env: {}, cwd: req.cwd }),
     parse: (out: { stdout: string }) => ({ status: 'ok', text: out.stdout, sessionId: null, resume: null }),
   };
   const fixture = probe.createFixture(path.join(root, 'repo'), { home: path.join(root, 'home') });
-  const stageDir = path.join(root, 'stage'); fs.mkdirSync(stageDir);
-  const limits = { ...loadAuditConfig(DEFAULT_CONFIG_PATH).limits, probeDeadlineSeconds: 1, probeTerminationGraceSeconds: 2 };
+  const stageDir = path.join(root, 'stage');
+  fs.mkdirSync(stageDir);
+  const limits = {
+    ...loadAuditConfig(DEFAULT_CONFIG_PATH).limits,
+    probeDeadlineSeconds: 1,
+    probeTerminationGraceSeconds: 2,
+  };
   return { root, spec, fixture, stageDir, limits };
 }
 const clock = {
   now: () => Date.now(),
-  every: (ms: number, fn: () => void) => { const handle = setInterval(fn, ms); handle.unref(); return () => clearInterval(handle); },
+  every: (ms: number, fn: () => void) => {
+    const handle = setInterval(fn, ms);
+    handle.unref();
+    return () => clearInterval(handle);
+  },
 };
 const ctxFor = (w: ReturnType<typeof workspace>, processPort: unknown = nodeProcess) => ({
-  fixture: w.fixture, stageDir: w.stageDir, limits: w.limits,
+  fixture: w.fixture,
+  stageDir: w.stageDir,
+  limits: w.limits,
   ports: { process: processPort, clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
 });
-const target = { id: 'claude', provider: 'claude', mode: 'cli', binary: process.execPath, model: null, effort: null, sandbox: false, aliases: ['cli'], skip: null };
-const killQuietly = (handle: string | null) => { try { if (handle) process.kill(Number(handle), 'SIGKILL'); } catch { /* already gone */ } };
+const target = {
+  id: 'claude',
+  provider: 'claude',
+  mode: 'cli',
+  binary: process.execPath,
+  model: null,
+  effort: null,
+  sandbox: false,
+  aliases: ['cli'],
+  skip: null,
+};
+const killQuietly = (handle: string | null) => {
+  try {
+    if (handle) process.kill(Number(handle), 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
+};
 
 // SECTION: Probe lifecycle
 
@@ -62,19 +99,26 @@ test('audit probe reports an unconfirmed exit and preserves the fixture when the
   const w = workspace(HUNG);
   // Ignores every termination request so the child outlives the grace period.
   const deaf = {
-    start: (launch: { argv: readonly string[] }, io: { logPath: string; capBytes: number }) => (io.logPath.endsWith('.kill')
-      ? { pid: -1, done: new Promise(() => {}) }
-      : nodeProcess.start(launch as never, io)),
+    start: (launch: { argv: readonly string[] }, io: { logPath: string; capBytes: number }) =>
+      io.logPath.endsWith('.kill') ? { pid: -1, done: new Promise(() => {}) } : nodeProcess.start(launch as never, io),
     signal: () => {},
   };
-  const record = await probe.runTarget(target, { ...ctxFor(w, deaf), limits: { ...w.limits, probeTerminationGraceSeconds: 1 } });
+  const record = await probe.runTarget(target, {
+    ...ctxFor(w, deaf),
+    limits: { ...w.limits, probeTerminationGraceSeconds: 1 },
+  });
   try {
     assert.equal(record.liveness, 'unknown');
     assert.equal(record.exitConfirmed, false);
     assert.ok(record.handle);
-    assert.deepEqual(probe.cleanupFixture(w.fixture, [record]), { status: 'blocked', reason: { code: 'exit-unconfirmed' } });
+    assert.deepEqual(probe.cleanupFixture(w.fixture, [record]), {
+      status: 'blocked',
+      reason: { code: 'exit-unconfirmed' },
+    });
     assert.ok(fs.existsSync(w.fixture.dir));
-  } finally { killQuietly(record.handle); }
+  } finally {
+    killQuietly(record.handle);
+  }
 });
 
 test('audit probe interruption preserves partial captures and the fixture', async () => {
@@ -82,16 +126,33 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
   const repo = path.join(w.root, 'repo');
   // A configured low-level model is required since unconfigured providers are skipped without launching.
   fs.mkdirSync(path.join(repo, 'skills/dispatch'), { recursive: true });
-  fs.writeFileSync(path.join(repo, 'skills/dispatch/config.local.jsonc'), JSON.stringify({ 'read-delegates': { claude: { targets: [{ low: { model: 'm' } }] } } }));
+  fs.writeFileSync(
+    path.join(repo, 'skills/dispatch/config.local.jsonc'),
+    JSON.stringify({ 'read-delegates': { claude: { targets: [{ low: { model: 'm' } }] } } }),
+  );
   // Live probes require a reserved run manifest.
   const settings = loadAuditConfig();
-  reserveRun(path.join(repo, '.scratch/audits/2026-10-07-0000-work'), { runId: '2026-10-07-0000', revision: 'abc', config: { ...settings, limits: { ...settings.limits, ...w.limits, probeDeadlineSeconds: 30 } } });
+  reserveRun(path.join(repo, '.scratch/audits/2026-10-07-0000-work'), {
+    runId: '2026-10-07-0000',
+    revision: 'abc',
+    config: { ...settings, limits: { ...settings.limits, ...w.limits, probeDeadlineSeconds: 30 } },
+  });
   const controller = new AbortController();
   const doctor = () => [{ provider: 'claude', mode: 'cli', path: process.execPath, status: 'path' }];
   const run = probe.main({
-    root: repo, argv: ['node', 'probe', '--run', '2026-10-07-0000', '--only', 'claude'], signal: controller.signal, home: path.join(w.root, 'home'),
+    root: repo,
+    argv: ['node', 'probe', '--run', '2026-10-07-0000', '--only', 'claude'],
+    signal: controller.signal,
+    home: path.join(w.root, 'home'),
     limits: { ...w.limits, probeDeadlineSeconds: 30 },
-    ports: { doctor, process: nodeProcess, clock, specs: { claude: w.spec }, env: process.env, platform: currentPlatform() },
+    ports: {
+      doctor,
+      process: nodeProcess,
+      clock,
+      specs: { claude: w.spec },
+      env: process.env,
+      platform: currentPlatform(),
+    },
   });
   setTimeout(() => controller.abort(), 1500);
   const result = await run;
@@ -114,9 +175,15 @@ test('audit probe CLI exits cleanly even while a handle keeps the event loop ali
     spawnSync('git', ['init', '-q'], { cwd: repo });
     const preload = path.join(repo, 'hold-open.mjs');
     fs.writeFileSync(preload, 'setInterval(() => {}, 1 << 30);\n');
-    const script = fileURLToPath(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url));
+    const script = fileURLToPath(
+      new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url),
+    );
     const runCli = (args: readonly string[]) =>
-      spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], { cwd: repo, encoding: 'utf8', timeout: 30_000 });
+      spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], {
+        cwd: repo,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
 
     const ok = runCli(['--run', '2026-01-01-0000', '--discover-only', '--only', 'claude']);
     assert.equal(ok.signal, null, 'CLI was killed by the test timeout instead of exiting');

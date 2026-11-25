@@ -1,19 +1,41 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createDiscovery, expandCandidate, type DiscoveryFs } from '../../../skills/dispatch/scripts/providers/discovery.ts';
+import {
+  createDiscovery,
+  expandCandidate,
+  type DiscoveryFs,
+} from '../../../skills/dispatch/scripts/providers/discovery.ts';
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 
-const env: PlatformEnv = { os: 'linux', arch: 'x64', wsl: false, bubblewrap: false, argvLimit: 100000, home: '/h', path: ['/usr/bin', '/opt/bin'], pathExt: [] };
+const env: PlatformEnv = {
+  os: 'linux',
+  arch: 'x64',
+  wsl: false,
+  bubblewrap: false,
+  argvLimit: 100000,
+  home: '/h',
+  path: ['/usr/bin', '/opt/bin'],
+  pathExt: [],
+};
 
 /** Fake fs table: path → 'exec' | 'file'; directories derive from the paths. */
 function table(entries: Record<string, 'exec' | 'file'>): DiscoveryFs & { probes: string[] } {
   const probes: string[] = [];
   return {
     probes,
-    list: (dir) => [...new Set(Object.keys(entries).filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1).split('/')[0] ?? ''))],
-    exists: (file) => { probes.push(file); return file in entries; },
+    list: (dir) => [
+      ...new Set(
+        Object.keys(entries)
+          .filter((p) => p.startsWith(`${dir}/`))
+          .map((p) => p.slice(dir.length + 1).split('/')[0] ?? ''),
+      ),
+    ],
+    exists: (file) => {
+      probes.push(file);
+      return file in entries;
+    },
     executable: (file) => entries[file] === 'exec',
   };
 }
@@ -27,7 +49,10 @@ test('discovery resolves provider × mode to path | missing | unlaunchable on a 
   });
   const discovery = createDiscovery(SPECS, env, fs);
   assert.deepEqual(discovery.resolve('claude', 'cli'), { status: 'path', path: '/opt/bin/claude' });
-  assert.deepEqual(discovery.resolve('claude', 'vscode'), { status: 'path', path: '/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude' });
+  assert.deepEqual(discovery.resolve('claude', 'vscode'), {
+    status: 'path',
+    path: '/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude',
+  });
   assert.deepEqual(discovery.resolve('claude', 'desktop'), { status: 'missing', path: null });
   assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'unlaunchable', path: '/usr/bin/codex' });
   const rows = discovery.doctor();
@@ -56,7 +81,13 @@ test('glob candidates sort newest versions first', () => {
 });
 
 test('Windows bare binary candidates use PATHEXT', () => {
-  const win: PlatformEnv = { ...env, os: 'win32', path: ['C:\\bin'], pathExt: ['.exe', '.cmd'], home: 'C:\\Users\\test' };
+  const win: PlatformEnv = {
+    ...env,
+    os: 'win32',
+    path: ['C:\\bin'],
+    pathExt: ['.exe', '.cmd'],
+    home: 'C:\\Users\\test',
+  };
   const candidate = 'C:\\Users\\test\\AppData\\Local\\Programs\\Codex\\resources\\bin\\codex.exe';
   const probes = table({
     'C:\\bin\\codex.cmd': 'exec',
@@ -67,7 +98,10 @@ test('Windows bare binary candidates use PATHEXT', () => {
   assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
 
   const upperWin: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };
-  const upperDiscovery = createDiscovery(SPECS, upperWin, { list: () => [], exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd', executable: () => true });
+  const upperDiscovery = createDiscovery(SPECS, upperWin, {
+    list: () => [],
+    exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd',
+    executable: () => true,
+  });
   assert.equal(upperDiscovery.resolve('claude', 'cli').status, 'path');
 });
-

@@ -15,9 +15,19 @@ const IPV4 = /^\d+(?:\.\d+){3}$/;
 const HOSTNAME_TLD = /\.(?:com|org|net|io|dev|app|edu|gov|local|internal)$/i;
 const DOTTED_EXT = /\.[A-Za-z][A-Za-z0-9_-]*$/;
 const WELL_KNOWN_ROOT_FILES = new Set([
-  'LICENSE', 'NOTICE', 'README', 'COPYING', 'CHANGELOG',
-  'Makefile', 'Dockerfile', 'Containerfile', 'Vagrantfile',
-  'Procfile', 'Gemfile', 'Rakefile', 'Justfile',
+  'LICENSE',
+  'NOTICE',
+  'README',
+  'COPYING',
+  'CHANGELOG',
+  'Makefile',
+  'Dockerfile',
+  'Containerfile',
+  'Vagrantfile',
+  'Procfile',
+  'Gemfile',
+  'Rakefile',
+  'Justfile',
 ]);
 
 function lineCount(content: string): number {
@@ -102,13 +112,19 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
     while (cursor < rest.length) {
       if (inComment) {
         const close = rest.indexOf('-->', cursor);
-        if (close === -1) { cursor = rest.length; break; }
+        if (close === -1) {
+          cursor = rest.length;
+          break;
+        }
         inComment = false;
         cursor = close + 3;
         continue;
       }
       const open = commentOpenOutsideCode(rest, cursor);
-      if (open === -1) { text += rest.slice(cursor); break; }
+      if (open === -1) {
+        text += rest.slice(cursor);
+        break;
+      }
       text += rest.slice(cursor, open);
       inComment = true;
       cursor = open + 4;
@@ -134,7 +150,11 @@ export function lintCitations(
   const read = (relPath: string): string | null => {
     if (fileCache.has(relPath)) return fileCache.get(relPath)!;
     let content: string | null = null;
-    try { content = readRepoFile(relPath); } catch { /* A failed repository read counts as a missing file. */ }
+    try {
+      content = readRepoFile(relPath);
+    } catch {
+      /* A failed repository read counts as a missing file. */
+    }
     fileCache.set(relPath, content);
     return content;
   };
@@ -149,12 +169,13 @@ export function lintCitations(
       const end = parsed[3] === undefined ? start : Number(parsed[3]);
 
       if (
-        prefix.includes('://')
-        || /^sha256:/i.test(token)
-        || IPV4.test(prefix)
-        || /^localhost$/i.test(prefix)
-        || (!prefix.includes('/') && HOSTNAME_TLD.test(prefix))
-      ) continue;
+        prefix.includes('://') ||
+        /^sha256:/i.test(token) ||
+        IPV4.test(prefix) ||
+        /^localhost$/i.test(prefix) ||
+        (!prefix.includes('/') && HOSTNAME_TLD.test(prefix))
+      )
+        continue;
 
       const safe = safeRelativePath(prefix);
       const existing = safe ? read(prefix) : null;
@@ -164,23 +185,34 @@ export function lintCitations(
           const firstToken = tokens[0]!;
           const lastToken = tokens.at(-1)!;
           if (
-            /\s--?[A-Za-z]/.test(prefix)
-            || /^localhost$/i.test(lastToken)
-            || IPV4.test(lastToken)
-            || (!lastToken.includes('/') && HOSTNAME_TLD.test(lastToken))
-            || !firstToken.includes('/')
-          ) continue;
+            /\s--?[A-Za-z]/.test(prefix) ||
+            /^localhost$/i.test(lastToken) ||
+            IPV4.test(lastToken) ||
+            (!lastToken.includes('/') && HOSTNAME_TLD.test(lastToken)) ||
+            !firstToken.includes('/')
+          )
+            continue;
         } else if (!(prefix.includes('/') || DOTTED_EXT.test(prefix) || WELL_KNOWN_ROOT_FILES.has(prefix))) {
           continue;
         }
       }
 
       if (!safe) {
-        defects.push({ code: 'broken-citation', severity: 'defect', line, message: `Unsafe repository citation path: ${prefix}` });
+        defects.push({
+          code: 'broken-citation',
+          severity: 'defect',
+          line,
+          message: `Unsafe repository citation path: ${prefix}`,
+        });
         continue;
       }
       if (existing === null) {
-        defects.push({ code: 'broken-citation', severity: 'defect', line, message: `Missing or unreadable cited file: ${prefix}` });
+        defects.push({
+          code: 'broken-citation',
+          severity: 'defect',
+          line,
+          message: `Missing or unreadable cited file: ${prefix}`,
+        });
         continue;
       }
       const totalLines = lineCount(existing);

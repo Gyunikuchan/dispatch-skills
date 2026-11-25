@@ -24,14 +24,21 @@ export function sortedJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${sortedJson(record[key])}`).join(',')}}`;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${sortedJson(record[key])}`)
+      .join(',')}}`;
   }
   return JSON.stringify(value);
 }
 
 // NOTE: unparseable JSON hashes as CRLF-normalized text so it still drifts deterministically.
 const jsonForm = (text: string): string => {
-  try { return sortedJson(JSON.parse(text)); } catch { return text.replaceAll('\r\n', '\n'); }
+  try {
+    return sortedJson(JSON.parse(text));
+  } catch {
+    return text.replaceAll('\r\n', '\n');
+  }
 };
 
 // Markdown and JSON formatter rewrites are not meaning changes, so they hash canonically. `.ts` stays exact
@@ -65,7 +72,11 @@ export function generateSkillHashes(skillDir: string): Record<string, string> {
   const packageManifest = path.join(skillDir, 'scripts', 'package.json');
   if (fs.existsSync(packageManifest)) entries['scripts/package.json'] = hashSkillFile(packageManifest);
   collect(skillDir, 'references', REFERENCE_EXTENSION, entries);
-  return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key] ?? '']));
+  return Object.fromEntries(
+    Object.keys(entries)
+      .sort()
+      .map((key) => [key, entries[key] ?? '']),
+  );
 }
 
 type IntegrityResult =
@@ -77,15 +88,25 @@ type IntegrityResult =
 export function checkIntegrity(skillDir: string): IntegrityResult {
   const manifestPath = path.join(skillDir, MANIFEST_NAME);
   if (!fs.existsSync(manifestPath)) {
-    return { status: 'missing-manifest', warning: `Skill integrity manifest '${MANIFEST_NAME}' not found in ${skillDir}; integrity verification is disabled.` };
+    return {
+      status: 'missing-manifest',
+      warning: `Skill integrity manifest '${MANIFEST_NAME}' not found in ${skillDir}; integrity verification is disabled.`,
+    };
   }
   let manifest: unknown;
-  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return { status: 'drift', violations: [MANIFEST_NAME] }; }
-  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) return { status: 'drift', violations: [MANIFEST_NAME] };
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return { status: 'drift', violations: [MANIFEST_NAME] };
+  }
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest))
+    return { status: 'drift', violations: [MANIFEST_NAME] };
   // `$`-prefixed keys carry build metadata (`$version`), not file hashes.
   const recorded = Object.fromEntries(Object.entries(manifest).filter(([key]) => !key.startsWith('$')));
   const actual = generateSkillHashes(skillDir);
-  const violations = [...new Set([...Object.keys(recorded), ...Object.keys(actual)])].filter((key) => recorded[key] !== actual[key]).sort();
+  const violations = [...new Set([...Object.keys(recorded), ...Object.keys(actual)])]
+    .filter((key) => recorded[key] !== actual[key])
+    .sort();
   return violations.length ? { status: 'drift', violations } : { status: 'ok' };
 }
 
@@ -93,9 +114,12 @@ export function checkIntegrity(skillDir: string): IntegrityResult {
 export function readVersion(skillDir: string): string | undefined {
   try {
     const manifest: unknown = JSON.parse(fs.readFileSync(path.join(skillDir, MANIFEST_NAME), 'utf8'));
-    const version = typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>)['$version'] : undefined;
+    const version =
+      typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>)['$version'] : undefined;
     return typeof version === 'string' ? version : undefined;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 /** One-line INTEGRITY_VIOLATION diagnostic, or null when clean. */

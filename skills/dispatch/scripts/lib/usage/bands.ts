@@ -1,4 +1,12 @@
-import { addCounters, tokenTotal, usageKey, type Band, type BandedCounters, type Counters, type UsageRow } from './rows.ts';
+import {
+  addCounters,
+  tokenTotal,
+  usageKey,
+  type Band,
+  type BandedCounters,
+  type Counters,
+  type UsageRow,
+} from './rows.ts';
 
 export const BAND_EDGES = [100_000, 200_000, 272_000] as const;
 export const MAX_MODEL_KEYS = 32;
@@ -14,24 +22,29 @@ export function bandOf(row: Counters): Band {
 }
 
 /** Folds per-request rows into per-`model#effort` banded counters; `reasoningInOutput` is set only when every row agrees. */
-export function foldRows(rows: readonly UsageRow[]): { total: Counters; models: Record<string, BandedCounters>; reasoningInOutput?: boolean } {
+export function foldRows(rows: readonly UsageRow[]): {
+  total: Counters;
+  models: Record<string, BandedCounters>;
+  reasoningInOutput?: boolean;
+} {
   const total: Counters = { input: 0, output: 0 };
   const models: Record<string, BandedCounters> = {};
   for (const row of rows) {
     addCounters(total, row);
     const key = usageKey(row.model, row.effort);
-    const entry = models[key] ??= { input: 0, output: 0 };
+    const entry = (models[key] ??= { input: 0, output: 0 });
     addCounters(entry, row);
     const band = bandOf(row);
-    const bands = entry.bands ??= {};
-    const bandEntry = bands[band] ??= { input: 0, output: 0 };
+    const bands = (entry.bands ??= {});
+    const bandEntry = (bands[band] ??= { input: 0, output: 0 });
     addCounters(bandEntry, row);
   }
-  const reasoningInOutput = rows.length > 0 && rows.every((r) => r.reasoningInOutput)
-    ? true
-    : rows.length > 0 && rows.every((r) => !r.reasoningInOutput)
-      ? false
-      : undefined;
+  const reasoningInOutput =
+    rows.length > 0 && rows.every((r) => r.reasoningInOutput)
+      ? true
+      : rows.length > 0 && rows.every((r) => !r.reasoningInOutput)
+        ? false
+        : undefined;
   return { total, models, ...(reasoningInOutput === undefined ? {} : { reasoningInOutput }) };
 }
 
@@ -44,8 +57,9 @@ export function boundModels<T extends Counters>(models: Record<string, T>): Reco
   const overflowCount = Math.max(0, entries.length - MAX_MODEL_KEYS);
   const dropped = new Set<string>();
   if (overflowCount > 0) {
-    const ranked = [...entries].sort((a, b) =>
-      tokenTotal(a[1]) - tokenTotal(b[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const ranked = [...entries].sort(
+      (a, b) => tokenTotal(a[1]) - tokenTotal(b[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
+    );
     for (let i = 0; i < overflowCount; i++) dropped.add(ranked[i]![0]);
   }
 

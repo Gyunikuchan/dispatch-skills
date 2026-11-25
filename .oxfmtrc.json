@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "quoteProps": "preserve",
+  "printWidth": 120,
+  "endOfLine": "lf",
+  "embeddedLanguageFormatting": "off"
+}

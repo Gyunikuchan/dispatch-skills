@@ -21,7 +21,8 @@ const REMEDIATION = {
   timeout: 'Check whether the provider starts promptly, then retry the probe.',
   'unsupported-version': 'Upgrade OpenCode to a release with standalone mode.',
   'sandbox-unavailable': 'Check bubblewrap and OpenCode state directories.',
-  'sandbox-unsupported': 'Set sandbox: false for this provider to opt out of OS isolation, or use a platform that supports its sandbox.',
+  'sandbox-unsupported':
+    'Set sandbox: false for this provider to opt out of OS isolation, or use a platform that supports its sandbox.',
   'config-error': 'Check the provider configuration and available agents.',
   'probe-error': 'Check that the installed provider CLI starts successfully.',
 } as const;
@@ -38,7 +39,14 @@ export type ProviderProbeResult = {
 };
 
 export type ProbeSummary = { ok: number; failed: number; unprobeable: number; unverified: number };
-type ProbeOutput = { exit: number | null; stdout: string; stderr: string; stdoutTruncated?: boolean; errorCode?: string; timedOut?: boolean };
+type ProbeOutput = {
+  exit: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutTruncated?: boolean;
+  errorCode?: string;
+  timedOut?: boolean;
+};
 type ProbeLaunch = { cwd: string; timeoutMs: number; stdoutCapBytes?: number };
 export type ProbeSpawnPort = (binary: string, args: readonly string[], launch: ProbeLaunch) => Promise<ProbeOutput>;
 export type ProbeDeps = {
@@ -75,56 +83,68 @@ function killGroup(pid: number): boolean {
   }
 }
 
-export const nodeProbeSpawn: ProbeSpawnPort = (binary, args, { cwd, timeoutMs, stdoutCapBytes }) => new Promise(resolve => {
-  const windows = process.platform === 'win32';
-  const env = sanitizeEnv(process.env);
-  const batch = isBatchLauncher(process.platform, binary);
-  const invocation = batch ? batchInvocation(binary, args, env['COMSPEC']) : { command: binary, args };
-  const child = spawn(invocation.command, invocation.args, {
-    cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: !windows,
-    windowsHide: true, windowsVerbatimArguments: batch,
-  });
-  const stdout = cappedStream(stdoutCapBytes);
-  const stderr = cappedStream();
-  let exited = false;
-  let timedOut = false;
-  child.stdout.on('data', stdout.append);
-  child.stderr.on('data', stderr.append);
-  child.once('exit', () => {
-    exited = true;
-    if (!windows && !timedOut && child.pid !== undefined) killGroup(child.pid);
-  });
-  child.once('error', (error: NodeJS.ErrnoException) => {
-    clearTimeout(timer);
-    resolve({ exit: null, stdout: '', stderr: '', errorCode: error.code ?? 'UNKNOWN' });
-  });
-  child.once('close', exit => {
-    clearTimeout(timer);
-    resolve({ exit, stdout: stdout.text(), stderr: stderr.text(), stdoutTruncated: stdout.truncated() });
-  });
+export const nodeProbeSpawn: ProbeSpawnPort = (binary, args, { cwd, timeoutMs, stdoutCapBytes }) =>
+  new Promise((resolve) => {
+    const windows = process.platform === 'win32';
+    const env = sanitizeEnv(process.env);
+    const batch = isBatchLauncher(process.platform, binary);
+    const invocation = batch ? batchInvocation(binary, args, env['COMSPEC']) : { command: binary, args };
+    const child = spawn(invocation.command, invocation.args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: !windows,
+      windowsHide: true,
+      windowsVerbatimArguments: batch,
+    });
+    const stdout = cappedStream(stdoutCapBytes);
+    const stderr = cappedStream();
+    let exited = false;
+    let timedOut = false;
+    child.stdout.on('data', stdout.append);
+    child.stderr.on('data', stderr.append);
+    child.once('exit', () => {
+      exited = true;
+      if (!windows && !timedOut && child.pid !== undefined) killGroup(child.pid);
+    });
+    child.once('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      resolve({ exit: null, stdout: '', stderr: '', errorCode: error.code ?? 'UNKNOWN' });
+    });
+    child.once('close', (exit) => {
+      clearTimeout(timer);
+      resolve({ exit, stdout: stdout.text(), stderr: stderr.text(), stdoutTruncated: stdout.truncated() });
+    });
 
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (!exited && child.pid !== undefined) {
-      if (windows) {
-        // taskkill owns the tree teardown. Do not kill the parent first or lose its descendants.
-        const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-          env, stdio: 'ignore', windowsHide: true,
-        });
-        killer.once('error', () => child.kill());
-        killer.once('exit', code => { if (code !== 0 && !exited) child.kill(); });
-        const killTimer = setTimeout(() => { killer.kill(); if (!exited) child.kill(); }, 1000);
-        killTimer.unref();
-        killer.once('close', () => clearTimeout(killTimer));
-        killer.unref();
-      } else if (!killGroup(child.pid)) child.kill('SIGKILL');
-    }
-    child.stdout.destroy();
-    child.stderr.destroy();
-    child.unref();
-    resolve({ exit: null, stdout: '', stderr: '', timedOut: true });
-  }, timeoutMs);
-});
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (!exited && child.pid !== undefined) {
+        if (windows) {
+          // taskkill owns the tree teardown. Do not kill the parent first or lose its descendants.
+          const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+            env,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          killer.once('error', () => child.kill());
+          killer.once('exit', (code) => {
+            if (code !== 0 && !exited) child.kill();
+          });
+          const killTimer = setTimeout(() => {
+            killer.kill();
+            if (!exited) child.kill();
+          }, 1000);
+          killTimer.unref();
+          killer.once('close', () => clearTimeout(killTimer));
+          killer.unref();
+        } else if (!killGroup(child.pid)) child.kill('SIGKILL');
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+      resolve({ exit: null, stdout: '', stderr: '', timedOut: true });
+    }, timeoutMs);
+  });
 
 function initialSandbox(provider: ProviderId, platform: PlatformEnv): ProbeSandbox {
   if (provider === 'opencode') {
@@ -135,7 +155,11 @@ function initialSandbox(provider: ProviderId, platform: PlatformEnv): ProbeSandb
 }
 
 function numericVersion(stdout: string): string | null {
-  const firstLine = stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? '';
+  const firstLine =
+    stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
   const match = /^(?:[A-Za-z0-9._/-]{1,32}\s+)?v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:\s|$)/.exec(firstLine);
   return match ? `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}` : null;
 }
@@ -144,8 +168,11 @@ function standaloneFailure(output: ProbeOutput): ProbeFailureCategory {
   if (output.errorCode) return 'probe-error';
   if (unsupportedStandaloneDiagnostic(output.stderr + '\n' + output.stdout)) return 'unsupported-version';
   if (output.exit !== 0 || output.stdoutTruncated) return 'config-error';
-  try { return Array.isArray(JSON.parse(output.stdout)) ? null : 'config-error'; }
-  catch { return 'config-error'; }
+  try {
+    return Array.isArray(JSON.parse(output.stdout)) ? null : 'config-error';
+  } catch {
+    return 'config-error';
+  }
 }
 
 function hasAllBindSources(args: readonly string[], exists: (path: string) => boolean): boolean {
@@ -159,15 +186,28 @@ function hasAllBindSources(args: readonly string[], exists: (path: string) => bo
   return true;
 }
 
-async function probeProvider(target: ProbeTarget, deps: Required<ProbeDeps>, globalDeadline: number): Promise<ProviderProbeResult> {
+async function probeProvider(
+  target: ProbeTarget,
+  deps: Required<ProbeDeps>,
+  globalDeadline: number,
+): Promise<ProviderProbeResult> {
   const { provider, sandboxRequired } = target;
   const { discovery, platform, now, cwd, exists } = deps;
   const providerDeadline = now() + PROVIDER_MS;
   const baseline = initialSandbox(provider, platform);
   let binaryFound = false;
   let version: string | null = null;
-  const row = (readiness: ProbeReadiness, sandbox: ProbeSandbox, failureCategory: ProbeFailureCategory): ProviderProbeResult => ({
-    provider, binaryFound, version, readiness, sandbox, failureCategory,
+  const row = (
+    readiness: ProbeReadiness,
+    sandbox: ProbeSandbox,
+    failureCategory: ProbeFailureCategory,
+  ): ProviderProbeResult => ({
+    provider,
+    binaryFound,
+    version,
+    readiness,
+    sandbox,
+    failureCategory,
     remediation: failureCategory === null ? null : REMEDIATION[failureCategory],
   });
   const timeout = () => row('error', baseline, 'timeout');
@@ -175,9 +215,15 @@ async function probeProvider(target: ProbeTarget, deps: Required<ProbeDeps>, glo
   const run = async (binary: string, args: readonly string[], stdoutCapBytes = STREAM_BYTES): Promise<ProbeOutput> => {
     const timeoutMs = remaining();
     if (timeoutMs <= 0) return { exit: null, stdout: '', stderr: '', timedOut: true };
-    try { return await deps.spawn(binary, args, { cwd, timeoutMs, stdoutCapBytes }); }
-    catch (error) {
-      return { exit: null, stdout: '', stderr: '', errorCode: (error as NodeJS.ErrnoException | null)?.code ?? 'UNKNOWN' };
+    try {
+      return await deps.spawn(binary, args, { cwd, timeoutMs, stdoutCapBytes });
+    } catch (error) {
+      return {
+        exit: null,
+        stdout: '',
+        stderr: '',
+        errorCode: (error as NodeJS.ErrnoException | null)?.code ?? 'UNKNOWN',
+      };
     }
   };
 
@@ -185,13 +231,17 @@ async function probeProvider(target: ProbeTarget, deps: Required<ProbeDeps>, glo
   let binary: string | null = null;
   for (const mode of SPECS[provider].modes) {
     const resolution = discovery.resolve(provider, mode.id);
-    if (resolution.status === 'path') { binary = resolution.path; break; }
+    if (resolution.status === 'path') {
+      binary = resolution.path;
+      break;
+    }
   }
   if (!binary) return row('error', baseline, 'not-found');
 
   const versionOutput = await run(binary, ['--version']);
   if (versionOutput.timedOut) return timeout();
-  if (versionOutput.errorCode === 'ENOENT' || versionOutput.errorCode === 'EACCES') return row('error', baseline, 'not-found');
+  if (versionOutput.errorCode === 'ENOENT' || versionOutput.errorCode === 'EACCES')
+    return row('error', baseline, 'not-found');
   if (versionOutput.errorCode || versionOutput.exit !== 0) return row('error', baseline, 'probe-error');
   binaryFound = true;
   version = numericVersion(versionOutput.stdout);
@@ -225,18 +275,30 @@ async function probeProvider(target: ProbeTarget, deps: Required<ProbeDeps>, glo
 }
 
 function failedProbe(row: ProviderProbeResult, { sandboxRequired }: ProbeTarget): boolean {
-  return !row.binaryFound || (sandboxRequired && (row.sandbox === 'unsupported' || row.sandbox === 'unavailable'))
-    || row.failureCategory === 'timeout' || row.readiness === 'unsupported'
-    || row.readiness === 'unauthenticated' || row.readiness === 'error';
+  return (
+    !row.binaryFound ||
+    (sandboxRequired && (row.sandbox === 'unsupported' || row.sandbox === 'unavailable')) ||
+    row.failureCategory === 'timeout' ||
+    row.readiness === 'unsupported' ||
+    row.readiness === 'unauthenticated' ||
+    row.readiness === 'error'
+  );
 }
 
-export async function probeProviders(targets: readonly ProbeTarget[], options: ProbeDeps = {}): Promise<{ probes: ProviderProbeResult[]; probeSummary: ProbeSummary }> {
+export async function probeProviders(
+  targets: readonly ProbeTarget[],
+  options: ProbeDeps = {},
+): Promise<{ probes: ProviderProbeResult[]; probeSummary: ProbeSummary }> {
   const now = options.now ?? Date.now;
   const globalDeadline = now() + GLOBAL_MS;
   const platform = options.platform ?? currentPlatform();
   const deps = {
-    now, platform, cwd: options.cwd ?? process.cwd(), exists: options.exists ?? fs.existsSync,
-    discovery: options.discovery ?? createNodeDiscovery(SPECS, platform), spawn: options.spawn ?? nodeProbeSpawn,
+    now,
+    platform,
+    cwd: options.cwd ?? process.cwd(),
+    exists: options.exists ?? fs.existsSync,
+    discovery: options.discovery ?? createNodeDiscovery(SPECS, platform),
+    spawn: options.spawn ?? nodeProbeSpawn,
   };
   const probes: ProviderProbeResult[] = new Array(targets.length);
   let next = 0;

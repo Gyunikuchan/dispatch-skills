@@ -22,13 +22,23 @@ function parseCodexEvents(raw: string): { answer: string; threadId: string | nul
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let event: Record<string, unknown>;
-    try { event = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
     const item = event['item'] as { type?: unknown; text?: unknown } | undefined;
     if (event['type'] === 'thread.started' && typeof event['thread_id'] === 'string') threadId = event['thread_id'];
-    if (event['type'] === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string') answer = item.text;
+    if (event['type'] === 'item.completed' && item?.type === 'agent_message' && typeof item.text === 'string')
+      answer = item.text;
     if (event['type'] === 'turn.failed' || event['type'] === 'error') {
       const nested = event['error'] as { message?: unknown } | undefined;
-      error = typeof nested?.message === 'string' ? nested.message : typeof event['message'] === 'string' ? event['message'] : 'Codex turn failed';
+      error =
+        typeof nested?.message === 'string'
+          ? nested.message
+          : typeof event['message'] === 'string'
+            ? event['message']
+            : 'Codex turn failed';
     }
   }
   return { answer, threadId, error };
@@ -36,22 +46,46 @@ function parseCodexEvents(raw: string): { answer: string; threadId: string | nul
 
 export const codex: ProviderSpec = {
   usage: codexUsage,
-  sessionUsage: sessionUsageReader('codex', raw => parseCodexEvents(raw).threadId),
+  sessionUsage: sessionUsageReader('codex', (raw) => parseCodexEvents(raw).threadId),
   zeroUsageProvenance: CODEX_COMPLETION_USAGE,
   resumeUsage: 'cumulative',
   id: 'codex',
   modes: [
-    { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'codex.cmd' : 'codex', env.os === 'win32' ? 'codex.exe' : join(env, env.home, '.local', 'bin', 'codex')] },
-    { id: 'desktop', candidates: (env) => env.os === 'darwin'
-      ? ['/Applications/Codex.app/Contents/Resources/codex']
-      : env.os === 'win32'
-      ? [
-          join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'resources', 'bin', 'codex.exe'),
-          join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'bin', 'codex.exe'),
-          join(env, 'C:', 'Program Files', 'Codex', 'resources', 'bin', 'codex.exe'),
-        ]
-      : [] },
-    { id: 'vscode', candidates: (env) => [join(env, env.home, '.vscode', 'extensions', 'openai.chatgpt-*', 'bin', '*', env.os === 'win32' ? 'codex.exe' : 'codex')] },
+    {
+      id: 'cli',
+      candidates: (env) => [
+        env.os === 'win32' ? 'codex.cmd' : 'codex',
+        env.os === 'win32' ? 'codex.exe' : join(env, env.home, '.local', 'bin', 'codex'),
+      ],
+    },
+    {
+      id: 'desktop',
+      candidates: (env) =>
+        env.os === 'darwin'
+          ? ['/Applications/Codex.app/Contents/Resources/codex']
+          : env.os === 'win32'
+            ? [
+                join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'resources', 'bin', 'codex.exe'),
+                join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'bin', 'codex.exe'),
+                join(env, 'C:', 'Program Files', 'Codex', 'resources', 'bin', 'codex.exe'),
+              ]
+            : [],
+    },
+    {
+      id: 'vscode',
+      candidates: (env) => [
+        join(
+          env,
+          env.home,
+          '.vscode',
+          'extensions',
+          'openai.chatgpt-*',
+          'bin',
+          '*',
+          env.os === 'win32' ? 'codex.exe' : 'codex',
+        ),
+      ],
+    },
   ],
   readOnlyFlags: ['--config', 'approval_policy="never"'],
   sandbox: { flags: ['--sandbox', 'read-only'], inactive: REJECTED[1] ?? /$^/, supported: () => true },
@@ -61,8 +95,18 @@ export const codex: ProviderSpec = {
   argv(req) {
     // `exec resume` takes no --cd or --sandbox, so read-only sandbox and approval ride on -c keys with cwd from launch.
     if (req.resume) {
-      const argv = [req.binary, 'exec', 'resume', req.resume, '--json', '--skip-git-repo-check', '-c', 'approval_policy="never"',
-        '-c', req.sandbox ? 'sandbox_mode="read-only"' : 'sandbox_mode="danger-full-access"'];
+      const argv = [
+        req.binary,
+        'exec',
+        'resume',
+        req.resume,
+        '--json',
+        '--skip-git-repo-check',
+        '-c',
+        'approval_policy="never"',
+        '-c',
+        req.sandbox ? 'sandbox_mode="read-only"' : 'sandbox_mode="danger-full-access"',
+      ];
       if (req.model) argv.push('--model', req.model);
       if (req.effort) argv.push('-c', `model_reasoning_effort=${JSON.stringify(req.effort)}`);
       argv.push(req.prompt);
@@ -83,11 +127,15 @@ export const codex: ProviderSpec = {
     const events = parseCodexEvents(out.stdout);
     // Classify only CLI diagnostics; the answer may legitimately quote an error.
     const diagnostics = `${out.stderrTail}\n${events.error ?? ''}`;
-    if (REJECTED.some((pattern) => pattern.test(diagnostics))) return failOutcome('sandbox-unsupported', `codex rejected its sandbox: ${diagnostics.trim().slice(0, 300)}`);
+    if (REJECTED.some((pattern) => pattern.test(diagnostics)))
+      return failOutcome('sandbox-unsupported', `codex rejected its sandbox: ${diagnostics.trim().slice(0, 300)}`);
     if (out.exit === 0 && events.answer.trim() && !events.error) {
       const id = events.threadId;
       return { status: 'ok', text: events.answer.trim(), sessionId: id, resume: id ? `codex exec resume ${id}` : null };
     }
-    return failOutcome(classifyFailure(diagnostics) ?? 'empty-output', `codex exit ${String(out.exit)}: ${diagnostics.trim().slice(0, 300)}`);
+    return failOutcome(
+      classifyFailure(diagnostics) ?? 'empty-output',
+      `codex exit ${String(out.exit)}: ${diagnostics.trim().slice(0, 300)}`,
+    );
   },
 };

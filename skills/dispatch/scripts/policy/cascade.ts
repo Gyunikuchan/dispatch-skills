@@ -20,17 +20,33 @@ type CascadeDecision =
   | { kind: 'reserve' }
   | { kind: 'terminal'; scope: 'slot' | 'run'; reason: string };
 
-const unreachable = (value: never): never => { throw new Error(`unhandled failure class: ${String(value)}`); };
+const unreachable = (value: never): never => {
+  throw new Error(`unhandled failure class: ${String(value)}`);
+};
 
 /** How a class moves inside the voice before exhaustion. */
 export function failureDisposition(cls: FailureClass): 'cascade' | 'skip-voice' | 'terminal-run' {
   switch (cls) {
-    case 'quota': case 'context-overflow': case 'auth': case 'model-not-found': case 'cli-outdated': case 'model-not-loaded':
-    case 'not-found': case 'timeout': case 'buffer': case 'empty-output': case 'capacity': case 'refusal': case 'no-report': case 'blocked': case 'truncated':
+    case 'quota':
+    case 'context-overflow':
+    case 'auth':
+    case 'model-not-found':
+    case 'cli-outdated':
+    case 'model-not-loaded':
+    case 'not-found':
+    case 'timeout':
+    case 'buffer':
+    case 'empty-output':
+    case 'capacity':
+    case 'refusal':
+    case 'no-report':
+    case 'blocked':
+    case 'truncated':
       return 'cascade';
     case 'sandbox-unsupported':
       return 'skip-voice';
-    case 'integrity': case 'config':
+    case 'integrity':
+    case 'config':
       return 'terminal-run';
     default:
       return unreachable(cls);
@@ -38,12 +54,19 @@ export function failureDisposition(cls: FailureClass): 'cascade' | 'skip-voice' 
 }
 
 /** The next step after `cls` failed at `position`. */
-export function next(cls: FailureClass, position: Position, voice: Voice, wave: WaveContext = { reserveAvailable: false }): CascadeDecision {
+export function next(
+  cls: FailureClass,
+  position: Position,
+  voice: Voice,
+  wave: WaveContext = { reserveAvailable: false },
+): CascadeDecision {
   const disposition = failureDisposition(cls);
-  if (disposition === 'terminal-run') return { kind: 'terminal', scope: 'run', reason: `${cls} is terminal for the run` };
+  if (disposition === 'terminal-run')
+    return { kind: 'terminal', scope: 'run', reason: `${cls} is terminal for the run` };
   if (disposition === 'cascade') {
     // Every failure, auth and quota included, tries the next alias of the voice (ADR 0001): models maintain independent quotas.
-    if (position.model + 1 < voice.models.length) return { kind: 'next-model', position: { model: position.model + 1, mode: position.mode } };
+    if (position.model + 1 < voice.models.length)
+      return { kind: 'next-model', position: { model: position.model + 1, mode: position.mode } };
     if (voice.modeCascadeOn.includes(cls) && position.mode + 1 < voice.modes.length) {
       return { kind: 'next-mode', position: { model: 0, mode: position.mode + 1 } };
     }
@@ -61,8 +84,19 @@ export const reservePool = (order: readonly SlotId[]): ReservePool => ({ order, 
 export const hasReserve = (pool: ReservePool): boolean => pool.order.some((slot) => !pool.used.includes(slot));
 
 /** Consumes the next unused ordered reserve (each at most once per fan-out directory) and records `<failed> → <reserve>: <reason>`. */
-export function takeReserve(pool: ReservePool, failed: SlotId, reason: string): { pool: ReservePool; reserve: SlotId | null } {
+export function takeReserve(
+  pool: ReservePool,
+  failed: SlotId,
+  reason: string,
+): { pool: ReservePool; reserve: SlotId | null } {
   const reserve = pool.order.find((slot) => !pool.used.includes(slot));
   if (reserve === undefined) return { pool, reserve: null };
-  return { reserve, pool: { order: pool.order, used: [...pool.used, reserve], records: [...pool.records, `${failed} → ${reserve}: ${reason}`] } };
+  return {
+    reserve,
+    pool: {
+      order: pool.order,
+      used: [...pool.used, reserve],
+      records: [...pool.records, `${failed} → ${reserve}: ${reason}`],
+    },
+  };
 }
