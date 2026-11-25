@@ -1,23 +1,33 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "grilling": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/grilling/SKILL.md",
-      "computedHash": "a57d6b820c3b10700fd7de8ea1199bb0d42bc194df9f10baec4a6ed6a9686448"
+      "computedHash": "485451958784497cd4c4dbea13cb5bbb579da58fac0d0e45f3bcb310fab68ac7",
+      "commit": "d65391149dbb5fe76478e76fa8d5122b2aa5a70e"
     },
     "retro": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/retro/SKILL.md",
-      "computedHash": "e63bb774fba4e601edfffc56bbd5c938d76c8faa2dff49456dff3b1e679cd3b6"
+      "computedHash": "e260aefb7b75b3548a3ee9883afbf8808e521f2e86feec92399617894f83b7c2",
+      "commit": "d65391149dbb5fe76478e76fa8d5122b2aa5a70e"
+    },
+    "untangle-codebase": {
+      "source": "caldoai/skills",
+      "commit": "d5b68dace378219890d821adb3685538e2c69b04",
+      "sourceType": "github",
+      "skillPath": "skills/untangle-codebase/SKILL.md",
+      "computedHash": "73791c30d4da2e001bc095732771966338b764e2e7b57bb30a81439cff85aef4"
     },
     "writing-for-agents": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/writing-for-agents/SKILL.md",
-      "computedHash": "831e996c177c6c5233eb3bb472a33edee2b3ce1ee5a6d7e8b696c1c3fb4eda3d"
+      "computedHash": "e79a2476b2417b228922453478d9505a6b9af19f3a412e560728ce62ed3555ca",
+      "commit": "d65391149dbb5fe76478e76fa8d5122b2aa5a70e"
     }
   }
 }
