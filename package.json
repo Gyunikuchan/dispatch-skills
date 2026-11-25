@@ -50,7 +50,7 @@
     "typecheck": "tsc -p .",
     "lint": "node scripts/lint.ts",
     "lint:all": "node scripts/lint.ts --all",
-    "format": "oxfmt oxlint.config.ts \"skills/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \".agents/skills/{audit-dispatch-skills,optimise-tests,link-reader}/**/*.ts\"",
+    "format": "oxfmt oxlint.config.ts oxfmt.config.ts \"skills/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \".agents/skills/{audit-dispatch-skills,optimise-tests,link-reader}/**/*.ts\"",
     "format:check": "npm run format -- --check",
     "test": "npm run typecheck && node scripts/maintain.ts --check && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node scripts/path-bytes.ts && node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-concurrency=8 \"tests/{unit,integration,tooling}/**/*.test.ts\"",
     "validate:configs": "node scripts/validate-configs.ts",
@@ -59,15 +59,14 @@
     "test:all": "npm test && npm run test:e2e"
   },
   "devDependencies": {
-    "@cloudflare/oxlint-config": "0.2.0",
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
-    "@interfere/landmines": "0.3.1",
     "@types/node": "^22.20.5",
     "husky": "^9.1.7",
     "oxfmt": "0.80.0",
     "oxlint": "1.95.0",
     "oxlint-tsgolint": "7.0.2008",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "ultracite": "^8.3.1"
   }
 }

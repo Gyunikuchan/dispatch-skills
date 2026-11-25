@@ -6,20 +6,19 @@ import { REPO_ROOT } from './scan.ts';
 
 // The cutover adds no dependency; native stripping defines the approved engine range.
 // Escalation approved: commitlint tooling for conventional commits.
-// Approved Oxc rollout adds formatting, type-aware linting and two shared presets.
+// Approved Oxc rollout adds formatting, type-aware linting and Ultracite presets.
 export const EXPECTED = {
   dependencies: [] as Array<string>,
   devDependencies: [
-    '@cloudflare/oxlint-config',
     '@commitlint/cli',
     '@commitlint/config-conventional',
-    '@interfere/landmines',
     '@types/node',
     'husky',
     'oxfmt',
     'oxlint',
     'oxlint-tsgolint',
     'typescript',
+    'ultracite',
   ],
   engines: { node: '^22.18 || >=23.6' },
 };

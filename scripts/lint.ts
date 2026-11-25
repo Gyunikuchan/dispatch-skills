@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const paths = [
   'oxlint.config.ts',
+  'oxfmt.config.ts',
   'skills/dispatch/scripts',
   'scripts',
   'tests',
