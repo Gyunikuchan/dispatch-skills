@@ -12,6 +12,7 @@ export const EXPECTED = {
   devDependencies: [
     '@commitlint/cli',
     '@commitlint/config-conventional',
+    '@interfere/landmines',
     '@types/node',
     'husky',
     'oxfmt',

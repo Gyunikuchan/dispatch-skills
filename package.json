@@ -61,6 +61,7 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
+    "@interfere/landmines": "^0.1.1",
     "@types/node": "^22.20.5",
     "husky": "^9.1.7",
     "oxfmt": "0.80.0",
