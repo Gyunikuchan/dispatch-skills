@@ -4,11 +4,11 @@ import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { askPrompt } from './domain/prompt.ts';
 import { sanitizeText } from './domain/sanitize.ts';
-import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome } from './fanout.ts';
+import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome } from './fanout.ts';
 import { foldLedger, latest, levelGate } from './ledger.ts';
 import { readTextPayload } from './input.ts';
 import { withLockFile } from './lock.ts';
-import { summaryWithItems, ToolError } from './output.ts';
+import { summaryWithItems, ToolError, writePrivateOutput } from './output.ts';
 import { LEVELS, type Level } from './types.ts';
 
 export async function askRun(ctx: HandlerContext): Promise<HandlerResult> {
@@ -23,7 +23,7 @@ export async function askRun(ctx: HandlerContext): Promise<HandlerResult> {
   const pins = parsePinsFlag(values['pins']);
   const slots = resolveSlots('ask', selected as Level, deps, pins);
   if (!slots.targets.length) throw new ToolError(1, 'invalid-input', 'ask requires a read delegate' + underfillNote(slots));
-  const nativeFailures = parseNativeFailures(values);
+  const nativeFailures = ctx.nativeFailures ?? [];
   assertHostNotSandboxed(deps, slots, nativeFailures.length > 0);
   const digest = crypto.createHash('sha256').update(question).digest('hex').slice(0, 16);
   const directory = path.join(session, '.state', 'asks', digest);
@@ -54,12 +54,7 @@ export async function askRun(ctx: HandlerContext): Promise<HandlerResult> {
     const summary = `ask: ${answers.length} answers, ${failed.length} failed` + underfillNote(slots);
     if (native.length) return {ok: false, exit: 4, reason: 'native-pending', summary: summaryWithItems(`ask: ${answers.length} answers, ${failed.length} failed: ` + nativePendingNote(native.length, wave) + underfillNote(slots), nativeSummaryItems(native)), value};
     if (!answers.length) return {ok: false, exit: 2, reason: 'ask-failed', summary, value};
-    const file = path.join(dir, 'answers.json');
-    const temp = file + '.' + crypto.randomUUID() + '.tmp';
-    try {
-      fs.writeFileSync(temp, JSON.stringify(value) + '\n', {mode: 0o600});
-      fs.renameSync(temp, file);
-    } finally {fs.rmSync(temp, {force: true});}
+    writePrivateOutput(path.join(dir, 'answers.json'), JSON.stringify(value) + '\n');
     return {ok: true, exit: 0, summary, value};
   });
 }

@@ -150,3 +150,12 @@ export function criterionStatuses(fold: Fold, checks: readonly Check[], current:
     return { criterion: check.criterion, state: 'missing' };
   });
 }
+
+export function criterionStatusCounts(statuses: readonly CriterionStatus[]) {
+  return {
+    verified: statuses.filter((status) => status.state === 'verified').length,
+    manual: statuses.filter((status) => status.state === 'manual').length,
+    waived: statuses.filter((status) => status.state === 'waived').length,
+    missing: statuses.filter((status) => status.state === 'missing').length,
+  };
+}

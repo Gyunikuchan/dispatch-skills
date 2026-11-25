@@ -8,10 +8,10 @@ import type { HandlerContext } from './cli.ts';
 import { governedDesignText } from './domain/design.ts';
 import { governedPlanText, parsePlan, selectTaskBrief } from './domain/plan.ts';
 import type { ReviewKind } from './domain/types.ts';
-import type { ReviewTarget } from './findings.ts';
+import type { ReviewSnapshot } from './review-state.ts';
 import { git, gitOk, gitPaths } from './git.ts';
-import { integrationRecord } from './integration.ts';
-import { currentHashes, foldLedger, latest, type Hashes } from './ledger.ts';
+import { integrationRecord } from './integration-state.ts';
+import { currentHashes, foldLedger, latest } from './ledger.ts';
 import { ToolError } from './output.ts';
 import { artifactSections } from './prompts.ts';
 import { launches } from './writers.ts';
@@ -19,7 +19,7 @@ import { launches } from './writers.ts';
 // NOTE: shared by every target rejection so the host can correct its target in one turn.
 export const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
 
-export type Capture = {artifactPath?:string; artifacts?:Hashes; spec: {path: string; hash: string}; specSource?: string; target: ReviewTarget; source?: string; taskSummary: string; cwd: string; changed: string[]};
+export type Capture = ReviewSnapshot & {specSource?: string; source?: string; taskSummary: string; cwd: string; changed: string[]};
 
 // NOTE: fix-review-lite reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
 function writeSpecSnapshot(file: string, text: string): void {

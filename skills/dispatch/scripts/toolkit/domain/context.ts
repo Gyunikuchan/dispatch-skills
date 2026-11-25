@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { sectionRanges, structuralLines } from './plan.ts';
+import { sectionRanges, structuralLines } from './markdown-structure.ts';
 
 const CONTEXT_SECTIONS = ['Map', 'Flows', 'Invariants', 'Coverage', 'Precedent', 'Conventions', 'Surprises', 'Not covered'] as const;
 type ContextSection = typeof CONTEXT_SECTIONS[number];

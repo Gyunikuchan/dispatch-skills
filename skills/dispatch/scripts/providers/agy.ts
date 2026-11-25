@@ -2,13 +2,18 @@
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
 import path from 'node:path';
-import { agyUsage } from '../lib/usage/agy.ts';
-import { readDelegateSession } from '../lib/usage/delegate.ts';
-import { classifyFailure, failOutcome } from './runner.ts';
-import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
+import { AGY_ENVELOPE_USAGE, agyUsage, normalizeAgyModelEffort } from '../lib/usage/agy.ts';
+import { sessionUsageReader } from './session-usage.ts';
+import { classifyFailure, failOutcome } from './response.ts';
+import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, ProviderUsageContext, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 
 const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
+
+function usageAppDataDir(context: ProviderUsageContext | undefined): string | undefined {
+  const home = context?.platform?.home;
+  return context?.appDataDir ?? (home && context?.mode ? path.join(home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
+}
 
 const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
 
@@ -30,6 +35,11 @@ function parseEnvelope(stdout: string): { conversationId: string | null; text: s
 
 export const agy: ProviderSpec = {
   id: 'agy',
+  invocationAttribution: {
+    normalize: normalizeAgyModelEffort,
+    measured: 'prefer-measured',
+    retainWithoutBaselineProvenance: AGY_ENVELOPE_USAGE,
+  },
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'agy.exe' : 'agy', env.os === 'win32' ? 'agy.cmd' : join(env, env.home, '.local', 'bin', 'agy')] },
     { id: 'desktop', candidates: (env) => env.os === 'darwin'
@@ -45,34 +55,17 @@ export const agy: ProviderSpec = {
   // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
   usage(raw, context) {
-    const appDataDir = context?.appDataDir
-      ?? (context?.platform?.home && context?.mode ? path.join(context.platform.home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
+    const appDataDir = usageAppDataDir(context);
     return agyUsage(raw, {
       ...(appDataDir ? { appDataDir } : {}),
       ...(context?.readSqliteGenMetadata ? { readSqliteGenMetadata: context.readSqliteGenMetadata } : {}),
       ...(context?.transcripts?.budget ? { budget: context.transcripts.budget } : {}),
     });
   },
-  sessionUsage(raw, context) {
-    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
-    const sessionId = parseEnvelope(raw)?.conversationId ?? null;
-    if (!sessionId) return { complete: false };
-    const appDataDir = context.appDataDir
-      ?? (context.platform?.home && context.mode ? path.join(context.platform.home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined);
-    return readDelegateSession({
-      platform: 'agy',
-      sessionId,
-      startMs: context.launchStartMs,
-      endMs: context.launchEndMs,
-      resumed: context.resumed ?? false,
-      ...(context.collectResponses ? { collectResponses: true } : {}),
-      home: context.platform.home,
-      env: (name) => context.env[name],
-      ...(appDataDir ? { appDataDir } : {}),
-      fs: context.transcripts.fs,
-      budget: context.transcripts.budget,
-    });
-  },
+  sessionUsage: sessionUsageReader('agy', raw => parseEnvelope(raw)?.conversationId ?? null, context => {
+    const appDataDir = usageAppDataDir(context);
+    return appDataDir ? { appDataDir } : {};
+  }),
   resumeUsage: 'cumulative',
   attemptSession: (out: ProcessResult): string | null =>
     validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),

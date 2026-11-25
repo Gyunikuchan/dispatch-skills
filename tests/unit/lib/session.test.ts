@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
-  findRepoRoot, folderName, FOLDER_NAME, initializeSession, initSession, readManifest, reactivateSession,
+  findRepoRoot, folderName, FOLDER_NAME, initSession, readManifest, reactivateSession,
 } from '../../../skills/dispatch/scripts/lib/session.ts';
 
 const now = new Date('2026-09-29T17:54:00.000Z');
@@ -33,13 +33,13 @@ test('repository root: ancestor Git metadata identifies the root; absence return
 });
 
 test('session matching skips corrupt unrelated directories and matches by manifest', () => {
-  const { root, temp } = repo();
-  const created = initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp });
+  const { root } = repo();
+  const created = initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now });
   assert.equal(created.reused, false);
   const dir = created.path;
   assert.equal(path.basename(dir), '20260929T1754Z-demo');
   assert.equal(readManifest(dir).location, 'workspace');
-  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now, tempRoot: temp }), { path: dir, reused: true });
+  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now }), { path: dir, reused: true });
 
   // Corrupt or unreadable unrelated directory does not block session matching or initialization.
   const damaged = path.join(path.dirname(dir), '20260929T1754Z-damaged');
@@ -47,38 +47,38 @@ test('session matching skips corrupt unrelated directories and matches by manife
   fs.writeFileSync(path.join(damaged, 'corrupt.txt'), 'data');
 
   // Existing session matching still succeeds despite damaged sibling.
-  assert.equal(initializeSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now, tempRoot: temp }), dir);
+  assert.equal(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now }).path, dir);
 
   // Initializing an unrelated session still succeeds.
-  const session = initializeSession({ repositoryRoot: root, sessionId: 's3', sessionTitle: 'healthy', now, tempRoot: temp });
+  const session = initSession({ repositoryRoot: root, sessionId: 's3', sessionTitle: 'healthy', now }).path;
   assert.equal(path.basename(session), '20260929T1754Z-healthy');
   assert.equal(readManifest(session).sessionId, 's3');
 
   // Initializing with same title as damaged folder avoids conflict by appending suffix.
-  const salvaged = initializeSession({ repositoryRoot: root, sessionId: 's4', sessionTitle: 'damaged', now, tempRoot: temp });
+  const salvaged = initSession({ repositoryRoot: root, sessionId: 's4', sessionTitle: 'damaged', now }).path;
   assert.equal(path.basename(salvaged), '20260929T1754Z-damaged-1');
   assert.equal(readManifest(salvaged).sessionId, 's4');
 });
 
 test('held claim waits for the winner and reuses its folder', (t) => {
-  const { root, temp } = repo();
-  const first = initializeSession({ repositoryRoot: root, sessionId: 'c1', sessionTitle: 'demo', now, tempRoot: temp });
+  const { root } = repo();
+  const first = initSession({ repositoryRoot: root, sessionId: 'c1', sessionTitle: 'demo', now }).path;
   const claim = path.join(path.dirname(first), '.claim-c2');
   fs.mkdirSync(claim);
   const winner = path.join(path.dirname(first), '20260929T1754Z-demo-1');
   fs.mkdirSync(winner);
   fs.writeFileSync(path.join(winner, 'manifest.json'), fs.readFileSync(path.join(first, 'manifest.json'), 'utf8').replace(/"c1"/g, '"c2"').replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'));
-  assert.equal(initializeSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, tempRoot: temp, waitMs: 50 }), fs.realpathSync(winner));
+  assert.equal(initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 50 }).path, fs.realpathSync(winner));
   fs.rmSync(winner, { recursive: true });
   let elapsed = 0;
   t.mock.method(Date, 'now', () => elapsed);
   t.mock.method(Atomics, 'wait', () => { elapsed += 10; return 'timed-out'; });
-  assert.throws(() => initializeSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, tempRoot: temp, waitMs: 30 }), /still claimed/);
+  assert.throws(() => initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 30 }), /still claimed/);
 });
 
 test('session reactivate validates repository and rejects external locations', () => {
   const { root, temp } = repo();
-  const dir = initializeSession({ repositoryRoot: root, sessionId: 'r1', sessionTitle: 'demo', now, tempRoot: temp });
+  const dir = initSession({ repositoryRoot: root, sessionId: 'r1', sessionTitle: 'demo', now }).path;
   assert.equal(reactivateSession(dir, root), dir);
 
   // Different repository root is rejected.

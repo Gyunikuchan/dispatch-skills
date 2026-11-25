@@ -1,7 +1,8 @@
+import { parseBlockedReply } from '../domain/blocker.ts';
 import fs from 'node:fs';
 import type { RosterSlot } from '../domain/types.ts';
 import { atomic, mergeBlocked, persistDeferredMarker, throwRejected, type BlockedAttempt, type Emit, type FanOutInput, type FanoutState, type NativeFailure, type SlotOutcome, type slotFiles } from './state.ts';
-import { attemptOf, blockedEntry, firstModelOf, isNativeFirstSlot, parseBlockedFile, reportEvidence, type nativeVoice } from './native.ts';
+import { attemptOf, blockedEntry, firstModelOf, isNativeFirstSlot, reportEvidence, type nativeVoice } from './native.ts';
 import type { cliVoice } from './voice.ts';
 
 export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgnoredReport'>, ports: {
@@ -396,7 +397,7 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
         }
         if (fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
-          const {isBlocked, raw} = parseBlockedFile(text);
+          const {isBlocked, raw} = parseBlockedReply(text);
           if (isBlocked && isCurrentHost(nativeSaved.provider)) {
             const {failed, reserve} = prepareHostBlocked(slot, nativeSaved, raw, attemptOf(slot, nativeSaved));
             if (reserve) {
@@ -483,7 +484,7 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
         const nativeOnlyPhysical = !route.first && (route.physical?.native ?? false);
         if (nativeOnlyPhysical && fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
-          const {isBlocked, raw} = parseBlockedFile(text);
+          const {isBlocked, raw} = parseBlockedReply(text);
           if (isBlocked) {
             if (isCurrentHost(nativeSaved.provider)) {
               const {failed, reserve} = prepareHostBlocked(slot, nativeSaved, raw, attemptOf(slot,nativeSaved));
@@ -528,7 +529,7 @@ export async function runNativeWave(input: Pick<FanOutInput, 'validate' | 'onIgn
         // Route true, no report: consume reply if present.
         if (fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
-          const {isBlocked, raw} = parseBlockedFile(text);
+          const {isBlocked, raw} = parseBlockedReply(text);
           if (isBlocked) {
             const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: (nativeSaved as {model?: string|readonly string[]}).model}), raw);
             emit(attemptOf(slot,nativeSaved),{kind:'validation',surface:'native',outcome:'blocked'});

@@ -1,11 +1,14 @@
 import path from 'node:path';
-import type { DiagnosticUsage } from '../../toolkit/types.ts';
-import { counter, counters, note, readErrorReason, readTranscript, row, stageAt, type Row } from './read.ts';
+import type { DiagnosticUsage } from './rows.ts';
+import { counter, counters, note, readErrorReason, readRoleTranscript, row, stageAt, type Row } from './read.ts';
 import { addCounters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 const pattern = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)\.jsonl(?:\.zst)?$/;
 type File = { file: string; id: string; mtime: number; date: string; failed?: boolean };
-export const codex: HostUsageAdapter = { sessionEnv: ['CODEX_THREAD_ID'], read(query, fs) { return collectCodexUsage(query, fs); } };
+export const codex: HostUsageAdapter = {
+  sessionEnv: ['CODEX_THREAD_ID'],
+  read: (query, fs, delegate) => collectCodexUsage(query, fs, delegate ? { rootRole: 'delegate' } : undefined),
+};
 export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} }; const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
@@ -78,10 +81,9 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
 
   function read(f: File, role: HostRole, totals: Set<number>, verify: boolean, forcedDepth?: number): boolean {
     try {
-      const data = readTranscript(fs, f.file, query.budget);
-      if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'unverified candidates'); return false; }
-      if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return false; }
-      const lines = data.text.split('\n');
+      const text = readRoleTranscript(fs, f.file, query.budget, result, role, 'unverified candidates');
+      if (text === undefined) return false;
+      const lines = text.split('\n');
       if (!verify) { parseLines(lines, 0, role, forcedDepth ?? 0, totals, f.id); return true; }
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]!; if (!line.trim()) continue;
@@ -152,6 +154,8 @@ export function collectCodexUsage(query: HostUsageQuery, fs: HostUsageFs, option
   return result;
 }
 
+export const CODEX_COMPLETION_USAGE = 'codex.turn.completed';
+
 export function codexUsage(raw: string): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
   let completed = false;
@@ -161,7 +165,7 @@ export function codexUsage(raw: string): DiagnosticUsage | undefined {
     try { event = row(JSON.parse(line)); } catch { return undefined; }
     if (event?.['type'] === 'turn.started') { started = true; continue; }
     if (event?.['type'] !== 'turn.completed') continue;
-    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, 'codex.turn.completed', 'uncached');
+    const usage = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cached_input_tokens', cacheWrite: 'cache_write_input_tokens', reasoning: 'reasoning_output_tokens' }, CODEX_COMPLETION_USAGE, 'uncached');
     if (!usage) return undefined;
     if (usage.cacheRead !== undefined) usage.input = Math.max(0, usage.input - usage.cacheRead);
     // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.

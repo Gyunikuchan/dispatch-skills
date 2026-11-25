@@ -137,18 +137,13 @@ export function recordHost(sessionDir: string, host: string): void {
   writeManifest(sessionDir, { ...readManifest(sessionDir), host });
 }
 
-type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; tempRoot?: string; waitMs?: number };
+type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; waitMs?: number };
 
 /**
  * Finds or creates the chat's session folder. A published folder for the same identity is reactivated;
  * creation is collision-safe: an exclusive claim directory serialises creators, and a same-minute name
  * collision with another identity takes a numeric title suffix.
  */
-export function initializeSession(options: InitOptions): string {
-  return initSession(options).path;
-}
-
-/** As `initializeSession`, and reports whether an existing folder was returned rather than created. */
 export function initSession(options: InitOptions): { path: string; reused: boolean } {
   const repo = canonicalRepositoryRoot(options.repositoryRoot);
   const root = workspaceSessionRoot(options.repositoryRoot);

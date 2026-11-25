@@ -1,12 +1,14 @@
+import { INTEGRATION_REVIEW } from './review-state.ts';
+import { SESSION_WORKTREES } from '../lib/session-paths.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult, CliDeps } from './cli.ts';
 import { git, gitOk, gitRaw, gitPaths, splitPaths, changedPaths, testedTree } from './git.ts';
-import { integrationRecord } from './integration.ts';
+import { currentRuntimeVerification, integrationRecord, pendingIntegration } from './integration-state.ts';
 import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
-import { pending, reason, result, refuse, withPostFold } from './integrate.ts';
-import { readTextPayload } from './input.ts';
-import { ToolError, capSummary } from './output.ts';
+import { withPostFold } from './ledger.ts';
+import { readRequiredReason, readTextPayload } from './input.ts';
+import { ToolError, capSummary, result, refuse } from './output.ts';
 
 const overlaps=(p:string,q:string)=>p===q||p.startsWith(q+'/')||q.startsWith(p+'/');
 
@@ -32,7 +34,7 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','deliver takes no task');
   if(ctx.values['commit']!==undefined||ctx.values['message']!==undefined)return commitDelivered(ctx);
   return withPostFold(ctx.session,'worktree deliver',ctx.deps,async tx=>{
-    const active=pending(tx.fold);if(active)refuse('integration-pending',active.data['task']);
+    const active=pendingIntegration(tx.fold);if(active)refuse('integration-pending',active.data['task']);
     const opened=integrationRecord(tx.fold);if(!opened)refuse('no-integration');
     const cwd=path.resolve(ctx.session,opened.data['path']),dest=opened.data['dest'] as {path:string;branch:string};
     const read=(root:string,args:string[])=>gitOk(ctx.deps,root,args,{GIT_OPTIONAL_LOCKS:'0'});
@@ -72,12 +74,10 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     if(started&&(started.data['source']!==source||started.data['from']!==from))blocked('Unfinished delivery has a different source or caller base');
     // A started delivery recovers under existing rules; a new one needs settled coverage before any caller write.
     if(!started){
-      const records=tx.fold.records.filter(r=>r.seq>opened.seq);
-      const proof=records.findLast(r=>r.kind==='integrate'&&r.data['phase']==='verification');
-      if(!proof || proof.data['open'].length || records.some(r=>r.seq>proof.seq&&r.kind==='ruling'&&r.data['subject'].startsWith('verification:')&&r.data['ruling']==='accepted')) refuse('verification-required');
-      const applies=applicableReviewIds(ctx.manifest,tx.fold).get('code-integration'),c=coverageState(ctx.session,tx.fold,'code-integration',applies);
+      if (!currentRuntimeVerification(tx.fold, opened.seq)) refuse('verification-required');
+      const applies=applicableReviewIds(ctx.manifest,tx.fold).get(INTEGRATION_REVIEW),c=coverageState(ctx.session,tx.fold,INTEGRATION_REVIEW,applies);
       // The message follows launch admission, which can stop a rerun for a user decision once the coverage round is used.
-      const budget=c.open.length?admission(ctx.session,tx.fold,'code-integration',0,applies).budget:null,user=budget?.state==='requires-coverage-decision';
+      const budget=c.open.length?admission(ctx.session,tx.fold,INTEGRATION_REVIEW,0,applies).budget:null,user=budget?.state==='requires-coverage-decision';
       if(c.decision==='rerun'||c.decision==='user')refuse('coverage-required','Review coverage: '+(c.open.length?'open slots '+c.open.join(', ')+(user?'; needs a user decision: accept reduced coverage'+(budget!.nextRound>budget!.ceiling?'':' or grant one more coverage round'):'; rerun them'):'round '+c.incomplete+' is incomplete'));}
     const retained=await git(ctx.deps,cwd,['rev-parse','--verify','--quiet',ref],{GIT_OPTIONAL_LOCKS:'0'});
     if(retained.exit===0&&retained.stdout.trim()!==source)blocked('Delivered-source ref points to a different commit');
@@ -224,7 +224,7 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
   });
 }
 export async function close(ctx: HandlerContext): Promise<HandlerResult> {
-  const why=reason(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','close takes no task');
+  const why=readRequiredReason(ctx); if(ctx.args.length)throw new ToolError(1,'invalid-input','close takes no task');
   return withPostFold(ctx.session,'worktree close',ctx.deps,async tx=>{
     await tx.append({kind:'integrate',by:'tool',data:{phase:'closed',reason:why}}); return result({closed:true,reason:why});
   });
@@ -301,8 +301,8 @@ function probeWorktreeMove(cwd: string): void {
 export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','cleanup takes no task');
   return withPostFold(ctx.session,'worktree cleanup',ctx.deps,async tx=>{
-    const root=ctx.manifest.repositoryRoot, boundary=path.resolve(ctx.session,'.state/worktrees');
-    const physicalBoundary=path.join(fs.realpathSync(ctx.session),'.state/worktrees');
+    const root=ctx.manifest.repositoryRoot, boundary=path.resolve(ctx.session,SESSION_WORKTREES);
+    const physicalBoundary=path.join(fs.realpathSync(ctx.session),SESSION_WORKTREES);
     const listRegistered=async()=> (await gitOk(ctx.deps,root,['worktree','list','--porcelain'])).split(/\r?\n\r?\n/).map(block=>block.split(/\r?\n/).find(l=>l.startsWith('worktree '))?.slice(9)).filter((v): v is string=>!!v).map(p=>path.resolve(p));
     const registered=await listRegistered(),isRegistered=(paths:string[],cwd:string)=>paths.some(p=>samePath(p,cwd));
     const verifyRecovery=async(cwd:string,recovery:string):Promise<void>=>{
@@ -345,13 +345,10 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           } catch(error) { removeError=error; }
         }
         // Prune is global, so it would also delete admin metadata for a stranded recovery worktree.
-        if(kept.some(row=>row.recoveryPath)) {
-          current=await listRegistered();
-          if(isRegistered(current,cwd))fail(relative,'deregister-failed',removeError??Object.assign(new Error('Git still lists the worktree after its path was removed'),{code:'WORKTREE_STILL_REGISTERED'}));
-          return;
+        if (!kept.some(row => row.recoveryPath)) {
+          const prune = await git(ctx.deps, root, ['worktree', 'prune']);
+          if (prune.exit) { fail(relative, 'prune-failed', {exit: prune.exit, message: prune.stderr || prune.stdout || 'Git worktree prune failed'}); return; }
         }
-        const prune=await git(ctx.deps,root,['worktree','prune']);
-        if(prune.exit) { fail(relative,'prune-failed',{exit:prune.exit,message:prune.stderr||prune.stdout||'Git worktree prune failed'});return; }
         current=await listRegistered();
         if(isRegistered(current,cwd))fail(relative,'deregister-failed',removeError??Object.assign(new Error('Git still lists the worktree after its path was removed'),{code:'WORKTREE_STILL_REGISTERED'}));
       } catch(error) { fail(relative,'deregister-failed',error); }

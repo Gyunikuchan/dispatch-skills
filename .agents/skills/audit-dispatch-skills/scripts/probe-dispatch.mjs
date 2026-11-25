@@ -28,7 +28,7 @@ import { pathToFileURL } from 'node:url';
 import { currentPlatform } from '../../../../skills/dispatch/scripts/lib/platform.ts';
 import { loadConfig as loadNativeConfig, loadReadCommands } from '../../../../skills/dispatch/scripts/lib/config.ts';
 import { LEVELS, resolveLevel } from '../../../../skills/dispatch/scripts/policy/roster.ts';
-import { createDiscovery } from '../../../../skills/dispatch/scripts/providers/discovery.ts';
+import { createNodeDiscovery } from '../../../../skills/dispatch/scripts/providers/discovery.ts';
 import { SPECS } from '../../../../skills/dispatch/scripts/providers/index.ts';
 import { nodeProcess } from '../../../../skills/dispatch/scripts/providers/node-process.ts';
 import { runDelegate } from '../../../../skills/dispatch/scripts/providers/runner.ts';
@@ -239,7 +239,7 @@ export async function discover(_mods, providers = PROVIDERS, ports = {}) {
 
 function realDiscovery() {
   const platform = currentPlatform();
-  return createDiscovery(SPECS, platform, { list: (dir) => { try { return fs.readdirSync(dir); } catch { return []; } }, exists: fs.existsSync, executable: (file) => { try { return fs.statSync(file).isFile() && (platform.os === 'win32' || (fs.statSync(file).mode & 0o111) !== 0); } catch { return false; } } });
+  return createNodeDiscovery(SPECS, platform);
 }
 
 /** @returns {'NOT FOUND'|'REACHABLE'|'UNREACHABLE'} */

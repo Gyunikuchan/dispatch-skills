@@ -45,6 +45,22 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
   'diagnostics render': { arguments: 'diagnostics render --session <session>' },
 };
 
+// The action grammar governs both generated help and CLI flag registration.
+function actionFlags(contracts: Readonly<Record<string, ActionContract>>): ReadonlyMap<string, readonly string[]> {
+  const result = new Map<string, string[]>();
+  for (const [action, contract] of Object.entries(contracts)) {
+    const flags = new Set(Array.from(contract.arguments.matchAll(/--([a-z][a-z-]*)\b/g), match => match[1]!));
+    for (const flag of flags) {
+      const actions = result.get(flag) ?? [];
+      actions.push(action);
+      result.set(flag, actions);
+    }
+  }
+  return result;
+}
+
+export const ACTION_FLAGS = actionFlags(ACTION_CONTRACTS);
+
 export const SESSION_CONTRACTS: Readonly<Record<SessionAction, ActionContract>> = {
   init: { arguments: 'session init --objective "<objective>" --host <platform> [--session-id <id>]' },
   reactivate: { arguments: 'session reactivate --session-dir <session> --host <platform>' },

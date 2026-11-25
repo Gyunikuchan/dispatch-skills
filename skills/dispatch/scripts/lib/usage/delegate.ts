@@ -1,14 +1,10 @@
-import type { DelegateResponse, DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
+import type { DelegateResponse, DiagnosticModelUsage, DiagnosticUsage } from './rows.ts';
 import { validSessionId } from '../session.ts';
-import { collectAgyUsage } from './agy.ts';
+import { USAGE_ADAPTERS } from './adapters.ts';
 import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
-import { collectClaudeUsage } from './claude.ts';
-import { collectCodexUsage } from './codex.ts';
-import { collectCopilotUsage } from './copilot.ts';
 import { mergeCopilot, type CopilotActor } from './rows.ts';
-import { collectOpencodeUsage } from './opencode.ts';
 import { baseCounters } from './read.ts';
-import { MAX_RESPONSE_AGENTS, usageKey, type DelegateQuery, type HostUsageQuery, type HostUsageResult } from './rows.ts';
+import { MAX_RESPONSE_AGENTS, usageKey, type DelegateQuery, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 export type SessionRead = { usage?: DiagnosticUsage; complete: boolean; invalidCounters?: true; responses?: DelegateResponse[] };
 
@@ -67,6 +63,17 @@ function responseCounts(query: DelegateQuery, result: HostUsageResult, incomplet
   return out;
 }
 
+const ACTIVITY_KEYS = ['turns', 'toolCalls', 'toolTurns'] as const;
+
+function activityTotals(rows: readonly UsageRow[], fallback?: Partial<Pick<UsageRow, typeof ACTIVITY_KEYS[number]>>) {
+  const totals: Partial<Pick<UsageRow, typeof ACTIVITY_KEYS[number]>> = {};
+  for (const key of ACTIVITY_KEYS) {
+    if (rows.length && rows.every(row => row[key] !== undefined)) totals[key] = rows.reduce((sum, row) => sum + row[key]!, 0);
+    else if (!rows.length && fallback?.[key] !== undefined) totals[key] = 0;
+  }
+  return totals;
+}
+
 /** Reads one delegate launch's own session data in its launch window and folds rows into banded counters. */
 export function readDelegateSession(query: DelegateQuery): SessionRead {
   if (!validSessionId(query.sessionId)) return { complete: false };
@@ -86,31 +93,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
 
   let result: HostUsageResult;
   try {
-    switch (query.platform) {
-      case 'copilot':
-        result = collectCopilotUsage(hostQuery, query.fs, { rootRole: 'delegate' });
-        break;
-      case 'claude': {
-        if (!query.cwd) return { complete: false };
-        const projectDir = query.cwd.replace(/[^A-Za-z0-9]/g, '-');
-        result = collectClaudeUsage(hostQuery, query.fs, {
-          projectDir, rootRole: 'delegate', ...(query.collectResponses ? { responseStartMs: query.startMs } : {}),
-        });
-        break;
-      }
-      case 'codex':
-        result = collectCodexUsage(hostQuery, query.fs, { rootRole: 'delegate' });
-        break;
-      case 'opencode':
-        result = collectOpencodeUsage(hostQuery, query.fs, { rootRole: 'delegate' });
-        break;
-      case 'agy':
-        result = collectAgyUsage(hostQuery, query.fs, {
-          ...(query.appDataDir ? { appDataDir: query.appDataDir } : {}),
-          rootRole: 'delegate',
-        });
-        break;
-    }
+    result = USAGE_ADAPTERS[query.platform].read(hostQuery, query.fs, query);
   } catch {
     return { complete: false };
   }
@@ -139,18 +122,8 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
 
   const models: Record<string, DiagnosticModelUsage> = boundModels(folded.models);
   const activeDelegateRows = rows.filter(r => r.role === 'delegate' && !r.skipResponse);
-  const hasDelegateRows = activeDelegateRows.length > 0;
-  const usageTurns = hasDelegateRows && activeDelegateRows.every(r => r.turns !== undefined)
-    ? activeDelegateRows.reduce((sum, r) => sum + r.turns!, 0)
-    : undefined;
-  const usageToolCalls = hasDelegateRows && activeDelegateRows.every(r => r.toolCalls !== undefined)
-    ? activeDelegateRows.reduce((sum, r) => sum + r.toolCalls!, 0)
-    : undefined;
-  const usageToolTurns = hasDelegateRows && activeDelegateRows.every(r => r.toolTurns !== undefined)
-    ? activeDelegateRows.reduce((sum, r) => sum + r.toolTurns!, 0)
-    : undefined;
-
-  if (hasDelegateRows) {
+  const activity = activityTotals(activeDelegateRows);
+  if (activeDelegateRows.length) {
     const delegateByModel = new Map<string, typeof activeDelegateRows>();
     for (const r of activeDelegateRows) {
       const rawKey = usageKey(r.model, r.effort);
@@ -159,18 +132,8 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
       list.push(r);
       delegateByModel.set(key, list);
     }
-    for (const key of Object.keys(models)) {
-      const entry = models[key]!;
-      const group = delegateByModel.get(key) ?? [];
-      if (group.length > 0) {
-        if (group.every(r => r.turns !== undefined)) entry.turns = group.reduce((s, r) => s + r.turns!, 0);
-        if (group.every(r => r.toolCalls !== undefined)) entry.toolCalls = group.reduce((s, r) => s + r.toolCalls!, 0);
-        if (group.every(r => r.toolTurns !== undefined)) entry.toolTurns = group.reduce((s, r) => s + r.toolTurns!, 0);
-      } else {
-        if (usageTurns !== undefined) entry.turns = 0;
-        if (usageToolCalls !== undefined) entry.toolCalls = 0;
-        if (usageToolTurns !== undefined) entry.toolTurns = 0;
-      }
+    for (const [key, model] of Object.entries(models)) {
+      Object.assign(model, activityTotals(delegateByModel.get(key) ?? [], activity));
     }
   }
 
@@ -179,9 +142,7 @@ export function readDelegateSession(query: DelegateQuery): SessionRead {
     ...evidence,
     usage: {
       ...folded.total,
-      ...(usageTurns === undefined ? {} : { turns: usageTurns }),
-      ...(usageToolCalls === undefined ? {} : { toolCalls: usageToolCalls }),
-      ...(usageToolTurns === undefined ? {} : { toolTurns: usageToolTurns }),
+      ...activity,
       scope: 'invocation',
       provenance: 'session',
       inputSemantics: 'uncached',

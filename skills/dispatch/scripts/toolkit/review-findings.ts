@@ -1,18 +1,19 @@
 import fs from 'node:fs';
+import { RESOLUTION_HEADING } from './domain/document-lint.ts';
 import path from 'node:path';
 import { nodeLinkFs } from '../lib/node-fs-ext.ts';
 import type { Manifest } from '../lib/session.ts';
 import { reviewId, loadRejections, type RejectionState } from './confirmations.ts';
 import { admission, renderBudget } from './findings.ts';
-import { readReviews, type ReviewRound } from './diagnostics.ts';
+import { reviewDirectory, reviewFindingsFile, reviewPointer, reviewRoundDirectory } from './review-state.ts';
+import { readReviews, type ReviewRound } from './review-storage.ts';
 import { foldLedger, latest, type Fold } from './ledger.ts';
 import { effectiveSeverity, RANK } from './domain/severity.ts';
 import type { Finding, Severity } from './domain/types.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
-import { sectionRanges, structuralLines } from './domain/plan.ts';
+import { sectionRanges, structuralLines } from './domain/markdown-structure.ts';
 import type { WalkthroughView } from './walkthrough.ts';
 
-const FINDINGS_HEADING = '## Review Findings & Resolutions';
 type ReviewRow = WalkthroughView['reviewRows'][number];
 export type RoundLink = { review: string; round: number; findings: number; path: string };
 type FindingsSectionStatus = 'updated' | 'unchanged' | 'skipped';
@@ -60,7 +61,7 @@ export function reviewRows(
       review: round.review,
       round: round.round,
       findings: findings.length,
-      path: `.state/reviews/${round.review}/round-${round.round}/findings.json`,
+      path: reviewPointer(session, reviewFindingsFile(reviewRoundDirectory(reviewDirectory(session, round.review), round.round))),
     });
     for (const raw of findings) {
       if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') continue;
@@ -150,10 +151,10 @@ function replaceFindingsSection(source: string, body: string): string {
   const eol = /\r\n|\n/.exec(source)?.[0] ?? '\n';
   const rendered = body.replace(/\r\n?/g, '\n').split('\n').join(eol);
   const lines = structuralLines(source);
-  const range = sectionRanges(lines, FINDINGS_HEADING)[0];
+  const range = sectionRanges(lines, RESOLUTION_HEADING)[0];
   if (!range) {
     const separator = !source ? '' : source.endsWith('\n') || source.endsWith('\r') ? eol : eol + eol;
-    return `${source}${separator}${FINDINGS_HEADING}${eol}${eol}${rendered}${eol}`;
+    return `${source}${separator}${RESOLUTION_HEADING}${eol}${eol}${rendered}${eol}`;
   }
 
   const starts = lineStarts(source, lines);

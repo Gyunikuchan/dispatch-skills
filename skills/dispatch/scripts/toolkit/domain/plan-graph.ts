@@ -1,6 +1,7 @@
 import type { LintDefect, ParsedPlan, PlanChange, PlanCriterion, PlanTask, PlanWarning } from './types.ts';
 import { isCriterionId } from './criterion-id.ts';
-import { PROSE_PLACEHOLDER, hasBehaviour, isFillerNote, lint } from './plan-lint.ts';
+import { hasBehaviour, isFillerNote, lint } from './document-lint.ts';
+import { PROSE_PLACEHOLDER } from './plan-lint.ts';
 import type { AuthoredTaskRow, Criterion, DraftTask } from './plan-parse.ts';
 
 // SECTION: Task graph

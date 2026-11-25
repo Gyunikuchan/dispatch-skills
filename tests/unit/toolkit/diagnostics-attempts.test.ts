@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { observeTool, optionalDiagnostics, readReviews, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
+import { optionalDiagnostics, sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { readDelegateSession } from '../../../skills/dispatch/scripts/lib/usage/delegate.ts';
@@ -18,7 +19,7 @@ import { sessionFixture } from './helpers/session.ts';
 import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
-import { recoveryTargetHash } from '../../../skills/dispatch/scripts/toolkit/status.ts';
+import { recoveryTargetHash } from '../../../skills/dispatch/scripts/toolkit/review-state.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
 
 const writeJson = (file: string, value: unknown) => {

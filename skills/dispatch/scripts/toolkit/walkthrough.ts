@@ -1,7 +1,8 @@
 import path from 'node:path';
+import { RESOLUTION_HEADING, RESOLUTION_TITLE } from './domain/document-lint.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
 import type { CoverageState } from './coverage.ts';
-import type { CriterionStatus } from './evidence.ts';
+import { criterionStatusCounts, type CriterionStatus } from './evidence.ts';
 import { renderFindingsSection, type RoundLink } from './review-findings.ts';
 import type { ReviewFixReport } from './report.ts';
 
@@ -115,7 +116,7 @@ function reviewFocus(view: WalkthroughView): string[] {
     attention.push(`- Deferred escalation ${line(item.id)} — see Deviations & Follow-ups`);
   }
   for (const row of view.reviewRows) {
-    if (row.ruling === null) attention.push(`- Open finding ${line(row.review)}:${line(row.id)} (${line(row.severity)}) — see Review Findings & Resolutions`);
+    if (row.ruling === null) attention.push(`- Open finding ${line(row.review)}:${line(row.id)} (${line(row.severity)}) — see ${RESOLUTION_TITLE}`);
   }
   for (const row of view.statuses) {
     if (row.state === 'verified') continue;
@@ -128,11 +129,11 @@ function reviewFocus(view: WalkthroughView): string[] {
   for (const file of view.unplannedPaths) attention.push(`- Unplanned path ${line(file)} — see Deviations & Follow-ups`);
   for (const row of view.reviewRows) {
     if (row.ruling === 'rejected' && (row.severity === 'MUST' || row.severity === 'SHOULD')) {
-      attention.push(`- Rejected ${line(row.severity)} finding ${line(row.review)}:${line(row.id)} — see Review Findings & Resolutions`);
+      attention.push(`- Rejected ${line(row.severity)} finding ${line(row.review)}:${line(row.id)} — see ${RESOLUTION_TITLE}`);
     }
   }
   for (const row of view.reviewRows) {
-    if (row.downgradedFrom) attention.push(`- Downgraded finding ${line(row.review)}:${line(row.id)} (${line(row.downgradedFrom)} to ${line(row.severity)}) — see Review Findings & Resolutions`);
+    if (row.downgradedFrom) attention.push(`- Downgraded finding ${line(row.review)}:${line(row.id)} (${line(row.downgradedFrom)} to ${line(row.severity)}) — see ${RESOLUTION_TITLE}`);
   }
   for (const edit of view.edits) {
     if (!['intent', 'dependency', 'discard'].includes(edit.class)) continue;
@@ -163,10 +164,7 @@ function coverageLines(state: WalkthroughView['coverage']): string[] {
 export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string {
   const statuses = view.statuses;
   const criteria = statuses.filter((row) => row.criterion !== 'contract');
-  const verified = criteria.filter((row) => row.state === 'verified').length;
-  const manual = criteria.filter((row) => row.state === 'manual').length;
-  const waived = criteria.filter((row) => row.state === 'waived').length;
-  const missing = criteria.filter((row) => row.state === 'missing').length;
+  const { verified, manual, waived, missing } = criterionStatusCounts(criteria);
   const satisfied = verified + manual + waived;
   const added = view.changes.filter((change) => change.action === 'NEW').length;
   const modified = view.changes.filter((change) => change.action === 'MODIFY').length;
@@ -273,7 +271,7 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
 
   const findingCount = view.reviewRows.length;
   const findings = renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir);
-  out.push('## Review Findings & Resolutions', '', `${findingCount} findings across ${view.reviewRounds.length} rounds (${openReviews} open)`, ...coverageLines(view.coverage), '');
+  out.push(RESOLUTION_HEADING, '', `${findingCount} findings across ${view.reviewRounds.length} rounds (${openReviews} open)`, ...coverageLines(view.coverage), '');
   if (findingCount) out.push('<details>', `<summary>Findings table (${findingCount})</summary>`, '', findings, '', '</details>', '');
   else out.push(findings, '');
 

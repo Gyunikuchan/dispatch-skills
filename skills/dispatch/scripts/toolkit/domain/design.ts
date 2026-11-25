@@ -1,16 +1,13 @@
 // Design parse + lint + governed text. Increment selection by
 // graph priority belongs to the design machine, not here.
 
-import {
-  SPEC_PIN_VALUE, boxValues, documentTitle, findPlaceholders, hasBehaviour, isFillerNote, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,
-  structuralLines, withoutSections, type PlaceholderVocabulary, type StructuralLine,
-} from './plan.ts';
+import { SPEC_PIN_VALUE, boxValues, documentTitle, EXECUTION_STATUS_HEADING, findPlaceholders, hasBehaviour, isFillerNote, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, lintSummaryBox, RESOLUTION_HEADING, type PlaceholderVocabulary } from './document-lint.ts';
+import { sectionRanges, structuralLines, withoutSections, type StructuralLine } from './markdown-structure.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
 
 const lint = (code: LintDefect['code'], line: number | null, message: string): LintDefect => ({ code, severity: 'warning', line, message });
 
 const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Increments'];
-export const EXECUTION_STATUS_HEADING = '## Execution Status';
 const REQUIRED_SECTIONS = [
   'At a Glance', 'Approach', 'Alternatives & Decisions', 'Risks, Security & Operations',
   'Architecture & Boundaries', 'Increment Dependency Graph', 'Increment Details', 'Final Integration',

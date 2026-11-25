@@ -11,8 +11,9 @@ import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/openc
 import {
   CONTINUE_PROMPT,
   IDLE_TIMEOUT_MS,
-  batchInvocation, buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
+  buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, runDelegate, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { batchInvocation, killArgv, mustSpill, sanitizeEnv } from '../../../skills/dispatch/scripts/providers/process-policy.ts';
 import type { DelegateRequest, Launch, PlatformEnv, ProcessResult, ProviderUsageContext } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = { os: 'linux', arch: 'x64', wsl: false, bubblewrap: true, argvLimit: 100000, home: '/h', path: [], pathExt: [] };
@@ -416,11 +417,10 @@ test('agy session usage unions models and effort over a table', async () => {
 });
 
 async function runAgyResumed(usages: Record<string, unknown>[], opts: Record<string, unknown> = {}) {
-  const { agy } = await import('../../../skills/dispatch/scripts/providers/agy.ts');
   const h = harness(posix);
   let call = 0;
   const spec = {
-    ...makeNudgeSpec('sess-agy'), id: 'agy' as const, resumeUsage: 'cumulative' as const,
+    ...makeNudgeSpec('sess-agy'), id: agy.id, resumeUsage: agy.resumeUsage, invocationAttribution: agy.invocationAttribution,
     usage: () => usages[Math.min(call++, usages.length - 1)],
   };
   const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low', ...opts }, 'cli', h.ports);
@@ -444,7 +444,7 @@ test('agy resumed delta attributes only the newly observed model and effort', as
   assert.equal(unchanged.invocations[1]?.usage?.models, undefined);
   const h = harness(posix);
   const multi = { ...base, input: 100, output: 20, actualModels: ['first-model', 'second-model'], actualEffort: 'medium', models: { 'first-model': { input: 60, output: 10 }, 'second-model': { input: 40, output: 10 } } };
-  const spec = { ...makeNudgeSpec('sess-multi'), id: 'agy' as const, resumeUsage: 'cumulative' as const, usage: () => multi };
+  const spec = { ...makeNudgeSpec('sess-multi'), id: agy.id, resumeUsage: agy.resumeUsage, invocationAttribution: agy.invocationAttribution, usage: () => multi };
   const pending = runDelegate(spec, { ...req, collectUsage: true, model: 'launch-model', effort: 'low' }, 'cli', h.ports);
   await flush(); h.finish(ok({ stdout: 'FINAL' }));
   assert.equal((await pending).invocations[0]?.model, 'first-model');

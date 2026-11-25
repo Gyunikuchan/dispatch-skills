@@ -1,11 +1,13 @@
+import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundFile, reviewFindingsFile, reviewGenerationDirectory, reviewSlotFile, type ReviewTarget, reviewRoundEntries } from './review-state.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Manifest } from '../lib/session.ts';
 import type { Finding, RosterSlot } from './domain/types.ts';
 import type { SlotOutcome } from './fanout.ts';
-import type { FindingsValue, ReviewTarget } from './findings.ts';
+import type { FindingsValue } from './findings.ts';
 import { latest, type Fold } from './ledger.ts';
+import { integrationRecord } from './integration-state.ts';
 import type { LedgerRecord } from './records.ts';
 import { ToolError } from './output.ts';
 import { parseReport } from './domain/report.ts';
@@ -89,8 +91,8 @@ export function applicableReviewIds(manifest:Manifest,fold:Fold): Selection {
     const artifact=canonical(path.resolve(manifest.repositoryRoot,bind.data[kind]));
     selected.set(reviewId(kind,artifact),metadata=>canonical(metadata.spec.path)===spec && (!metadata.artifactPath || canonical(metadata.artifactPath)===artifact));
   }
-  const opened=fold.records.findLast(row=>row.kind==='integrate' && row.data['phase']==='opened');
-  if(opened)selected.set('code-integration',metadata=>canonical(metadata.spec.path)===spec && typeof metadata.target!=='string' && metadata.target.base===opened.data['base']);
+  const opened = integrationRecord(fold);
+  if(opened)selected.set(INTEGRATION_REVIEW,metadata=>canonical(metadata.spec.path)===spec && typeof metadata.target!=='string' && metadata.target.base===opened.data['base']);
   return selected;
 }
 export function loadRejections(session:string,fold:Fold,selected: readonly string[] | Selection): RejectionState[] {
@@ -98,22 +100,22 @@ export function loadRejections(session:string,fold:Fold,selected: readonly strin
   const entries=Array.isArray(selected)?selected.map(id=>[id,()=>true] as const):[...(selected as Selection)];
   for(const [review,applies] of entries) {
     if(!fold.records.some(row=>row.kind==='ruling' && row.data['subject'].startsWith('review:'+review+':') && row.data['ruling']==='rejected'))continue;
-    const directory=path.join(session,'.state/reviews',review);
+    const directory=reviewDirectory(session, review);
     if(!fs.existsSync(directory))continue;
-    for(const name of fs.readdirSync(directory).filter(name=>/^round-\d+$/.test(name)).sort((a,b)=>Number(a.slice(6))-Number(b.slice(6)))) {
+    for (const {name} of reviewRoundEntries(fs.readdirSync(directory))) {
       const dir=path.join(directory,name);
-      if(!fs.existsSync(path.join(dir,'round.json')) && fs.readdirSync(dir).length===0)continue;
+      if(!fs.existsSync(reviewRoundFile(dir)) && fs.readdirSync(dir).length===0)continue;
       try {
-        const metadata=JSON.parse(fs.readFileSync(path.join(dir,'round.json'),'utf8'));
+        const metadata=JSON.parse(fs.readFileSync(reviewRoundFile(dir),'utf8'));
         if(!metadata.spec?.path || !metadata.target)throw new Error('Invalid round');
         if(!applies(metadata))continue;
         if(!metadata.spec?.hash || !Array.isArray(metadata.roster))throw new Error('Invalid round');
-        if(!fs.existsSync(path.join(dir,'findings.json')))continue;
-        const findings=JSON.parse(fs.readFileSync(path.join(dir,'findings.json'),'utf8'));
+        if(!fs.existsSync(reviewFindingsFile(dir)))continue;
+        const findings=JSON.parse(fs.readFileSync(reviewFindingsFile(dir),'utf8'));
         if(!Array.isArray(findings.findings) || findings.findings.some((f:Finding)=>!f || typeof f.id!=='string' || !['MUST','SHOULD','CONSIDER'].includes(f.severity) || !Array.isArray(f.sources) || f.sources.some(source=>typeof source!=='string')))throw new Error('Invalid findings');
         findings.confirmations=(Array.isArray(findings.confirmations)?findings.confirmations:[]).filter((reply:RejectionReply)=>{
           try {
-            const saved=JSON.parse(fs.readFileSync(path.join(dir,'gen-'+metadata.generation,'slots',reply.sourceSlot+'.json'),'utf8'));
+            const saved=JSON.parse(fs.readFileSync(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), reply.sourceSlot),'utf8'));
             if(saved.state!=='done' || saved.slot!==reply.sourceSlot || JSON.stringify(saved.responder)!==JSON.stringify(reply.responder))return false;
             const expectedRequestIds=(metadata.requests ?? []).filter((request:RejectionRequest)=>request.sourceSlots.includes(reply.sourceSlot)).map((request:RejectionRequest)=>request.requestId);
             const parsed=parseReport({kind:review.startsWith('code-')?'code':review.startsWith('design-')?'design':'plan',source:reply.sourceSlot,text:saved.text,expectedRequestIds});

@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { describe, test } from 'node:test';
-import { initializeSession } from '../../skills/dispatch/scripts/lib/session.ts';
+import { initSession } from '../../skills/dispatch/scripts/lib/session.ts';
 import { publishQuotaFailure, readQuotaState, reprobeQuota } from '../../skills/dispatch/scripts/lib/quota-store.ts';
 import { H, quotaSnapshot } from '../../skills/dispatch/scripts/policy/quota.ts';
 import type { QuotaKey } from '../../skills/dispatch/scripts/toolkit/types.ts';
@@ -21,7 +21,7 @@ const entry = fileURLToPath(new URL('../../skills/dispatch/scripts/dispatch.ts',
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-state-')), repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  const sessionDir = initializeSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') });
+  const sessionDir = initSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
   const capture = (keys: QuotaKey[] = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);
@@ -53,7 +53,7 @@ describe('quota state survives sessions and reprobe races', () => {
       assert.equal(publishQuotaFailure(f.options, key, generation, now).published, true);
       const state = await f.subprocess('const s=store.readQuotaState(x.options,[x.key],x.now); console.log(JSON.stringify(policy.quotaSnapshot([x.key],s.generations,s.observations,x.now).decisions[0]));', { options: f.options, key, now: now + 1 });
       assert.equal(state.skipped, true);
-      const other = initializeSession({ repositoryRoot: f.repo, sessionId: crypto.randomUUID(), sessionTitle: 'Other quota fixture', now: new Date('2026-10-19T00:01:00Z') });
+      const other = initSession({ repositoryRoot: f.repo, sessionId: crypto.randomUUID(), sessionTitle: 'Other quota fixture', now: new Date('2026-10-19T00:01:00Z') }).path;
       assert.equal(readQuotaState({ ...f.options, sessionDir: other }, [key], now + 1).observations.length, 0);
       assert.equal(f.capture([key], now + H).snapshot.decisions[0]!.skipped, false);
       const records = fs.readdirSync(f.quotaDir()).map((name) => fs.readFileSync(path.join(f.quotaDir(), name), 'utf8')).join('');

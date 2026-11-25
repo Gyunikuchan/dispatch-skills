@@ -1,9 +1,8 @@
+import { readStoredJson, reviewRoundDirectory, reviewRoundFile, reviewFindingsFile, reviewGenerationDirectory, reviewRoundEntries, reviewSlotFile } from './review-state.ts';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { UserDecision } from './domain/prompt.ts';
 import type { RosterSlot } from './domain/types.ts';
 import type { BlockedAttempt, SlotOutcome } from './fanout.ts';
-import { read } from './findings.ts';
 import { clipBytes } from './output.ts';
 import type { LedgerRecord } from './records.ts';
 
@@ -14,15 +13,16 @@ const BLOCKED_NOTICE_BYTES = 400; // Leaves the summary room for counts and at l
 
 /** Blocked attempts of one round, read from its current generation so a resumed pending run keeps them. */
 function blockedEntries(directory: string, number: number): BlockedEntry[] {
-  const root = path.join(directory, 'round-' + number), metadata = read<{generation: number; roster: RosterSlot[]}>(path.join(root, 'round.json'));
+  const root = reviewRoundDirectory(directory, number), metadata = readStoredJson<{generation: number; roster: RosterSlot[]}>(reviewRoundFile(root));
   if (!metadata) return [];
-  const slots = path.join(root, 'gen-' + metadata.generation, 'slots');
-  return metadata.roster.flatMap(slot => (read<SlotOutcome>(path.join(slots, slot.slot + '.json'))?.blocked ?? []).map(entry => ({slot: slot.slot, ...entry})));
+  const generation = reviewGenerationDirectory(root, metadata.generation);
+  return metadata.roster.flatMap(slot => (readStoredJson<SlotOutcome>(reviewSlotFile(generation, slot.slot))?.blocked ?? []).map(entry => ({slot: slot.slot, ...entry})));
 }
 
 /** Same slot and reason identity in the nearest earlier round that has findings; a narrowed slot has no partner. */
 function blockersFor(directory: string, number: number, blocked: readonly BlockedEntry[]): BlockerEntry[] {
-  const previous = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).filter(candidate => candidate < number && fs.existsSync(path.join(directory, 'round-' + candidate, 'findings.json'))).sort((left, right) => right - left)[0];
+  const previous = reviewRoundEntries(fs.readdirSync(directory)).findLast(({number: candidate}) =>
+    candidate < number && fs.existsSync(reviewFindingsFile(reviewRoundDirectory(directory, candidate))))?.number;
   if (previous === undefined) return [];
   const prior = new Set(blockedEntries(directory, previous).map(entry => entry.slot + '\0' + entry.reasonHash)), seen = new Set<string>(), blockers: BlockerEntry[] = [];
   for (const entry of blocked) {

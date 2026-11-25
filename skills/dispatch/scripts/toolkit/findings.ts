@@ -1,7 +1,8 @@
+import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundDirectory, reviewRoundFile, reviewFindingsFile, readStoredJson, type ReviewTarget, reviewRoundEntries } from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { collectFindings, isUnresolvedLocus, matchFinding, parseReport } from './domain/report.ts';
-import { structuralLines } from './domain/plan.ts';
+import { structuralLines } from './domain/markdown-structure.ts';
 import type { Finding, ReviewKind } from './domain/types.ts';
 import type { SlotOutcome } from './fanout.ts';
 import type { LedgerRecord, RecordInput } from './records.ts';
@@ -11,7 +12,6 @@ import { parseRepositoryNoteKey } from './ledger.ts';
 import { coverageState, type CoverageApplies, type CoverageDecision, type CoverageState } from './coverage.ts';
 import { ToolError } from './output.ts';
 import { loadRejections, rejectionState, type RejectionRequest, type RejectionReply, type ConfirmationRound } from './confirmations.ts';
-export type ReviewTarget = string | {base: string; head: string};
 type ReviewedFinding = Finding & {recurrence?: {of: string}; unresolved?: {of: string}};
 export type RepositoryChange = { cwd: string; paths: string[] };
 export type RepositoryCheckState = { state: 'unavailable'; reason: string };
@@ -151,10 +151,6 @@ export function findingUnits(input: {kind: ReviewKind; round: number; rounds: re
   });
 }
 // SECTION: Review budget
-export function read<T>(file: string): T | null {
-  try {return JSON.parse(fs.readFileSync(file, 'utf8')) as T;}
-  catch (error) {if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error;}
-}
 const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/;
 /**
  * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
@@ -189,8 +185,8 @@ export type ReviewBudget = {cap: number; ceiling: number; nextRound: number; asO
 type ReportContent = { seq: number; repositoryChanges?: RepositoryChange[]; repositoryCheck?: RepositoryCheckState };
 export function contentReports(session: string, review: string, round: number): ReportContent[] {
   const out: ReportContent[] = [];
-  const dir = path.join(session, '.state/reviews', review, 'round-' + round);
-  const findings = read<FindingsValue & {asOfSeq?: number; budget?: {asOfSeq?: number}}>(path.join(dir, 'findings.json'));
+  const dir = reviewRoundDirectory(reviewDirectory(session, review), round);
+  const findings = readStoredJson<FindingsValue & {asOfSeq?: number; budget?: {asOfSeq?: number}}>(reviewFindingsFile(dir));
   const findingsHas = (Array.isArray(findings?.repositoryChanges) && findings.repositoryChanges.length > 0) || !!findings?.repositoryCheck;
   // The finalized findings copy carries the same durable identity as its
   // per-generation checkout report: finalize persists asOfSeq into
@@ -315,27 +311,28 @@ export function checkoutReportsFor(dir: string, gen: string): CheckoutReportRead
   return files
     .filter(file => /^checkout-report(-\d+)?\.json$/.test(file))
     .sort((left, right) => attemptNumber(left) - attemptNumber(right))
-    .map(file => read<CheckoutReportRead>(path.join(dir, gen, file)))
+    .map(file => readStoredJson<CheckoutReportRead>(path.join(dir, gen, file)))
     .filter((report): report is CheckoutReportRead => report !== null);
 }
 
 export function admission(session: string, fold: Fold, review: string, cap: number, applies?: CoverageApplies): {budget: ReviewBudget; rounds: number} {
-  const directory = path.join(session, '.state/reviews', review), file = (round: number, name: string) => path.join(directory, 'round-' + round, name);
-  const numbers = fs.readdirSync(directory).flatMap(name => /^round-(\d+)$/.test(name) ? [Number(name.slice(6))] : []).sort((a, b) => a - b);
+  const directory = reviewDirectory(session, review);
+  const roundDir = (round: number) => reviewRoundDirectory(directory, round);
+  const numbers = reviewRoundEntries(fs.readdirSync(directory)).map(entry => entry.number);
   const last = numbers.at(-1) ?? 0;
   // An all-failed round has no findings.json but keeps its failed report: a
   // quoted rerun note naming it completes its number, so the next call starts
   // the authorized fresh whole-target rerun instead of retrying failed fan-out.
-  let completed = last > 0 && fs.existsSync(file(last, 'findings.json'));
+  let completed = last > 0 && fs.existsSync(reviewFindingsFile(roundDir(last)));
   if (!completed && last > 0 && repositoryRerunRounds(fold, review).includes(last)) {
     const seqs = reportSeqs(session, review, last);
     if (seqs.length && !isReportsClosed(fold, review, last, seqs) && rerunGranted(session, fold, review, last)) completed = true;
   }
   const n = completed ? last + 1 : last || 1;
-  const cap1 = read<{cap: number}>(file(1, 'round.json'))?.cap ?? cap, ceiling = ceilingState(fold.records, review, cap1);
-  const rulings = fold.records.filter(row => row.kind === 'ruling'), startSeq = read<{startSeq?: number}>(file(n - 1, 'round.json'))?.startSeq ?? 0;
+  const cap1 = readStoredJson<{cap: number}>(reviewRoundFile(roundDir(1)))?.cap ?? cap, ceiling = ceilingState(fold.records, review, cap1);
+  const rulings = fold.records.filter(row => row.kind === 'ruling'), startSeq = readStoredJson<{startSeq?: number}>(reviewRoundFile(roundDir(n - 1)))?.startSeq ?? 0;
   const rejections = loadRejections(session, fold, [review]), pending = rejections.some(state => state.state === 'pending');
-  const fixed = numbers.some(number => read<FindingsValue>(file(number, 'findings.json'))?.findings.some(finding => {
+  const fixed = numbers.some(number => readStoredJson<FindingsValue>(reviewFindingsFile(roundDir(number)))?.findings.some(finding => {
     const history = rulings.filter(row => row.data['subject'] === 'review:' + review + ':' + finding.id), ruling = history.at(-1);
     return effectiveSeverity(finding, history) === 'MUST' && ruling?.data['ruling'] === 'accepted' && (number === n - 1 || ruling.seq > startSeq);
   }));
@@ -360,12 +357,12 @@ export function admission(session: string, fold: Fold, review: string, cap: numb
   }
   // SECTION: Coverage rows (code-integration only); escalation, ceiling and accepted-MUST rules stay first.
   let coverage: BudgetCoverage | undefined, use: 'free' | 'grant' | undefined, folded: CoverageState | undefined;
-  if (review === 'code-integration') {
+  if (review === INTEGRATION_REVIEW) {
     try { folded = coverageState(session, fold, review, applies); }
     catch (error) { if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error; coverage = {state: 'unreadable'}; }
   }
   if (folded) {
-    const saved = folded.incomplete === n ? read<{coverageUse?: 'free' | 'grant'}>(file(n, 'round.json'))?.coverageUse : undefined;
+    const saved = folded.incomplete === n ? readStoredJson<{coverageUse?: 'free' | 'grant'}>(reviewRoundFile(roundDir(n)))?.coverageUse : undefined;
     if ((state === 'allowed' || state === 'requires-continuation') && !past) {
       if (saved) {state = 'allowed'; use = saved;}
       else if (!fixed && !pending && folded.open.length && n !== last) {

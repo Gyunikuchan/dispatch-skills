@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { KILL_ESCALATION_MS, sanitizeEnv, waitWithin } from './runner.ts';
+import { KILL_ESCALATION_MS, sanitizeEnv, waitWithin } from './process-policy.ts';
 import { nodeProcess } from './node-process.ts';
 import { unsupportedStandaloneDiagnostic } from './opencode.ts';
 import type { DelegateRequest, LifecycleStep, PreparePorts, ProcessResult } from './types.ts';

@@ -1,13 +1,11 @@
-import type { DiagnosticUsage } from '../../toolkit/types.ts';
+import type { DiagnosticUsage } from './rows.ts';
 import { opencodeDbPath } from '../opencode-db.ts';
 import { count, note, readErrorReason, row, stageAt, type Row } from './read.ts';
 import { addCounters, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 export const opencode: HostUsageAdapter = {
   sessionEnv: ['OPENCODE_SESSION_ID'],
-  read(query, fs) {
-    return collectOpencodeUsage(query, fs);
-  },
+  read: (query, fs, delegate) => collectOpencodeUsage(query, fs, delegate ? { rootRole: 'delegate' } : undefined),
 };
 
 export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { rootRole?: 'host' | 'delegate' }): HostUsageResult {
@@ -79,6 +77,8 @@ export function collectOpencodeUsage(query: HostUsageQuery, fs: HostUsageFs, opt
   return result;
 }
 
+export const OPENCODE_COMPLETION_USAGE = 'opencode.step.finish';
+
 /** OpenCode `run --format json`: one `step_finish` per turn carries usage; `tokens.input` already excludes cache reads. */
 export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
@@ -90,7 +90,7 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
     const rawInput = tokens?.['input'], rawOutput = tokens?.['output'];
     if (!tokens || !count(rawInput) || !count(rawOutput)) return undefined;
     const cache = row(tokens['cache']);
-    const usage: DiagnosticUsage = { input: rawInput, output: rawOutput, scope: 'invocation', provenance: 'opencode.step.finish', inputSemantics: 'uncached' };
+    const usage: DiagnosticUsage = { input: rawInput, output: rawOutput, scope: 'invocation', provenance: OPENCODE_COMPLETION_USAGE, inputSemantics: 'uncached' };
     for (const [key, value] of [['reasoning', tokens['reasoning']], ['cacheRead', cache?.['read']], ['cacheWrite', cache?.['write']]] as const) {
       if (value === undefined) continue;
       if (!count(value)) return undefined;

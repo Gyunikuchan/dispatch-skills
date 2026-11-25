@@ -3,15 +3,12 @@ import * as zlib from 'node:zlib';
 import type { ProviderKey } from '../platform.ts';
 import { readOpencodeMessages } from '../opencode-db.ts';
 import { validSessionId } from '../session.ts';
-import { agy, readAgySqliteGenMetadata } from './agy.ts';
-import { claudeCode } from './claude.ts';
-import { codex } from './codex.ts';
-import { copilot } from './copilot.ts';
+import { USAGE_ADAPTERS } from './adapters.ts';
+import { readAgySqliteGenMetadata } from './agy.ts';
 import { mergeCopilot } from './rows.ts';
-import { opencode } from './opencode.ts';
-import { boundModels, foldRows, OTHER_KEY, type BandedCounters } from './bands.ts';
+import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
-import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey, type Counters, type HostResponseAggregate, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type HostUsageResult, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
+import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey, type BandedCounters, type Counters, type HostResponseAggregate, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFacts, type HostUsageFs, type HostUsageRow, type HostUsageResult, type Milestone, type PhaseMilestone, type UsageRow } from './rows.ts';
 
 function foldHostRows(
   rows: readonly (UsageRow & { stage: HostStage })[],
@@ -156,14 +153,13 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
   }
   return aggregates;
 }
-const ADAPTERS: Partial<Record<ProviderKey, HostUsageAdapter>> = { agy, claude: claudeCode, codex, opencode, copilot };
 export function hostSessionId(platform: ProviderKey | null, env: (name: string) => string | undefined): string | undefined {
-  const adapter = platform ? ADAPTERS[platform] : undefined;
+  const adapter = platform ? USAGE_ADAPTERS[platform] : undefined;
   const sessionId = adapter?.sessionEnv.map(env).find(Boolean);
   return sessionId && validSessionId(sessionId) ? sessionId : undefined;
 }
 type HostUsageInput = { startMs: number; endMs: number; home: string; env: (name: string) => string | undefined; stages: readonly Milestone[]; phases?: readonly PhaseMilestone[] };
-export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = ADAPTERS): HostUsageFacts {
+export function readHostUsage(platform: ProviderKey | null, input: HostUsageInput, fsPort: HostUsageFs, adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = USAGE_ADAPTERS): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
   if (!adapter) return { platform, rows: [], unavailable: 'no adapter' };
   const sessionId = adapter.sessionEnv.map(input.env).find(Boolean);

@@ -2,105 +2,23 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { delegateResponseActor } from '../lib/usage/delegate.ts';
-import type { Invocation } from '../providers/types.ts';
-import { hostSessionId, readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
+import { readHostUsage, nodeHostUsageFs } from '../lib/usage/index.ts';
 import { readErrorReason } from '../lib/usage/read.ts';
 import { type HostStage, type HostUsageFacts, type Milestone, type PhaseMilestone } from '../lib/usage/rows.ts';
 import type { ProviderKey } from '../lib/platform.ts';
-import { addYield, billedTokens, normalizeUsage, renderDiagnostics, retroObservations, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
+import { addYield, billedTokens, renderDiagnostics, retroObservations, sanitizeFacts, type InvocationFacts, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts } from './domain/diagnostics.ts';
 import { recoveryRef } from './domain/diagnostics-gates.ts';
-import { containedSessionPath, foldLedger, latest, type Fold } from './ledger.ts';
+import { completeDelegateResponses } from './domain/diagnostics-types.ts';
+import { foldLedger, latest, type Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { launches } from './writers.ts';
 import { ToolError } from './output.ts';
-import { generateSkillHashes, readVersion } from '../lib/integrity.ts';
-import { loadConfig } from '../lib/config.ts';
+import { CAPTURE_FAILURE_SUFFIX, captureDirectory, diagnosticSubject, diagnosticsEnabled, hostThreadId } from './diagnostics-capture.ts';
 import { loadPricing, type Pricer } from '../lib/pricing.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { CliDeps, HandlerContext, HandlerResult } from './cli.ts';
-import { recoveryTargetHash } from './status.ts';
-
-type RosterSlot = {slot: string; provider?: string; model?: string | readonly string[]; effort?: string; native?: boolean; reserve?: boolean};
-type SlotOutcome =
-  | {slot: string; state: 'done'; responder?: {slot: string; provider: string; model: string | null; native: boolean; effort?: string}}
-  | {slot: string; state: 'native'; provider?: string; model?: string | readonly string[]; effort?: string; error?: string; cliFallback?: true}
-  | {slot: string; state: 'failed'; cls: string};
-type ReviewedFinding = {
-  id: string;
-  severity?: string;
-  sources?: string[];
-  recurrence?: {of: string};
-  unresolved?: {of: string};
-  origin?: string;
-};
-type FindingsFile = {review?: string; findings?: ReviewedFinding[]};
-type RoundFile = {round: number; generation: number; cap: number; roster: RosterSlot[]};
-
-export type ReviewRound = {
-  review: string;
-  round: number;
-  cap: number;
-  roster: RosterSlot[];
-  generation: number;
-  slots: SlotOutcome[];
-  findings: FindingsFile | null;
-};
-
-function readJson<T>(file: string): T | null {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    if (error instanceof SyntaxError) throw new ToolError(2, 'review-corrupt', `Malformed review JSON at ${file}`);
-    throw error;
-  }
-}
-
-function entriesOrEmpty(directory: string): fs.Dirent[] {
-  try {
-    return fs.readdirSync(directory, {withFileTypes: true});
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-}
-
-/** Reads initialized rounds and their current-generation slot and findings files. */
-export function readReviews(session: string): ReviewRound[] {
-  const root = path.join(session, '.state', 'reviews');
-  const rounds: ReviewRound[] = [];
-  for (const reviewEntry of entriesOrEmpty(root).filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
-    const reviewRoot = path.join(root, reviewEntry.name);
-    for (const roundEntry of entriesOrEmpty(reviewRoot).filter((entry) => entry.isDirectory())) {
-      const roundRoot = path.join(reviewRoot, roundEntry.name);
-      const round = readJson<RoundFile>(path.join(roundRoot, 'round.json'));
-      if (!round) continue;
-      const roster = Array.isArray(round.roster) ? round.roster : [];
-      const rosterIds = new Set(roster.map((slot) => slot['slot']));
-      const slotRoot = path.join(roundRoot, `gen-${round.generation}`, 'slots');
-      const bySlot = new Map<string, SlotOutcome>();
-      for (const slotEntry of entriesOrEmpty(slotRoot).filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name))) {
-        const outcome = readJson<SlotOutcome>(path.join(slotRoot, slotEntry.name));
-        if (outcome && rosterIds.has(outcome.slot)) bySlot.set(outcome.slot, outcome);
-      }
-      const slots = roster.flatMap((slot) => {
-        const outcome = bySlot.get(slot['slot']);
-        return outcome ? [outcome] : [];
-      });
-      rounds.push({
-        review: reviewEntry.name,
-        round: round.round,
-        cap: round.cap,
-        roster,
-        generation: round.generation,
-        slots,
-        findings: readJson<FindingsFile>(path.join(roundRoot, 'findings.json')),
-      });
-    }
-  }
-  return rounds.sort((a, b) => a.review.localeCompare(b.review) || a.round - b.round);
-}
+import { reviewDirectory, reviewFindingsFile, reviewGenerationDirectory, reviewRoot, reviewRoundDirectory, reviewRoundFile } from './review-state.ts';
+import { entriesOrEmpty, readReviewJson, reviewDirectories, reviewSlotEntries, reviewSlotsDirectory, type FindingsFile, type ReviewRound, type RoundFile, type SlotOutcome } from './review-storage.ts';
 
 function invocation(round: ReviewRound, slot: SlotOutcome): InvocationFacts {
   const target = round.roster.find(row => row.slot === slot['slot']);
@@ -254,17 +172,6 @@ export function stageMilestones(fold: Fold, captures: readonly RunFacts[], start
 // Host milestone name for a round; the review hash keeps it within the phase key gate.
 const roundPhase = (review: string, round: number) => `round-${review.slice(7)}-${round}`;
 
-export function hostThreadId(
-  platform: ProviderKey | null,
-  env: Record<string, string | undefined>,
-  sessionPath: string,
-): string | undefined {
-  if (!platform) return undefined;
-  const id = hostSessionId(platform, (name) => env[name]);
-  if (!id) return undefined;
-  return crypto.createHmac('sha256', path.resolve(sessionPath)).update(JSON.stringify([platform, id])).digest('hex').slice(0, 16);
-}
-
 /**
  * Each window closes at its last run, ruling or fix-review-lite note, before the next round starts.
  * A capture belongs to the window holding its start, so closed windows never change on a later render.
@@ -312,25 +219,17 @@ function roundTimeline(
     }
     return Math.min(close, nextStart - 1);
   });
-  const calls = new Map<number, Map<string, number>>();
-  const roundCaptures = new Map<number, { host?: string; hostThread?: string }[]>();
+  const activity = new Map<number, { calls: Map<string, number>; captures: RunFacts[] }>();
   for (const capture of measured) {
     const start = capture.capture?.start;
     if (start === undefined) continue;
-    let index = -1;
-    timeline.forEach((round, i) => { if (round.start <= start) index = i; });
+    const index = timeline.findLastIndex(round => round.start <= start);
     if (index < 0 || start > closes[index]!) continue;
-    const captures = roundCaptures.get(index) ?? [];
-    captures.push({
-      ...(capture.host === undefined ? {} : { host: capture.host }),
-      ...(capture.hostThread === undefined ? {} : { hostThread: capture.hostThread }),
-    });
-    roundCaptures.set(index, captures);
+    const entry = activity.get(index) ?? {calls: new Map<string, number>(), captures: []};
+    entry.captures.push(capture);
     const key = callKey(capture);
-    if (key === undefined) continue;
-    const counts = calls.get(index) ?? new Map<string, number>();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-    calls.set(index, counts);
+    if (key !== undefined) entry.calls.set(key, (entry.calls.get(key) ?? 0) + 1);
+    activity.set(index, entry);
   }
   const reviewerTurnsFor = (round: YieldRound): Pick<RoundWorkload, 'reviewerTurns' | 'reviewerTurnsPartial'> => {
     const activeSlots = round.roster.filter(s => !s.reserve);
@@ -346,15 +245,7 @@ function roundTimeline(
       let slotTurns = 0;
       let cliObserved = cliInvocations.length > 0;
       for (const inv of cliInvocations) {
-        let turns: number | undefined;
-        if (inv.usage?.turns !== undefined) {
-          turns = inv.usage.turns;
-        } else if (inv.usageSource !== 'stdout' && !inv.coverage?.includes('transcript unavailable')) {
-          const delegateResponses = (inv.responses ?? []).filter(r => r.role === 'delegate');
-          if (delegateResponses.length > 0 && delegateResponses.every(r => r.coverage === 'complete' && r.observed !== undefined)) {
-            turns = delegateResponses.reduce((sum, r) => sum + r.observed!, 0);
-          }
-        }
+        const turns = inv.usage?.turns ?? completeDelegateResponses(inv)?.reduce((sum, response) => sum + response.observed, 0);
         if (turns === undefined) { cliObserved = false; break; }
         slotTurns += turns;
       }
@@ -374,8 +265,9 @@ function roundTimeline(
     const kind = (['plan', 'design', 'code'] as const).find(kind => round.review.startsWith(kind + '-'));
     const row: RoundWorkload = { review, ...(kind ? { kind } : {}), round: round.round, ...reviewerTurnsFor(round) };
     if (index < 0) return row;
-    capturesByRound.set(`${review}#${round.round}`, roundCaptures.get(index) ?? []);
-    const phases = [...(calls.get(index) ?? new Map<string, number>())].map(([key, count]) => ({key, count}))
+    const entry = activity.get(index);
+    capturesByRound.set(`${review}#${round.round}`, entry?.captures ?? []);
+    const phases = [...(entry?.calls ?? [])].map(([key, count]) => ({key, count}))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
     return {...row, calls: {total: phases.reduce((sum, p) => sum + p.count, 0), phases}};
   });
@@ -417,32 +309,32 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
     catch { issue('unreadable'); return []; }
   };
   const read = (file: string): unknown => {
-    try { return readJson<unknown>(file); }
+    try { return readReviewJson<unknown>(file); }
     catch(error) { issue(error instanceof ToolError && error.reason==='review-corrupt' ? 'corrupt' : 'unreadable'); return undefined; }
   };
   const rounds: YieldRound[] = [];
-  const hash=(value:string)=>crypto.createHash('sha256').update(value).digest('hex').slice(0,16);
-  const root = path.join(session,'.state','reviews');
-  for (const review of entries(root).filter(e=>e.isDirectory())) {
-    const reviewRoot=path.join(root,review.name);
-    for (const entry of entries(reviewRoot).filter(e=>e.isDirectory())) {
-      const roundRoot=path.join(reviewRoot,entry.name), value=read(path.join(roundRoot,'round.json'));
+  const root = reviewRoot(session);
+  for (const review of reviewDirectories(root, entries)) {
+    const reviewDir = reviewDirectory(session, review.name);
+    for (const entry of reviewDirectories(reviewDir, entries)) {
+      const roundRoot=path.join(reviewDir,entry.name), value=read(reviewRoundFile(roundRoot));
       if(value===undefined) continue;
       if(!object(value)||!Number.isSafeInteger(value['round'])||value['round']<1||!Number.isSafeInteger(value['generation'])||value['generation']<1||!Number.isSafeInteger(value['cap'])||!Array.isArray(value['roster'])||!value['roster'].every((r:unknown)=>object(r)&&typeof r['slot']==='string')) { issue('corrupt');continue; }
       const round=value as RoundFile, slots:SlotOutcome[]=[];
-      for(const file of entries(path.join(roundRoot,`gen-${round.generation}`,'slots')).filter(e=>e.isFile()&&e.name.endsWith('.json'))) {
-        const slot=read(path.join(roundRoot,`gen-${round.generation}`,'slots',file.name));
+      const slotDir = reviewSlotsDirectory(roundRoot, round.generation);
+      for(const file of reviewSlotEntries(slotDir, entries)) {
+        const slot=read(path.join(slotDir,file.name));
         if(slot===undefined)continue;
         if(!object(slot)||!round.roster.some(r=>r['slot']===slot['slot'])||!['done','native','failed'].includes(slot['state'])) {issue('corrupt');continue;}
         slots.push(slot as SlotOutcome);
       }
-      const findings=read(path.join(roundRoot,'findings.json'));
+      const findings=read(reviewFindingsFile(roundRoot));
       const valid=findings===null || (object(findings)&&Array.isArray(findings['findings'])&&findings['findings'].every((f:unknown)=>object(f)&&typeof f['id']==='string'));
       if(findings!==undefined&&!valid)issue('corrupt');
-      const generations=[...new Set(entries(roundRoot).filter(e=>e.isDirectory()&&/^gen-\d+$/.test(e.name)).map(e=>Number(e.name.slice(4))))];
+      const generations=[...new Set(reviewDirectories(roundRoot, entries).filter(e=>/^gen-\d+$/.test(e.name)).map(e=>Number(e.name.slice(4))))];
       if(!generations.includes(round.generation))generations.push(round.generation);
       rounds.push({review:review.name,round:round.round,cap:round.cap,generation:round.generation,roster:round.roster,slots,findings:valid?findings as FindingsFile|null:null,
-        generations:generations.sort((a,b)=>a-b).map(generation=>({generation,subject:hash(path.join(roundRoot,`gen-${generation}`))}))});
+        generations:generations.sort((a,b)=>a-b).map(generation=>({generation,subject:diagnosticSubject(reviewGenerationDirectory(roundRoot, generation))}))});
     }
   }
   rounds.sort((a,b)=>a.review.localeCompare(b.review)||a.round-b.round);
@@ -450,13 +342,16 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   const storageFailures=new Map<string,number>();
   const recoverySelections: NonNullable<RunFacts['recoverySelections']> = [];
   const recoveryExecutions: NonNullable<RunFacts['recoveryExecutions']> = [];
-  const directory=path.join(session,'.state','diagnostics');
+  const directory = captureDirectory(session);
   for(const entry of entries(directory).filter(e=>e.isFile()&&e.name.endsWith('.json'))) {
     const raw=read(path.join(directory,entry.name));
     if(raw===undefined)continue;
-    if(object(raw)&&raw['kind']==='storage-failure'&&entry.name.endsWith('.json.failure.json')) {
+    if(object(raw)&&raw['kind']==='storage-failure'&&entry.name.endsWith('.json' + CAPTURE_FAILURE_SUFFIX)) {
       const failures=raw['count'];
-      if(Number.isSafeInteger(failures)&&failures>0)storageFailures.set(entry.name.slice(0,-'.failure.json'.length),Math.max(storageFailures.get(entry.name.slice(0,-'.failure.json'.length))??0,Math.min(1_000_000,failures)));
+      if (Number.isSafeInteger(failures) && failures > 0) {
+        const captureName = entry.name.slice(0, -CAPTURE_FAILURE_SUFFIX.length);
+        storageFailures.set(captureName, Math.max(storageFailures.get(captureName) ?? 0, Math.min(1_000_000, failures)));
+      }
       else issue('corrupt');
       continue;
     }
@@ -483,7 +378,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   const reviewKeys=new Map<string,string>();
   const superseded=new Set<string>();
   for(const round of rounds) {
-    const key=reviewKeys.get(round.review)??'review-'+hash(path.join(root,round.review));reviewKeys.set(round.review,key);
+    const key=reviewKeys.get(round.review)??'review-'+diagnosticSubject(reviewDirectory(session, round.review));reviewKeys.set(round.review,key);
     for(const generation of round.generations) {
       phaseBySubject.set(generation.subject,key);
       if (generation.generation !== round.generation) superseded.add(generation.subject);
@@ -522,7 +417,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   for(const capture of measured)for(const row of capture.invocations)add(row,capture.capture?.start??0);
   for(const round of rounds)for(const slot of round.slots) {
     const row=invocation(round,slot);
-    const subject=hash(path.join(root,round.review,`round-${round.round}`,`gen-${round.generation}`));
+    const subject=diagnosticSubject(reviewGenerationDirectory(reviewRoundDirectory(reviewDirectory(session, round.review), round.round), round.generation));
     const key=[subject,slot['slot']].join('|'),captured=native.get(key)?.row;
     if(slot.state==='done'&&slot.responder&&!slot.responder.native)continue;
     const descriptor=slot.state==='native'&&typeof slot.provider==='string';
@@ -565,7 +460,7 @@ export function sessionFacts(session: string, fold: Fold, outcome: string, hostC
   const starts=measured.map(c=>c.capture?.start).filter((s): s is number => typeof s === 'number' && Number.isFinite(s) && s > 0 && s <= 8_640_000_000_000_000);
   let createdAt: unknown = hostContext?.manifest.createdAt;
   if (createdAt === undefined) {
-    try { createdAt = readJson<{createdAt?: unknown}>(path.join(session, 'manifest.json'))?.createdAt; } catch { /* ignore */ }
+    try { createdAt = readReviewJson<{createdAt?: unknown}>(path.join(session, 'manifest.json'))?.createdAt; } catch { /* ignore */ }
   }
   const createdMs = typeof createdAt === 'string' ? Date.parse(createdAt) : NaN;
   const startMsForDate = starts.length ? Math.min(...starts) : Number.isFinite(createdMs) && Math.abs(createdMs) <= 8_640_000_000_000_000 ? createdMs : undefined;
@@ -648,192 +543,6 @@ export function writeDiagnostics(session: string, facts: RunFacts, pricer?: Pric
   return output;
 }
 
-export function diagnosticsEnabled(skillRoot: string): boolean {
-  let candidateSeen = false;
-  const read = (file: string): string | null => {
-    try {
-      const contents = fs.readFileSync(file, 'utf8');
-      candidateSeen = true;
-      return contents;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      candidateSeen = true;
-      throw error;
-    }
-  };
-  try {
-    const value = loadConfig(skillRoot, read).config['diagnostics'];
-    if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
-    return value === true;
-  } catch (error) {
-    if (!candidateSeen) return false;
-    throw new ToolError(2, 'config-invalid', error instanceof Error ? error.message : String(error));
-  }
-}
-
-/** Optional diagnostics stay outside workflow decisions and semantic result files. */
-export function diagnosticInstructions(skillRoot: string): {instructions?: string} {
-  try {
-    return diagnosticsEnabled(skillRoot) ? {instructions:'Read references/diagnostics.md from the Dispatch skill root; at each verb\'s final handoff, merge retro observations and run diagnostics render.'} : {};
-  } catch { return {}; }
-}
-
-/** Captures runner facts before semantic slot persistence, so retries and reserve calls survive recovery. */
-export function observeTool(session: string, tool: string, action: string, kind: string | undefined, deps: CliDeps): {deps: CliDeps; finish: (outcome: HandlerResult) => string | undefined} | undefined {
-  try {
-  if (!diagnosticsEnabled(deps.skillRoot)) return undefined;
-  const started = deps.clock();
-  const phase = tool + '-' + action + (tool === 'review' ? '-' + (kind ?? 'code') : '');
-  const name: HostStage = tool === 'ask' ? 'ask' : tool === 'review' ? (kind === 'plan' ? 'plan review' : kind === 'design' ? 'design review' : 'code review') : 'implementation';
-  const hostThread = hostThreadId(deps.orchestrator?.platform ?? null, deps.env, session);
-  const facts: RunFacts = {os:process.platform,...(deps.orchestrator ? {host:deps.orchestrator.platform} : {}),...(hostThread ? {hostThread} : {}),phases:[],invocations:[],reviews:[]};
-  const directory = path.join(session,'.state','diagnostics');
-  const ref = crypto.randomUUID();
-  const file = path.join(directory,ref+'.json');
-  facts.capture={state:'opened',start:started};
-  try {
-    const version=readVersion(deps.skillRoot);
-    if(version)facts.version=version;
-    facts.build=crypto.createHash('sha256').update(JSON.stringify(Object.entries(generateSkillHashes(deps.skillRoot)).sort(([a],[b])=>a<b?-1:a>b?1:0))).digest('hex');
-    facts.config=loadConfig(deps.skillRoot).config;
-  }catch{}
-  let pendingPersistence=false;
-  const persist = () => {
-    const temp = file+'.tmp';
-    try {
-      fs.mkdirSync(directory,{recursive:true});
-      fs.writeFileSync(temp,JSON.stringify(sanitizeFacts(facts))+'\n',{mode:0o600});
-      fs.renameSync(temp,file);
-      pendingPersistence=false;
-    } catch {
-      pendingPersistence=true;
-      facts.capture!.storageFailed=Math.min(1000000,(facts.capture!.storageFailed??0)+1);
-      // Preserve the previous capture when an optional update fails.
-      const marker=file+'.failure.json',markerTemp=marker+'.tmp';
-      try {
-        fs.writeFileSync(markerTemp,JSON.stringify({kind:'storage-failure',count:facts.capture!.storageFailed})+'\n',{mode:0o600});
-        fs.renameSync(markerTemp,marker);
-      } catch {}
-      finally {try {fs.rmSync(markerTemp,{force:true});}catch{}}
-    } finally { try {fs.rmSync(temp,{force:true});} catch {} }
-  };
-  const subjectOf=(directory:string)=>crypto.createHash('sha256').update(directory).digest('hex').slice(0,16);
-  const attempts=new Map<string,number>();
-  const seen=new WeakSet<object>();
-  let recoverySubject: string | undefined;
-  const reused = new Set<string>(), launched = new Set<string>();
-  const collect=(rows: unknown, request: Parameters<CliDeps['delegate']>[1])=>{
-    try {
-      if(!Array.isArray(rows))return;
-      const slot=/^([A-Za-z0-9_-]+\[\d+\])\.log$/.exec(path.basename(request.logPath))?.[1];
-      const subject=subjectOf(path.dirname(path.dirname(request.logPath)));
-      const key=subject+slot;
-      let added=false;
-      for(const i of rows as Invocation[]) {
-        if (!i || typeof i !== 'object' || seen.has(i)) continue;
-        const attempt=(attempts.get(key)??0)+1;attempts.set(key,attempt);
-        const usage=i.usage&&i.launched&&i.usage.scope!=='session-cumulative'?normalizeUsage(i.usage,i.usage.inputSemantics):undefined;
-        const source=i.usage?.provenance;
-        const usageSource=usage&&(source==='session'||source==='stdout')?source:undefined;
-        const responses = i.launched && Array.isArray(i.responses) ? i.responses.map(response => {
-          const actor = delegateResponseActor(response);
-          const role = response.role;
-          const agent = actor === undefined ? undefined : `delegate-${role === 'subagent' ? 'child-' : ''}${
-            crypto.createHmac('sha256', path.resolve(session)).update(JSON.stringify([i.provider, role, actor])).digest('hex').slice(0, 16)}`;
-          return { ...response, stage: name, ...(agent ? { agent } : {}) };
-        }) : undefined;
-        facts.invocations.push({phase,subject,attempt,provider:i.provider,model:i.model??(i.provider==='copilot'?'unavailable':'default'),mode:i.mode,surface:'cli',launched:i.launched,outcome:i.outcome,
-          ...(i.configuredEffort ? { configuredEffort: i.configuredEffort } : {}),...(responses?.length ? { responses } : {}),...(slot?{slot}:{}),...(request.targetSlot?{targetSlot:request.targetSlot}:{}),...(i.effort?{effort:i.effort}:{}),...(i.durationMs===undefined?{}:{durationMs:i.durationMs}),...(i.startMs===undefined?{}:{startMs:i.startMs}),...(i.endMs===undefined?{}:{endMs:i.endMs}),...(usage?{usage}:{}),...(usageSource?{usageSource}:{}),...(i.coverage?{coverage:i.coverage}:{}),...(i.usage?.actualModels?{reportedModels:i.usage.actualModels}:{}),...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models ? {reportedModelAmbiguous:true as const}:{}),...(i.lifecycleSteps?{lifecycleSteps:i.lifecycleSteps}:{}),...(i.nudge===true?{nudge:true as const}:{}),...(i.wrapUp===true?{wrapUp:true as const}:{})});
-        const logical = request.targetSlot ?? slot;
-        if (i.launched && logical && recoverySubject === path.dirname(path.dirname(request.logPath))) launched.add(logical);
-        seen.add(i);added=true;
-      }
-      if(added||pendingPersistence)persist();
-    } catch { /* Malformed optional runner metadata cannot change its outcome. */ }
-  };
-  persist();
-  return {
-    deps:{...deps, recovery(candidate, actual, subject) {
-      if (!recoveryRef(candidate)) return undefined;
-      try {
-        const relative = '.state/diagnostics/' + candidate + '.json';
-        const stat = fs.lstatSync(path.join(session, relative));
-        if (!stat.isFile() || stat.size > 128 * 1024) return undefined;
-        const saved = readJson<RunFacts>(containedSessionPath(session, relative));
-        if (!saved) return undefined;
-        const capture = sanitizeFacts(saved), selection = capture.recoverySelection;
-        if (capture.capture?.state !== 'completed' || capture.capture.end === undefined ||
-            !capture.phases.some(p => p.key === 'status-show' && p.outcome === 'ok') ||
-            !selection || selection.review !== actual.review || selection.round !== actual.round ||
-            selection.generation !== actual.generation || selection.targetHash !== recoveryTargetHash(actual.target)) return undefined;
-        recoverySubject = subject;
-        const execution: NonNullable<RunFacts['recoveryExecution']> = {ref: candidate};
-        facts.recoveryExecution = execution;
-        return replies => {
-          execution.unresolved = new Set(replies.filter(reply => reply.state !== 'done').map(reply => reply.slot)).size;
-        };
-      } catch { return undefined; }
-    }, diagnostics(event) {
-      try {
-        if (event.subject === recoverySubject &&
-            ((event.kind === 'slot' && event.state === 'done') || (event.kind === 'native' && event.state === 'completed')) && event.replay)
-          reused.add(event.targetSlot ?? event.slot);
-        const subject=subjectOf(event.subject);
-        const base={phase,subject,slot:event.slot,attempt:event.attempt,...(event.targetSlot?{targetSlot:event.targetSlot}:{}),provider:event.provider??'unavailable',model:event.model??'unavailable',launched:false};
-        if(event.kind==='validation'&&event.surface==='cli') {
-          const row=facts.invocations.findLast(i=>i.subject===subject&&i.slot===event.slot);
-          if(row)row.validationOutcome=event.outcome;
-        } else if(event.kind==='native') {
-          const prior=facts.invocations.find(i=>i.surface==='native'&&i.subject===subject&&i.slot===event.slot);
-          const row={...base,...(event.effort ? { effort: event.effort } : {}),surface:'native' as const,outcome:event.state==='completed'?'ok':'native-'+event.state,nativeState:event.state};
-          if(prior){delete prior.effort;Object.assign(prior,row);}else facts.invocations.push(row);
-        } else if(event.kind==='routing'||event.kind==='slot') {
-          let row=facts.invocations.findLast(i=>i.surface==='cli'&&i.subject===subject&&i.slot===event.slot);
-          if(!row&&event.cls) {
-            row={...base,surface:'cli',outcome:event.cls};
-            facts.invocations.push(row);
-          }
-          if(row) {
-            if(event.kind==='routing')row.routingOutcome=event.state;
-            else row.slotState=event.state;
-            if(event.targetSlot)row.targetSlot=event.targetSlot;
-          }
-        }
-        persist();
-      }catch{}
-    }, async delegate(provider,request,mode) {
-      try {
-        const result=await deps.delegate(provider,{...request,collectUsage:true,...(provider==='opencode'?{collectLifecycle:true}:{}),onInvocation(row) { collect([row],request); try { request.onInvocation?.(row); } catch {} }},mode);
-        collect(result.invocations,request);return result;
-      } catch(error) {
-        try {collect((error as {invocations?:unknown})?.invocations,request);}catch{}
-        throw error;
-      }
-    }},
-    finish(outcome) {
-      try {
-        facts.phases=[{key:phase,name,outcome:outcome.ok?'ok':outcome.reason??'fault',wallMs:Math.max(0,deps.clock()-started)}];
-        facts.capture={...facts.capture!,state:'completed',end:deps.clock()};
-        if (tool === 'status' && action === 'show' && outcome.ok && outcome.recoverySelection) {
-          const selection = sanitizeFacts({...facts, recoverySelection: outcome.recoverySelection}).recoverySelection;
-          if (selection) facts.recoverySelection = selection;
-        }
-        const execution = facts.recoveryExecution;
-        if (execution) {
-          // A second fan-out wave can replay slots launched earlier in this call.
-          const saved = [...reused].filter(slot => !launched.has(slot)).length;
-          if (saved) execution.reused = saved;
-          if (launched.size) execution.launched = launched.size;
-        }
-        if(!outcome.ok&&['invalid-input','invalid-record','approval-stale','key-conflict','user-only'].includes(outcome.reason??''))facts.rejectedTools=[{tool,action,cls:outcome.reason!}];
-        persist();
-        if (!pendingPersistence && facts.recoverySelection) return ref;
-      }catch{}
-    },
-  };
-  }catch{return undefined;}
-}
-
 export function optionalDiagnostics(session: string, fold: Fold, outcome: string, host?: {manifest: HandlerContext['manifest']; deps: CliDeps}): string | undefined {
   try { return writeDiagnostics(session,sessionFacts(session,fold,outcome,host),host&&loadPricing(host.deps.skillRoot)); }
   catch { return undefined; }
@@ -855,7 +564,7 @@ export function retroWarning(session: string): string | undefined {
   for (const entry of entries) {
     if (!entry.isFile() || !/^brief-explorer-.*\.json$/.test(entry.name)) continue;
     let result: {kind?: unknown} | null;
-    try { result = readJson<{kind?: unknown}>(path.join(results, entry.name)); }
+    try { result = readReviewJson<{kind?: unknown}>(path.join(results, entry.name)); }
     catch { continue; }
     if (result?.kind === 'map') {
       return 'Map explorer brief recorded. Add a valid grounding-<phase> item to .state/retro.json, then run diagnostics render.';

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { renameRetrying } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { initializeSession } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { initSession } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { publishQuotaFailure, readQuotaState, reprobeQuota } from '../../../skills/dispatch/scripts/lib/quota-store.ts';
 import { H, quotaSnapshot } from '../../../skills/dispatch/scripts/policy/quota.ts';
 import type { QuotaKey } from '../../../skills/dispatch/scripts/toolkit/types.ts';
@@ -17,7 +17,7 @@ function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-state-'));
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
-  const sessionDir = initializeSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') });
+  const sessionDir = initSession({ repositoryRoot: repo, sessionId: crypto.randomUUID(), sessionTitle: 'Quota fixture', now: new Date('2026-10-19T00:00:00Z') }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
   const capture = (keys: QuotaKey[] = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);

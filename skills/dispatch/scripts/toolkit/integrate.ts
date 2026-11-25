@@ -1,60 +1,18 @@
-import crypto from 'node:crypto';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { withLedger, gate, currentHashes, latest, type Fold, type LedgerTransaction } from './ledger.ts';
-import { validateReviewFix, type LedgerRecord, type ReviewFix } from './records.ts';
+import { withPostFold, gate, currentHashes, latest, type Fold, type LedgerTransaction } from './ledger.ts';
+import { validateReviewFix, type ReviewFix } from './records.ts';
 import { git, gitOk, gitPaths, changedPaths } from './git.ts';
 import { ensureIntegration } from './integration.ts';
-import { launches, isStale, abandonedRef } from './writers.ts';
+import { pendingIntegration } from './integration-state.ts';
+import { candidate, isStale, abandonedRef } from './writers.ts';
 import { checks, loadPlan, taskSection } from './plan-view.ts';
 import { cleanupEvidence, matchesDeclared, strictEvidence } from './evidence.ts';
-import { ToolError } from './output.ts';
+import { result, refuse, ToolError } from './output.ts';
 import { stableValue } from './domain/stable-value.ts';
-import { readJsonPayload } from './input.ts';
+import { readJsonPayload, readRequiredReason } from './input.ts';
 
-export const result=(value: unknown, postFold?: Fold): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value),...(postFold?{postFold}:{})});
-export async function withPostFold(session: string, tool: string, deps: HandlerContext['deps'], fn: (tx: LedgerTransaction) => Promise<HandlerResult>): Promise<HandlerResult> {
-  let postFold: Fold | undefined;
-  const out = await withLedger(session, tool, deps, async tx => {
-    const res = await fn(tx);
-    postFold = tx.fold;
-    return res;
-  });
-  return { ...out, ...(postFold ? { postFold } : {}) };
-}
-export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
-export function reason(ctx: HandlerContext): string {
-  const value=ctx.values['reason'];
-  if(typeof value!=='string'||!value.trim())throw new ToolError(1,'invalid-input','A non-blank --reason is required');
-  return value;
-}
-export function reviewFixIdentity(value: ReviewFix): { digest: string; data: string } {
-  const canonical = stableValue(value);
-  return {
-    digest: 'sha256:' + crypto.createHash('sha256').update(canonical).digest('hex'),
-    data: Buffer.from(canonical).toString('base64url'),
-  };
-}
-const FIX_DATA = 'Dispatch-Review-Fix-Data: ';
-// NOTE: commitlint config-conventional caps body and footer lines at 100 characters, so the data trailer repeats in ordered chunks.
-const dataTrailers = (prefix: string, data: string): string[] =>
-  (data.match(new RegExp(`.{1,${100 - prefix.length}}`, 'g')) ?? []).map(chunk => prefix + chunk);
-export const reviewFixTrailers = (value: ReviewFix, {digest, data} = reviewFixIdentity(value)): string =>
-  ['Dispatch-Review-Fix: ' + digest, ...dataTrailers(FIX_DATA, data)].join('\n');
-export function reviewFixFromCommit(message: string): ReviewFix | undefined {
-  const digests = message.split(/\r?\n/).filter(line => line.startsWith('Dispatch-Review-Fix: '));
-  const values = message.split(/\r?\n/).filter(line => line.startsWith(FIX_DATA));
-  if (!digests.length && !values.length) return undefined;
-  if (digests.length !== 1 || !values.length) throw new ToolError(1, 'invalid-review-fix', 'Expected one correction digest and its metadata trailers');
-  const digest = digests[0]!.slice('Dispatch-Review-Fix: '.length);
-  const encoded = values.map(line => line.slice(FIX_DATA.length)).join('');
-  try {
-    const parsed = validateReviewFix(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')));
-    if (digest !== reviewFixIdentity(parsed).digest) throw new Error('Correction digest mismatch');
-    return parsed;
-  } catch {
-    throw new ToolError(1, 'invalid-review-fix', 'Correction metadata is malformed or differs from its digest');
-  }
-}
+import { dataTrailers, reviewFixFromCommit, reviewFixTrailers } from './review-fix.ts';
+
 function readReviewFix(ctx: HandlerContext): ReviewFix | undefined {
   const parsed = readJsonPayload(ctx, {
     fileFlag: 'review-fix',
@@ -88,15 +46,6 @@ function task(ctx: HandlerContext): string {
   if(ctx.args.length!==1)throw new ToolError(1,'invalid-input','One task ID is required');
   taskSection(loadPlan(ctx.session,ctx.manifest),ctx.args[0]!);
   return ctx.args[0]!;
-}
-export function pending(fold: Fold): LedgerRecord | undefined {
-  return fold.records.findLast(row=>row.kind==='integrate' && row.data['phase']==='started' && !fold.records.some(end=>end.kind==='integrate' && end.seq>row.seq && end.data['task']===row.data['task'] && (end.data['phase']==='done'||end.data['phase']==='abandoned')));
-}
-export function candidate(fold: Fold,id: string) {
-  const launch=launches(fold,id).at(-1);
-  if(!launch?.finished)return undefined;
-  if(fold.records.some(r=>r.kind==='integrate' && r.seq>launch.finished!.seq && r.data['task']===id && (r.data['phase']==='done'||r.data['phase']==='abandoned')))return undefined;
-  return launch;
 }
 function checkGate(ctx: HandlerContext,fold: Fold) {
   const checked=gate(fold,currentHashes(ctx.manifest.repositoryRoot,latest(fold,'bind')));
@@ -132,7 +81,7 @@ export async function integrate(ctx: HandlerContext): Promise<HandlerResult> {
   const id=task(ctx);
   return withPostFold(ctx.session,'worktree integrate',ctx.deps,async tx=>{
     checkGate(ctx,tx.fold);
-    const active=pending(tx.fold);
+    const active=pendingIntegration(tx.fold);
     if(active && active.data['task']!==id)refuse('integration-pending',active.data['task']);
     const launch=candidate(tx.fold,id); if(!launch)refuse('no-candidate');
     const hash=launch.finished!.data['candidate'] as string;
@@ -161,7 +110,7 @@ export async function continueIntegration(ctx: HandlerContext): Promise<HandlerR
   const id=task(ctx);
   return withPostFold(ctx.session,'worktree continue',ctx.deps,async tx=>{
     checkGate(ctx,tx.fold);
-    const active=pending(tx.fold);
+    const active=pendingIntegration(tx.fold);
     const integration=await ensureIntegration(tx,ctx), cwd=integration.path;
     const cherry=await cherryHead(ctx,cwd);
     if(cherry && active?.data['task']!==id)refuse('wrong-task');
@@ -181,13 +130,13 @@ export async function continueIntegration(ctx: HandlerContext): Promise<HandlerR
 }
 export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
   if(ctx.args.length)throw new ToolError(1,'invalid-input','commit takes no task');
-  const why=reason(ctx);
+  const why=readRequiredReason(ctx);
   const hasReviewFix=ctx.values['review-fix']!==undefined||ctx.values['review-fix-json']!==undefined;
   const hasTestCleanup=ctx.values['test-cleanup']!==undefined||ctx.values['test-cleanup-json']!==undefined;
   if(hasReviewFix && hasTestCleanup)throw new ToolError(1,'invalid-input','--test-cleanup and --review-fix are mutually exclusive');
   let reviewFix=readReviewFix(ctx); const cleanup=readTestCleanup(ctx);
   return withPostFold(ctx.session,'worktree commit',ctx.deps,async tx=>{
-    const active=pending(tx.fold); if(active)refuse('integration-pending',active.data['task']);
+    const active=pendingIntegration(tx.fold); if(active)refuse('integration-pending',active.data['task']);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     let hash=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
     const dirty=(await changedPaths(ctx.deps,cwd,'HEAD')).length>0;
@@ -247,9 +196,9 @@ export async function commit(ctx: HandlerContext): Promise<HandlerResult> {
   });
 }
 export async function abort(ctx: HandlerContext): Promise<HandlerResult> {
-  const id=task(ctx),why=reason(ctx);
+  const id=task(ctx),why=readRequiredReason(ctx);
   return withPostFold(ctx.session,'worktree abort',ctx.deps,async tx=>{
-    const active=pending(tx.fold),launch=candidate(tx.fold,id);
+    const active=pendingIntegration(tx.fold),launch=candidate(tx.fold,id);
     const integration=await ensureIntegration(tx,ctx),cwd=integration.path;
     const cherry=await cherryHead(ctx,cwd);
     if(cherry && active?.data['task']!==id)refuse('wrong-task');

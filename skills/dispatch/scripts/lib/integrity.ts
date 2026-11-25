@@ -37,7 +37,7 @@ const jsonForm = (text: string): string => {
 // Markdown and JSON formatter rewrites are not meaning changes, so they hash canonically. `.ts` stays exact
 // (CRLF-normalized only) because whitespace there can be meaningful and must not be hidden by a formatter.
 // `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF, so CRLF always normalizes to LF.
-function hashSkillFile(file: string): string {
+export function hashSkillFile(file: string): string {
   const text = fs.readFileSync(file, 'utf8');
   if (MARKDOWN_EXTENSION.test(file)) return sha256(canonicalMarkdown(text));
   if (JSON_EXTENSION.test(file)) return sha256(jsonForm(text));

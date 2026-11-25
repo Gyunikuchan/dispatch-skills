@@ -1,12 +1,15 @@
+import { isDetailWrapper, sectionRanges, structuralLines, type StructuralLine } from './markdown-structure.ts';
 import type { ChangeAction, EvidenceClass, Glance, LintDefect, ParsedPlan, PlanChange, PlanCriterion, PlanTask } from './types.ts';
 import { criterionHeading } from './criterion-id.ts';
 import { joinTaskMap, lintTaskSections, lintTasks } from './plan-graph.ts';
 import {
-  ACTION_HEADING, LONG_PARAGRAPH_WORDS, PROSE_PLACEHOLDER, RESOLUTION_HEADING, TASK_HEADING,
-  boxValues, checkPathTokens, documentTitle, findPlaceholders, governedPlanText, headingPaths, isDetailWrapper,
-  isTestPath, isTestSupportPath, lint, lintAutomatedDuplicates, lintGlanceRestatesTaskMap, lintLongParagraphs,
-  lintNotes, lintSectionOrder, lintSummaryBox, normalizePlanPath, parseSummaryBox, sectionRanges,
-  splitTaskMapRow, structuralLines, taskStructuralView, type PlaceholderVocabulary, type StructuralLine,
+  boxValues, documentTitle, findPlaceholders, lint, lintLongParagraphs, lintSectionOrder, lintSummaryBox,
+  LONG_PARAGRAPH_WORDS, parseSummaryBox, RESOLUTION_HEADING, SPEC_PIN_VALUE, type PlaceholderVocabulary,
+} from './document-lint.ts';
+import {
+  ACTION_HEADING, TASK_HEADING, PROSE_PLACEHOLDER, checkPathTokens, governedPlanText, headingPaths,
+  isTestPath, isTestSupportPath, lintAutomatedDuplicates, lintGlanceRestatesTaskMap, lintNotes, normalizePlanPath,
+  splitTaskMapRow, taskStructuralView,
 } from './plan-lint.ts';
 
 const TASK_MAP_HEADING = '## Task Map';
@@ -22,7 +25,6 @@ const PLAN_SECTION_ORDER = [
 
 const BOX_LABELS = ['Parent', 'Decide', 'Risk', 'Scope'];
 /** Parent forms: a governing spec pinned by checksum or a design increment. */
-export const SPEC_PIN_VALUE = /^`([^`\s]+\.spec\.md)` · sha256:([0-9a-f]{64})$/;
 const DESIGN_PIN_VALUE = /^`([^`\s]+\.design\.md)` · (I\d{2})$/;
 const PARENT_VALUE = new RegExp(`(?:${SPEC_PIN_VALUE.source})|(?:${DESIGN_PIN_VALUE.source})`);
 const TASK_FIELD = /^[-*+]\s+(Outcome|Prerequisites|Criteria):\s*(.*?)\s*$/i;

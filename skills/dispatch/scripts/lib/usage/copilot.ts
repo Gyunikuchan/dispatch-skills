@@ -11,7 +11,7 @@ const configuration = (v: unknown): string | undefined => typeof v === 'string' 
 
 export const copilot: HostUsageAdapter = {
   sessionEnv: ['COPILOT_AGENT_SESSION_ID', 'COPILOT_CLI_SESSION_ID'],
-  read: (query, fs) => collectCopilotUsage(query, fs),
+  read: (query, fs, delegate) => collectCopilotUsage(query, fs, delegate ? { rootRole: 'delegate' } : undefined),
 };
 
 export function collectCopilotUsage(query: HostUsageQuery, fs: HostUsageFs, options: { rootRole?: 'host' | 'delegate' } = {}): HostUsageResult {

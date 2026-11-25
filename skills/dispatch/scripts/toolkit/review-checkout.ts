@@ -1,3 +1,4 @@
+import { reviewGenerationDirectory } from './review-state.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -259,11 +260,11 @@ function comparedDirs(session: string, repositoryRoot: string, cwd: string, task
 }
 
 function baselineFileFor(dir: string, generation: number): string {
-  return path.join(dir, 'gen-' + generation, 'checkout-baseline.json');
+  return path.join(reviewGenerationDirectory(dir, generation), 'checkout-baseline.json');
 }
 
 function checkoutReportFileFor(dir: string, generation: number): string {
-  return path.join(dir, 'gen-' + generation, 'checkout-report.json');
+  return path.join(reviewGenerationDirectory(dir, generation), 'checkout-report.json');
 }
 
 // Retries never overwrite an unacknowledged report: the first write of a
@@ -274,12 +275,12 @@ function checkoutReportAttemptFor(dir: string, generation: number): string {
   const canonical = checkoutReportFileFor(dir, generation);
   if (!fs.existsSync(canonical)) return canonical;
   let attempt = 2;
-  while (fs.existsSync(path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json'))) attempt++;
-  return path.join(dir, 'gen-' + generation, 'checkout-report-' + attempt + '.json');
+  while (fs.existsSync(path.join(reviewGenerationDirectory(dir, generation), 'checkout-report-' + attempt + '.json'))) attempt++;
+  return path.join(reviewGenerationDirectory(dir, generation), 'checkout-report-' + attempt + '.json');
 }
 
 export function writeCheckoutReport(dir: string, generation: number, checkout: CheckoutReport): void {
-  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  fs.mkdirSync(reviewGenerationDirectory(dir, generation), {recursive: true});
   atomic(checkoutReportAttemptFor(dir, generation), checkout);
 }
 
@@ -288,7 +289,7 @@ export function writeCheckoutReport(dir: string, generation: number, checkout: C
 // fanout.json carries it; only nativeFirst selects the wave path.
 export function generationLaunchedNative(dir: string, generation: number): boolean {
   try {
-    const fanout = JSON.parse(fs.readFileSync(path.join(dir, 'gen-' + generation, 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
+    const fanout = JSON.parse(fs.readFileSync(path.join(reviewGenerationDirectory(dir, generation), 'fanout.json'), 'utf8')) as {nativeFirst?: true; nativeLaunched?: true};
     return fanout.nativeFirst === true || fanout.nativeLaunched === true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ENOENT';
@@ -327,7 +328,7 @@ export async function writeBaselineIfMissing(
 ): Promise<void> {
   const file = baselineFileFor(dir, generation);
   if (fs.existsSync(file)) return;
-  fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+  fs.mkdirSync(reviewGenerationDirectory(dir, generation), {recursive: true});
   try {
     const baseline = await captureCheckouts(deps, dirs, sessionDir);
     atomic(file, baseline);
@@ -399,7 +400,7 @@ export function carryCheckoutBaseline(dir: string, previousGeneration: number): 
   const previousBaseline = baselineFileFor(dir, previousGeneration);
   const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
   try {
-    fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+    fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), {recursive: true});
     const nextValid = (() => {
       try {
         JSON.parse(fs.readFileSync(nextBaseline, 'utf8'));
@@ -435,7 +436,7 @@ export function carryCheckoutBaseline(dir: string, previousGeneration: number): 
     }
   } catch (error) {
     try {
-      fs.mkdirSync(path.join(dir, 'gen-' + (previousGeneration + 1)), {recursive: true});
+      fs.mkdirSync(reviewGenerationDirectory(dir, previousGeneration + 1), {recursive: true});
       if (!fs.existsSync(nextBaseline)) atomic(nextBaseline, {state: 'unavailable', reason: 'baseline carry-over failed: ' + (error instanceof Error ? error.message : String(error))});
     } catch {
       // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.

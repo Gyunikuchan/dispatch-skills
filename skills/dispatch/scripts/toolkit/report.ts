@@ -1,17 +1,19 @@
+import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundFile, reviewFindingsFile, reviewGenerationDirectory, reviewRoundNumber } from './review-state.ts';
 import { reviewIdentity } from './review-identity.ts';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { cleanupBinding, criterionStatuses, latestCleanup, verifiedStage, type CriterionStatus } from './evidence.ts';
+import { cleanupBinding, criterionStatusCounts, criterionStatuses, latestCleanup, verifiedStage, type CriterionStatus } from './evidence.ts';
 import { git, gitOk, headTree, splitPaths, testedTree } from './git.ts';
-import { integrationRecord } from './integration.ts';
+import { integrationRecord } from './integration-state.ts';
 import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
 import { readArtifact } from './artifacts.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
-import { parseGlance, structuralLines } from './domain/plan.ts';
-import { ToolError } from './output.ts';
-import { diagnosticsEnabled, optionalDiagnostics, retroWarning } from './diagnostics.ts';
+import { parseGlance } from './domain/plan.ts';
+import { structuralLines } from './domain/markdown-structure.ts';
+import { ToolError, writePrivateOutput } from './output.ts';
+import { diagnosticsEnabled } from './diagnostics-capture.ts';
+import { optionalDiagnostics, retroWarning } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
 import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
 import { reviewRows } from './review-findings.ts';
@@ -55,15 +57,7 @@ type Snapshot = {
   reviewFixes: ReviewFixReport[];
   testCleanup: WalkthroughView['testCleanup'];
 };
-type ReportFacts = Snapshot & {
-  view: WalkthroughView;
-  edits: WalkthroughView['edits'];
-  unplannedPaths: string[];
-  openEscalations: WalkthroughView['openEscalations'];
-  deferredRulings: WalkthroughView['deferredRulings'];
-  deferredEscalations: WalkthroughView['deferredEscalations'];
-  userRecords: WalkthroughView['userRecords'];
-};
+type ReportFacts = Snapshot & {view: WalkthroughView};
 
 function isDirectory(directory: string): boolean {
   try { return fs.statSync(directory).isDirectory(); }
@@ -80,20 +74,20 @@ function recordForDestination(fold: Fold, integration: LedgerRecord): LedgerReco
 }
 
 function completedReviewHeads(session: string): string[] {
-  const root = path.join(session, '.state/reviews/code-integration');
+  const root = reviewDirectory(session, INTEGRATION_REVIEW);
   const heads = new Set<string>();
   if (!isDirectory(root)) return [];
   for (const name of fs.readdirSync(root, {withFileTypes: true})) {
-    if (!name.isDirectory() || !/^round-\d+$/.test(name.name)) continue;
+    if (!name.isDirectory() || reviewRoundNumber(name.name) === undefined) continue;
     const directory = path.join(root, name.name);
-    if (!fs.existsSync(path.join(directory, 'findings.json'))) continue;
-    const round = readReviewJson<{scope?: string; generation?: number; target?: {head?: string}}>(path.join(directory, 'round.json'));
+    if (!fs.existsSync(reviewFindingsFile(directory))) continue;
+    const round = readReviewJson<{scope?: string; generation?: number; target?: {head?: string}}>(reviewRoundFile(directory));
     const head = round?.target?.head;
     const generation = round?.generation;
     if (typeof head !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ||
         /\(confirmation-only\)/i.test(round?.scope ?? '') ||
         typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1) continue;
-    const slots = path.join(directory, `gen-${generation}`, 'slots');
+    const slots = path.join(reviewGenerationDirectory(directory, generation), 'slots');
     if (isDirectory(slots) && fs.readdirSync(slots, {withFileTypes: true}).some(file =>
       file.isFile() && file.name.endsWith('.json') &&
       readReviewJson<{state?: string}>(path.join(slots, file.name))?.state === 'done')) heads.add(head);
@@ -183,7 +177,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   try {rejectionConfirmations=loadRejections(ctx.session,fold,applicableReviewIds(ctx.manifest,fold));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='review-confirmation-required'))throw error;confirmationError=error.message;}
   let coverage:WalkthroughView['coverage'];
-  try {coverage=coverageState(ctx.session,fold,'code-integration',applicableReviewIds(ctx.manifest,fold).get('code-integration'));}
+  try {coverage=coverageState(ctx.session,fold,INTEGRATION_REVIEW,applicableReviewIds(ctx.manifest,fold).get(INTEGRATION_REVIEW));}
   catch(error) {if(!(error instanceof ToolError && error.reason==='coverage-required'))throw error;coverage='unreadable';}
   return {
     fold, bind, plan, planPath, planHash, planStem, specPath, specHash, designHash: hashes.design ?? undefined,
@@ -331,71 +325,50 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
     ...(snapshot.testCleanup ? { testCleanup: snapshot.testCleanup } : {}),
   };
-  return { ...snapshot, view, edits, unplannedPaths, openEscalations, deferredRulings, deferredEscalations, userRecords };
+  return { ...snapshot, view };
 }
 
-/** Reads the un-locked facts used by `report render`. */
-async function reportFacts(ctx: HandlerContext): Promise<ReportFacts> {
-  return materialize(ctx, await capture(ctx, foldLedger(ctx.session)));
-}
-
-function writeWalkthrough(session: string, stem: string, text: string): string {
-  const output = path.join(session, stem + '.walkthrough.md');
-  const temporary = output + '.' + crypto.randomUUID() + '.tmp';
-  try {
-    fs.writeFileSync(temporary, text, { mode: 0o600 });
-    fs.renameSync(temporary, output);
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
-  return output;
-}
-
-function statusCounts(statuses: readonly CriterionStatus[]) {
+function resultValue(facts: ReportFacts, relativePath: string) {
   return {
-    verified: statuses.filter((status) => status.state === 'verified').length,
-    manual: statuses.filter((status) => status.state === 'manual').length,
-    waived: statuses.filter((status) => status.state === 'waived').length,
-    missing: statuses.filter((status) => status.state === 'missing').length,
-  };
-}
-
-function resultValue(facts: ReportFacts, session: string, walkthroughPath: string) {
-  return {
-    path: path.relative(session, walkthroughPath).split(path.sep).join('/'),
+    path: relativePath,
     statuses: facts.statuses,
     changes: facts.view.changes,
-    deviations: { edits: facts.edits, unplannedPaths: facts.unplannedPaths },
-    openEscalations: facts.openEscalations,
-    deferredRulings: facts.deferredRulings,
-    deferredEscalations: facts.deferredEscalations,
-    userRecords: facts.userRecords,
+    deviations: { edits: facts.view.edits, unplannedPaths: facts.view.unplannedPaths },
+    openEscalations: facts.view.openEscalations,
+    deferredRulings: facts.view.deferredRulings,
+    deferredEscalations: facts.view.deferredEscalations,
+    userRecords: facts.view.userRecords,
     delivered: facts.view.delivered,
     rejectionConfirmations:facts.rejectionConfirmations,confirmationError:facts.confirmationError,
     reviewedCodeBaseline:facts.reviewedCodeBaseline,reviewFixes:facts.reviewFixes,
   };
 }
 
-function walkthroughText(facts:ReportFacts,session:string):string {
-  return renderWalkthrough(facts.view,session);
+function publishReport(ctx: HandlerContext, facts: ReportFacts, outcome: 'rendered' | 'complete', diagnostics: boolean): HandlerResult {
+  const walkthroughPath = path.join(ctx.session, facts.planStem + '.walkthrough.md');
+  writePrivateOutput(walkthroughPath, renderWalkthrough(facts.view, ctx.session));
+  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, outcome, {manifest: ctx.manifest, deps: ctx.deps}) : undefined;
+  const complete = outcome === 'complete';
+  const warning = complete && diagnostics ? retroWarning(ctx.session) : undefined;
+  const counts = criterionStatusCounts(facts.statuses);
+  const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
+  const deviations = facts.view.edits.length + facts.view.unplannedPaths.length;
+  const summary = `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviations}; user records ${facts.view.userRecords.length}`;
+  const confirmation = !complete && facts.confirmationError ? '; confirmation unavailable: ' + facts.confirmationError : '';
+  return {
+    ok: true,
+    exit: 0,
+    summary: (complete ? 'complete: ' : '') + summary + confirmation + (warning ? '; ' + warning : ''),
+    value: { ...resultValue(facts, relative), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}), ...(warning ? {warning} : {}) },
+    postFold: facts.fold,
+  };
 }
 
 export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> {
   if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'report render takes no positional arguments');
-  const writeDiagnosticsEnabled = diagnosticsEnabled(ctx.deps.skillRoot);
-  const facts = await reportFacts(ctx);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
-  const diagnosticsPath = writeDiagnosticsEnabled ? optionalDiagnostics(ctx.session, facts.fold, 'rendered', {manifest:ctx.manifest,deps:ctx.deps}) : undefined;
-  const counts = statusCounts(facts.statuses);
-  const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
-  const deviationCount = facts.edits.length + facts.unplannedPaths.length;
-  return {
-    ok: true,
-    exit: 0,
-    summary: `walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}${facts.confirmationError?'; confirmation unavailable: '+facts.confirmationError:''}`,
-    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}) },
-    postFold: facts.fold,
-  };
+  const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
+  const facts = await materialize(ctx, await capture(ctx, foldLedger(ctx.session)));
+  return publishReport(ctx, facts, 'rendered', diagnostics);
 }
 
 function refusal(snapshot: Snapshot): ToolError | null {
@@ -439,18 +412,5 @@ export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult
     };
   }
   const facts = await materialize(ctx, captured.snapshot);
-  const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
-  const walkthroughPath = writeWalkthrough(ctx.session, facts.planStem, walkthroughText(facts, ctx.session));
-  const diagnosticsPath = diagnostics ? optionalDiagnostics(ctx.session, facts.fold, 'complete', {manifest:ctx.manifest,deps:ctx.deps}) : undefined;
-  const warning = diagnostics ? retroWarning(ctx.session) : undefined;
-  const counts = statusCounts(facts.statuses);
-  const relative = path.relative(ctx.session, walkthroughPath).split(path.sep).join('/');
-  const deviationCount = facts.edits.length + facts.unplannedPaths.length;
-  return {
-    ok: true,
-    exit: 0,
-    summary: `complete: walkthrough ${relative}; SC verified ${counts.verified}, manual ${counts.manual}, waived ${counts.waived}, missing ${counts.missing}; deviations ${deviationCount}; user records ${facts.userRecords.length}` + (warning ? `; ${warning}` : ''),
-    value: { ...resultValue(facts, ctx.session, walkthroughPath), ...(diagnosticsPath ? {diagnostics: diagnosticsPath} : {}), ...(warning ? {warning} : {}) },
-    postFold: facts.fold,
-  };
+  return publishReport(ctx, facts, 'complete', diagnosticsEnabled(ctx.deps.skillRoot));
 }

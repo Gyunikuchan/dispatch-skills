@@ -1,17 +1,18 @@
+import type { NativeFailure } from './fanout/state.ts';
 import type { HostUsageFs } from '../lib/usage/rows.ts';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
+import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
-import { createDiscovery } from '../providers/discovery.ts';
+import { createNodeDiscovery } from '../providers/discovery.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import { runDelegate, sandboxBlocked } from '../providers/runner.ts';
 import { nodeProcess, nodeRunnerFs } from '../providers/node-process.ts';
-import { sanitizeText } from './domain/sanitize.ts';
+import { BLOCKED_MARKER, failureReasonEvidence, parseBlockedReply } from './domain/blocker.ts';
 import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../providers/opencode-runtime.ts';
 import { normalizeProvider } from '../policy/roster.ts';
 import type { DelegateRequest, LifecycleStep, ModeId, ProviderId, RunResult } from '../providers/types.ts';
@@ -23,26 +24,63 @@ import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
 import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
 import { stripBom } from '../lib/fs-ext.ts';
-import { ACTION_CONTRACTS } from './contracts.ts';
+import { ACTION_CONTRACTS, ACTION_FLAGS } from './contracts.ts';
 import { lintArtifact } from './lint.ts';
 import { appendCleanupCheckpoint, appendLintEdit, appendRecords, currentHashes, foldLedger, latest, queryLedger, type Fold } from './ledger.ts';
 import { readJsonPayload } from './input.ts';
 import { isHintExcludedAction, stepHint } from './hints.ts';
-import { capSummary, summaryWithItems, ToolError, writeResult, type ToolResult } from './output.ts';
+import { capSummary, summaryWithItems, ToolError, writeResult, type HandlerResult, type ToolResult } from './output.ts';
 import { doctorReport, doctorReportWithProbe } from './doctor.ts';
 import { nodeProbeSpawn, type ProbeDeps } from '../providers/probe.ts';
-import { resumeStatus, statusReport, type RecoverySelection } from './status.ts';
+import { resumeStatus, statusReport } from './status.ts';
+import { reviewDirectory, type RecoverySelection } from './review-state.ts';
+import type { GitDeps } from './git.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
 import { reportComplete, reportRender } from './report.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
-import { diagnosticsRender, observeTool } from './diagnostics.ts';
+import { observeTool } from './diagnostics-capture.ts';
+import { diagnosticsRender } from './diagnostics.ts';
 import { refreshFindingsSection, rulingReview } from './review-findings.ts';
 import { validateRecord } from './records.ts';
 import { reviewId } from './confirmations.ts';
 
-export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold; recoverySelection?: RecoverySelection };
-export type HandlerContext = { session: string; manifest: Manifest; args: string[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
+const earlyExclusiveFlags = ['probe', 'resume-ref', 'resume', 'cleanup'];
+const exclusiveFlags = [
+  'reuse', 'fresh', 'edit', 'json', 'text', 'message', 'base', 'integration-path',
+  'review-fix-json', 'test-cleanup-json', 'task', 'test-cleanup', 'commit', 'pins', 'native-failed',
+];
+const booleanFlags = new Set(['relaunch', 'reuse', 'fresh', 'probe', 'resume']);
+const toolkitFlags: ParseArgsConfig['options'] = Object.fromEntries(Array.from(ACTION_FLAGS.keys(), flag => [
+  flag, booleanFlags.has(flag) ? { type: 'boolean' } : { type: 'string', multiple: flag === 'native-failed' },
+]));
+
+function checkExclusiveFlags(flags: readonly string[], values: HandlerContext['values'], action: string): void {
+  for (const flag of flags) {
+    const actions = ACTION_FLAGS.get(flag)!;
+    if (values[flag] === undefined || actions.includes(action)) continue;
+    const ordered = flag === 'pins' || flag === 'native-failed' ? actions.toReversed() : actions;
+    const last = ordered.at(-1);
+    const label = ordered.length === 1 ? last : `${ordered.slice(0, -1).join(', ')} and ${last}`;
+    const message = `--${flag} is only for ${label}`;
+    if (flag === 'test-cleanup') throw new Error(message);
+    throw new ToolError(1, 'invalid-input', message);
+  }
+}
+
+function parseNativeFailure(entry: string | boolean): NativeFailure {
+  if (typeof entry !== 'string') throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+  const separator = entry.indexOf('=');
+  const attempt = entry.slice(0, separator).trim();
+  const rawReason = entry.slice(separator + 1).trim();
+  if (separator <= 0 || !attempt || !rawReason) throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+  const { isBlocked, raw } = parseBlockedReply(rawReason);
+  const { reason, reasonHash } = failureReasonEvidence(raw);
+  return { attempt, reason: isBlocked ? `${BLOCKED_MARKER} ${reason}` : reason, reasonHash };
+}
+
+export type { HandlerResult } from './output.ts';
+export type HandlerContext = { session: string; manifest: Manifest; args: string[]; nativeFailures?: readonly NativeFailure[]; values: Record<string, string | boolean | (string | boolean)[] | undefined>; deps: CliDeps };
 export type CliDeps = {
   probe?: ProbeDeps;
   readStdin?: () => string;
@@ -55,7 +93,7 @@ export type CliDeps = {
   orchestrator: Orchestrator | null;
   liveness: Readonly<Record<string, boolean>>;
   sandboxSupported?: Readonly<Record<string, boolean>>;
-  run: (argv: string[], options: {cwd: string; env?: NodeJS.ProcessEnv; stdin?: string}) => Promise<{exit: number; stdout: string; stderr: string}>;
+  run: GitDeps['run'];
   hook?: (point: string) => Promise<void> | void;
   stdout: (line: string) => void;
   env: NodeJS.ProcessEnv;
@@ -71,10 +109,7 @@ export type CliDeps = {
 
 export function nodeDeps(): CliDeps {
   const platform = currentPlatform();
-  const discovery = createDiscovery(SPECS, platform, {
-    list: dir => { try {return fs.readdirSync(dir);}catch{return [];} }, exists:fs.existsSync,
-    executable(file) {try{return fs.statSync(file).isFile() && (platform.os === 'win32' || (fs.statSync(file).mode & 0o111)!==0);}catch{return false;}},
-  });
+  const discovery = createNodeDiscovery(SPECS, platform);
   const modes = (provider:ProviderId) => SPECS[provider].modes.filter(mode=>discovery.resolve(provider,mode.id).status==='path').map(mode=>mode.id);
   const runnerFs = nodeRunnerFs;
   const clock = () => Date.now();
@@ -213,7 +248,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
             const relative = (data as Record<string, unknown>)[kind];
             if (typeof relative !== 'string') continue;
             const review = reviewId(kind, path.resolve(manifest.repositoryRoot, relative));
-            if (fs.existsSync(path.join(session, '.state', 'reviews', review))) reviews.add(review);
+            if (fs.existsSync(reviewDirectory(session, review))) reviews.add(review);
           }
           continue;
         }
@@ -290,6 +325,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     deps.stdout(JSON.stringify({ ...output, summary: capSummary(output.summary), ...(help ? { help } : {}) }) + '\n');
     return exit;
   };
+  let nativeFailures: readonly NativeFailure[] = [];
   let parsed: ReturnType<typeof parseArgs>;
   let session: string;
   let manifest: Manifest;
@@ -298,72 +334,21 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   try {
     const args = argv.flatMap((arg, index) => arg === '--since' && /^-\d/.test(argv[index + 1] ?? '')
       ? [arg + '=' + argv[index + 1]] : index > 0 && argv[index - 1] === '--since' && /^-\d/.test(arg) ? [] : [arg]);
-    parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
-      session: { type: 'string' }, level: { type: 'string' }, kind: { type: 'string' }, key: { type: 'string' }, since: { type: 'string' },
-      'test-cleanup': {type: 'string'}, commit: {type: 'string'}, criteria: {type: 'string'}, task: {type: 'string'}, reason: {type: 'string'}, 'review-fix': {type: 'string'}, 'ack-stale': {type: 'string'}, relaunch: {type: 'boolean'}, spec: {type: 'string'},
-      'native-failed': {type: 'string', multiple: true}, host: {type: 'string'}, pins: {type: 'string'}, edit: {type: 'string'},
-      json: { type: 'string' }, text: { type: 'string' }, message: { type: 'string' }, base: { type: 'string' }, 'integration-path': { type: 'string' },
-      'review-fix-json': { type: 'string' }, 'test-cleanup-json': { type: 'string' },
-      reuse: { type: 'boolean' }, fresh: { type: 'boolean' }, probe: { type: 'boolean' }, resume: { type: 'boolean' }, 'resume-ref': { type: 'string' }, cleanup: { type: 'string' },
-    } });
+    parsed = parseArgs({ args, allowPositionals: true, strict: true, options: toolkitFlags });
     [tool = '', action = ''] = parsed.positionals;
     const fullAction = tool + ' ' + action;
-    if (parsed.values['probe'] !== undefined && fullAction !== 'doctor run') throw new ToolError(1, 'invalid-input', '--probe is only for doctor run');
-    if (parsed.values['resume-ref'] !== undefined && fullAction !== 'review run') throw new ToolError(1, 'invalid-input', '--resume-ref is only for review run');
-    if (parsed.values['resume'] !== undefined && fullAction !== 'status show') throw new ToolError(1, 'invalid-input', '--resume is only for status show');
-    if (parsed.values['cleanup'] !== undefined && fullAction !== 'ledger append') throw new ToolError(1, 'invalid-input', '--cleanup is only for ledger append');
+    checkExclusiveFlags(earlyExclusiveFlags, parsed.values, fullAction);
     if (!handlers[fullAction]) throw new Error('Unknown tool or action');
-    if (parsed.values['reuse'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--reuse is only for check run');
-    if (parsed.values['fresh'] !== undefined && fullAction !== 'check run') throw new ToolError(1, 'invalid-input', '--fresh is only for check run');
-    if (parsed.values['edit'] !== undefined && fullAction !== 'lint run') throw new ToolError(1, 'invalid-input', '--edit is only for lint run');
-    if (parsed.values['json'] !== undefined && !['brief explorer', 'brief test-cleanup', 'brief verifier', 'lint run'].includes(fullAction)) {
-      throw new ToolError(1, 'invalid-input', '--json is only for brief explorer, brief test-cleanup, brief verifier and lint run');
-    }
-    if (parsed.values['text'] !== undefined && fullAction !== 'ask run') throw new ToolError(1, 'invalid-input', '--text is only for ask run');
-    if (parsed.values['message'] !== undefined && fullAction !== 'worktree deliver') throw new ToolError(1, 'invalid-input', '--message is only for worktree deliver');
-    if (parsed.values['base'] !== undefined && fullAction !== 'brief test-cleanup') throw new ToolError(1, 'invalid-input', '--base is only for brief test-cleanup');
-    if (parsed.values['integration-path'] !== undefined && fullAction !== 'brief test-cleanup') throw new ToolError(1, 'invalid-input', '--integration-path is only for brief test-cleanup');
-    if (parsed.values['review-fix-json'] !== undefined && fullAction !== 'worktree commit') throw new ToolError(1, 'invalid-input', '--review-fix-json is only for worktree commit');
-    if (parsed.values['test-cleanup-json'] !== undefined && fullAction !== 'worktree commit') throw new ToolError(1, 'invalid-input', '--test-cleanup-json is only for worktree commit');
-    if (parsed.values['task'] !== undefined && (tool !== 'check' || action !== 'run')) throw new ToolError(1, 'invalid-input', '--task is only for check run');
-    if (parsed.values['test-cleanup'] !== undefined && (tool !== 'worktree' || action !== 'commit')) throw new Error('--test-cleanup is only for worktree commit');
-    if (parsed.values['commit'] !== undefined && (tool !== 'worktree' || action !== 'deliver')) throw new ToolError(1, 'invalid-input', '--commit is only for worktree deliver');
-    const isReviewOrAsk = (tool === 'review' && action === 'run') || (tool === 'ask' && action === 'run');
-    if (parsed.values['pins'] !== undefined && !isReviewOrAsk) throw new ToolError(1, 'invalid-input', '--pins is only for review run and ask run');
-    const nativeFailedRaw = parsed.values['native-failed'];
-    if (nativeFailedRaw !== undefined) {
-      if (!isReviewOrAsk) throw new ToolError(1, 'invalid-input', '--native-failed is only for review run and ask run');
-      const entries = Array.isArray(nativeFailedRaw) ? nativeFailedRaw : [nativeFailedRaw];
-      const sanitized: string[] = [];
-      const hashes: string[] = [];
-      for (const entry of entries) {
-        if (typeof entry !== 'string') throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
-        const eq = entry.indexOf('=');
-        if (eq <= 0) throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
-        const attempt = entry.slice(0, eq).trim();
-        const rawReason = entry.slice(eq + 1);
-        if (!attempt || !rawReason.trim()) throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
-        const rawTrimmed = rawReason.trim();
-        // A BLOCKED reason hashes its extracted raw so a CLI report and a native reply share one identity.
-        if (rawTrimmed.startsWith('BLOCKED:')) {
-          const extracted = rawTrimmed.slice('BLOCKED:'.length).trim();
-          const reason = 'BLOCKED: ' + (sanitizeText(extracted).slice(0, 200) || '(reason removed by sanitizer)');
-          sanitized.push(`${attempt}=${reason}`);
-          hashes.push(crypto.createHash('sha256').update(extracted).digest('hex'));
-        } else {
-          const reason = sanitizeText(rawTrimmed).slice(0, 200) || '(reason removed by sanitizer)';
-          sanitized.push(`${attempt}=${reason}`);
-          hashes.push(crypto.createHash('sha256').update(rawTrimmed).digest('hex'));
-        }
-      }
-      parsed.values['native-failed'] = sanitized as never;
-      (parsed.values as Record<string, unknown>)['native-failed-hash'] = hashes;
+    checkExclusiveFlags(exclusiveFlags, parsed.values, fullAction);
+    const reports = parsed.values['native-failed'];
+    if (reports !== undefined) {
+      nativeFailures = (Array.isArray(reports) ? reports : [reports]).map(parseNativeFailure);
+      delete parsed.values['native-failed'];
     }
     if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);
-    const hostSensitive = (tool === 'doctor' && action === 'run') || (tool === 'review' && action === 'run')
-      || (tool === 'ask' && action === 'run') || (tool === 'brief' && (action === 'render' || action === 'explorer' || action === 'test-cleanup' || action === 'verifier' || action === 'fix-review-lite'));
+    const hostSensitive = ACTION_FLAGS.get('host')!.includes(fullAction);
     const hostRaw = parsed.values['host'];
     if (hostSensitive) {
       if (typeof hostRaw !== 'string') throw new Error('Missing --host');
@@ -386,7 +371,7 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   let outcome: HandlerResult;
   try {
     outcome = await (deps.handler ?? handlers[tool + ' ' + action]!)({
-      session, manifest, args: parsed.positionals.slice(2), values: parsed.values, deps: observation?.deps ?? deps,
+      session, manifest, args: parsed.positionals.slice(2), values: parsed.values, nativeFailures, deps: observation?.deps ?? deps,
     });
   } catch (error) {
     const fault = error instanceof ToolError ? error : new ToolError(2, 'fault', error instanceof Error ? error.message : String(error));

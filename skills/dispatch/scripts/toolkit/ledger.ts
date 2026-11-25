@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import type { CliDeps } from './cli.ts';
 import { atomic } from './fanout/state.ts';
-import { git, gitOk, gitPaths } from './git.ts';
-import { integrationRecord } from './integration.ts';
+import { git, gitOk, gitPaths, type GitDeps } from './git.ts';
+import { integrationRecord } from './integration-state.ts';
 import { safeRelativePath } from './domain/context.ts';
 import path from 'node:path';
 import { readManifest } from '../lib/session.ts';
@@ -14,6 +13,7 @@ import { lintArtifact } from './lint.ts';
 import { withLock, type LockDeps } from './lock.ts';
 import { ToolError } from './output.ts';
 import { defaultKey, KINDS, validateRecord, type LedgerRecord, type RecordInput } from './records.ts';
+import { reviewDirectory, reviewFindingsFile, reviewRoot, reviewRoundDirectory } from './review-state.ts';
 
 export type Fold = { records: LedgerRecord[]; lastSeq: number; torn: Buffer | null };
 export type Hashes = Partial<Record<ArtifactKind, string | null>>;
@@ -175,8 +175,8 @@ function checkCorrection(session: string, fold: Fold, data: Record<string, any>)
   const refuse = (why: string): never => { throw new ToolError(1, 'invalid-record', 'severity correction refused: ' + why); };
   const match = CORRECTED_SUBJECT.exec(data['subject']);
   if (!match || match[1]!.includes('..')) refuse('data.subject must be review:<review>:<finding> with a finding ID such as R1-F001');
-  const reviews = path.resolve(session, '.state', 'reviews');
-  const file = path.resolve(reviews, match![1]!, 'round-' + match![3], 'findings.json');
+  const reviews = path.resolve(reviewRoot(session));
+  const file = path.resolve(reviewFindingsFile(reviewRoundDirectory(reviewDirectory(session, match![1]!), match![3]!)));
   if (path.relative(reviews, file).startsWith('..')) refuse('data.subject resolves outside the session reviews');
   let finding: Record<string, any> | undefined;
   try { finding = JSON.parse(fs.readFileSync(file, 'utf8')).findings.find((row: any) => row?.id === match![2]); } catch { /* Absent and unreadable findings refuse alike. */ }
@@ -341,6 +341,10 @@ export async function appendRecords(session: string, input: unknown, deps: LockD
       : { seq: results[0]!.seq, deduped: results[0]!.deduped };
   });
 }
+export async function withPostFold<T extends object>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T & { postFold: Fold }> {
+  return withLedger(session, tool, deps, async tx => ({ ...await fn(tx), postFold: tx.fold }));
+}
+
 export async function withLedger<T>(session: string, tool: string, deps: LockDeps, fn: (tx: LedgerTransaction) => Promise<T>): Promise<T> {
   return withLock(session, tool, deps, async broken => {
     const fold = foldLedger(session);
@@ -391,12 +395,12 @@ const zeroCleanup = (value: unknown): boolean => {
   return !!report && typeof report === 'object' && Object.keys(report).sort().join() === 'deleted,merged,removed' &&
     Array.isArray(report['removed']) && report['removed'].length === 0 && report['deleted'] === 0 && report['merged'] === 0;
 };
-const cleanupPaths = async (deps: CliDeps, cwd: string, base: string, head: string): Promise<string[]> =>
+const cleanupPaths = async (deps: GitDeps, cwd: string, base: string, head: string): Promise<string[]> =>
   base === head ? [] : (await gitPaths(deps, cwd, ['diff', '--name-only', '--no-renames', '-z', base, head, '--'])).sort();
-const cleanCheckout = async (deps: CliDeps, cwd: string): Promise<boolean> =>
+const cleanCheckout = async (deps: GitDeps, cwd: string): Promise<boolean> =>
   !(await gitOk(deps, cwd, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all']));
 
-export async function appendCleanupCheckpoint(session: string, mode: unknown, value: unknown, deps: CliDeps) {
+export async function appendCleanupCheckpoint(session: string, mode: unknown, value: unknown, deps: GitDeps & LockDeps) {
   const input = value as Record<string, unknown> | null;
   if ((mode !== 'skip' && mode !== 'zero') || !input || typeof input !== 'object' ||
       Object.keys(input).sort().join() !== (mode === 'skip' ? 'head' : 'head,report') ||
@@ -429,7 +433,7 @@ export async function appendCleanupCheckpoint(session: string, mode: unknown, va
   });
 }
 
-export async function hasCleanupCheckpoint(session: string, fold: Fold, deps: CliDeps, cwd: string, head: string): Promise<boolean> {
+export async function hasCleanupCheckpoint(session: string, fold: Fold, deps: GitDeps, cwd: string, head: string): Promise<boolean> {
   const opened = integrationRecord(fold);
   if (!opened) return false;
   try {

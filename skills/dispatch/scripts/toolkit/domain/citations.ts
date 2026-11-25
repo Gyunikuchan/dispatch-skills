@@ -1,8 +1,8 @@
 // Pure repo-relative line-reference validation for plan and design documents.
 
 import { safeRelativePath } from './context.ts';
-import { EXECUTION_STATUS_HEADING } from './design.ts';
-import { commentOpenOutsideCode, FENCE, RESOLUTION_HEADING } from './plan.ts';
+import { EXECUTION_STATUS_HEADING, RESOLUTION_HEADING } from './document-lint.ts';
+import { commentOpenOutsideCode, FENCE } from './markdown-structure.ts';
 
 export type CitationDefect = { code: 'broken-citation'; severity: 'defect'; line: number; message: string };
 

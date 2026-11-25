@@ -5,8 +5,7 @@ import type { FailureClass } from '../toolkit/types.ts';
 import type { readOpencodeMessages } from '../lib/opencode-db.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
 import type { SessionRead } from '../lib/usage/delegate.ts';
-import type { HostUsageFs, ReadBudget } from '../lib/usage/rows.ts';
-import type { CoverageReason, DelegateResponse, DiagnosticUsage } from '../toolkit/types.ts';
+import type { CoverageReason, DelegateResponse, DiagnosticUsage, HostUsageFs, ReadBudget } from '../lib/usage/rows.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 
@@ -147,10 +146,26 @@ export type ProviderSpec = {
   readOnlyFlags: readonly string[];
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
+  /** Process-tree ownership requires bounded settlement and optional lifecycle evidence. */
+  ownedTreeLabel?: string;
   stepEvent?(line: string): 'step-start' | 'step-end' | null;
   usage?(raw: string, context?: ProviderUsageContext): DiagnosticUsage | undefined;
   sessionUsage?(raw: string, context: ProviderUsageContext): SessionRead | undefined;
+  /** An attempt can identify a session even when stdout has no session ID. */
+  sessionUsageFromAttempt?: true;
+  /** The collector can return valid counters with partial transcript coverage. */
+  acceptPartialSessionUsage?: true;
   resumeUsage?: 'per-launch' | 'cumulative' | undefined;
+  /** A stdout record kind that reports only the current launch inside a cumulative session. */
+  perLaunchUsageProvenance?: string;
+  /** A completed event that proves a zero-token response was observed. */
+  zeroUsageProvenance?: string;
+  invocationAttribution?: {
+    normalize?(model: string | null, effort: string | null): { model: string | null; effort: string | null };
+    measured: 'prefer-measured' | 'measured-only';
+    /** A report kind that establishes model attribution even when per-model baselines are missing. */
+    retainWithoutBaselineProvenance?: string;
+  };
   /** Marks a launched invocation whose provider has no machine-readable usage output. */
   usageUnavailable?: CoverageReason;
   /** Provider-specific stdout cap; the runner default is 10 MiB. */

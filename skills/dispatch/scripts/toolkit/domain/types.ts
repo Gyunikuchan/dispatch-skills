@@ -37,29 +37,7 @@ export type DraftFinding = Omit<Finding, 'id' | 'dupOf'>;
 
 // SECTION: Lint
 
-export type LintDefectCode =
-  // Summary box and placeholders
-  | 'missing-summary-box' | 'summary-label' | 'leftover-placeholder' | 'placeholder' | 'filler-note'
-  // Plan structure
-  | 'proposed-changes' | 'change-heading' | 'unknown-change-marker' | 'invalid-change-path' | 'duplicate-change-path'
-  | 'change-path-excluded' | 'generated-command' | 'verification-plan' | 'automated-tests' | 'automated-tests-owner'
-  | 'automated-command' | 'ambiguous-command' | 'automated-tests-unavailable' | 'automated-test-duplicates-check' | 'missing-seams'
-  // Plan criteria
-  | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
-  | 'criterion-change-path' | 'criterion-check' | 'criterion-check-tests' | 'criterion-evidence'
-  | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-tests-path' | 'criterion-red-command' | 'red-downgraded' | 'undeclared-test-path'
-  | 'criterion-review' | 'criterion-critical-review'
-  | 'missing-satisfies' | 'missing-requirement-ref' | 'plan-id-in-test-name' | 'outside-increment'
-  // Plan tasks
-  | 'task-heading' | 'task-summary' | 'task-behaviour' | 'increment-behaviour' | 'task-ownership' | 'task-criteria' | 'criterion-task-changes' | 'task-map' | 'generated-inputs' | 'overlap' | 'task-overlap' | 'glance-restates-task-map'
-  // Design
-  | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
-  | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
-  | 'execution-status'
-  // Shared document structure
-  | 'long-paragraph' | 'section-order' | 'unknown-requirement' | 'unsatisfied-requirement';
-
-export type LintDefect = { code: LintDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
+export type { LintDefect, LintDefectCode } from './document-lint.ts';
 
 // SECTION: Plan
 

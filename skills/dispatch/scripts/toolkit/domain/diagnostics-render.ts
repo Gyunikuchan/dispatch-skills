@@ -1,9 +1,8 @@
 import { formatCost, sumCost, type AppliedRateBasis, type Cost, type CostReason, type Pricer } from '../../lib/pricing.ts';
-import { addCounters, HOST_ROLES, MAX_RESPONSE_AGENTS, STAGE_ORDER, tokenTotal, type Counters, type ResponseCoverage } from '../../lib/usage/rows.ts';
-import type { CoverageReason } from '../types.ts';
+import { addCounters, HOST_ROLES, MAX_RESPONSE_AGENTS, STAGE_ORDER, tokenTotal, type Counters, type CoverageReason, type ResponseCoverage } from '../../lib/usage/rows.ts';
 import { measured, opt, retroObservations, sanitizeFacts } from './diagnostics-gates.ts';
 import { bySeverity, num, pct, phaseName, plural, selectFindings, sum } from './diagnostics-heuristics.ts';
-import { addYield, CATEGORIES, DASH, DIAGNOSTIC_LIMITS, type DelegateResponseFacts, type Finding, type InvocationFacts, type ModelUsage, type PhaseFacts, type RetroObservation, type RunFacts, type SlotYieldAttempt, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
+import { addYield, CATEGORIES, completeDelegateResponses, DASH, DIAGNOSTIC_LIMITS, isSessionDelegate, type DelegateResponseFacts, type Finding, type InvocationFacts, type ModelUsage, type PhaseFacts, type RetroObservation, type RunFacts, type SlotYieldAttempt, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
 
 
 const APART = new Set(['opencode', 'agy']);
@@ -41,6 +40,10 @@ export function heuristics(run: RunFacts): Finding[] {
 const md = (text: string) => text.replace(/<(?=[A-Za-z/!?])/g, '&lt;');
 const cell = (text: string) => md(text).replace(/\|/g, '\\|');
 const row = (cells: readonly string[]) => `| ${cells.map(cell).join(' | ')} |`;
+const tableHeader = (columns: readonly string[]): string[] => [
+  row(columns.map(column => column.replace(/^:/, ''))),
+  row(columns.map(column => column.startsWith(':') ? '---:' : '---')),
+];
 const tokenCells = (t: Totals | undefined, prefix = '') => [t?.input, t?.cacheRead, t?.cacheWrite, t?.output].map((n) => n === undefined ? DASH : `${prefix}${num(n)}`);
 const unique = (values: readonly string[]) => [...new Set(values)].join(', ') || DASH;
 const clip = (text: string, max: number) => Array.from(text).length > max ? `${Array.from(text).slice(0, max - 1).join('')}…` : text;
@@ -93,21 +96,17 @@ const stageForPhase = (run: RunFacts, phaseKey: string | undefined) => {
   return phase === 'integration review' ? 'code review' : STAGE_ORDER.find(x => x === phase) ?? DASH;
 };
 
-const isSessionDelegate = (i: { usageSource?: InvocationFacts['usageSource'] | undefined; coverage?: readonly CoverageReason[] | undefined }) =>
-  i.usageSource !== 'stdout' && !i.coverage?.includes('transcript unavailable');
-
 function delegateFallbackUsage(i: { usage?: Usage | undefined; usageSource?: InvocationFacts['usageSource'] | undefined; coverage?: readonly CoverageReason[] | undefined; responses?: readonly DelegateResponseFacts[] | undefined }): ModelUsage | undefined {
   if (!i.usage) return undefined;
   if (i.usageSource === 'stdout') {
     const { turns: _t, toolCalls: _c, toolTurns: _tt, ...rest } = i.usage;
     return rest;
   }
-  if (i.usage.turns !== undefined || !isSessionDelegate(i) || !i.responses?.length) return i.usage;
-  const delegates = i.responses.filter(r => r.role === 'delegate');
-  if (!delegates.length || !delegates.every(r => r.coverage === 'complete' && r.observed !== undefined)) return i.usage;
+  const delegates = i.usage.turns === undefined ? completeDelegateResponses(i) : undefined;
+  if (!delegates) return i.usage;
   return {
     ...i.usage,
-    turns: delegates.reduce((n, r) => n + r.observed!, 0),
+    turns: delegates.reduce((n, r) => n + r.observed, 0),
     ...opt('toolCalls', allDefinedSum(delegates.map(r => r.toolCalls))),
     ...opt('toolTurns', allDefinedSum(delegates.map(r => r.toolTurns))),
   };
@@ -371,7 +370,7 @@ function costDrivers(units: readonly Unit[]): string[] {
     cacheHitOf(g.units), num(allDefinedSum(g.units.map(u => u.usage?.turns))), evidence(g.units),
   ]));
   const note = liftedRateNote(units);
-  return ['## Cost drivers', '', row(['Stage', 'Platform', 'Role', 'Model', 'Effort', 'Cost', 'Share', 'Billed tokens', 'Cache hit', 'LLM turns', 'Evidence']), '| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | --- |', ...rows, ...(note ? ['', note] : []), ''];
+  return ['## Cost drivers', '', ...tableHeader(['Stage', 'Platform', 'Role', 'Model', 'Effort', ':Cost', 'Share', ':Billed tokens', ':Cache hit', ':LLM turns', 'Evidence']), ...rows, ...(note ? ['', note] : []), ''];
 }
 
 // SECTION: Folding
@@ -552,9 +551,10 @@ export function efficiencyOf(runs: readonly RunFacts[], pricer?: Pricer) {
   };
 }
 
-type Fold = { responses?: number; timing?: number; workload?: number; copilot?: number; health?: number; yield?: number; stage?: number; phase?: number; platform?: number };
 type Foldable = { units: readonly Unit[]; tokens: number; key: string };
 const FOLD_ORDER = ['responses', 'timing', 'workload', 'copilot', 'phase', 'stage', 'platform', 'health', 'yield'] as const;
+type FoldTable = typeof FOLD_ORDER[number];
+type Fold = Partial<Record<FoldTable, number>>;
 
 /** Keeps the `keep` best-ranked rows (high cost, low cost, tokens, key; unpriced counts 0) in normal order and merges the rest into one trailing row. */
 function foldTable<R extends Foldable>(rows: readonly R[], keep: number | undefined, merge: (rest: R[]) => R, pinned: (row: R) => boolean = () => false): R[] {
@@ -585,14 +585,7 @@ function buildSections(
   runUnits: readonly (readonly Unit[])[],
   metadataLines: readonly string[],
   pricer?: Pricer,
-): {
-  reviewHealth: (fold: Fold) => string[];
-  groundingLines: () => string[];
-  tier2Cost: (fold: Fold) => string[];
-  tier2Efficiency: (fold: Fold) => string[];
-  tier2Execution: (fold: Fold) => string[];
-  counts: Record<Exclude<(typeof FOLD_ORDER)[number], 'copilot'>, number>;
-} {
+) {
   const singleRun = runs.length === 1;
   const allUnits = runUnits.flat();
   const overviewPhase = (p: PhaseFacts) => {
@@ -622,7 +615,7 @@ function buildSections(
     if (!u.row) continue;
     const key = [u.stage, u.platform, u.role, u.model, u.effort, String(u.configured)].join('\0');
     const entry = rows.get(key) ?? { stage: u.stage, platform: u.platform, role: u.role, model: u.model, effort: u.effort, configured: u.configured, samples: [], measured: 0, launched: 0, coverageReasons: new Set<CoverageReason>(), costNotes: new Set<string>(), units: [], tokens: 0, key };
-    entry.configured ||= u.configured; entry.launched++; entry.units.push(u);
+    entry.launched++; entry.units.push(u);
     if (u.usage) { entry.measured++; entry.samples.push({ usage: u.usage, platform: u.platform, reasoningInOutput: u.reasoningInOutput }); entry.tokens += billedTokens(u.usage, u.platform, u.reasoningInOutput); }
     for (const reason of u.coverage ?? []) entry.coverageReasons.add(reason);
     for (const reason of u.cost?.reasons ?? []) entry.costNotes.add(reason);
@@ -739,8 +732,7 @@ function buildSections(
       out.push(
         `- ${plural(reviewKeys.size, 'review')} · ${plural(roundEntries.length, 'round')} · Host turns ${aggTurns(roundEntries.map(e => e.hostTurns))} · Reviewer turns ${aggTurns(roundEntries.map(e => e.revTurns), roundEntries.some(e => e.revPartial))}`,
         '',
-        row([...(singleRun ? [] : ['Run']), 'Review', 'Round', 'Wall span', 'Host turns', 'Reviewer turns', 'Accepted', 'Rejected', 'Recurring']),
-        '| ' + (singleRun ? '' : '--- | ') + '--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+        ...tableHeader([...(singleRun ? [] : ['Run']), 'Review', ':Round', ':Wall span', ':Host turns', ':Reviewer turns', ':Accepted', ':Rejected', ':Recurring']),
         ...kept,
         ...(fold.health !== undefined && fold.health < healthRows.length ? ['', `${healthRows.length - fold.health} review round rows omitted.`] : []),
         '',
@@ -749,8 +741,7 @@ function buildSections(
     if (yieldRows.length) {
       const kept = yieldLines.slice(0, fold.yield);
       out.push('### Responder yield', '',
-        row(['Provider', 'Model', 'M/S/C', ...(showFixInduced ? ['Fix-induced'] : []), 'Accepted', 'Rejected', 'Dup', 'Cost', 'Cost / accepted', 'Notes']),
-        '| --- | --- | --- |' + (showFixInduced ? ' ---: |' : '') + ' ---: | ---: | ---: | ---: | ---: | --- |',
+        ...tableHeader(['Provider', 'Model', 'M/S/C', ...(showFixInduced ? [':Fix-induced'] : []), ':Accepted', ':Rejected', ':Dup', ':Cost', ':Cost / accepted', 'Notes']),
         ...kept,
         ...(fold.yield !== undefined && fold.yield < yieldLines.length ? ['', `${yieldLines.length - fold.yield} yield rows omitted.`] : []),
         '');
@@ -759,27 +750,26 @@ function buildSections(
   };
   const groundingLines = (): string[] => {
     if (!grounding.length) return [];
-    const out = ['### Grounding', '', row([...(singleRun ? [] : ['Run']), 'Phase', 'Evidence', 'Assessment', 'Proposed change']),
-      '| ' + (singleRun ? '' : '--- | ') + '--- | --- | --- | --- |'];
+    const out = ['### Grounding', '', ...tableHeader([...(singleRun ? [] : ['Run']), 'Phase', 'Evidence', 'Assessment', 'Proposed change'])];
     for (const g of grounding) out.push(row([...(singleRun ? [] : [String(g.run)]), g.id.slice('grounding-'.length), g.evidence, g.impact, g.proposedFix]));
     return [...out, ''];
   };
 
   const responseAgentRows = groupResponses(efficiency.responses, true);
+  const tokenColumns = [':Uncached input', ':Cache read', ':Cache write', ':Output', ':Reasoning', 'Coverage', 'Cost notes', ':Cost'];
   const tier2Cost = (fold: Fold): string[] => [
     '<details>', '', '<summary>Cost & token breakdown (platform, stage, model, and metadata)</summary>', '',
     ...metadataLines, '',
     '### Tokens by platform', '',
-    row(['Platform', 'Uncached input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Coverage', 'Cost notes', 'Cost']),
-    '| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |',
+    ...tableHeader(['Platform', ...tokenColumns]),
     ...(platforms.size ? foldTable(platformRows, fold.platform, mergePlatforms).map(r => row([r.platform, ...cells(r.samples), [...r.segments, ...knownSourceNotes(r.units)].join(' · ') || DASH, [...r.costNotes, ...rateNotes(r.units)].join(', ') || DASH, costText(r.units)])) : [row(Array<string>(9).fill(DASH))]),
     '', '### Tokens by stage', '', 'Host/subagent stages are time-derived; delegates recorded.', '',
-    row(['Stage', 'Platform', 'Role', 'Model', 'Effort', 'Uncached input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Coverage', 'Cost notes', 'Cost']),
-    '| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: |',
+    ...tableHeader(['Stage', 'Platform', 'Role', 'Model', 'Effort', ...tokenColumns]),
     ...(sorted.length ? foldTable(sorted, fold.stage, mergeStages).map(entry => row([entry.stage, entry.platform, entry.role, entry.model === DASH ? DASH : entry.configured ? `${entry.model} (configured)` : entry.model, entry.effort, ...cells(entry.samples), coverageRow(entry), costNotesRow(entry), costText(entry.units)])) : [row(Array<string>(13).fill(DASH))]),
     '', '</details>', '',
   ];
 
+  const responseColumns = ['Event basis', ':Observed turns', 'Coverage', ':Matched turns', ':Matched uncached input', ':Uncached input / turn', ':Tool calls (tool turns)'];
   const tier2Efficiency = (fold: Fold): string[] => {
     const { responseEvents, recovery } = efficiency;
     const kept = responseAgentRows.slice(0, fold.responses);
@@ -793,12 +783,10 @@ function buildSections(
         '',
       ] : []),
       '### Context efficiency by stage and role', '',
-      row(['Stage', 'Role', 'Event basis', 'Observed turns', 'Coverage', 'Matched turns', 'Matched uncached input', 'Uncached input / turn', 'Tool calls (tool turns)']),
-      '| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |',
+      ...tableHeader(['Stage', 'Role', ...responseColumns]),
       ...responseEvents.byStageRole.map(entry => row([entry.stage, entry.role, entry.basis, ...responseCells(entry)])),
       '', '### Turns & context efficiency by agent', '',
-      row(['Stage', 'Role', 'Agent', 'Event basis', 'Observed turns', 'Coverage', 'Matched turns', 'Matched uncached input', 'Uncached input / turn', 'Tool calls (tool turns)']),
-      '| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |',
+      ...tableHeader(['Stage', 'Role', 'Agent', ...responseColumns]),
       ...kept.map(entry => row([entry.stage, entry.role, entry.agent ?? DASH, entry.basis, ...responseCells(entry)])),
       ...(kept.length < responseAgentRows.length ? ['', `${responseAgentRows.length - kept.length} response detail rows omitted. Stage totals include them.`] : []),
       '', '</details>', '',
@@ -807,13 +795,12 @@ function buildSections(
 
   const tier2Execution = (fold: Fold): string[] => {
     const out: string[] = ['<details>', '', '<summary>Execution & review detail (phases, per-slot timing, and workload)</summary>', '', '### Phases', '',
-      row([...(singleRun ? [] : ['Run']), 'Phase', 'Outcome', ...TIMING_COLS.filter((_, idx) => showTiming[idx]), 'Invocations', 'Input', 'Cache read', 'Cache write', 'Output', 'Coverage', 'Cost']),
-      row([...(singleRun ? [] : ['---']), '---', '---', ...showTiming.filter(Boolean).map(() => '---:'), '---:', '---:', '---:', '---:', '---:', '---:', '---:']),
+      ...tableHeader([...(singleRun ? [] : ['Run']), 'Phase', 'Outcome', ...TIMING_COLS.flatMap((column, index) => showTiming[index] ? [':' + column] : []), ':Invocations', ':Input', ':Cache read', ':Cache write', ':Output', ':Coverage', ':Cost']),
       ...foldTable(phaseRows, fold.phase, mergePhases, (r) => r.pinned).map((r) => row([...(singleRun ? [] : [r.label]), r.phase, r.outcome ?? DASH, ...r.timing.filter((_, idx) => showTiming[idx]).map(formatDuration), String(r.items.length), ...tokenCells(totals(usageSamples(r.items))), coverage(r.items), costText(r.units)])),
       ...(notes.length ? ['', ...notes] : []), ''];
     if (timing.length) {
       const kept = timing.slice(0, fold.timing ?? timing.length);
-      out.push('### Review round timing', '', row(['Review', 'Round', 'Slot', 'Wall', 'Critical path']), '| --- | ---: | --- | ---: | --- |');
+      out.push('### Review round timing', '', ...tableHeader(['Review', ':Round', 'Slot', ':Wall', 'Critical path']));
       for (const round of kept) {
         const spans = round.slots.map(slot => {
           if (!slot.attempts.length || slot.attempts.some(a => a.startMs === undefined || a.endMs === undefined || a.endMs < a.startMs)) return undefined;
@@ -829,7 +816,7 @@ function buildSections(
       const storageFailed = sum(runs.map((run) => run.collection?.storageFailed)) ?? 0;
       const eligible = workload.filter(round => round.kind === 'plan' || round.kind === 'design');
       const over = eligible.filter(round => (round.calls?.total ?? 0) > 6 || (round.hostTurns ?? 0) > 25);
-      out.push('### Review round workload', '', row(['Review', 'Round', 'Toolkit calls', 'Host tokens', 'Host turns', 'Reviewer turns']), '| --- | ---: | --- | ---: | ---: | ---: |',
+      out.push('### Review round workload', '', ...tableHeader(['Review', ':Round', 'Toolkit calls', ':Host tokens', ':Host turns', ':Reviewer turns']),
         ...workload.slice(0, fold.workload).map((round) => row(['subject ' + round.review.slice(7), String(round.round),
           round.calls ? `${num(round.calls.total)}${round.calls.phases.length ? ': ' + round.calls.phases.map((p) => `${p.key} ${num(p.count)}`).join(' · ') : ''}` : DASH,
           round.calls && round.hostTokens !== undefined ? num(round.hostTokens) : DASH,
@@ -846,7 +833,16 @@ function buildSections(
 
   return {
     reviewHealth, groundingLines, tier2Cost, tier2Efficiency, tier2Execution,
-    counts: { responses: responseAgentRows.length, timing: timing.length, workload: workload.length, health: healthRows.length, yield: yieldLines.length, stage: sorted.length, phase: phaseRows.filter((r) => !r.pinned).length, platform: platformRows.length },
+    counts: {
+      responses: responseAgentRows.length,
+      timing: timing.length,
+      workload: workload.length,
+      health: healthRows.length,
+      yield: yieldLines.length,
+      stage: sorted.length,
+      phase: phaseRows.filter((r) => !r.pinned).length,
+      platform: platformRows.length,
+    },
   };
 }
 
@@ -854,8 +850,7 @@ function appendix(runs: readonly RunFacts[]): string[] {
   const singleRun = runs.length === 1;
   const configured = runs.some(run => run.invocations.some(i => i.configuredEffort));
   const lines = ['<details>', '', '<summary>Invocations, provenance, and configuration</summary>', '',
-    row([...(singleRun ? [] : ['Run']), 'Phase', 'Provider', 'Model', 'Effort', ...(configured ? ['Configured effort'] : []), 'Duration', 'Input', 'Cache read', 'Cache write', 'Output', 'Reasoning', 'Total', 'Outcome']),
-    '| ' + (singleRun ? '' : '--- | ') + '--- | --- | --- | --- | ' + (configured ? '--- | ' : '') + '---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |'];
+    ...tableHeader([...(singleRun ? [] : ['Run']), 'Phase', 'Provider', 'Model', 'Effort', ...(configured ? ['Configured effort'] : []), ':Duration', ':Input', ':Cache read', ':Cache write', ':Output', ':Reasoning', ':Total', 'Outcome'])];
   runs.forEach((run, index) => {
     for (const i of run.invocations) {
       const usage = measured(i) ? totals([{ usage: measured(i)!, platform: i.provider, reasoningInOutput: i.usage?.reasoningInOutput }]) : undefined;
@@ -1005,6 +1000,7 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
   });
   const stageShares = computeShares(stageGroups);
 
+  const summaryColumns = ['Share', ':Cost', ':Billed tokens', ':Cache hit', ':User turns', ':LLM turns', ':Tool calls (tool turns)'];
   const lead = [
     '# Dispatch diagnostics', '',
     'Review before sharing: dispatch-owned data only (no source, objective, paths, identities); fixes unverified.', '',
@@ -1020,14 +1016,12 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
     '',
     ...(findings.length > 3 ? ['Top findings:', '', ...findings.slice(0, 3).map((f, i) => `${i + 1}. ${summaryLine(f)}`), ''] : []),
     '### Spend & Turns by Role', '',
-    row(['Role', 'Share', 'Cost', 'Billed tokens', 'Cache hit', 'User turns', 'LLM turns', 'Tool calls (tool turns)', 'Coverage']),
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
+    ...tableHeader(['Role', ...summaryColumns, 'Coverage']),
     ...roleGroups.map((g, i) => row([g.label, shareBar(roleShares[i] ?? null), formatCost(g.cost), g.hasUsage ? num(g.tokens) : DASH, g.cacheHit, num(g.userTurns), num(g.llmTurns), toolCell(g.toolCalls, g.toolTurns), g.coverage])),
     '',
     '### Spend & Turns by Stage', '',
     ...(hostTurnsComplete ? [] : ['Stage uses observed rows. Summary flags missing host/subagent data.', '']),
-    row(['Stage', 'Share', 'Cost', 'Billed tokens', 'Cache hit', 'User turns', 'LLM turns', 'Tool calls (tool turns)']),
-    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+    ...tableHeader(['Stage', ...summaryColumns]),
     ...(stageGroups.length ? stageGroups.map((g, i) => row([g.stage, shareBar(stageShares[i] ?? null), formatCost(g.cost), g.hasUsage ? num(g.tokens) : DASH, g.cacheHit, g.userTurns, g.llmTurns, g.toolText])) : [row(Array<string>(8).fill(DASH))]),
     '',
     ...costDrivers(allUnits),
@@ -1043,7 +1037,7 @@ export function renderDiagnostics(input: readonly RunFacts[], pricer?: Pricer): 
   };
   const tail = appendix(runs);
   const copilot = copilotDetails(runs);
-  const counts = { ...sections.counts, copilot: copilot.count };
+  const counts: Record<FoldTable, number> = { ...sections.counts, copilot: copilot.count };
   const assemble = (withAppendix: boolean, keep: number, fold: Fold = {}) => [
     ...lead,
     ...sections.reviewHealth(fold),
@@ -1099,8 +1093,7 @@ function copilotDetails(runs: readonly RunFacts[]): { count: number; render: (ke
     return [
       '<details>', '', '<summary>Copilot accounting evidence</summary>', '',
       'Supported local records only; unknown formats and unresolved nesting limit coverage. Reported nano-AI units and premium-request multipliers are not USD or final charges. Token-priced costs are USD estimates.', '',
-      row(['Stage', 'Role', 'Actor', 'Model (observed)', 'Effort (observed)', 'Depth', 'Tokens / lineage / actors', 'Reported nano-AI units', 'Multiplier', 'Billing state / coverage']),
-      '| --- | --- | --- | --- | --- | ---: | --- | ---: | --- | --- |',
+      ...tableHeader(['Stage', 'Role', 'Actor', 'Model (observed)', 'Effort (observed)', ':Depth', 'Tokens / lineage / actors', ':Reported nano-AI units', 'Multiplier', 'Billing state / coverage']),
       ...values.slice(0, keep).map(v => row([v.stage, v.role, v.agent ?? 'Other or unknown actors', v.model || DASH, v.effort ?? DASH, v.depth === undefined ? DASH : String(v.depth), v.copilot ? `${v.copilot.tokenCoverage} / ${v.copilot.lineageCoverage} / ${v.copilot.actorCoverage}` : 'unknown', v.copilot?.billing.totalNanoAiu === undefined ? DASH : String(v.copilot.billing.totalNanoAiu), v.copilot?.billing.multipliers?.join(', ') ?? DASH, `${v.copilot?.billing.statuses?.join(', ') ?? DASH} / ${v.copilot?.billing.coverage ?? 'unknown'}`])),
       ...(keep < values.length ? ['', `Detail coverage partial: ${values.length - keep} accounting rows omitted (${reasons.join('; ')}); measured token and cost rollups retain all rows.`] : []),
       '', '</details>', '',

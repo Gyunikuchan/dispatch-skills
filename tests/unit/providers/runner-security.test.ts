@@ -11,8 +11,9 @@ import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/openc
 import {
   CONTINUE_PROMPT,
   IDLE_TIMEOUT_MS,
-  batchInvocation, buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, killArgv, mustSpill, runDelegate, sanitizeEnv, type RunnerFs, type RunnerPorts,
+  buildAttachmentBlock, findSensitiveMatch, formatSafetyPrompt, GUARDRAIL_HEADER, runDelegate, type RunnerFs, type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { batchInvocation, killArgv, mustSpill, sanitizeEnv } from '../../../skills/dispatch/scripts/providers/process-policy.ts';
 import type { DelegateRequest, Launch, PlatformEnv, ProcessResult, ProviderUsageContext } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = { os: 'linux', arch: 'x64', wsl: false, bubblewrap: true, argvLimit: 100000, home: '/h', path: [], pathExt: [] };

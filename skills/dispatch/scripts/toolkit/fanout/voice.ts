@@ -11,7 +11,7 @@ import { sumSessionUsage, CONTINUE_PROMPT } from '../../providers/runner.ts';
 import type { ProviderId, Invocation, LaunchRequest, ProcessResult, UsageBaseline } from '../../providers/types.ts';
 import type { CliDeps } from '../cli.ts';
 import type { RosterSlot } from '../domain/types.ts';
-import type { DiagnosticUsage } from '../types.ts';
+import type { DiagnosticUsage } from '../../lib/usage/rows.ts';
 import { atomic, mergeBlocked, type BlockedAttempt, type Emit, type FanOutInput, type SlotOutcome, type Validation, type slotFiles } from './state.ts';
 
 export const VOICE_DEADLINE_MS = 30 * 60 * 1000;

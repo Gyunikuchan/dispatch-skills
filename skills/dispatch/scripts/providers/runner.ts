@@ -1,20 +1,20 @@
+import { SESSION_WORKTREES } from '../lib/session-paths.ts';
 // The one delegate runner (spec §6.2):
 // credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
-// then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
+// then `spec.parse`.
 
 import path from 'node:path';
-import type { CoverageReason, DelegateResponse, FailureClass, DiagnosticUsage } from '../toolkit/types.ts';
-import { normalizeAgyModelEffort } from '../lib/usage/agy.ts';
+import type { FailureClass } from '../toolkit/types.ts';
 import { nodeHostUsageFs } from '../lib/usage/index.ts';
 import { baseCounters, hasUsageTokens, MAX_TOTAL_BYTES } from '../lib/usage/read.ts';
-import { addCounters, type HostUsageFs } from '../lib/usage/rows.ts';
+import { addCounters, COUNTER_KEYS, type CoverageReason, type DelegateResponse, type DiagnosticUsage, type HostUsageFs } from '../lib/usage/rows.ts';
 import { readOpencodeMessages } from '../lib/opencode-db.ts';
-import type { OsId } from '../lib/platform.ts';
+import { KILL_ESCALATION_MS, killArgv, mustSpill, sanitizeEnv, waitWithin } from './process-policy.ts';
+import { failOutcome } from './response.ts';
 import type { DelegateRequest, Invocation, Launch, LifecycleStep, LaunchRequest, ModeId, PlatformEnv, Prelaunch, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome, UsageBaseline } from './types.ts';
 
 const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
 const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
-export const KILL_ESCALATION_MS = 1000;
 /** Silence on both stdout and stderr that stops a delegate before its overall deadline. */
 export const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const BETWEEN_STEPS_MS = 60_000, IN_STEP_MS = 180_000, IDLE_CHECK_MS = 10_000;
@@ -28,35 +28,7 @@ export const WRAP_UP_PROMPT = 'The delegate run is about to reach its deadline. 
 /** One-line deadline notice inside every guarded prompt. */
 const deadlineNotice = (deadlineMs: number, remainingMs: number, wrapUpAtMs?: number): string =>
   `[DEADLINE]: ${new Date(deadlineMs).toISOString()} (${Math.max(0, Math.round(remainingMs / 60_000))}m remaining${wrapUpAtMs === undefined ? '' : `; wrap-up at ${new Date(wrapUpAtMs).toISOString()}`})`;
-// cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
-const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
-
 const bytes = (text: string): number => Buffer.byteLength(text, 'utf8');
-
-// SECTION: Credential stripping
-
-/** Non-secret variables delegates may inherit; every credential is stripped by omission. */
-const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
-  'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'windir', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE',
-  'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'ProgramData', 'PROGRAMFILES', 'ProgramFiles',
-  'PROGRAMFILES(X86)', 'ProgramFiles(x86)', 'COMMONPROGRAMFILES', 'CommonProgramFiles', 'ALLUSERSPROFILE', 'SYSTEMDRIVE',
-  'SystemDrive', 'NODE_ENV', 'TERM', 'LANG', 'LC_ALL', 'SHELL', 'COMSPEC', 'GIT_EXEC_PATH',
-  // Reachability and identity: endpoints and paths, never tokens.
-  'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy',
-  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
-  'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'JETSKI_APP_DATA_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'USER', 'USERNAME', 'LOGNAME', 'TZ',
-]);
-
-// NOTE: redundant with the whitelist by construction; catches a credential-shaped name added to it by mistake.
-const SENSITIVE_ENV_KEY = /(KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/i;
-
-export function sanitizeEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
-  const clean: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && SAFE_ENV_WHITELIST.has(key) && !SENSITIVE_ENV_KEY.test(key)) clean[key] = value;
-  }
-  return clean;
-}
 
 // SECTION: Sensitive-file guardrail
 
@@ -97,8 +69,8 @@ export function formatSafetyPrompt(raw: string, scope: { workspaceRoot?: string;
   if (scope.attachedFiles?.length) lines.push(`[ATTACHED FILES]: ${scope.attachedFiles.join(', ')}`);
   // NOTE: only the word patterns yield inside one directory; the other denied patterns still apply there, and worktrees hold host source.
   const real = scope.sessionRealRoot && scope.sessionRealRoot !== scope.sessionRoot ? ` (resolved ${scope.sessionRealRoot})` : '';
-  const worktree = scope.sessionRoot ? `${scope.sessionRoot}/.state/worktrees` : '';
-  const physicalWorktree = scope.worktreeRealRoot ?? (scope.sessionRealRoot ? `${scope.sessionRealRoot}/.state/worktrees` : worktree);
+  const worktree = scope.sessionRoot ? `${scope.sessionRoot}/${SESSION_WORKTREES}` : '';
+  const physicalWorktree = scope.worktreeRealRoot ?? (scope.sessionRealRoot ? `${scope.sessionRealRoot}/${SESSION_WORKTREES}` : worktree);
   const worktreeReal = physicalWorktree && physicalWorktree !== worktree ? ` (resolved ${physicalWorktree})` : '';
   const checkouts = scope.worktreeRoots?.length ? ` or a resolved checkout directory (${scope.worktreeRoots.join(', ')})` : '';
   const sessionExemption = scope.sessionRoot
@@ -129,7 +101,7 @@ const insidePath = (file: string, root: string): boolean => {
   return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 };
 
-const worktreeRoot = (root: string): string => path.join(root, '.state', 'worktrees');
+const worktreeRoot = (root: string): string => path.join(root, SESSION_WORKTREES);
 
 /** 'file' | 'dir' when `file` or its realpath (symlink target) matches the denylist, else null. */
 export function findSensitiveMatch(file: string, realpath: (file: string) => string | null, session: SessionScope = {}): 'file' | 'dir' | null {
@@ -220,85 +192,11 @@ export function buildAttachmentBlock(files: readonly string[], fs: RunnerFs, non
   return { text: snippets.join('\n\n'), notes, attachedFiles, usedBytes };
 }
 
-// SECTION: Argv spill
-
-const isBatchLauncher = (os: OsId, binary: string): boolean => os === 'win32' && /\.(?:bat|cmd)$/i.test(binary);
-
-/** Whether the prompt must spill: over the argv ceiling, unsafe for a Windows command shim, or too large for a batch launcher. */
-export function mustSpill(prompt: string, env: PlatformEnv, binary: string, reservedBytes = 0): boolean {
-  const size = bytes(prompt);
-  const windowsShim = env.os === 'win32' && /[\r\n%]/.test(prompt);
-  const batch = isBatchLauncher(env.os, binary) && size > Math.max(0, BATCH_LAUNCHER_ARG_BYTE_LIMIT - reservedBytes);
-  return size > env.argvLimit || windowsShim || batch;
-}
-
 /** Single line with no `%`: the pointer itself must survive a batch launcher. */
 const spillPointer = (briefFile: string): string =>
   'Your full task brief was written to a file to keep it off the command line. '
   + `FIRST ACTION: read this file in full, then carry out the instructions it contains. Brief file: ${briefFile.replaceAll('\\', '/')}`;
 
-// SECTION: Tree kill
-
-/** The Windows tree-kill launch; POSIX signals the negative pid (process group) instead. */
-export const killArgv = (os: OsId, pid: number): readonly string[] =>
-  os === 'win32' ? ['taskkill', '/pid', String(pid), '/T', '/F'] : ['kill', '-TERM', `-${pid}`];
-
-/** Waits for an owned process effect without allowing teardown to hold a caller indefinitely. */
-export function waitWithin<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(null), Math.max(0, ms));
-    promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
-  });
-}
-
-// SECTION: Shared classifiers
-
-/** Shared classifier over diagnostics text; null when nothing matches. */
-export function classifyFailure(text: string): FailureClass | null {
-  if (!text) return null;
-  // A missing or lapsed plan needs user action, so it is auth and takes precedence over quota wording.
-  if (/(no (active )?subscription|subscription (is )?(required|expired|inactive|not found)|payment required|\b402\b)/i.test(text)) return 'auth';
-  if (/\b(usage limit|rate limit|rate_limit|quota|credit balance|insufficient[_ ]quota|too many requests|\b429\b)/i.test(text)) return 'quota';
-  if (/(context (window|length)|prompt is too long|maximum context|token limit|context_length_exceeded|too many tokens|CONTEXT_BUDGET_EXCEEDED)/i.test(text)) return 'context-overflow';
-  if (/(unauthorized|not authenticated|authentication failed|no authentication|invalid api key|please (log|sign) in|access denied by policy|policy settings may be preventing access|\b401\b|\b403\b)/i.test(text)) return 'auth';
-  if (/no models loaded|model (is )?not loaded|SERVER_OFFLINE/i.test(text)) return 'model-not-loaded';
-  if (/(command not found|is not recognized|ENOENT|no such file or directory)/i.test(text)) return 'not-found';
-  if (/(timed out|timeout|ETIMEDOUT)/i.test(text)) return 'timeout';
-  return null;
-}
-
-/** A provider diagnostic saying a sandbox flag or setting is unsupported. */
-export function isSandboxUnsupported(text: string, options: { includeSettings?: boolean; strict?: boolean } = {}): boolean {
-  const flag = options.includeSettings ? '--(?:settings|sandbox)|\\bsandbox(?:ing)?\\b' : '--sandbox|\\bsandbox(?:ing)?\\b';
-  const reason = options.strict
-    ? 'unknown|unrecognized|unsupported|invalid'
-    : "unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires";
-  return new RegExp(`(?:(?:${flag}).{0,80}(?:${reason})|(?:${reason}).{0,80}(?:${flag}))`, 'i').test(text);
-}
-
-/** JSON `session_id`, a `session id:` line, or the CLI's own `--resume` mention. */
-export function extractSessionId(text: string, resumePrefix: string): string | null {
-  const match = /"session_id"\s*:\s*"([a-zA-Z0-9_-]+)"/.exec(text)
-    ?? /session\s+id[:=]\s*([a-zA-Z0-9_-]{8,})/i.exec(text)
-    ?? new RegExp(`${resumePrefix}\\s+--resume\\s+([a-zA-Z0-9_-]{8,})`, 'i').exec(text);
-  return match?.[1] ?? null;
-}
-
-const TRACE = /^(?:> build|→ (?:Skill|Read|Write|Edit|Run)|\$ |✱ |\[dispatch\])/;
-
-/** Drops a leading tool trace so only the answer remains. */
-export function extractCleanResponse(raw: string): string {
-  const lines = raw.trim().split(/\r?\n/);
-  let start = 0;
-  while (start < lines.length && (TRACE.test(lines[start] ?? '') || !(lines[start] ?? '').trim())) start++;
-  return start > 0 && start < lines.length ? lines.slice(start).join('\n').trim() : raw.trim();
-}
-
-export const failOutcome = (cls: FailureClass, detail: string): Extract<RunOutcome, { status: 'fail' }> => ({ status: 'fail', cls, detail });
-
-export const tail = (text: string, max = 2000): string => (text.length > max ? text.slice(-max) : text);
-
-const USAGE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;
 /** Combine invocation deltas for a provider session, including per-model attribution. */
 export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]): DiagnosticUsage | undefined {
   let total: DiagnosticUsage | undefined;
@@ -347,13 +245,13 @@ export function sumSessionUsage(rows: readonly (DiagnosticUsage | undefined)[]):
   }
   return total;
 }
-function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefined): DiagnosticUsage {
+function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefined, retainAttribution: boolean): DiagnosticUsage {
   const result: DiagnosticUsage = { ...usage, scope: 'invocation' };
-  for (const key of USAGE_KEYS) if (usage[key] !== undefined) result[key] = Math.max(0, usage[key] - (previous?.[key] ?? 0));
+  for (const key of COUNTER_KEYS) if (usage[key] !== undefined) result[key] = Math.max(0, usage[key] - (previous?.[key] ?? 0));
 
   if (previous !== undefined) {
     if (!previous.models || !usage.models) {
-      if (usage.provenance === 'agy.usage.envelope') {
+      if (retainAttribution) {
         if (usage.models) {
           const modelKeys = Object.keys(usage.models);
           if (modelKeys.length === 1) {
@@ -381,7 +279,7 @@ function usageDelta(usage: DiagnosticUsage, previous: DiagnosticUsage | undefine
         const prevPart = Object.hasOwn(previous.models, model) ? previous.models[model] : undefined;
         const target = { ...part };
         let increased = false;
-        for (const key of USAGE_KEYS) {
+        for (const key of COUNTER_KEYS) {
           if (part[key] !== undefined) {
             const delta = Math.max(0, part[key] - (prevPart?.[key] ?? 0));
             target[key] = delta;
@@ -429,8 +327,8 @@ export type RunnerPorts = {
 type DelegateRun = { outcome: RunOutcome; result: ProcessResult | null; attempts: number; briefFile: string | null; invocations: Invocation[] };
 
 type WrapUpPort = { runDeadline: number; enabled: boolean; nameSession: () => string | null };
-/** Deadline/idleness kills the tree; OpenCode group settlement is bounded after normal completion, timeout, or failure. */
-async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, confirmTreeExit: boolean, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[], wrapUp?: WrapUpPort): Promise<ProcessResult> {
+/** Deadline/idleness kills the tree; owned group settlement is bounded after normal completion, timeout, or failure. */
+async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPorts, idle: boolean, ownedTreeLabel: string | undefined, stepEvent?: ProviderSpec['stepEvent'], steps?: LifecycleStep[], wrapUp?: WrapUpPort): Promise<ProcessResult> {
   let lastActivity = ports.clock.now();
   let betweenSteps = false;
   const { pid, done } = ports.process.start(launch, { logPath: req.logPath, capBytes: req.outputCapBytes, onActivity: () => { lastActivity = ports.clock.now(); }, ...(stepEvent ? { onLine: (line: string, fragment?: boolean) => { betweenSteps = !fragment && stepEvent(line) === 'step-end'; } } : {}) });
@@ -447,9 +345,9 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     if (ports.platform.os === 'win32') {
       try {
         const killer = ports.process.start({ argv: killArgv('win32', pid), stdin: null, env: launch.env, cwd: launch.cwd }, { logPath: `${req.logPath}.kill`, capBytes: 4096 });
-        if (confirmTreeExit) taskkillDone = killer.done;
+        if (ownedTreeLabel) taskkillDone = killer.done;
       } catch (error) {
-        if (!confirmTreeExit) throw error;
+        if (!ownedTreeLabel) throw error;
         taskkillStartFailed = true;
       }
       stopTimeout();
@@ -499,7 +397,7 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
     }
   }
   try {
-    if (!confirmTreeExit) {
+    if (!ownedTreeLabel) {
       const result = await done;
       if (!timedOut) return result;
       if (wrapUpStopped) return { ...result, timedOut: true, wrapUpStop: true as const };
@@ -517,7 +415,7 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
         const since = ports.clock.now();
         const confirmed = await ports.process.settleGroup(pid, KILL_ESCALATION_MS);
         teardown(since, KILL_ESCALATION_MS, confirmed);
-        if (!confirmed) return { ...completed, lifecycleError: 'OpenCode process group exit unconfirmed; retain the worktree and verify process exit before cleanup' };
+        if (!confirmed) return { ...completed, lifecycleError: `${ownedTreeLabel} process group exit unconfirmed; retain the worktree and verify process exit before cleanup` };
       }
       return completed;
     }
@@ -533,14 +431,14 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
       settleTaskkill,
     ] as const);
     let lifecycleError: string | undefined;
-    if (!result) lifecycleError = `OpenCode owned process tree ${pid} exit was not confirmed within ${teardownBudgetMs} ms`;
-    else if (ports.platform.os === 'win32' && taskkillStartFailed) lifecycleError = `OpenCode owned process tree ${pid} teardown could not start`;
-    else if (ports.platform.os === 'win32' && !killer) lifecycleError = `OpenCode owned process tree ${pid} taskkill exit was not confirmed within ${teardownBudgetMs} ms`;
-    else if (ports.platform.os === 'win32' && killer?.exit !== 0) lifecycleError = `OpenCode owned process tree ${pid} taskkill exited with status ${String(killer?.exit)}`;
+    if (!result) lifecycleError = `${ownedTreeLabel} owned process tree ${pid} exit was not confirmed within ${teardownBudgetMs} ms`;
+    else if (ports.platform.os === 'win32' && taskkillStartFailed) lifecycleError = `${ownedTreeLabel} owned process tree ${pid} teardown could not start`;
+    else if (ports.platform.os === 'win32' && !killer) lifecycleError = `${ownedTreeLabel} owned process tree ${pid} taskkill exit was not confirmed within ${teardownBudgetMs} ms`;
+    else if (ports.platform.os === 'win32' && killer?.exit !== 0) lifecycleError = `${ownedTreeLabel} owned process tree ${pid} taskkill exited with status ${String(killer?.exit)}`;
     if (pid > 1 && ports.platform.os !== 'win32' && ports.process.settleGroup) {
       const remaining = Math.max(0, teardownDeadline - ports.clock.now());
       const confirmed = await ports.process.settleGroup(pid, remaining);
-      if (!confirmed) lifecycleError = 'OpenCode process group exit unconfirmed';
+      if (!confirmed) lifecycleError = `${ownedTreeLabel} process group exit unconfirmed`;
     }
     teardown(teardownStart, teardownBudgetMs, !lifecycleError);
     if (lifecycleError) lifecycleError += '; retain the worktree and verify process exit before cleanup';
@@ -572,18 +470,35 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
     return await runAttempts(spec, req, mode, ports, track);
   } catch (error) {
     // NOTE: the original error object is rethrown unchanged; it only gains the attempts so far for the slot row.
-    const normalized = spec.id === 'agy' ? normalizeAgyModelEffort(track.model, track.effort) : { model: track.model, effort: track.effort };
-    recordInvocation(track.invocations, req, { provider: spec.id, model: normalized.model, mode, effort: normalized.effort, launched: false, outcome: 'launch-failed' });
+    const attribution = invocationAttribution(spec, track.model, track.effort, req.effort);
+    recordInvocation(track.invocations, req, { provider: spec.id, ...attribution, mode, launched: false, outcome: 'launch-failed' });
     if (error !== null && typeof error === 'object') (error as { invocations?: Invocation[] }).invocations = [...track.invocations];
     throw error;
   }
 }
 
+function invocationAttribution(
+  spec: ProviderSpec,
+  model: string | null,
+  effort: string | null,
+  configuredEffort: string | null,
+  usage?: DiagnosticUsage,
+): Pick<Invocation, 'model' | 'effort' | 'configuredEffort'> {
+  const policy = spec.invocationAttribution;
+  if (!policy) return { model, effort };
+  if (policy.measured === 'measured-only') return {
+    model: usage?.actualModels?.[0] ?? null,
+    effort: usage?.actualEffort ?? null,
+    ...(configuredEffort ? { configuredEffort } : {}),
+  };
+  const fallback = policy.normalize?.(model, effort) ?? { model, effort };
+  return {
+    model: usage?.actualModels?.[0] ?? fallback.model,
+    effort: usage?.actualEffort !== undefined ? usage.actualEffort : fallback.effort,
+  };
+}
+
 function recordInvocation(rows: Invocation[], req: DelegateRequest, row: Invocation): void {
-  if (row.provider === 'copilot' && !row.launched) {
-    row.model = null; row.effort = null;
-    if (req.effort) row.configuredEffort = req.effort;
-  }
   rows.push(row);
   try { req.onInvocation?.(row); } catch {}
 }
@@ -597,8 +512,8 @@ export const sandboxBlocked = (spec: ProviderSpec, sandbox: boolean, platform: P
 async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts, track: Attempts): Promise<DelegateRun> {
   const { invocations } = track;
   const unlaunched = (outcome: Extract<RunOutcome, { status: 'fail' }>, attempts: number, briefFile: string | null, steps?: LifecycleStep[]): DelegateRun => {
-    const normalized = spec.id === 'agy' ? normalizeAgyModelEffort(track.model, track.effort) : { model: track.model, effort: track.effort };
-    recordInvocation(invocations, req, { provider: spec.id, model: normalized.model, mode, effort: normalized.effort, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
+    const attribution = invocationAttribution(spec, track.model, track.effort, req.effort);
+    recordInvocation(invocations, req, { provider: spec.id, ...attribution, mode, launched: false, outcome: outcome.cls, ...(steps?.length ? { lifecycleSteps: steps } : {}) });
     return { outcome, result: null, attempts, briefFile, invocations };
   };
   const deadline = ports.clock.now() + req.timeoutMs, runBudget = req.timeoutMs, wrapUpPossible = runBudget >= WRAP_UP_FLOOR_MS;
@@ -608,23 +523,42 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     return unlaunched(failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), 0, null);
   }
   const session = sessionScope(req.sessionRoot, ports.fs);
+  const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
   const attachments = buildAttachmentBlock(req.attachments, ports.fs, ports.nonce, undefined, session);
   const body = ports.fs.readText(req.promptPath);
   const scope = { attachedFiles: attachments.attachedFiles, ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
   const guarded = formatSafetyPrompt(attachments.text ? `${deadlineLine}\n\n${attachments.text}\n\n${body}` : `${deadlineLine}\n\n${body}`, scope);
   const schemaText = req.schemaPath && spec.schema ? ports.fs.readText(req.schemaPath) : null;
   const base: LaunchRequest = { ...req, sandbox, binary: ports.binary, prompt: guarded, briefFile: null, schemaText, platform: ports.platform };
-  // The batch ceiling covers the whole command line, so fixed arguments spend budget too.
-  const reserved = bytes(spec.argv({ ...base, prompt: '' }, mode).argv.join(' '));
-  let briefFile: string | null = null;
-  if (mustSpill(guarded, ports.platform, ports.binary, reserved)) {
-    ports.fs.writeText(req.briefPath, guarded);
-    briefFile = req.briefPath;
+  function preparePrompt(launch: LaunchRequest, prompt: string): LaunchRequest {
+    // The batch ceiling covers the whole command line, so fixed arguments spend budget too.
+    const reserved = bytes(spec.argv({ ...launch, prompt: '' }, mode).argv.join(' '));
+    if (!mustSpill(prompt, ports.platform, ports.binary, reserved)) return { ...launch, prompt, briefFile: null };
+    ports.fs.writeText(req.briefPath, prompt);
+    return { ...launch, prompt: spillPointer(req.briefPath), briefFile: req.briefPath };
   }
-  const prepared: LaunchRequest = briefFile ? { ...base, prompt: spillPointer(briefFile), briefFile } : base;
-
+  function resumeLaunch(launch: LaunchRequest, resume: string, timeoutMs: number, instruction: string, wrapUpAt?: number): LaunchRequest {
+    const prompt = formatSafetyPrompt(`${deadlineNotice(deadline, timeoutMs, wrapUpAt)}\n\n${instruction}`, resumeScope);
+    return preparePrompt({ ...launch, resume, timeoutMs }, prompt);
+  }
+  function copyStalled(result: ProcessResult, model: string | null): void {
+    try {
+      const stalledPath = `${req.logPath}.stalled`;
+      let existing = '';
+      try {
+        existing = ports.fs.readText(stalledPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+      }
+      const separator = existing && !existing.endsWith('\n') ? '\n' : '';
+      const header = `## ${spec.id} ${model ?? 'unknown'} stalled`;
+      ports.fs.writeText(stalledPath, `${existing}${separator}${header}\n${result.stdout ?? ''}\n`);
+    } catch {
+      // Best effort: a copy failure skips the copy, not the resume.
+    }
+  }
   let attempts = 0;
-  let current = prepared;
+  let current = preparePrompt(base, guarded);
   let resumesUsed = req.resumesUsed ?? 0;
   let stalledOutcome: Extract<RunOutcome, { status: 'fail' }> | null = null;
   let stalledResult: ProcessResult | null = null;
@@ -639,7 +573,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   let wrapUpSessionForResume: string | null = null;
   const wrapUpTimeout = (prev: ProcessResult | null): DelegateRun => {
     const path = prev?.stdoutPath ?? req.logPath;
-    return { outcome: failOutcome('timeout', `wrap-up resume did not complete; partial output at ${path}`), result: prev, attempts, briefFile, invocations };
+    return { outcome: failOutcome('timeout', `wrap-up resume did not complete; partial output at ${path}`), result: prev, attempts, briefFile: current.briefFile, invocations };
   };
   // The capacity wait reuses the runner clock so every test harness keeps its existing ports.
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
@@ -648,15 +582,19 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
   });
   let previousEndMs: number | null = typeof req.usageWindowEndMs === 'number' && Number.isFinite(req.usageWindowEndMs) ? req.usageWindowEndMs : null;
   let baseline: UsageBaseline = req.usageBaseline ?? 'cumulative';
-  const resolveWrapUpSession = (partial: ProcessResult, launchReq: LaunchRequest): string | null => {
+  function reportedSession(partial: ProcessResult, launchReq: LaunchRequest): string | null {
     let id: string | null = null;
-    try { id = spec.attemptSession ? spec.attemptSession(partial, launchReq) : null; } catch { id = null; }
-    if (typeof id === 'string' && VALID_NUDGE_ID.test(id)) return id;
+    try { id = spec.attemptSession?.(partial, launchReq) ?? null; } catch { id = null; }
+    return typeof id === 'string' && VALID_NUDGE_ID.test(id) ? id : null;
+  }
+  const resolveWrapUpSession = (partial: ProcessResult, launchReq: LaunchRequest): string | null => {
+    const id = reportedSession(partial, launchReq);
+    if (id !== null) return id;
     if (launchReq.resume && (spec.presetsSession || !spec.silentUntilExit) && VALID_NUDGE_ID.test(launchReq.resume)) return launchReq.resume;
     return null;
   };
   for (;;) {
-    const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.id === 'opencode' ? [] : undefined;
+    const steps: LifecycleStep[] | undefined = req.collectLifecycle === true && spec.ownedTreeLabel !== undefined ? [] : undefined;
     const isResume = current.resume !== null;
     const isWrapUpLaunch = pendingWrapUp;
     pendingWrapUp = false;
@@ -672,13 +610,13 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       if (pre) steps?.push({ step: 'prepare', elapsedMs: Math.round(ports.clock.now() - prepareStart), budgetMs: Math.max(0, deadline - prepareStart), outcome: pre.kind === 'launch' ? 'ok' : pre.outcome.cls === 'timeout' ? 'timeout' : 'failed' });
     } catch (error) {
       if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
-      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile: current.briefFile, invocations };
       throw error;
     }
     if (pre?.kind === 'fail') {
       if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
-      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
-      return unlaunched(pre.outcome, attempts, briefFile, steps);
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile: current.briefFile, invocations };
+      return unlaunched(pre.outcome, attempts, current.briefFile, steps);
     }
     let clockBehind = false;
     if (isResume && previousEndMs !== null) {
@@ -691,7 +629,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       clockBehind = ports.clock.now() <= previousEndMs;
     }
     const remaining = deadline - ports.clock.now();
-    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, briefFile, steps); }
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev); if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile: current.briefFile, invocations }; return unlaunched(failOutcome('timeout', 'preparation exhausted delegate deadline'), attempts, current.briefFile, steps); }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     let launchStartMs = 0;
@@ -713,11 +651,11 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       attempts++;
       // A resumed launch starts after previousEndMs so a shared boundary millisecond stays with the earlier launch.
       launchStartMs = previousEndMs === null ? ports.clock.now() : Math.max(ports.clock.now(), previousEndMs + 1);
-      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.id === 'opencode', spec.stepEvent, steps, { runDeadline: deadline, enabled: wrapUpEnabled, nameSession });
+      result = await launchOnce({ ...launch, env }, current, ports, spec.silentUntilExit !== true, spec.ownedTreeLabel, spec.stepEvent, steps, { runDeadline: deadline, enabled: wrapUpEnabled, nameSession });
       launchEndMs = previousEndMs = ports.clock.now();
     } catch (error) {
       if (isWrapUpLaunch) return wrapUpTimeout(wrapUpPrev);
-      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+      if (isResume && stalledOutcome && stalledResult) return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile: current.briefFile, invocations };
       throw error;
     } finally {
       if (pre?.kind === 'launch') await pre.release();
@@ -742,14 +680,14 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             sessionRead = clockBehind ? { complete: false } : spec.sessionUsage(result.stdout, {
               mode, platform: ports.platform, env: ports.env, launchStartMs, launchEndMs, readOpencodeMessages,
               cwd: current.cwd, resumed: isResume, collectResponses: true, transcripts,
-              ...(spec.id === 'copilot' ? { sessionId: spec.attemptSession?.(result, current) ?? undefined } : {}),
+              ...(spec.sessionUsageFromAttempt ? { sessionId: spec.attemptSession?.(result, current) ?? undefined } : {}),
             });
           } catch { sessionRead = { complete: false }; }
         }
         responses = sessionRead?.responses;
         const sessionUsage = sessionRead?.usage;
         const sessionCounters = baseCounters(sessionUsage);
-        if ((sessionRead?.complete || spec.id === 'copilot') && sessionUsage && sessionCounters) {
+        if ((sessionRead?.complete || spec.acceptPartialSessionUsage) && sessionUsage && sessionCounters) {
           usage = { ...sessionUsage, provenance: 'session' };
           baseline = 'none';
           if (!sessionRead?.complete) coverage.push('transcript unavailable');
@@ -757,10 +695,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
           if (sessionRead !== undefined) coverage.push('transcript unavailable');
           if (sessionRead?.invalidCounters || (sessionUsage && !sessionCounters) || (stdoutUsage && !stdoutCounters)) coverage.push('invalid counters');
           if (!stdoutCounters) stdoutUsage = undefined;
-          const perLaunchClaude = spec.id === 'claude' && stdoutUsage?.provenance === 'claude.result.usage';
-          const isCumulativeStdout = spec.resumeUsage === 'cumulative' && !perLaunchClaude;
-          const observedEvent = (spec.id === 'codex' && stdoutUsage?.provenance === 'codex.turn.completed')
-            || (spec.id === 'opencode' && stdoutUsage?.provenance === 'opencode.step.finish');
+          const perLaunchStdout = stdoutUsage !== undefined && stdoutUsage.provenance === spec.perLaunchUsageProvenance;
+          const isCumulativeStdout = spec.resumeUsage === 'cumulative' && !perLaunchStdout;
+          const observedEvent = stdoutUsage !== undefined && stdoutUsage.provenance === spec.zeroUsageProvenance;
           if (!isCumulativeStdout) {
             usage = stdoutUsage ? { ...stdoutUsage, provenance: 'stdout' } : undefined;
             baseline = 'none';
@@ -768,7 +705,9 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             let resolved = stdoutUsage;
             if (current.resume) {
               const lastFresh = invocations.findLastIndex(row => !row.nudge);
-              resolved = usageDelta(stdoutUsage, sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]));
+              const previousUsage = sumSessionUsage([...(lastFresh < 0 ? [req.priorUsage] : []), ...invocations.slice(Math.max(0, lastFresh)).map(row => row.usage)]);
+              const retainAttribution = stdoutUsage.provenance === spec.invocationAttribution?.retainWithoutBaselineProvenance;
+              resolved = usageDelta(stdoutUsage, previousUsage, retainAttribution);
             }
             usage = { ...resolved, provenance: 'stdout' };
           } else {
@@ -776,7 +715,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             baseline = 'none';
           }
           const selected = baseCounters(usage);
-          const perLaunchReport = perLaunchClaude || spec.resumeUsage === 'per-launch';
+          const perLaunchReport = perLaunchStdout || spec.resumeUsage === 'per-launch';
           if (stdoutCounters && !hasUsageTokens(stdoutCounters) && !observedEvent && !(outcome.status === 'ok' && perLaunchReport)) {
             coverage.push('unverified zero');
             usage = undefined;
@@ -795,13 +734,10 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
       if (!usage && spec.usageUnavailable) coverage.push(spec.usageUnavailable);
       if (spec.sessionUsage && !responses?.length) responses = [{ role: 'delegate', basis: 'unavailable', coverage: 'unknown' }];
     }
-    const normalizedLaunch = spec.id === 'agy' ? normalizeAgyModelEffort(current.model, current.effort) : { model: current.model, effort: current.effort };
-    const measuredModel = usage?.actualModels?.length ? usage.actualModels[0]! : null;
-    const rowModel = spec.id === 'copilot' ? measuredModel : spec.id === 'agy' ? (measuredModel ?? normalizedLaunch.model) : spec.id === 'opencode' ? (measuredModel ?? current.model) : current.model;
-    const rowEffort = spec.id === 'copilot' ? usage?.actualEffort ?? null : spec.id === 'agy' ? (usage?.actualEffort !== undefined ? usage.actualEffort : normalizedLaunch.effort) : spec.id === 'opencode' ? (usage?.actualEffort !== undefined ? usage.actualEffort : current.effort) : current.effort;
-    recordInvocation(invocations, req, { provider: spec.id, model: rowModel, mode, effort: rowEffort, ...(spec.id === 'copilot' && current.effort ? { configuredEffort: current.effort } : {}), launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(responses?.length ? { responses } : {}), ...(req.collectUsage === true && coverage.length ? { coverage } : {}) });
+    const attribution = invocationAttribution(spec, current.model, current.effort, current.effort, usage);
+    recordInvocation(invocations, req, { provider: spec.id, ...attribution, mode, launched: true, durationMs: result.durationMs, startMs: launchStartMs, endMs: launchEndMs, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, usageBaseline: baseline, usageWindowEndMs: launchEndMs, ...(isResume ? { nudge: true as const } : {}), ...(isWrapUpLaunch ? { wrapUp: true as const } : {}), ...(steps?.length ? { lifecycleSteps: steps } : {}), ...(usage ? { usage } : {}), ...(responses?.length ? { responses } : {}), ...(req.collectUsage === true && coverage.length ? { coverage } : {}) });
     if (isWrapUpLaunch) {
-      if (outcome.status === 'ok') return { outcome, result, attempts, briefFile, invocations };
+      if (outcome.status === 'ok') return { outcome, result, attempts, briefFile: current.briefFile, invocations };
       return wrapUpTimeout(result);
     }
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
@@ -811,40 +747,14 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
     }
     if (outcome.status === 'fail') {
       if (result.wrapUpStop) {
-        if (result.lifecycleError || result.truncated || outcome.cls !== 'timeout') return { outcome, result, attempts, briefFile, invocations };
+        if (result.lifecycleError || result.truncated || outcome.cls !== 'timeout') return { outcome, result, attempts, briefFile: current.briefFile, invocations };
         const sessionId = wrapUpSessionForResume ?? resolveWrapUpSession(result, current);
-        if (wrapUpUsed || !sessionId) return { outcome, result, attempts, briefFile, invocations };
-        try {
-          const stalledPath = `${req.logPath}.stalled`;
-          let existing = '';
-          try {
-            existing = ports.fs.readText(stalledPath);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
-            else throw error;
-          }
-          const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
-          const entry = `${header}\n${result.stdout ?? ''}`;
-          const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
-          ports.fs.writeText(stalledPath, combined);
-        } catch {
-          // Best effort: a copy failure skips the copy, not the resume.
-        }
+        if (wrapUpUsed || !sessionId) return { outcome, result, attempts, briefFile: current.briefFile, invocations };
+        copyStalled(result, current.model);
         const remainingWrapUp = deadline - ports.clock.now();
-        if (remainingWrapUp <= 0) return { outcome, result, attempts, briefFile, invocations };
+        if (remainingWrapUp <= 0) return { outcome, result, attempts, briefFile: current.briefFile, invocations };
         try {
-          const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
-          const wrapGuarded = formatSafetyPrompt(`${deadlineNotice(deadline, remainingWrapUp)}\n\n${WRAP_UP_PROMPT}`, resumeScope);
-          const wrapReserved = bytes(spec.argv({ ...current, prompt: '', resume: sessionId, timeoutMs: remainingWrapUp }, mode).argv.join(' '));
-          let resumeBriefFile: string | null = null;
-          let resumePrompt = wrapGuarded;
-          if (mustSpill(wrapGuarded, ports.platform, ports.binary, wrapReserved)) {
-            ports.fs.writeText(req.briefPath, wrapGuarded);
-            resumeBriefFile = req.briefPath;
-            resumePrompt = spillPointer(req.briefPath);
-          }
-          briefFile = resumeBriefFile;
-          current = { ...current, resume: sessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingWrapUp };
+          current = resumeLaunch(current, sessionId, remainingWrapUp, WRAP_UP_PROMPT);
         } catch {
           wrapUpUsed = true;
           return wrapUpTimeout(result);
@@ -861,33 +771,12 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
         && !(result.timedOut && result.idleMs === undefined)
         && !outcome.retryWithoutEffort;
       if (resumable) {
-        let reportedId: string | null = null;
-        try {
-          reportedId = spec.attemptSession ? spec.attemptSession(result, current) : null;
-        } catch {
-          reportedId = null;
-        }
-        if (typeof reportedId === 'string' && VALID_NUDGE_ID.test(reportedId)) lastSessionId = reportedId;
-        try {
-          const stalledPath = `${req.logPath}.stalled`;
-          let existing = '';
-          try {
-            existing = ports.fs.readText(stalledPath);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') existing = '';
-            else throw error;
-          }
-          const header = `## ${spec.id} ${current.model ?? 'unknown'} stalled`;
-          const entry = `${header}\n${result.stdout ?? ''}`;
-          const combined = existing === '' ? `${entry}\n` : `${existing.endsWith('\n') ? existing : `${existing}\n`}${entry}\n`;
-          ports.fs.writeText(stalledPath, combined);
-        } catch {
-          // Best effort: a copy failure skips the copy, not the resume.
-        }
+        lastSessionId = reportedSession(result, current) ?? lastSessionId;
+        copyStalled(result, current.model);
         if (resumesUsed < MAX_RESUMES) {
           if (outcome.cls === 'capacity' && lastSessionId !== null) {
             const waitMs = Math.min(outcome.retryAfterMs ?? CAPACITY_WAIT_MS, CAPACITY_WAIT_CAP_MS);
-            if (deadline - ports.clock.now() <= waitMs) return { outcome, result, attempts, briefFile, invocations };
+            if (deadline - ports.clock.now() <= waitMs) return { outcome, result, attempts, briefFile: current.briefFile, invocations };
             await sleep(waitMs);
           }
           const remainingNudge = deadline - ports.clock.now();
@@ -895,21 +784,10 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
             stalledOutcome = outcome;
             stalledResult = result;
             try {
-              const resumeScope = { ...session, ...(ports.workspaceRoot === undefined ? {} : { workspaceRoot: ports.workspaceRoot }) };
               const wrapUpAt = !wrapUpUsed && wrapUpPossible && deadline - WRAP_UP_LEAD_MS > ports.clock.now() ? deadline - WRAP_UP_LEAD_MS : undefined;
-              const resumeGuarded = formatSafetyPrompt(`${deadlineNotice(deadline, remainingNudge, wrapUpAt)}\n\n${CONTINUE_PROMPT}`, resumeScope);
-              const resumeReserved = bytes(spec.argv({ ...current, prompt: '', resume: lastSessionId, timeoutMs: remainingNudge }, mode).argv.join(' '));
-              let resumeBriefFile: string | null = null;
-              let resumePrompt = resumeGuarded;
-              if (mustSpill(resumeGuarded, ports.platform, ports.binary, resumeReserved)) {
-                ports.fs.writeText(req.briefPath, resumeGuarded);
-                resumeBriefFile = req.briefPath;
-                resumePrompt = spillPointer(req.briefPath);
-              }
-              briefFile = resumeBriefFile;
-              current = { ...current, resume: lastSessionId, prompt: resumePrompt, briefFile: resumeBriefFile, timeoutMs: remainingNudge };
+              current = resumeLaunch(current, lastSessionId, remainingNudge, CONTINUE_PROMPT, wrapUpAt);
             } catch {
-              return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile, invocations };
+              return { outcome: stalledOutcome, result: stalledResult, attempts, briefFile: current.briefFile, invocations };
             }
             resumesUsed += 1;
             try { req.onResume?.(lastSessionId, resumesUsed); } catch {}
@@ -918,7 +796,7 @@ async function runAttempts(spec: ProviderSpec, req: DelegateRequest, mode: ModeI
         }
       }
     }
-    return { outcome, result, attempts, briefFile, invocations };
+    return { outcome, result, attempts, briefFile: current.briefFile, invocations };
   }
 }
 
@@ -932,26 +810,4 @@ function settle(spec: ProviderSpec, req: LaunchRequest, result: ProcessResult): 
   if (result.timedOut) return failOutcome('timeout', `timed out after ${req.timeoutMs} ms; partial output at ${result.stdoutPath}`);
   if (result.truncated) return failOutcome('buffer', `output exceeded ${req.outputCapBytes} bytes; partial output at ${result.stdoutPath}`);
   return spec.parse(result, req);
-}
-
-// SECTION: Windows batch launchers
-
-const CMD_META_CHARS = /([()\]!^"`<>&|;, *?])/g;
-
-function escapeCmdArgument(argument: string): string {
-  const quoted = ('"' + argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1') + '"').replace(CMD_META_CHARS, '^$1');
-  // A .bat re-parses its own arguments, so escapes must survive twice (qntm.org/cmd).
-  return quoted.replace(CMD_META_CHARS, '^$1');
-}
-
-/**
- * Batch launchers (.cmd/.bat) cannot run without cmd.exe, and `shell: true` concatenates argv unescaped (injection);
- * route through cmd.exe with every argument escaped and verbatim arguments.
- */
-export function batchInvocation(binary: string, args: readonly string[], comSpec = 'cmd.exe'): { command: string; args: string[] } {
-  if (args.some((arg) => /[\r\n]/.test(arg))) throw new Error('batch launcher argument contains a newline; spill it to a brief file');
-  // NOTE: cmd.exe expands %VAR% before caret escapes apply, so no escape makes % literal.
-  if (args.some((arg) => arg.includes('%'))) throw new Error('batch launcher argument contains %; spill it to a brief file');
-  const line = [binary.replace(CMD_META_CHARS, '^$1'), ...args.map(escapeCmdArgument)].join(' ');
-  return { command: comSpec, args: ['/d', '/s', '/c', '"' + line + '"'] };
 }

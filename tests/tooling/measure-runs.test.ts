@@ -12,7 +12,8 @@ import { resolvePricing } from '../../skills/dispatch/scripts/lib/pricing.ts';
 import { readDelegateSession } from '../../skills/dispatch/scripts/lib/usage/delegate.ts';
 import { nodeHostUsageFs } from '../../skills/dispatch/scripts/lib/usage/index.ts';
 import type { CliDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
-import { observeTool, sessionFacts, writeDiagnostics } from '../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { observeTool } from '../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
+import { sessionFacts, writeDiagnostics } from '../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 const CREATED = '2020-01-01T00:00:00.000Z';

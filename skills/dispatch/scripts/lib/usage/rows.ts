@@ -1,4 +1,3 @@
-import type { DiagnosticBand, DiagnosticCounters } from '../../toolkit/types.ts';
 import type { readOpencodeMessages } from '../opencode-db.ts';
 
 export const HOST_ROLES = ['host', 'subagent'] as const;
@@ -7,7 +6,16 @@ export const HOST_UNAVAILABLE = ['no adapter', 'no host id', 'invalid host id', 
 export const STAGE_ORDER = ['spec', 'design', 'design review', 'plan', 'plan review', 'implementation', 'code review', 'ask'] as const;
 export type HostStage = typeof STAGE_ORDER[number];
 export type HostRole = typeof HOST_ROLES[number];
-export type Counters = DiagnosticCounters;
+const CACHE_COUNTER_KEYS = ['cacheRead', 'cacheWrite'] as const;
+export const BASE_OPTIONAL_COUNTER_KEYS = [...CACHE_COUNTER_KEYS, 'reasoning'] as const;
+export const OPTIONAL_COUNTER_KEYS = [...CACHE_COUNTER_KEYS, 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;
+export const COUNTER_KEYS = ['input', 'output', ...OPTIONAL_COUNTER_KEYS] as const;
+export type Counters = { input: number; output: number } & Partial<Record<typeof OPTIONAL_COUNTER_KEYS[number], number>>;
+
+export const BANDS = ['le100k', 'le200k', 'le272k', 'gt272k'] as const;
+export type Band = typeof BANDS[number];
+export type Bands = Partial<Record<Band, Counters>>;
+export type BandedCounters = Counters & { bands?: Bands };
 export const MAX_RESPONSE_AGENTS = 32;
 export const HOST_RESPONSE_BASES = ['agy-planner-response', 'claude-assistant-message', 'codex-token-count', 'opencode-assistant-message', 'copilot-usage-record'] as const;
 export const RESPONSE_STAGES = [...STAGE_ORDER, 'unattributed'] as const;
@@ -21,7 +29,25 @@ export type CopilotEvidence = {
   actorCoverage: ResponseCoverage;
   billing: { coverage: ResponseCoverage; totalNanoAiu?: number; statuses?: string[]; multipliers?: number[] };
 };
-export type CopilotActor = Counters & { bands?: Partial<Record<DiagnosticBand, Counters>>; turns?: number; agent?: string; parent?: string; role: 'host' | 'delegate' | 'subagent'; model: string; effort: string | null; depth?: number; copilot: CopilotEvidence };
+export type CopilotActor = BandedCounters & { turns?: number; agent?: string; parent?: string; role: 'host' | 'delegate' | 'subagent'; model: string; effort: string | null; depth?: number; copilot: CopilotEvidence };
+export type DelegateResponse = {
+  role: 'delegate' | 'subagent';
+  basis: HostResponseBasis | 'unavailable';
+  coverage: ResponseCoverage;
+  observed?: number;
+  uncachedInput?: number;
+  toolCalls?: number;
+  toolTurns?: number;
+};
+
+export type DiagnosticModelUsage = Counters & { bands?: Bands; turns?: number; toolCalls?: number; toolTurns?: number };
+export type DiagnosticUsage = Counters & { copilot?: CopilotEvidence; actors?: CopilotActor[]; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[]; models?: Record<string, DiagnosticModelUsage>; actualEffort?: string | null; reasoningInOutput?: boolean; turns?: number; toolCalls?: number; toolTurns?: number };
+
+/** Why a launched CLI invocation has no or incomplete measured usage; fixed enum so exception text never renders. */
+export const COVERAGE_REASONS = ['no usage', 'transcript unavailable', 'invalid counters', 'unverified zero'] as const;
+export type CoverageReason = typeof COVERAGE_REASONS[number];
+export type UsageSource = 'session' | 'stdout';
+
 export type HostResponseAggregate = {
   stage: ResponseStage;
   role: HostRole;
@@ -50,7 +76,7 @@ export type UsageRow = Counters & {
   skipResponse?: true;
 };
 export type HostUsageRow = { stage: HostStage; phase?: string; role: HostRole; model: string; effort: string | null } & Counters & {
-  bands?: Partial<Record<DiagnosticBand, Counters>>;
+  bands?: Bands;
   reasoningInOutput?: boolean;
   turns?: number;
   toolCalls?: number;
@@ -101,14 +127,19 @@ export type HostUsageResult = {
   unavailable?: HostUnavailable;
   notes?: HostNotes;
 };
-export type HostUsageAdapter = { sessionEnv: readonly string[]; read(query: HostUsageQuery, fs: HostUsageFs): HostUsageResult };
-
-const OPTIONAL_COUNTERS = ['cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h', 'reasoning'] as const;
+export type HostUsageAdapter = {
+  sessionEnv: readonly string[];
+  read(
+    query: HostUsageQuery,
+    fs: HostUsageFs,
+    delegate?: Pick<DelegateQuery, 'cwd' | 'appDataDir' | 'startMs' | 'collectResponses'>,
+  ): HostUsageResult;
+};
 
 export function addCounters<T extends Counters>(total: T, part: Counters): T {
   total.input += part.input;
   total.output += part.output;
-  for (const key of OPTIONAL_COUNTERS) {
+  for (const key of OPTIONAL_COUNTER_KEYS) {
     if (total[key] !== undefined || part[key] !== undefined) total[key] = (total[key] ?? 0) + (part[key] ?? 0);
   }
   return total;

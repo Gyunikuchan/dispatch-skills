@@ -13,7 +13,7 @@ import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { reviewFixFromCommit, reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+import { reviewFixFromCommit, reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/review-fix.ts';
 import { checks as checkPlan, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 
 function useMemoryAtomicWrite(): () => void {
@@ -325,7 +325,7 @@ test('host flag replaces recorded host and reroutes voices', async () => {
 
 
 test('an unreadable fanout record still counts as a native launch', async () => {
-  const {generationLaunchedNative} = await import('../../../skills/dispatch/scripts/toolkit/review.ts');
+  const {generationLaunchedNative} = await import('../../../skills/dispatch/scripts/toolkit/review-checkout.ts');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'launch-'));
   try {
     const dir = path.join(root, 'round-1');

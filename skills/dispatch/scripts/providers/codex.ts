@@ -1,11 +1,11 @@
 // Codex (spec §6.1): `exec --json` with approvals disabled and a read-only
 // sandbox; sandbox rejection → `sandbox-unsupported`; only `sandbox: false` selects `danger-full-access`.
 
-import { classifyFailure, failOutcome } from './runner.ts';
+import { classifyFailure, failOutcome } from './response.ts';
 import type { PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
-import { codexUsage } from '../lib/usage/codex.ts';
-import { readDelegateSession } from '../lib/usage/delegate.ts';
+import { CODEX_COMPLETION_USAGE, codexUsage } from '../lib/usage/codex.ts';
+import { sessionUsageReader } from './session-usage.ts';
 
 const REJECTED = [
   /(?:unrecognized|unknown|unexpected|invalid) (?:option|argument|value)[^\n]*--sandbox/i,
@@ -36,23 +36,8 @@ function parseCodexEvents(raw: string): { answer: string; threadId: string | nul
 
 export const codex: ProviderSpec = {
   usage: codexUsage,
-  sessionUsage(raw, context) {
-    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
-    const sessionId = parseCodexEvents(raw).threadId;
-    if (!sessionId) return { complete: false };
-    return readDelegateSession({
-      platform: 'codex',
-      sessionId,
-      startMs: context.launchStartMs,
-      endMs: context.launchEndMs,
-      resumed: context.resumed ?? false,
-      ...(context.collectResponses ? { collectResponses: true } : {}),
-      home: context.platform.home,
-      env: (name) => context.env[name],
-      fs: context.transcripts.fs,
-      budget: context.transcripts.budget,
-    });
-  },
+  sessionUsage: sessionUsageReader('codex', raw => parseCodexEvents(raw).threadId),
+  zeroUsageProvenance: CODEX_COMPLETION_USAGE,
   resumeUsage: 'cumulative',
   id: 'codex',
   modes: [

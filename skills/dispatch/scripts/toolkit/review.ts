@@ -1,28 +1,28 @@
+import { INTEGRATION_REVIEW, reviewDirectory, reviewRoundDirectory, reviewRoundFile, reviewPendingFile, reviewFindingsFile, reviewGenerationDirectory, sameReviewCapture, reviewRulingSnapshot, readStoredJson, type Round, type ReviewTarget } from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { nodeLinkFs, renameRetrying } from '../lib/node-fs-ext.ts';
 import { atomic } from './fanout/state.ts';
 import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactKind } from './artifacts.ts';
-import { confirmGate, foldLedger, latest, levelGate, withLedger, hasCleanupCheckpoint, type Fold, type Hashes } from './ledger.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, hasCleanupCheckpoint, type Fold } from './ledger.ts';
 import { withLockFile } from './lock.ts';
-import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parseNativeFailures, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
-import type { Underfill } from '../policy/roster.ts';
+import { assertHostNotSandboxed, fanOutComplete, nativeSummaryItems, parsePinsFlag, resolveSlots, underfillNote, cliWaveState, nativePendingNote, type SlotOutcome, type Validation } from './fanout.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
-import { parsePlan, structuralLines } from './domain/plan.ts';
+import { parsePlan } from './domain/plan.ts';
+import { structuralLines } from './domain/markdown-structure.ts';
 import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import type { InterRound } from './domain/prompt.ts';
 import { changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
-import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, read, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue, type ReviewTarget } from './findings.ts';
+import { admission, finalizeRound, findingUnits, reportSeqs, isReportsClosed, rerunGranted, rerunNotesFor, renderBudget, repositoryRerunRounds, type Finalized, type FindingsValue } from './findings.ts';
 import { git, gitPaths } from './git.ts';
 import { CODE_TARGETS, captureReviewTarget, reviewerInputPath, specHashFor, writeReviewerInput, writeRoundSnapshots, type Capture } from './review-capture.ts';
 import { carryCheckoutBaseline, compareForRound, comparedDirsFor, writeBaselineIfMissing, writeCheckoutReport } from './review-checkout.ts';
 import { blockedNotice, blockedStateFor, hotUnitsNotice, userDecisions, type BlockedState } from './review-notices.ts';
-import { integrationRecord } from './integration.ts';
+import { currentRuntimeVerification, integrationRecord } from './integration-state.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
 import { LEVELS, type Level } from './types.ts';
 import { clipBytes, summaryWithItems, ToolError } from './output.ts';
@@ -30,17 +30,13 @@ import { redGaps } from './red.ts';
 import { applicableReviewIds, loadRejections, reviewId, rejectionRequest, type RejectionRequest, type ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection, renderFindingsFile, rulingsTemplate } from './review-findings.ts';
 import { coverageState } from './coverage.ts';
-import { sanitizeText } from './domain/sanitize.ts';
+import { failureReasonEvidence } from './domain/blocker.ts';
 import { lintCitations } from './domain/citations.ts';
 import { repositoryReader } from './lint.ts';
 
 import type { LedgerRecord } from './records.ts';
 import { launches } from './writers.ts';
 
-export { generationLaunchedNative } from './review-checkout.ts';
-
-export type Round = {artifactPath?:string; requests?:RejectionRequest[]; rulingSnapshot?:string; round: number; generation: number; cap: number; level: Level; pins?: string | null; roster: RosterSlot[]; scope: string; startSeq: number; spec: Capture['spec']; artifacts?:Hashes; target: ReviewTarget; underfill?: Underfill; turnTarget: number; contextMapPath?: string; coverage?: 'open' | 'full'; coverageUse?: 'free' | 'grant'; interRound?: InterRound};
-export const sameReviewCapture =(round: Round, capture: Capture) => (!round.artifactPath || round.artifactPath===capture.artifactPath) && round.spec.hash === capture.spec.hash && round.spec.path === capture.spec.path && JSON.stringify(round.target) === JSON.stringify(capture.target) && JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 const label = (target: ReviewTarget) => typeof target === 'string' ? target : target.head;
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
 const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
@@ -73,24 +69,13 @@ async function reviewWarning(ctx: HandlerContext, target: string, cwd: string, h
   if (target !== 'integration') return '';
   const opened = integrationRecord(fold)!;
   // Use the delivery proof rule so a subsequent cleanup commit preserves verification.
-  const records = fold.records.filter(row => row.seq > opened.seq);
-  const proof = records.findLast(row => row.kind === 'integrate' && row.data['phase'] === 'verification');
   const warnings: string[] = [];
-  if (!proof || proof.data['open'].length || records.some(row => row.seq > proof.seq && row.kind === 'ruling' &&
-      row.data['subject'].startsWith('verification:') && row.data['ruling'] === 'accepted'))
+  if (!currentRuntimeVerification(fold, opened.seq))
     warnings.push('no current runtime verification recorded before integration review');
   if (!(await cleanupComplete(ctx, fold.records, cwd)) &&
       !(await hasCleanupCheckpoint(ctx.session, fold, ctx.deps, cwd, head)))
     warnings.push('no test cleanup recorded before integration review');
   return warnings.join('; ');
-}
-
-export function reviewRulingSnapshot(review: string, prior: FindingsValue[], rows: readonly LedgerRecord[]): string {
-  const matches = (row: LedgerRecord, id: string) => row.data['subject'] === 'review:' + review + ':' + id;
-  return JSON.stringify(prior.flatMap(value => value.findings.flatMap(finding => {
-    const history = rows.filter(row => matches(row, finding.id));
-    return effectiveSeverity(finding, history) === 'MUST' ? [[finding.id, history.at(-1)?.seq ?? 0]] : [];
-  })));
 }
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
@@ -114,7 +99,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   }
   const pins = parsePinsFlag(ctx.values['pins']);
   const roster = resolveSlots(kind, level, deps, pins), cap = roster.rounds;
-  const nativeFailures = parseNativeFailures(ctx.values);
+  const nativeFailures = ctx.nativeFailures ?? [];
   assertHostNotSandboxed(deps, roster, nativeFailures.length > 0);
   const noReviewer = () => cap > 0 ? 'No live or usable reviewer is configured for this review; restore a provider or configure one' + underfillNote(roster) : 'Review at ' + level + ' has no reviewers; raise the level to continue';
   const artifact = kind === 'code' ? requested : path.resolve(manifest.repositoryRoot, requested);
@@ -140,13 +125,13 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const rejectionStates=()=>loadRejections(session,foldLedger(session),[review]);
   const initialRejections=rejectionStates();
   if(initialRejections.some(state=>state.state==='escalated'))throw new ToolError(4,'escalation-open','Resolve the disputed MUST rejection before another confirmation round');
-  const directory = path.join(session, '.state/reviews', review);
+  const directory = reviewDirectory(session, review);
   fs.mkdirSync(directory, {recursive: true});
 
   const capture = () => captureReviewTarget(ctx, kind, artifact, requested, taskTarget, gitTarget);
 
   // Coverage applies to the integration review alone; every admission caller passes the same predicate.
-  const applies = review === 'code-integration' ? applicableReviewIds(manifest, fold).get(review) : undefined;
+  const applies = review === INTEGRATION_REVIEW ? applicableReviewIds(manifest, fold).get(review) : undefined;
   return withLockFile(path.join(directory, 'claim'), 'review', deps, 0, async () => {
     const {budget: admitted, rounds} = admission(session, foldLedger(session), review, cap, applies), n = admitted.nextRound, cap1 = admitted.cap;
     // Computed once after the slots exist: every return path reports the same blocked state.
@@ -171,14 +156,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     // NOTE: a started all-failed round has no findings.json and counts as neither complete nor incomplete, so its reuse skips the new-round decision.
     if (admitted.state === 'requires-coverage-decision') throw new ToolError(4, 'coverage-decision', 'Coverage stays open for ' + (admitted.coverage?.state === 'readable' ? admitted.coverage.open.join(', ') : review) + '; ask the user to accept reduced coverage (user escalation coverage:' + review + ':<key>, summary "accept: <slot>[, <slot>]")' + (n > admitted.ceiling ? '; no round fits within ceiling ' + admitted.ceiling : ' or grant one more coverage round (summary "grant: <reason>")') + ', with their quote');
     // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
-    const existingRound = read<Round>(path.join(directory, 'round-' + n, 'round.json'));
+    const existingRound = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n)));
     if (!cap && !existingRound && !rejectionStates().some(state => state.state === 'pending'))
       throw new ToolError(4, 'level-unapproved', 'Review at ' + level + ' has no reviewers; raise the level to continue');
-    const dir = path.join(directory, 'round-' + n);
+    const dir = reviewRoundDirectory(directory, n);
     const current = await capture();
     fs.mkdirSync(dir, {recursive: true});
-    const roundFile = path.join(dir, 'round.json'), pendingFile = path.join(dir, 'pending.json');
-    let round = read<Round>(roundFile);
+    const roundFile = reviewRoundFile(dir), pendingFile = reviewPendingFile(dir);
+    let round = readStoredJson<Round>(roundFile);
     if (series && '@' + (current.target as {base: string}).base !== series) throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
     const warning = kind === 'code' && (requested === 'integration' || requested === 'worktree')
       ? await reviewWarning(ctx, requested, current.cwd, label(current.target)) : '';
@@ -186,8 +171,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const warningValue = warning ? {warning} : {};
     const prior: FindingsValue[] = [], priorTargets: Record<number, ReviewTarget> = {}, confirmationRounds:ConfirmationRound[]=[];
     for (let i = 1; i < n; i++) {
-      const value = read<FindingsValue>(path.join(directory, 'round-' + i, 'findings.json'));
-      const metadata = read<Round>(path.join(directory, 'round-' + i, 'round.json'));
+      const value = readStoredJson<FindingsValue>(reviewFindingsFile(reviewRoundDirectory(directory, i)));
+      const metadata = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, i)));
       if (value && metadata) {prior.push(value); priorTargets[i] = metadata.target;confirmationRounds.push({review,metadata,findings:value});}
     }
     const rulingRows = () => foldLedger(session).records.filter(row => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'));
@@ -243,14 +228,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         // round: its saved round.json keeps the roster for the same
         // whole-target rerun, and its failed report stays open until that
         // rerun finalizes.
-        const failedRound = read<Round>(path.join(directory, 'round-' + (n - 1), 'round.json'));
+        const failedRound = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n - 1)));
         const failedLogical = failedRound?.roster.filter(slot => !slot.reserve) ?? [];
         if (failedLogical.length) return {targets: failedLogical, narrowed: false};
       }
       const target = previous?.metadata.roster.find(slot => !slot.reserve);
       const decisive = decisiveRound(previous);
       // Open coverage replaces the narrowed slot, and a decisive finding keeps the full roster; both run at whole-target scope.
-      const open = review === 'code-integration' ? coverageState(session, foldLedger(session), review, applies).open : [];
+      const open = review === INTEGRATION_REVIEW ? coverageState(session, foldLedger(session), review, applies).open : [];
       if (open.length && n > 1) return {targets: target && !decisive ? open.flatMap(name => { const slot = savedSlot(name); return slot ? [{...slot, reserve: false}] : []; }) : roster.targets, narrowed: false, coverage: target && !decisive ? 'open' : 'full'};
       return {targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive};
     }
@@ -268,7 +253,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     async function interRoundDiff(captured: Capture, confirmationOnlyRound: boolean): Promise<string> {
       if (confirmationOnlyRound) return UNCHANGED_TARGET;
       try {
-        const previous = read<Round>(path.join(directory, 'round-' + (n - 1), 'round.json'));
+        const previous = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n - 1)));
         if (!previous) return 'unavailable.';
         if (kind === 'code') return label(previous.target) === label(captured.target) ? UNCHANGED_TARGET : '`git diff ' + label(previous.target) + ' ' + label(captured.target) + '`';
         const before = reviewerInputPath(directory, n - 1), after = reviewerInputPath(directory, n);
@@ -290,7 +275,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // rerun, coverage grant, decisive ruling or moved target keeps the standard prompt.
       const confirmationOnlyRound = n > 1 && !rerun && !coverage && requests.length > 0 && !decisiveRound(latestSubstantive())
         && previousRound !== undefined && sameReviewCapture(previousRound.metadata as Round, captured);
-      let scope = 'Full review', changedPaths = captured.changed; const changedHeadingsSince = (round: number): string[] => {const snapshot = path.join(directory, 'round-' + round, 'target.snapshot.md'); return kind !== 'code' && captured.source !== undefined && fs.existsSync(snapshot) ? changedHeadings(fs.readFileSync(snapshot, 'utf8'), captured.source) : [];};
+      let scope = 'Full review', changedPaths = captured.changed; const changedHeadingsSince = (round: number): string[] => {const snapshot = path.join(reviewRoundDirectory(directory, round), 'target.snapshot.md'); return kind !== 'code' && captured.source !== undefined && fs.existsSync(snapshot) ? changedHeadings(fs.readFileSync(snapshot, 'utf8'), captured.source) : [];};
       if (confirmationOnlyRound) {
         scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
       } else if (rerun && !coverage) {
@@ -332,7 +317,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
       if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) writeReviewerInput(directory, n, kind, captured.source);
       if (n > 1) value.interRound = {diff: await interRoundDiff(captured, confirmationOnlyRound), accepted: acceptedSinceReview()};
-      fs.mkdirSync(path.join(dir, 'gen-' + generation), {recursive: true});
+      fs.mkdirSync(reviewGenerationDirectory(dir, generation), {recursive: true});
       writeRoundSnapshots(dir, kind, captured);
       atomic(roundFile, value);
       return value;
@@ -350,7 +335,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         || rejectionStates().filter(state => state.state === 'pending').some(state => state.request.sourceSlots.some(source => confirmationRounds.some(round => round.metadata.roster.some(slot => slot.slot === source))));
       if (!staffed) throw new ToolError(4, 'level-unapproved', noReviewer());
       const previousGeneration = round!.generation;
-      const pending = read<Finalized>(pendingFile);
+      const pending = readStoredJson<Finalized>(pendingFile);
       if (pending) {
         await withLedger(session, 'review supersede', deps, async tx => {
           for (const escalation of pending.escalations) {
@@ -385,14 +370,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       }
       reviewerArtifact = inputPath;
     }
-    let pending = read<Finalized>(pendingFile);
+    let pending = readStoredJson<Finalized>(pendingFile);
     const ignoredFailureReports: string[] = [];
     const computeUnits = () => {
       const rows = rulingRows();
       const rounds = Array.from({length: n}, (_, i) => {
         const number = i + 1;
         const value = number === n ? pending : prior.find(item => item.round === number);
-        const metadata = number === n ? round : read<Round>(path.join(directory, 'round-' + number, 'round.json'));
+        const metadata = number === n ? round : readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, number)));
         let text: string | undefined;
         if (kind !== 'code') {try {text = fs.readFileSync(reviewerInputPath(directory, number), 'utf8');} catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}}
         return {findings: value?.findings ?? [], ...(text === undefined ? {} : {text}), startSeq: metadata?.startSeq ?? 0};
@@ -400,8 +385,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const bind = latest(foldLedger(session), 'bind');
       return findingUnits({kind, round: n, rounds, planPath: bind ? path.relative(manifest.repositoryRoot, path.resolve(manifest.repositoryRoot, String(bind.data['plan']))) : '', ruling: (id, seq) => rows.findLast(row => row.seq <= seq && row.data['subject'] === 'review:' + review + ':' + id)?.data['ruling'] as string | undefined});
     };
-    const fanoutDir = path.join(dir, 'gen-' + round.generation);
-    const observeRecovery = review === 'code-integration' && typeof round.target !== 'string' ? deps.recovery?.(
+    const fanoutDir = reviewGenerationDirectory(dir, round.generation);
+    const observeRecovery = review === INTEGRATION_REVIEW && typeof round.target !== 'string' ? deps.recovery?.(
       ctx.values['resume-ref'], {review, target: round.target, round: n, generation: round.generation}, fanoutDir,
     ) : undefined;
     if (!pending) {
@@ -425,17 +410,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         const parsed = parseReport({kind, source: logicalSlot, text,expectedRequestIds:(requestsBySlot.get(logicalSlot) ?? []).map(request=>request.requestId)});
         if (parsed.ok) return {ok: true};
         if (parsed.failure.kind === 'blocked') {
-          // The raw reason stops here: only its sanitized display and hash identity leave this frame.
-          const raw = parsed.failure.detail.trim();
-          const reason = sanitizeText(raw).slice(0, 200) || '(reason removed by sanitizer)';
-          return {ok: false, cls: 'blocked', reason: 'blocked: ' + reason, blocked: {reason, reasonHash: crypto.createHash('sha256').update(raw).digest('hex')}};
+          const blocked = failureReasonEvidence(parsed.failure.detail.trim());
+          return {ok: false, cls: 'blocked', reason: 'blocked: ' + blocked.reason, blocked};
         }
         const cls = parsed.failure.kind === 'uncovered-scope' ? 'no-report' : parsed.failure.kind;
         return {ok: false, cls, reason: parsed.failure.kind + ': ' + parsed.failure.detail};
       };
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
-      const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(dir, 'gen-' + round!.generation, 'attempts.json');
-        atomic(file, [...(read<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
+      const onFailed = (slot: string, outcome: {cls: string}) => { const file = path.join(reviewGenerationDirectory(dir, round!.generation), 'attempts.json');
+        atomic(file, [...(readStoredJson<object[]>(file) ?? []), {slot, seq: foldLedger(session).lastSeq, wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined, outcome: outcome.cls}]); };
       const replies = await fanOutComplete({dir: fanoutDir, slots: round.roster, prompt, validate, cwd: current.cwd, sessionRoot: session, onFailed,
         nativeFirstProviders: roster.nativeFirstProviders, nativeFailures,
         onIgnoredReport: attempt => { ignoredFailureReports.push(attempt); }}, deps);
@@ -461,7 +444,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       const {dirs: compareDirs, absentWorktree} = comparedDirsFor(session, manifest.repositoryRoot, captured.cwd, taskTarget, requested);
       const checkout = {...(await compareForRound(dir, round.generation, compareDirs, session, absentWorktree, deps)), asOfSeq: foldLedger(session).lastSeq};
       // An all-failed open-only or narrowed integration round finalizes as used, so its open slots get a whole-target rerun; a full-roster round keeps its number.
-      if (!replies.some(reply => reply.state === 'done') && round.coverage !== 'open' && !(review === 'code-integration' && /^Re-review round \d+ \(narrowed\)/.test(round.scope))) {
+      if (!replies.some(reply => reply.state === 'done') && round.coverage !== 'open' && !(review === INTEGRATION_REVIEW && /^Re-review round \d+ \(narrowed\)/.test(round.scope))) {
         const state = blockedStateOf(), notice = blockedNotice(state.blocked, state.blockers);
         const changedPaths = (checkout.repositoryChanges ?? []).flatMap(entry => entry.paths).sort();
         const changedSuffix = changedPaths.length ? '; repository changes: ' + changedPaths.join(', ') : '';
@@ -505,7 +488,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           const redExits = new Map<string, number | null>();
           for (const criterion of redCriteria) {
             let wrapper: {status?: unknown} | null;
-            try { wrapper = read(path.join(session, '.state/briefs', task + '-' + launch?.launch + '.red', criterion.id + '.exit')); }
+            try { wrapper = readStoredJson(path.join(session, '.state/briefs', task + '-' + launch?.launch + '.red', criterion.id + '.exit')); }
             catch (error) { if (error instanceof SyntaxError) continue; throw error; }
             if (wrapper && (typeof wrapper.status === 'number' || wrapper.status === null)) redExits.set(criterion.id, wrapper.status);
           }
@@ -555,11 +538,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const findingsFile = relativeDir + '/findings.md', rulingsFile = relativeDir + '/rulings.json';
     nodeLinkFs.writeAtomic(path.join(session, findingsFile), renderFindingsFile(pending.findings));
     atomic(path.join(session, rulingsFile), rulingsTemplate(review, n, pending.findings));
-    renameRetrying(pendingFile, path.join(dir, 'findings.json'));
+    renameRetrying(pendingFile, reviewFindingsFile(dir));
     const counts = (severity: string) => pending!.findings.filter(finding => finding.severity === severity).length;
     const recurrences = pending.findings.filter(finding => finding.recurrence).length;
     const fixInduced = pending.findings.filter(finding => finding.origin === 'fix-induced').length;
-    const file = path.join(dir, 'findings.json');
+    const file = reviewFindingsFile(dir);
     let findingsSectionReason: string | undefined;
     const findings = kind === 'plan' || kind === 'design'
       ? refreshFindingsSection(session, manifest, review, reason => { findingsSectionReason = reason; })

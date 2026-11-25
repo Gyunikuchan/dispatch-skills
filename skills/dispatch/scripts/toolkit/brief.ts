@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { currentSnapshot, foldLedger, gate, latest, withLedger } from './ledger.ts';
-import { parsePlan, selectTaskBrief, structuralLines } from './domain/plan.ts';
-import { qualityCriteria } from './domain/prompt.ts';
+import { parsePlan, selectTaskBrief } from './domain/plan.ts';
+import { structuralLines } from './domain/markdown-structure.ts';
+import { qualityCriteria, type QualityConsumer } from './domain/prompt.ts';
 import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
@@ -188,6 +189,28 @@ export function nextBriefPath(directory: string, base: string): string {
   return path.join(directory, `${base}-${index}.md`);
 }
 
+function briefQuality(skillRoot: string, consumer: QualityConsumer): string {
+  const bar = fs.readFileSync(path.join(skillRoot, 'references', 'templates', 'quality-bar.md'), 'utf8');
+  const specStage = fs.readFileSync(path.join(skillRoot, 'references', 'spec-stage.md'), 'utf8');
+  return qualityCriteria(bar, consumer, 0, specStage);
+}
+
+function prepareBriefDirectory(session: string): string {
+  const directory = path.join(session, '.state', 'briefs');
+  fs.mkdirSync(directory, {recursive: true});
+  return directory;
+}
+
+function publishUtilityBrief(ctx: HandlerContext, directory: string, kind: string, text: string, details: Record<string, string | number | null>): HandlerResult {
+  const file = nextBriefPath(directory, kind);
+  fs.writeFileSync(file, text);
+  const host = ctx.deps.orchestrator?.platform;
+  const launch = utilityLaunchValues(ctx.deps.skillRoot, host);
+  const bytes = Buffer.byteLength(text);
+  const value = {briefPath: file, bytes, ...details, ...launch};
+  return {ok: true, exit: 0, value, summary: briefSummary(kind + ' brief', host, launch, file, bytes)};
+}
+
 /** Validates a parsed brief values object; an unknown, missing or blank value refuses before anything is written. */
 function validateValues<const Req extends string, const Opt extends string = never>(
   parsed: unknown,
@@ -244,16 +267,12 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     return {bind, snapshot, launch, source, parsed, selected, level, postFold: tx.fold};
   });
   const {bind, snapshot, launch, source, parsed, selected, level, postFold} = gated;
-  const markdown = taskMarkdown(source, selected);
-  const {section} = taskParts(source, selected);
-  const criteria = markdown.slice(section.length).trim();
+  const {section, criteria} = taskParts(source, selected);
   const worktree = path.resolve(ctx.session, launch.record.data['path']);
   const reportPath = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.report.md');
   const redLogDir = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.red');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
-  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
-  const quality = qualityCriteria(bar, 'writer', 0, specStage);
+  const quality = briefQuality(ctx.deps.skillRoot, 'writer');
   const slots: Record<string, string> = {
     task, worktree,
     specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']), specHash: snapshot.hashes.spec!,
@@ -265,8 +284,7 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     contracts: checks(parsed.plan).find(check => check.criterion === 'contract')!.commands.map(command => '- `' + command + '`').join('\n'),
   };
   const text = fillSlots('writer', fs.readFileSync(path.join(templates, 'writer-brief.md'), 'utf8'), slots);
-  const directory = path.join(ctx.session, '.state', 'briefs');
-  fs.mkdirSync(directory, {recursive: true});
+  const directory = prepareBriefDirectory(ctx.session);
   const file = path.join(directory, task + '-' + launch.launch + '.md');
   fs.writeFileSync(file, text);
   const launchValues = writerLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform, level);
@@ -293,8 +311,6 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   );
   const kind = values.outputPath ? 'map' : 'research';
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
-  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
 
   const entry = resolveHostUtility(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
   const contextLimit = entry ? entry.contextLimit : null;
@@ -314,7 +330,7 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
     limit,
     splitAt,
     nestedLaunch,
-    quality: qualityCriteria(bar, 'explorer', 0, specStage),
+    quality: briefQuality(ctx.deps.skillRoot, 'explorer'),
     ...(kind === 'map' ? {
       outputPath: values.outputPath!,
       cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
@@ -327,13 +343,8 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   };
   const text = fillSlots('explorer', kindTemplate, slots);
   assertFilled('explorer', text);
-  const directory = path.join(ctx.session, '.state', 'briefs');
-  fs.mkdirSync(directory, {recursive: true});
-  const file = nextBriefPath(directory, 'explorer');
-  fs.writeFileSync(file, text);
-  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text), kind, contextLimit, ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary('explorer brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
+  const directory = prepareBriefDirectory(ctx.session);
+  return publishUtilityBrief(ctx, directory, 'explorer', text, {kind, contextLimit});
 }
 
 export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<HandlerResult> {
@@ -350,23 +361,16 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   const bind = latest(fold, 'bind');
   if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim()) throw new ToolError(4, 'lint-errors', 'No bound plan');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
-  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
   const slots: Record<string, string> = {
     base: values.base,
     integrationPath: values.integrationPath,
     planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']),
-    quality: qualityCriteria(bar, 'cleanup', 0, specStage),
+    quality: briefQuality(ctx.deps.skillRoot, 'cleanup'),
   };
   const text = fillSlots('test-cleanup', fs.readFileSync(path.join(templates, 'test-cleanup-brief.md'), 'utf8'), slots);
   assertFilled('test-cleanup', text);
-  const directory = path.join(ctx.session, '.state', 'briefs');
-  fs.mkdirSync(directory, {recursive: true});
-  const file = nextBriefPath(directory, 'test-cleanup');
-  fs.writeFileSync(file, text);
-  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text), ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary('test-cleanup brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes), postFold: fold};
+  const directory = prepareBriefDirectory(ctx.session);
+  return {...publishUtilityBrief(ctx, directory, 'test-cleanup', text, {}), postFold: fold};
 }
 
 const VERIFIER_VALUES = ['checkoutPath', 'base', 'specPath', 'focus'] as const;
@@ -376,17 +380,10 @@ export async function renderVerifierBrief(ctx: HandlerContext): Promise<HandlerR
     VERIFIER_VALUES,
   );
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
-  const bar = fs.readFileSync(path.join(templates, 'quality-bar.md'), 'utf8');
-  const specStage = fs.readFileSync(path.join(ctx.deps.skillRoot, 'references', 'spec-stage.md'), 'utf8');
   const evidenceDir = path.join(ctx.session, 'verification');
-  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: qualityCriteria(bar, 'verifier', 0, specStage)});
+  const text = fillSlots('verifier', fs.readFileSync(path.join(templates, 'verifier-brief.md'), 'utf8'), {...values, evidenceDir, quality: briefQuality(ctx.deps.skillRoot, 'verifier')});
   assertFilled('verifier', text);
-  const directory = path.join(ctx.session, '.state', 'briefs');
-  fs.mkdirSync(directory, {recursive: true});
+  const directory = prepareBriefDirectory(ctx.session);
   fs.mkdirSync(evidenceDir, {recursive: true});
-  const file = nextBriefPath(directory, 'verifier');
-  fs.writeFileSync(file, text);
-  const launchValues = utilityLaunchValues(ctx.deps.skillRoot, ctx.deps.orchestrator?.platform);
-  const value = {briefPath: file, bytes: Buffer.byteLength(text), evidenceDir, ...launchValues};
-  return {ok: true, exit: 0, value, summary: briefSummary('verifier brief', ctx.deps.orchestrator?.platform, launchValues, file, value.bytes)};
+  return publishUtilityBrief(ctx, directory, 'verifier', text, {evidenceDir});
 }

@@ -1,12 +1,14 @@
+import { SESSION_WORKTREES } from '../lib/session-paths.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { withLedger, type Fold, type LedgerTransaction } from './ledger.ts';
+import { withPostFold, type Fold } from './ledger.ts';
 import type { LedgerRecord } from './records.ts';
 import { gitOk, gitPaths, changedPaths, testedTree, headTree } from './git.ts';
-import { ensureIntegration, integrationRecord } from './integration.ts';
+import { ensureIntegration } from './integration.ts';
+import { integrationEnded, integrationRecord } from './integration-state.ts';
 import { loadPlan, ownedPaths, taskSection } from './plan-view.ts';
-import { ToolError } from './output.ts';
+import { result, refuse, ToolError } from './output.ts';
 
 type Launch = { launch: number; record: LedgerRecord; finished?: LedgerRecord; abandoned?: LedgerRecord; superseded: boolean };
 export function launches(fold: Fold, task: string): Launch[] {
@@ -25,6 +27,13 @@ export function launches(fold: Fold, task: string): Launch[] {
   }
   return rows;
 }
+export function candidate(fold: Fold,id: string) {
+  const launch=launches(fold,id).at(-1);
+  if(!launch?.finished)return undefined;
+  if (integrationEnded(fold, id, launch.finished.seq)) return undefined;
+  return launch;
+}
+
 export function isStale(fold: Fold, launch: LedgerRecord, currentTaskSection: string): boolean {
   return launch.data['base'].taskSection!==currentTaskSection || fold.records.some(r=>r.kind==='edit' && r.seq>launch.data['base'].seq && r.data['affects'].includes(launch.data['task']));
 }
@@ -73,23 +82,12 @@ function taskId(ctx: HandlerContext) {
   const paths=ownedPaths(plan,id);
   return {id,paths,section:taskSection(plan,id),prerequisites:plan.tasks.find(task=>task.id===id)!.prerequisites};
 }
-const result = (value: unknown): HandlerResult => ({ok:true,value,exit:0,summary:JSON.stringify(value)});
-async function withWriterFold(session: string, tool: string, deps: HandlerContext['deps'], fn: (tx: LedgerTransaction) => Promise<HandlerResult>): Promise<HandlerResult> {
-  let postFold: Fold | undefined;
-  const out = await withLedger(session, tool, deps, async tx => {
-    const res = await fn(tx);
-    postFold = tx.fold;
-    return res;
-  });
-  return { ...out, ...(postFold ? { postFold } : {}) };
-}
-function refuse(reason: string, message=reason): never { throw new ToolError(4,reason,message); }
 export const candidateRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/candidates/'+task+'-'+launch;
 export const abandonedRef = (sid: string, task: string, launch: number) => 'refs/dispatch/'+sid+'/abandoned/'+task+'-'+launch;
 export const deliveredSourceRef=(session:string)=>'refs/dispatch/'+session+'/delivered-source';
 export async function create(ctx: HandlerContext): Promise<HandlerResult> {
   const {id,section,prerequisites}=taskId(ctx);
-  return withWriterFold(ctx.session,'worktree create',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree create',ctx.deps,async tx=>{
     const rows=launches(tx.fold,id); const previous=rows.at(-1);
     if(ctx.values['relaunch']) {
       if(!open(previous)) refuse('no-open-launch');
@@ -112,7 +110,7 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
       await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','add','--detach',cwd,previous.record.data['base'].commit]);
       return result({task:id,launch:previous.launch,path:previous.record.data['path'],restored:true});
     }
-    const n=rows.length+1; const relative='.state/worktrees/'+id+'-'+n; const cwd=path.resolve(ctx.session,relative);
+    const n=rows.length+1; const relative=`${SESSION_WORKTREES}/${id}-${n}`; const cwd=path.resolve(ctx.session,relative);
     const listed=await gitOk(ctx.deps,ctx.manifest.repositoryRoot,['worktree','list','--porcelain']);
     const registered=listed.split(/\r?\n/).filter(l=>l.startsWith('worktree ')).some(l=>path.resolve(l.slice(9))===cwd);
     let base: string;
@@ -131,7 +129,7 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
 }
 export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
   const {id,paths}=taskId(ctx);
-  return withWriterFold(ctx.session,'worktree submit',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree submit',ctx.deps,async tx=>{
     const launch=launches(tx.fold,id).at(-1); if(!open(launch)) refuse('no-open-launch');
     const cwd=path.resolve(ctx.session,launch.record.data['path']); const base=launch.record.data['base'].commit;
     let candidate=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);
@@ -161,7 +159,7 @@ export async function abandon(ctx: HandlerContext): Promise<HandlerResult> {
   const {id}=taskId(ctx);
   const reason=ctx.values['reason'];
   if(typeof reason!=='string' || !reason.trim()) throw new ToolError(1,'invalid-input','A non-blank --reason is required');
-  return withWriterFold(ctx.session,'worktree abandon',ctx.deps,async tx=>{
+  return withPostFold(ctx.session,'worktree abandon',ctx.deps,async tx=>{
     const launch=launches(tx.fold,id).at(-1); if(!open(launch)) refuse('no-open-launch');
     const cwd=path.resolve(ctx.session,launch.record.data['path']);
     const head=await gitOk(ctx.deps,cwd,['rev-parse','HEAD']);

@@ -1,8 +1,8 @@
+import { readStoredJson, reviewDirectory, reviewRoundFile, reviewFindingsFile, reviewGenerationDirectory, reviewSlotFile, reviewRoundEntries } from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ConfirmationRound } from './confirmations.ts';
 import type { SlotOutcome } from './fanout.ts';
-import { read } from './findings.ts';
 import type { Fold } from './ledger.ts';
 import { ToolError } from './output.ts';
 import { coverageDecision } from './records.ts';
@@ -30,13 +30,13 @@ const numbered = (names: string[], pattern: RegExp) => names.filter(name => patt
  * completions come from the current generation of a finalized round. It writes nothing; unreadable files fail closed.
  */
 export function coverageState(session: string, fold: Fold, review: string, applies: CoverageApplies = () => true): CoverageState {
-  const root = path.join(session, '.state/reviews', review);
+  const root = reviewDirectory(session, review);
   const unreadable = (file: string): never => { throw new ToolError(4, 'coverage-required', 'Cannot establish coverage for ' + review + ': ' + path.relative(root, file)); };
-  const load = <T>(file: string): T | null => { try { return read<T>(file); } catch { return unreadable(file); } };
-  const rounds = numbered(fs.existsSync(root) ? fs.readdirSync(root) : [], /^round-\d+$/).flatMap(name => {
-    const dir = path.join(root, name), metadata = load<Metadata>(path.join(dir, 'round.json'));
+  const load = <T>(file: string): T | null => { try { return readStoredJson<T>(file); } catch { return unreadable(file); } };
+  const rounds = reviewRoundEntries(fs.existsSync(root) ? fs.readdirSync(root) : []).flatMap(({name, number}) => {
+    const dir = path.join(root, name), metadata = load<Metadata>(reviewRoundFile(dir));
     if (!metadata) return []; // no round file: the round never started
-    if (!metadata.spec?.path || !metadata.target || !Array.isArray(metadata.roster) || !Number.isSafeInteger(metadata.generation)) unreadable(path.join(dir, 'round.json'));
+    if (!metadata.spec?.path || !metadata.target || !Array.isArray(metadata.roster) || !Number.isSafeInteger(metadata.generation)) unreadable(reviewRoundFile(dir));
     if (!applies(metadata)) return [];
     const attempts = numbered(fs.readdirSync(dir), /^gen-\d+$/).flatMap(gen => {
       const list = load<Attempt[]>(path.join(dir, gen, 'attempts.json')) ?? [];
@@ -44,9 +44,9 @@ export function coverageState(session: string, fold: Fold, review: string, appli
       return list.map(item => ({...item, gen}));
     });
     const slots = metadata.roster.filter(slot => !slot.reserve).map(slot => slot.slot);
-    const saved = slots.map(slot => [slot, load<SlotOutcome>(path.join(dir, 'gen-' + metadata.generation, 'slots', slot + '.json'))] as const);
-    for (const [slot, outcome] of saved) if (outcome?.state === 'failed' && !attempts.some(item => item.slot === slot && item.gen === 'gen-' + metadata.generation)) unreadable(path.join(dir, 'gen-' + metadata.generation, 'slots', slot + '.json'));
-    return [{number: Number(name.slice(6)), metadata, slots, attempts, saved, finalized: fs.existsSync(path.join(dir, 'findings.json')),
+    const saved = slots.map(slot => [slot, load<SlotOutcome>(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), slot))] as const);
+    for (const [slot, outcome] of saved) if (outcome?.state === 'failed' && !attempts.some(item => item.slot === slot && item.gen === 'gen-' + metadata.generation)) unreadable(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), slot));
+    return [{number, metadata, slots, attempts, saved, finalized: fs.existsSync(reviewFindingsFile(dir)),
       whole: !!metadata.scope?.startsWith('Full review') || metadata.coverage !== undefined, allFailed: saved.length > 0 && saved.every(([, outcome]) => outcome?.state === 'failed')}];
   });
   const targets = [...new Set(rounds.flatMap(round => round.slots))], tracked = new Map<string, Tracked>();

@@ -4,7 +4,8 @@
 import path from 'node:path';
 
 import { isRecord, loadConfig, readReal, type ReadFile } from './config.ts';
-import { BAND_EDGES, BANDS, OTHER_KEY, type Bands } from './usage/bands.ts';
+import { BAND_EDGES, OTHER_KEY } from './usage/bands.ts';
+import { BANDS, type Bands } from './usage/rows.ts';
 import { splitUsageKey, type Counters } from './usage/rows.ts';
 
 // SECTION: Types

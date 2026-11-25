@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import type { DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
-import { MAX_FILE_BYTES, count, counter, counters, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
+import type { DiagnosticModelUsage, DiagnosticUsage } from './rows.ts';
+import { MAX_FILE_BYTES, count, counter, counters, note, readErrorReason, readRoleTranscript, row, stageAt } from './read.ts';
 import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type ReadBudget, type UsageRow } from './rows.ts';
 
 const ID_REGEX = /^[A-Za-z0-9-]+$/;
@@ -19,8 +19,11 @@ type ParsedStep = {
 
 export const agy: HostUsageAdapter = {
   sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
-  read(query, fsPort) {
-    return collectAgyUsage(query, fsPort);
+  read(query, fsPort, delegate) {
+    return collectAgyUsage(query, fsPort, delegate ? {
+      rootRole: 'delegate',
+      ...(delegate.appDataDir ? { appDataDir: delegate.appDataDir } : {}),
+    } : undefined);
   },
 };
 
@@ -106,32 +109,13 @@ export function collectAgyUsage(query: HostUsageQuery, fsPort: HostUsageFs, opti
   ): { steps: ParsedStep[]; discoveredChildren: string[] } {
     const discoveredChildren: string[] = [];
     const transcriptFile = path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
-    let data: { text?: string; stop?: 'file cap' | 'budget' | 'zstd' };
-    try {
-      data = readTranscript(fsPort, transcriptFile, query.budget);
-    } catch (error) {
-      if (role === 'host') result.unavailable = readErrorReason(error);
-      else note(notes, role, 'unreadable files');
-      return { steps: [], discoveredChildren };
-    }
-
-    if (data.stop) {
-      if (data.stop === 'budget') note(notes, role, 'read budget reached');
-      else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap';
-      else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'subagents over size cap');
-      return { steps: [], discoveredChildren };
-    }
-
-    if (data.text === undefined) {
-      if (role === 'host') result.unavailable = 'read-error:ENOENT';
-      else note(notes, role, 'unreadable files');
-      return { steps: [], discoveredChildren };
-    }
+    const text = readRoleTranscript(fsPort, transcriptFile, query.budget, result, role);
+    if (text === undefined) return { steps: [], discoveredChildren };
 
     const steps: ParsedStep[] = [];
     const pendingInvokeModels: string[] = [];
 
-    for (const line of data.text.split('\n')) {
+    for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       let entry: any;
       try {
@@ -681,6 +665,8 @@ type UsageContext = {
   budget?: ReadBudget;
 };
 
+export const AGY_ENVELOPE_USAGE = 'agy.usage.envelope';
+
 export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return undefined; }
@@ -788,7 +774,7 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
       } else if (rawModel) {
         out.actualEffort = null;
       }
-      out.provenance = 'agy.usage.envelope';
+      out.provenance = AGY_ENVELOPE_USAGE;
       return out;
     }
   }
@@ -807,7 +793,7 @@ export function agyUsage(raw: string, context?: UsageContext): DiagnosticUsage |
       };
     }
     out.actualEffort = norm.effort;
-    out.provenance = 'agy.usage.envelope';
+    out.provenance = AGY_ENVELOPE_USAGE;
   }
 
   return out;

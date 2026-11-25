@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BAND_EDGES, BANDS, MAX_MODEL_KEYS, OTHER_KEY, bandOf, boundModels, foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
+import { BAND_EDGES, MAX_MODEL_KEYS, OTHER_KEY, bandOf, boundModels, foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
+import { BANDS } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { tokenTotal, type UsageRow } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({

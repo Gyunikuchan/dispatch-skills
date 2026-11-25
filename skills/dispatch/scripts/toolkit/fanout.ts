@@ -1,3 +1,4 @@
+import { parseBlockedReply } from './domain/blocker.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig, loadReadCommands } from '../lib/config.ts';
@@ -10,9 +11,9 @@ import type { RosterSlot } from './domain/types.ts';
 import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
-import { atomic, mergeBlocked, normalizeNative, persistDeferredMarker, readState, savedOrphanTargets, sessionOf, slotFiles, throwRejected, writeState, type BlockedAttempt, type Emit, type FanOutInput, type FanoutState, type NativeFailure, type SlotOutcome } from './fanout/state.ts';
+import { atomic, mergeBlocked, normalizeNative, persistDeferredMarker, readState, savedOrphanTargets, sessionOf, slotFiles, throwRejected, writeState, type BlockedAttempt, type Emit, type FanOutInput, type FanoutState, type SlotOutcome } from './fanout/state.ts';
 import { cliVoice, VOICE_DEADLINE_MS } from './fanout/voice.ts';
-import { attemptOf, blockedEntry, firstModelOf, isNativeFirstProvider, isNativeFirstSlot, nativeVoice, parseBlockedFile, reportEvidence } from './fanout/native.ts';
+import { attemptOf, blockedEntry, firstModelOf, isNativeFirstProvider, isNativeFirstSlot, nativeVoice, reportEvidence } from './fanout/native.ts';
 import { runNativeWave } from './fanout/wave.ts';
 
 export { cliWaveState, nativeSummaryItems, type BlockedAttempt, type SlotOutcome, type Validation } from './fanout/state.ts';
@@ -53,18 +54,6 @@ export function hasCliSlot(roster: Roster & {nativeFirstProviders: readonly stri
   return [...roster.targets, ...roster.reserves].some(
     slot => !slot.native && !isNativeFirstProvider(slot.provider, roster.nativeFirstProviders),
   );
-}
-
-/** Parse `--native-failed` and `--native-failed-hash` flags into NativeFailure entries. */
-export function parseNativeFailures(values: Record<string, unknown>): NativeFailure[] {
-  const rawFailed = values['native-failed'];
-  const rawHashes = values['native-failed-hash'];
-  const failedEntries = rawFailed === undefined ? [] : Array.isArray(rawFailed) ? rawFailed as string[] : [rawFailed as string];
-  const failedHashes = rawHashes === undefined ? [] : Array.isArray(rawHashes) ? rawHashes as string[] : [rawHashes as string];
-  return failedEntries.map((entry, index) => {
-    const eq = entry.indexOf('=');
-    return {attempt: entry.slice(0, eq), reason: entry.slice(eq + 1), reasonHash: failedHashes[index] ?? ''};
-  });
 }
 
 /** Refuse CLI fan-out before state writes when a Claude host runs inside Claude Code's sandbox. */
@@ -212,7 +201,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       }
       if (fs.existsSync(nativeSaved.replyPath)) {
         const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
-        const {isBlocked, raw} = parseBlockedFile(text);
+        const {isBlocked, raw} = parseBlockedReply(text);
         if (isBlocked && isCurrentHost(nativeSaved.provider)) {
           const {failed, reserve} = prepareHostBlocked(slot, nativeSaved, raw, attemptOf(slot,nativeSaved));
           if (reserve) {
@@ -259,7 +248,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       }
       if (fs.existsSync(nativeSaved.replyPath)) {
         const text = fs.readFileSync(nativeSaved.replyPath, 'utf8');
-        const {isBlocked, raw} = parseBlockedFile(text);
+        const {isBlocked, raw} = parseBlockedReply(text);
         if (isBlocked) {
           const entry = blockedEntry(nativeSaved.provider, firstModelOf({model: nativeSaved.model}), raw);
           deferFallback(slot, nativeSaved, 'blocked: ' + entry.reason, [entry]);

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
+import { reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/review-fix.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { fakeGit } from './helpers/fake-git.ts';

@@ -1,11 +1,11 @@
 // Claude Code (spec §6.1): plan permission mode, read-tool allowlist, write-tool
 // denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
 
-import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
+import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './response.ts';
 import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
-import { claudeUsage } from '../lib/usage/claude.ts';
-import { readDelegateSession } from '../lib/usage/delegate.ts';
+import { CLAUDE_INVOCATION_USAGE, claudeUsage } from '../lib/usage/claude.ts';
+import { sessionUsageReader } from './session-usage.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 const READ_ONLY_ALLOWED_TOOLS = [
@@ -50,24 +50,10 @@ function parseEnvelope(stdout: string): Envelope | null {
 
 export const claude: ProviderSpec = {
   usage: claudeUsage,
-  sessionUsage(raw, context) {
-    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
-    const sessionId = parseEnvelope(raw)?.sessionId ?? null;
-    if (!sessionId) return { complete: false };
-    return readDelegateSession({
-      platform: 'claude',
-      sessionId,
-      startMs: context.launchStartMs,
-      endMs: context.launchEndMs,
-      resumed: context.resumed ?? false,
-      ...(context.collectResponses ? { collectResponses: true } : {}),
-      home: context.platform.home,
-      env: (name) => context.env[name],
-      ...(context.cwd === undefined ? {} : { cwd: context.cwd }),
-      fs: context.transcripts.fs,
-      budget: context.transcripts.budget,
-    });
-  },
+  sessionUsage: sessionUsageReader('claude', raw => parseEnvelope(raw)?.sessionId ?? null, context => (
+    context.cwd === undefined ? {} : { cwd: context.cwd }
+  )),
+  perLaunchUsageProvenance: CLAUDE_INVOCATION_USAGE,
   resumeUsage: 'cumulative',
   id: 'claude',
   modes: [

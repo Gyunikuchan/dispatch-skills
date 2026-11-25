@@ -1,7 +1,7 @@
 import path from 'node:path';
-import type { DiagnosticModelUsage, DiagnosticUsage } from '../../toolkit/types.ts';
+import type { DiagnosticModelUsage, DiagnosticUsage } from './rows.ts';
 import { boundModels } from './bands.ts';
-import { count, counter, counters, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
+import { count, counter, counters, note, readErrorReason, readRoleTranscript, row, stageAt } from './read.ts';
 import { addCounters, type Counters, type HostRole, type HostStage, type HostUsageAdapter, type HostUsageFs, type HostUsageQuery, type HostUsageResult, type UsageRow } from './rows.ts';
 
 function applyCacheSplit(target: Counters, rawUsage: unknown, valid: (v: unknown) => v is number): void {
@@ -15,7 +15,18 @@ function applyCacheSplit(target: Counters, rawUsage: unknown, valid: (v: unknown
   if (typeof c1h === 'number') target.cacheWrite1h = c1h;
 }
 
-export const claudeCode: HostUsageAdapter = { sessionEnv: ['CLAUDE_CODE_SESSION_ID'], read(query, fs) { return collectClaudeUsage(query, fs); } };
+export const claudeCode: HostUsageAdapter = {
+  sessionEnv: ['CLAUDE_CODE_SESSION_ID'],
+  read(query, fs, delegate) {
+    if (!delegate) return collectClaudeUsage(query, fs);
+    if (!delegate.cwd) return { rows: [], unavailable: 'host id file missing' };
+    return collectClaudeUsage(query, fs, {
+      projectDir: delegate.cwd.replace(/[^A-Za-z0-9]/g, '-'),
+      rootRole: 'delegate',
+      ...(delegate.collectResponses ? { responseStartMs: delegate.startMs } : {}),
+    });
+  },
+};
 export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, options?: { projectDir?: string; rootRole?: 'host' | 'delegate'; responseStartMs?: number }): HostUsageResult {
   const result: HostUsageResult = { rows: [], notes: {} }; const notes = result.notes!;
   const rootRole = options?.rootRole ?? 'host';
@@ -37,12 +48,11 @@ export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, optio
   const userTurnsByStage: Partial<Record<HostStage, number>> = {};
   function read(file: string, role: HostRole, depth = 0) {
     try {
-      const data = readTranscript(fs, file, query.budget);
-      if (data.stop) { if (data.stop === 'budget') note(notes, role, 'read budget reached'); else if (role === 'host') result.unavailable = data.stop === 'zstd' ? 'zstd unavailable' : 'transcript over size cap'; else note(notes, role, data.stop === 'zstd' ? 'zstd unavailable' : 'subagents over size cap'); return; }
-      if (data.text === undefined) { if (role === 'host') result.unavailable = 'read-error:ENOENT'; else note(notes, role, 'unreadable files'); return; }
+      const text = readRoleTranscript(fs, file, query.budget, result, role);
+      if (text === undefined) return;
       const messages = new Map<string, { at: number; firstAt: number; model: string; effort: string | null; usage: Record<string, unknown> }>();
       const toolUseById = new Map<string, { ids: Set<string>; unnamed: number }>();
-      for (const line of data.text.split('\n')) {
+      for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         let entry: any; try { entry = JSON.parse(line); } catch { note(notes, role, 'unparsed lines'); continue; }
         if (!entry || typeof entry !== 'object') continue;
@@ -129,6 +139,8 @@ export function collectClaudeUsage(query: HostUsageQuery, fs: HostUsageFs, optio
   return result;
 }
 
+export const CLAUDE_INVOCATION_USAGE = 'claude.result.usage';
+
 export function claudeUsage(raw: string): DiagnosticUsage | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return undefined; }
@@ -148,7 +160,7 @@ export function claudeUsage(raw: string): DiagnosticUsage | undefined {
     out.models = boundModels(rawModels);
     return Object.values(out).some((v) => typeof v === 'number' && !count(v)) ? undefined : out;
   }
-  const out = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, 'claude.result.usage', 'uncached');
+  const out = counters(event['usage'], { input: 'input_tokens', output: 'output_tokens', cacheRead: 'cache_read_input_tokens', cacheWrite: 'cache_creation_input_tokens' }, CLAUDE_INVOCATION_USAGE, 'uncached');
   if (out) applyCacheSplit(out, event['usage'], count);
   return out;
 }

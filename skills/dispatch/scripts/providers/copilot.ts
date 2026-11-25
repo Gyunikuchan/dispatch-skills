@@ -1,11 +1,11 @@
 // GitHub Copilot (spec §6.1): plan mode with --assisted-approval --no-ask-user; sandbox adds
 // --sandbox --allow-all-tools; quota moves to the next mode, auth does not; resume `copilot --resume <id>`.
 
-import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
+import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './response.ts';
 import type { FailureClass } from '../toolkit/types.ts';
 import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
-import { readDelegateSession } from '../lib/usage/delegate.ts';
+import { sessionUsageReader } from './session-usage.ts';
 
 const AUTH = /(no authentication|can be authenticated|oauth token|personal access token|gh auth login|subscription required|not subscribed|active github copilot subscription)/i;
 
@@ -22,17 +22,12 @@ function classify(text: string, checkSandbox = true): FailureClass | null {
 
 export const copilot: ProviderSpec = {
   id: 'copilot',
+  invocationAttribution: { measured: 'measured-only' },
+  sessionUsageFromAttempt: true,
+  acceptPartialSessionUsage: true,
   usageUnavailable: 'no usage',
   resumeUsage: 'per-launch',
-  sessionUsage(_raw, context) {
-    if (!context.sessionId || !context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
-    return readDelegateSession({
-      platform: 'copilot', sessionId: context.sessionId, startMs: context.launchStartMs, endMs: context.launchEndMs,
-      resumed: context.resumed ?? false, home: context.platform.home, env: name => context.env[name],
-      ...(context.collectResponses ? { collectResponses: true } : {}),
-      fs: context.transcripts.fs, budget: context.transcripts.budget,
-    });
-  },
+  sessionUsage: sessionUsageReader('copilot', (_raw, context) => context.sessionId || undefined),
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'copilot.cmd' : 'copilot', env.os === 'win32' ? 'copilot.exe' : join(env, env.home, '.local', 'bin', 'copilot')] },
     { id: 'desktop', candidates: (env) => env.os === 'darwin'

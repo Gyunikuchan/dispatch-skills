@@ -1,5 +1,4 @@
-import type { DiagnosticCounters, DiagnosticUsage } from '../../toolkit/types.ts';
-import type { HostNote, HostNotes, HostRole, HostUnavailable, HostUsageFs, Milestone, PhaseMilestone, ReadBudget } from './rows.ts';
+import { BASE_OPTIONAL_COUNTER_KEYS, type Counters, type DiagnosticUsage, type HostNote, type HostNotes, type HostRole, type HostUnavailable, type HostUsageFs, type HostUsageResult, type Milestone, type PhaseMilestone, type ReadBudget } from './rows.ts';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
@@ -21,6 +20,24 @@ export function readTranscript(fs: HostUsageFs, file: string, budget: ReadBudget
   if (decoded.length > limit) { budget.remaining -= limit; return stop(); }
   budget.remaining -= decoded.length; return { text: decoded.toString('utf8') };
 }
+export function readRoleTranscript(
+  fs: HostUsageFs, file: string, budget: ReadBudget, result: HostUsageResult, role: HostRole,
+  oversizedSubagent: HostNote = 'subagents over size cap',
+): string | undefined {
+  try {
+    const { text, stop } = readTranscript(fs, file, budget);
+    if (text !== undefined) return text;
+    const notes = result.notes ??= {};
+    if (stop === 'budget') note(notes, role, 'read budget reached');
+    else if (role === 'host') result.unavailable = stop === 'zstd' ? 'zstd unavailable' : stop ? 'transcript over size cap' : 'read-error:ENOENT';
+    else note(notes, role, stop === 'zstd' ? 'zstd unavailable' : stop ? oversizedSubagent : 'unreadable files');
+  } catch (error) {
+    if (role === 'host') result.unavailable = readErrorReason(error);
+    else note(result.notes ??= {}, role, 'unreadable files');
+  }
+  return undefined;
+}
+
 export function stageAt(stages: readonly Milestone[], ms: number) { let selected = stages[0]; for (const stage of stages) if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) selected = stage; return selected?.stage ?? 'spec'; }
 export function phaseAt(phases: readonly PhaseMilestone[], ms: number): string | undefined {
   let selected: PhaseMilestone | undefined;
@@ -34,11 +51,11 @@ export const counter = (value: unknown): value is number => typeof value === 'nu
 export type Row = Record<string, unknown>;
 export const row = (v: unknown): Row | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Row : null;
 export const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
-export function baseCounters(value: unknown): DiagnosticCounters | undefined {
+export function baseCounters(value: unknown): Counters | undefined {
   const r = row(value);
   if (!r || !count(r['input']) || !count(r['output'])) return undefined;
-  const out: DiagnosticCounters = { input: r['input'], output: r['output'] };
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
+  const out: Counters = { input: r['input'], output: r['output'] };
+  for (const key of BASE_OPTIONAL_COUNTER_KEYS) {
     const n = r[key];
     if (n === undefined) continue;
     if (!count(n)) return undefined;
@@ -53,7 +70,7 @@ export function baseCounters(value: unknown): DiagnosticCounters | undefined {
   return out;
 }
 
-export function hasUsageTokens(counters: DiagnosticCounters): boolean {
+export function hasUsageTokens(counters: Counters): boolean {
   return counters.input > 0 || counters.output > 0 || (counters.cacheRead ?? 0) > 0
     || (counters.cacheWrite ?? 0) > 0 || (counters.reasoning ?? 0) > 0;
 }
@@ -62,7 +79,7 @@ export function counters(value: unknown, names: Record<string, string>, provenan
   const r = row(value);
   if (!r || !count(r[names['input']!]) || !count(r[names['output']!])) return undefined;
   const out: DiagnosticUsage = { input: r[names['input']!] as number, output: r[names['output']!] as number, scope: 'invocation', provenance, inputSemantics };
-  for (const key of ['cacheRead', 'cacheWrite', 'reasoning'] as const) {
+  for (const key of BASE_OPTIONAL_COUNTER_KEYS) {
     const field = names[key];
     if (field && r[field] !== undefined) { if (!count(r[field])) return undefined; out[key] = r[field]; }
   }

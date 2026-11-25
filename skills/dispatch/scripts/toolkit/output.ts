@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Fold } from './ledger.ts';
+import type { RecoverySelection } from './review-state.ts';
+
+export type HandlerResult = { ok: boolean; summary: string; value: unknown; exit: number; reason?: string; postFold?: Fold; recoverySelection?: RecoverySelection };
 
 export type ToolResult = { ok: boolean; summary: string; path: string | null; reason?: string; hint?: string; exit: number };
 export class ToolError extends Error {
@@ -13,6 +17,9 @@ export class ToolError extends Error {
     this.reason = reason;
   }
 }
+
+export const result=(value: unknown, postFold?: Fold): HandlerResult=>({ok:true,value,exit:0,summary:JSON.stringify(value),...(postFold?{postFold}:{})});
+export function refuse(reason: string,message=reason): never {throw new ToolError(4,reason,message);}
 
 export function capSummary(text: string): string {
   if (Buffer.byteLength(text, 'utf8') <= 1024) return text;
@@ -54,14 +61,18 @@ export function summaryWithItems(head: string, items: readonly string[]): string
   return head;
 }
 
+export function writePrivateOutput(target: string, text: string, flag: 'w' | 'wx' = 'w'): void {
+  const temp = target + '.' + crypto.randomUUID() + '.tmp';
+  try {
+    fs.writeFileSync(temp, text, { flag, mode: 0o600 });
+    fs.renameSync(temp, target);
+  } finally { fs.rmSync(temp, { force: true }); }
+}
+
 export function writeResult(session: string, tool: string, action: string, value: unknown): string {
   const directory = path.join(path.resolve(session), '.state', 'results');
   fs.mkdirSync(directory, { recursive: true });
   const target = path.join(directory, tool + '-' + action + '-' + crypto.randomUUID() + '.json');
-  const temp = target + '.' + crypto.randomUUID() + '.tmp';
-  try {
-    fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-    fs.renameSync(temp, target);
-  } finally { fs.rmSync(temp, { force: true }); }
+  writePrivateOutput(target, JSON.stringify(value, null, 2) + '\n', 'wx');
   return target;
 }

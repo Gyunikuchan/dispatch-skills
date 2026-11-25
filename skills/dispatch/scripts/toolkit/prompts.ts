@@ -4,10 +4,13 @@ import { assembleTemplate, extractTemplate, fillTemplate, interRoundSection, qua
 import { REVIEW_TAGS_BY_KIND } from './domain/report.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
-import type { ReviewTarget } from './findings.ts';
-import { structuralLines } from './domain/plan.ts';
+import type { ReviewTarget } from './review-state.ts';
+import { EXECUTION_STATUS_TITLE, RESOLUTION_TITLE } from './domain/document-lint.ts';
+import { structuralLines } from './domain/markdown-structure.ts';
 
 export { settledSection, type Settled } from './domain/prompt.ts';
+
+const managedSections = [RESOLUTION_TITLE, EXECUTION_STATUS_TITLE];
 
 function sections(source: string, subsections: boolean): Map<string, string> {
   const sections = new Map<string, string>();
@@ -15,7 +18,7 @@ function sections(source: string, subsections: boolean): Map<string, string> {
   const save = () => {if (heading) sections.set(heading, body.join('\n').trim());};
   for (const line of structuralLines(source)) {
     const match = !line.fenced ? /^(#{2,3})\s+(.+?)\s*$/.exec(line.text) : null;
-    if (subsections && match?.[1] === '##') ignored = ['Review Findings & Resolutions', 'Execution Status'].includes(match[2]!);
+    if (subsections && match?.[1] === '##') ignored = managedSections.includes(match[2]!);
     if (match && (subsections || match[1] === '##')) {
       save(); heading = ignored ? '' : match[2]!; body = [];
     } else if (!ignored) body.push(line.original);
@@ -28,7 +31,7 @@ export function artifactSections(source: string): Map<string, string> {return se
 export function changedHeadings(before: string, after: string): string[] {
   const previous = sections(before, true), current = sections(after, true);
   return [...new Set([...current.keys(), ...previous.keys()])].filter(heading =>
-    !['Review Findings & Resolutions', 'Execution Status'].includes(heading) && previous.get(heading) !== current.get(heading));
+    !managedSections.includes(heading) && previous.get(heading) !== current.get(heading));
 }
 
 export function reviewPrompt(kind: ReviewKind, context: {

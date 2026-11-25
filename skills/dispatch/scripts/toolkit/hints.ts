@@ -1,7 +1,7 @@
 import type { Manifest } from '../lib/session.ts';
 import { strictEvidence } from './evidence.ts';
-import { candidate, pending } from './integrate.ts';
-import { integrationRecord } from './integration.ts';
+import { candidate } from './writers.ts';
+import { integrationRecord, pendingIntegration } from './integration-state.ts';
 import { confirmGate, gate, latest, levelGate, type Fold, type Hashes } from './ledger.ts';
 import { clipBytes } from './output.ts';
 import { checks, loadPlan, taskCriteria, taskSection } from './plan-view.ts';
@@ -95,7 +95,7 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
   const integratePhase = latest(fold, 'integrate')?.data?.['phase'];
   if (integratePhase === 'closed') return undefined;
   // Row 11: pending integration conflict or in-progress pick requires orchestrator decision.
-  if (pending(fold)) return undefined;
+  if (pendingIntegration(fold)) return undefined;
 
   // Row 12: uncommitted delivery points to walkthrough completion (committed does not repeat it).
   if (action === 'worktree deliver' && integratePhase === 'delivered') {

@@ -11,7 +11,7 @@ import { SPECS, isProviderId } from './providers/index.ts';
 import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
 import { renderCallTable, stripGeneratedMarkers } from './toolkit/contracts.ts';
 import { capSummary } from './toolkit/output.ts';
-import { diagnosticInstructions } from './toolkit/diagnostics.ts';
+import { diagnosticInstructions } from './toolkit/diagnostics-capture.ts';
 
 const GROUNDING_INSTRUCTIONS = 'When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor\'s `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery.';
 

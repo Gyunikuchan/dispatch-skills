@@ -4,13 +4,13 @@ import { failureDisposition } from '../../policy/cascade.ts';
 import { normalizeProvider } from '../../policy/roster.ts';
 import { sessionScope, formatSafetyPrompt } from '../../providers/runner.ts';
 import { nodeRunnerFs } from '../../providers/node-process.ts';
-import { sanitizeText } from '../domain/sanitize.ts';
+import { BLOCKED_MARKER, failureReasonDisplay, failureReasonEvidence, isBlockedReply, parseBlockedReply } from '../domain/blocker.ts';
 import type { CliDeps } from '../cli.ts';
 import type { RosterSlot } from '../domain/types.ts';
 import { atomic, mergeBlocked, nativeLaunchAs, type BlockedAttempt, type Emit, type FailureClass, type FanOutInput, type NativeFailure, type SlotOutcome, type Validation, type slotFiles } from './state.ts';
 import type { cliVoice } from './voice.ts';
 
-const newNativeReply = (cwd: string, replyPath: string) => `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`BLOCKED: <reason>\` when you cannot write it.\n`;
+const newNativeReply = (cwd: string, replyPath: string) => `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`${BLOCKED_MARKER} <reason>\` when you cannot write it.\n`;
 
 export function firstModelOf(slot: {model?: string | readonly string[] | undefined}): string | null {
   if (slot.model === undefined) return null;
@@ -32,41 +32,21 @@ function makeNonce(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 6);
 }
 
-export function parseBlockedFile(text: string): {isBlocked: boolean; raw: string} {
-  const trimmed = text.trim();
-  const firstLine = trimmed.split(/\r?\n/, 1)[0] ?? '';
-  if (!firstLine.startsWith('BLOCKED:')) return {isBlocked: false, raw: trimmed};
-  const raw = trimmed.slice('BLOCKED:'.length).trim();
-  return {isBlocked: true, raw};
-}
-
-export function blockedEntry(provider: string, model: string | null, rawTrimmed: string): BlockedAttempt {
-  const reason = sanitizeText(rawTrimmed).slice(0, 200) || '(reason removed by sanitizer)';
-  return {provider, model, reason, reasonHash: crypto.createHash('sha256').update(rawTrimmed).digest('hex')};
-}
-
-function reportIsBlocked(reason: string): boolean {
-  return reason.startsWith('BLOCKED:');
-}
-
-function reportBlockedRaw(reason: string): string {
-  // CLI passes sanitized "BLOCKED: <sanitized>" and hashes the extracted raw.
-  // Recover the extracted part for identity; fall back to the whole reason.
-  if (!reason.startsWith('BLOCKED:')) return reason.trim();
-  return reason.slice('BLOCKED:'.length).trim();
+export function blockedEntry(provider: string, model: string | null, raw: string): BlockedAttempt {
+  return { provider, model, ...failureReasonEvidence(raw) };
 }
 
 // Display form of a failure reason: reported BLOCKED evidence wins, the
 // protocol marker recovers its raw text, anything else keeps its wording.
 function blockedDisplayOf(reason: string, evidence?: BlockedAttempt[]): string {
   if (evidence?.[0]?.reason) return evidence[0].reason;
-  const raw = reportIsBlocked(reason) ? reportBlockedRaw(reason) : reason.trim();
-  return sanitizeText(raw).slice(0, 200) || '(reason removed by sanitizer)';
+  const raw = isBlockedReply(reason) ? parseBlockedReply(reason).raw : reason.trim();
+  return failureReasonDisplay(raw);
 }
 
 // Blocked evidence for a reported attempt, attributed to the voice that ran it.
 export function reportEvidence(native: {provider: string; model?: string | readonly string[]}, report: NativeFailure): BlockedAttempt[] | undefined {
-  if (!reportIsBlocked(report.reason)) return undefined;
+  if (!isBlockedReply(report.reason)) return undefined;
   return [{provider: native.provider, model: firstModelOf(native), reason: blockedDisplayOf(report.reason), reasonHash: report.reasonHash}];
 }
 
@@ -188,7 +168,7 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     const merged = mergeBlocked(nativeSaved.blocked, extraBlocked);
     // Fail closed on the recorded error: the exact external marker, or an
     // internal 'blocked: ' reason with its blocked evidence.
-    const blockedFailure = reportIsBlocked(nativeError) || (nativeError.startsWith('blocked: ') && merged.length > 0);
+    const blockedFailure = isBlockedReply(nativeError) || (nativeError.startsWith('blocked: ') && merged.length > 0);
     const display = blockedDisplayOf(nativeError, extraBlocked);
     const withFallback = {...nativeSaved, cliFallback: true as const, nativeError, ...(merged.length ? {blocked: merged} : {})};
     atomic(fileOfLogical(logical.slot), withFallback);
@@ -364,7 +344,7 @@ export function nativeVoice(input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>, 
     invalidateReply(native.replyPath);
     emit(attemptOf(slot, native), {kind: 'native', state: 'failed'});
     const canSubstitute = isCurrentHost(native.provider) && native.attempt.split('#')[0] === slot.slot;
-    const cls = reportIsBlocked(report.reason) ? 'blocked' : 'refusal';
+    const cls = isBlockedReply(report.reason) ? 'blocked' : 'refusal';
     const blocked = cls === 'blocked' ? mergeBlocked(native.blocked, reportEvidence(native, report)) : native.blocked;
     const failed: Extract<SlotOutcome, {state: 'failed'}> = {
       slot: slot.slot, state: 'failed', cls, reason: cls + ': ' + sanitized, ...(blocked?.length ? {blocked} : {}),

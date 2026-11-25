@@ -1,10 +1,8 @@
 import { pricingProblems } from '../../lib/pricing.ts';
-import { BANDS, boundModels, type Bands } from '../../lib/usage/bands.ts';
-import type { CopilotActor, CopilotEvidence } from '../../lib/usage/rows.ts';
+import { boundModels } from '../../lib/usage/bands.ts';
 import { baseCounters, count as safeCount, hasUsageTokens } from '../../lib/usage/read.ts';
-import { addCounters, HOST_ROLES, HOST_RESPONSE_BASES, MAX_RESPONSE_AGENTS, RESPONSE_COVERAGES, RESPONSE_STAGES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Counters, type HostResponseAggregate, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
+import { addCounters, BANDS, COVERAGE_REASONS, HOST_ROLES, HOST_RESPONSE_BASES, MAX_RESPONSE_AGENTS, RESPONSE_COVERAGES, RESPONSE_STAGES, HOST_NOTES, HOST_UNAVAILABLE, splitUsageKey, STAGE_ORDER, type Bands, type CopilotActor, type CopilotEvidence, type Counters, type CoverageReason, type HostResponseAggregate, type HostUsageFacts, type HostUsageRow } from '../../lib/usage/rows.ts';
 import type { LifecycleStep } from '../../providers/types.ts';
-import type { CoverageReason } from '../types.ts';
 import { CATEGORIES, COMPONENTS, DASH, DIAGNOSTIC_LIMITS, PHASE_NAMES, type Category, type DelegateResponseFacts, type InvocationFacts, type ModelUsage, type RecoveryExecution, type RetroObservation, type ReviewFacts, type RoundWorkload, type RunFacts, type SlotYieldFacts, type Usage } from './diagnostics-types.ts';
 
 const MAX_REVIEW_ROUND_CAP = 1000;
@@ -232,7 +230,6 @@ function lifecycleOf(v: unknown): LifecycleStep[] | undefined {
   return rows.length ? rows : undefined;
 }
 
-const COVERAGE_REASONS: readonly CoverageReason[] = ['no usage', 'transcript unavailable', 'invalid counters', 'unverified zero'];
 function coverageOf(v: unknown): CoverageReason[] | undefined {
   const raw = typeof v === 'string' ? [v] : Array.isArray(v) ? v : [];
   const reasons = [...new Set(raw.flatMap((x): CoverageReason[] => {
@@ -259,36 +256,40 @@ function usageSourceOf(value: unknown): InvocationFacts['usageSource'] {
 
 const delegateAgent = match(/^delegate-(?:child-)?[a-f0-9]{16}$/);
 
-function delegateResponsesOf(value: unknown): DelegateResponseFacts[] | undefined {
+function responsesOf(value: unknown, source: 'delegate'): DelegateResponseFacts[] | undefined;
+function responsesOf(value: unknown, source: 'host'): HostResponseAggregate[] | undefined;
+function responsesOf(value: unknown, source: 'host' | 'delegate') {
   if (!Array.isArray(value)) return undefined;
-  const seen = new Set<string>();
+  const delegate = source === 'delegate';
   const aliases = new Set<string>();
-  const responses = value.slice(0, MAX_RESPONSE_AGENTS + 2).flatMap((item): DelegateResponseFacts[] => {
+  const keys = new Set<string>();
+  const items = delegate ? value.slice(0, MAX_RESPONSE_AGENTS + 2) : value;
+  const responses = items.flatMap((item: unknown) => {
     if (!record(item)) return [];
-    const {role, observed: rawObserved, uncachedInput: rawInput} = item;
     const stage = RESPONSE_STAGES.find(x => x === item['stage']);
-    const basis = [...HOST_RESPONSE_BASES, 'unavailable' as const].find(x => x === item['basis']);
+    const role = (delegate ? ['delegate', 'subagent'] as const : HOST_ROLES).find(x => x === item['role']);
+    const basis = delegate && item['basis'] === 'unavailable' ? 'unavailable' as const : HOST_RESPONSE_BASES.find(x => x === item['basis']);
     const coverage = RESPONSE_COVERAGES.find(x => x === item['coverage']);
-    if (!stage || !basis || !coverage || (role !== 'delegate' && role !== 'subagent')) return [];
-    const agent = delegateAgent(item['agent']);
-    if (item['agent'] !== undefined && (!agent || agent.startsWith('delegate-child-') !== (role === 'subagent'))) return [];
-    const observed = count(rawObserved);
-    const uncachedInput = count(rawInput);
-    const toolCalls = count(item['toolCalls']);
-    const toolTurns = count(item['toolTurns']);
-    if (coverage === 'unknown' ? rawObserved !== undefined || rawInput !== undefined : observed === undefined || basis === 'unavailable') return [];
-    if (coverage === 'complete' && !agent) return [];
+    if (!stage || !role || !basis || !coverage) return [];
+    const agent = delegate ? delegateAgent(item['agent']) : responseAgent(item['agent']);
+    const validAgent = agent && (delegate ? agent.startsWith('delegate-child-') === (role === 'subagent') : agent.startsWith(`${role}-`));
+    if (item['agent'] !== undefined && !validAgent) return [];
+    const observed = count(item['observed']);
+    if (coverage === 'unknown') {
+      if (delegate ? item['observed'] !== undefined || item['uncachedInput'] !== undefined : observed !== undefined) return [];
+    } else if (observed === undefined || basis === 'unavailable' || (coverage === 'complete' && !agent)) return [];
     const key = JSON.stringify([stage, role, basis, agent]);
-    if (seen.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
-    seen.add(key);
+    if (keys.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
+    keys.add(key);
     if (agent) aliases.add(agent);
     return [{
-      stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed), ...opt('uncachedInput', uncachedInput),
-      ...opt('toolCalls', coverage === 'unknown' ? undefined : toolCalls),
-      ...opt('toolTurns', coverage === 'unknown' ? undefined : toolTurns),
+      stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed),
+      ...opt('uncachedInput', observed === undefined ? undefined : count(item['uncachedInput'])),
+      ...opt('toolCalls', observed === undefined ? undefined : count(item['toolCalls'])),
+      ...opt('toolTurns', observed === undefined ? undefined : count(item['toolTurns'])),
     }];
   });
-  return responses.length ? responses : undefined;
+  return delegate && responses.length === 0 ? undefined : responses;
 }
 
 function invocationOf(v: unknown): InvocationFacts[] {
@@ -319,7 +320,7 @@ function invocationOf(v: unknown): InvocationFacts[] {
     ...opt('targetSlot',match(/^[A-Za-z0-9_-]{1,40}\[\d{1,3}\]$/)(v['targetSlot'])),
     outcome, ...opt('usage', usage), ...(usage && usageSource ? { usageSource } : {}), ...reportedModelsOf(v, usage),
     ...opt('coverage', coverage.size ? [...coverage] : undefined),
-    ...opt('responses', surface === 'cli' && launched ? delegateResponsesOf(v['responses']) : undefined),
+    ...opt('responses', surface === 'cli' && launched ? responsesOf(v['responses'], 'delegate') : undefined),
     ...opt('lifecycleSteps', lifecycleOf(v['lifecycleSteps'])), ...opt('slot', match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/)(v['slot'])),
     ...(v['superseded'] === true ? { superseded: true as const } : {}),
     ...(v['nudge'] === true ? { nudge: true as const } : {}),
@@ -327,37 +328,6 @@ function invocationOf(v: unknown): InvocationFacts[] {
   }];
 }
 
-function hostResponsesOf(value: unknown): HostResponseAggregate[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const aliases = new Set<string>();
-  const keys = new Set<string>();
-  return value.flatMap((item: unknown): HostResponseAggregate[] => {
-    if (!record(item)) return [];
-    const stage = RESPONSE_STAGES.find(x => x === item['stage']);
-    const role = HOST_ROLES.find(x => x === item['role']);
-    const basis = HOST_RESPONSE_BASES.find(x => x === item['basis']);
-    const coverage = RESPONSE_COVERAGES.find(x => x === item['coverage']);
-    if (!stage || !role || !basis || !coverage) return [];
-    const agent = responseAgent(item['agent']);
-    if (item['agent'] !== undefined && (!agent || !agent.startsWith(`${role}-`))) return [];
-    const observed = count(item['observed']);
-    const uncachedInput = count(item['uncachedInput']);
-    const toolCalls = count(item['toolCalls']);
-    const toolTurns = count(item['toolTurns']);
-    if (coverage === 'unknown' ? observed !== undefined : observed === undefined) return [];
-    if (coverage === 'complete' && !agent) return [];
-    const key = `${stage}\0${role}\0${basis}\0${agent ?? ''}`;
-    if (keys.has(key) || (agent && !aliases.has(agent) && aliases.size >= MAX_RESPONSE_AGENTS)) return [];
-    keys.add(key);
-    if (agent) aliases.add(agent);
-    return [{
-      stage, role, basis, coverage, ...opt('agent', agent), ...opt('observed', observed),
-      ...opt('uncachedInput', observed === undefined ? undefined : uncachedInput),
-      ...opt('toolCalls', observed === undefined ? undefined : toolCalls),
-      ...opt('toolTurns', observed === undefined ? undefined : toolTurns),
-    }];
-  });
-}
 function hostUsageOf(value: unknown): HostUsageFacts | undefined {
   if (!record(value)) return undefined;
   const rows: HostUsageRow[] = list(value['rows']).flatMap(v => {
@@ -389,7 +359,7 @@ function hostUsageOf(value: unknown): HostUsageFacts | undefined {
   return {
     platform: token(value['platform']) ?? null,
     rows,
-    ...opt('responses', hostResponsesOf(value['responses'])),
+    ...opt('responses', responsesOf(value['responses'], 'host')),
     ...opt('userTurns', count(value['userTurns'])),
     ...opt('userTurnsByStage', userTurnsByStage),
     ...opt('subagentCount', count(value['subagentCount'])),

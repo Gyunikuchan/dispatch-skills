@@ -1,11 +1,6 @@
-import { addCounters, tokenTotal, usageKey, type Counters, type UsageRow } from './rows.ts';
+import { addCounters, tokenTotal, usageKey, type Band, type BandedCounters, type Counters, type UsageRow } from './rows.ts';
 
 export const BAND_EDGES = [100_000, 200_000, 272_000] as const;
-export const BANDS = ['le100k', 'le200k', 'le272k', 'gt272k'] as const;
-type Band = (typeof BANDS)[number];
-export type Bands = Partial<Record<Band, Counters>>;
-export type BandedCounters = Counters & { bands?: Bands };
-
 export const MAX_MODEL_KEYS = 32;
 export const OTHER_KEY = 'other';
 

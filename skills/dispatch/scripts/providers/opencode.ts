@@ -3,10 +3,10 @@
 // endpoint gets a `/models` preflight, the GPU lock, and a WAN proxy trap; a remote endpoint skips all three.
 // Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
 
-import { classifyFailure, failOutcome } from './runner.ts';
+import { classifyFailure, failOutcome } from './response.ts';
 import { opencodeModelValue } from '../lib/platform.ts';
-import { opencodeUsage } from '../lib/usage/opencode.ts';
-import { readDelegateSession } from '../lib/usage/delegate.ts';
+import { OPENCODE_COMPLETION_USAGE, opencodeUsage } from '../lib/usage/opencode.ts';
+import { sessionUsageReader } from './session-usage.ts';
 import type { LaunchRequest, PlatformEnv, Prelaunch, PreparePorts, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
 
@@ -105,6 +105,8 @@ export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): 
 
 export const opencode: ProviderSpec = {
   id: 'opencode',
+  invocationAttribution: { measured: 'prefer-measured' },
+  ownedTreeLabel: 'OpenCode',
   stepEvent(line) {
     try {
       const type = row(JSON.parse(line))?.['type'];
@@ -123,28 +125,10 @@ export const opencode: ProviderSpec = {
   native: 'opencode',
   modeCascadeOn: [],
   usage: opencodeUsage,
-  sessionUsage(raw, context) {
-    if (!context.transcripts || context.launchStartMs === undefined || context.launchEndMs === undefined) return undefined;
-    const sessionId = parseEvents(raw).sessionId;
-    if (!sessionId) return { complete: false };
-    const fs = context.transcripts.fs.opencodeMessages
-      ? context.transcripts.fs
-      : context.readOpencodeMessages
-        ? { ...context.transcripts.fs, opencodeMessages: context.readOpencodeMessages }
-        : context.transcripts.fs;
-    return readDelegateSession({
-      platform: 'opencode',
-      sessionId,
-      startMs: context.launchStartMs,
-      endMs: context.launchEndMs,
-      resumed: context.resumed ?? false,
-      ...(context.collectResponses ? { collectResponses: true } : {}),
-      home: context.platform.home,
-      env: (name) => context.env[name],
-      fs,
-      budget: context.transcripts.budget,
-    });
-  },
+  sessionUsage: sessionUsageReader('opencode', raw => parseEvents(raw).sessionId, (context, fs) => (
+    !fs.opencodeMessages && context.readOpencodeMessages ? { fs: { ...fs, opencodeMessages: context.readOpencodeMessages } } : {}
+  )),
+  zeroUsageProvenance: OPENCODE_COMPLETION_USAGE,
   resumeUsage: 'per-launch',
   outputCapBytes: 64 * 1024 * 1024,
   resumeCommand: (id) => id,

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 // Executable discovery (spec §6.3): expand each mode's candidates (`*` segments via
 // the fs table, bare names via PATH/PATHEXT), probe executability, cache provider × mode per invocation.
 
@@ -91,4 +92,19 @@ export function createDiscovery(specs: Readonly<Record<ProviderId, ProviderSpec>
       specs[provider].modes.map((mode): DoctorRow => ({ provider, mode: mode.id, ...resolve(provider, mode.id) }))),
     get probes() { return probes; },
   };
+}
+
+export function createNodeDiscovery(specs: Readonly<Record<ProviderId, ProviderSpec>>, platform: PlatformEnv): Discovery {
+  return createDiscovery(specs, platform, {
+    list(dir) {
+      try { return fs.readdirSync(dir); } catch { return []; }
+    },
+    exists: fs.existsSync,
+    executable(file) {
+      try {
+        const stat = fs.statSync(file);
+        return stat.isFile() && (platform.os === 'win32' || (stat.mode & 0o111) !== 0);
+      } catch { return false; }
+    },
+  });
 }

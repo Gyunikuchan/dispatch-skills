@@ -4,7 +4,8 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { batchInvocation, type RunnerFs } from './runner.ts';
+import { batchInvocation, isBatchLauncher } from './process-policy.ts';
+import type { RunnerFs } from './runner.ts';
 import type { Launch, ProcessPort, ProcessResult } from './types.ts';
 
 export const nodeRunnerFs: RunnerFs = {
@@ -51,7 +52,7 @@ export const nodeProcess: ProcessPort = {
     const [command, ...args] = launch.argv;
     if (!command) throw new Error('nodeProcess.start: empty argv');
     // ComSpec is the host's own cmd.exe location; shell stays off and batchInvocation escapes every argument.
-    const batch = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)
+    const batch = isBatchLauncher(process.platform, command)
       ? batchInvocation(command, args, process.env['ComSpec'] || 'cmd.exe') : null;
     // Open the log first so a failure cannot orphan a running child.
     const log = fs.openSync(io.logPath, 'w', 0o600);

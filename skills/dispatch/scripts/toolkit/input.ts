@@ -4,6 +4,12 @@ import { stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext } from './cli.ts';
 import { ToolError } from './output.ts';
 
+export function readRequiredReason(ctx: HandlerContext): string {
+  const value=ctx.values['reason'];
+  if(typeof value!=='string'||!value.trim())throw new ToolError(1,'invalid-input','A non-blank --reason is required');
+  return value;
+}
+
 export type DirectFieldSpec = { readonly flag: string; readonly key: string };
 
 export type TextPayloadSpec = {
@@ -104,8 +110,6 @@ export function readTextPayload(ctx: HandlerContext, spec: TextPayloadSpec): str
 }
 
 /** Reads and parses a JSON payload from a file path, stdin `-`, inline `--json` flag, or co-required direct flags. */
-export function readJsonPayload(ctx: HandlerContext, spec: JsonPayloadSpec & { readonly optional: true }): unknown | undefined;
-export function readJsonPayload(ctx: HandlerContext, spec: JsonPayloadSpec & { readonly optional?: false }): unknown;
 export function readJsonPayload(ctx: HandlerContext, spec: JsonPayloadSpec): unknown {
   const resolved = resolveSource(ctx, spec);
   if (resolved.kind === 'none') return undefined;

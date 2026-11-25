@@ -1,7 +1,8 @@
 // Spec parse + lint (governing spec, KD-8). Pure: callers supply the source text.
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';
-import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder, sectionRanges, structuralLines, type StructuralLine } from './plan.ts';
+import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder } from './document-lint.ts';
+import { sectionRanges, structuralLines, type StructuralLine } from './markdown-structure.ts';
 const SPEC_SECTION_ORDER = [
   '## At a Glance', '## Intent & Problem', '## Background', '## Requirements', '## Non-goals', '## Constraints', '## Decisions',
   '## Discussion Record', '## Open Questions',

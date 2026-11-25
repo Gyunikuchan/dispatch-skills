@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { currentPlatform } from '../lib/platform.ts';
-import { createDiscovery, type Discovery } from './discovery.ts';
+import { createNodeDiscovery, type Discovery } from './discovery.ts';
 import { SPECS } from './index.ts';
 import { bwrapArgv, unsupportedStandaloneDiagnostic } from './opencode.ts';
-import { batchInvocation, sanitizeEnv } from './runner.ts';
+import { batchInvocation, isBatchLauncher, sanitizeEnv } from './process-policy.ts';
 import type { PlatformEnv, ProviderId } from './types.ts';
 
 const CONCURRENCY = 4;
@@ -78,7 +78,7 @@ function killGroup(pid: number): boolean {
 export const nodeProbeSpawn: ProbeSpawnPort = (binary, args, { cwd, timeoutMs, stdoutCapBytes }) => new Promise(resolve => {
   const windows = process.platform === 'win32';
   const env = sanitizeEnv(process.env);
-  const batch = windows && /\.(cmd|bat)$/i.test(binary);
+  const batch = isBatchLauncher(process.platform, binary);
   const invocation = batch ? batchInvocation(binary, args, env['COMSPEC']) : { command: binary, args };
   const child = spawn(invocation.command, invocation.args, {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: !windows,
@@ -125,19 +125,6 @@ export const nodeProbeSpawn: ProbeSpawnPort = (binary, args, { cwd, timeoutMs, s
     resolve({ exit: null, stdout: '', stderr: '', timedOut: true });
   }, timeoutMs);
 });
-
-function defaultDiscovery(platform: PlatformEnv): Discovery {
-  return createDiscovery(SPECS, platform, {
-    list(dir) { try { return fs.readdirSync(dir); } catch { return []; } },
-    exists: fs.existsSync,
-    executable(file) {
-      try {
-        const stat = fs.statSync(file);
-        return stat.isFile() && (platform.os === 'win32' || (stat.mode & 0o111) !== 0);
-      } catch { return false; }
-    },
-  });
-}
 
 function initialSandbox(provider: ProviderId, platform: PlatformEnv): ProbeSandbox {
   if (provider === 'opencode') {
@@ -249,7 +236,7 @@ export async function probeProviders(targets: readonly ProbeTarget[], options: P
   const platform = options.platform ?? currentPlatform();
   const deps = {
     now, platform, cwd: options.cwd ?? process.cwd(), exists: options.exists ?? fs.existsSync,
-    discovery: options.discovery ?? defaultDiscovery(platform), spawn: options.spawn ?? nodeProbeSpawn,
+    discovery: options.discovery ?? createNodeDiscovery(SPECS, platform), spawn: options.spawn ?? nodeProbeSpawn,
   };
   const probes: ProviderProbeResult[] = new Array(targets.length);
   let next = 0;

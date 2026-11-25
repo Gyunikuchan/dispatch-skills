@@ -1,3 +1,4 @@
+import { reviewDirectory, reviewRoundFile, reviewFindingsFile, reviewRoundNumber } from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
@@ -39,13 +40,13 @@ function completedRounds(reviewDir: string): Round[] {
   if (!fs.existsSync(reviewDir)) return [];
   const rounds: Round[] = [];
   for (const name of fs.readdirSync(reviewDir)) {
-    const match = /^round-(\d+)$/.exec(name);
-    if (!match) continue;
+    const number = reviewRoundNumber(name);
+    if (number === undefined) continue;
     const dir = path.join(reviewDir, name);
-    const metadata = readJson(path.join(dir, 'round.json'));
-    const findings = readJson(path.join(dir, 'findings.json'))?.['findings'];
+    const metadata = readJson(reviewRoundFile(dir));
+    const findings = readJson(reviewFindingsFile(dir))?.['findings'];
     if (!metadata || !Array.isArray(findings)) continue;
-    rounds.push({ number: Number(match[1]), dir, metadata, findings });
+    rounds.push({ number, dir, metadata, findings });
   }
   return rounds.sort((a, b) => b.number - a.number);
 }
@@ -59,7 +60,7 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
 
   // NOTE: selection by recorded artifactPath, not the bind, so a same-basename artifact or an unbound session never picks the wrong round.
   const review = reviewId(kind, artifact);
-  const reviewDir = path.join(ctx.session, '.state', 'reviews', review);
+  const reviewDir = reviewDirectory(ctx.session, review);
   const artifactReal = canonical(artifact);
   const round = completedRounds(reviewDir).find(candidate =>
     typeof candidate.metadata['artifactPath'] === 'string' && canonical(candidate.metadata['artifactPath']) === artifactReal);
