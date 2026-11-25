@@ -6,9 +6,8 @@ import {
   parsePins,
   resolveLevel,
   resolveRoster,
-  type ReadDelegate,
-  type RosterInput,
 } from '../../../skills/dispatch/scripts/policy/roster.ts';
+import type { ReadDelegate, RosterInput } from '../../../skills/dispatch/scripts/policy/roster.ts';
 
 const base: RosterInput = {
   level: 'high',
@@ -44,6 +43,8 @@ test('grammar-pins: (a,b), (3), and (all) parse; count and all stand alone', () 
   assert.throws(() => resolveRoster({ ...base, pins: { kind: 'providers', keys: ['codex', 'typo'] } }), /typo/);
 });
 
+const slotIds = (r: ReturnType<typeof resolveRoster>) => r.targets.map((slot) => slot.slot);
+
 // SECTION: Ordering and identity
 
 test('config-order: unpinned rosters follow config order with host last regardless of model or effort', () => {
@@ -62,7 +63,7 @@ test('config-order: unpinned rosters follow config order with host last regardle
     'claude[1]:claude-sonnet',
   ]);
 
-  const multiDelegates: Record<string, ReadDelegate> = {
+  const multiDelegates = {
     codex: { targets: [{ low: { model: 'gpt-5', effort: 'high' } }] },
     claude: { targets: [{ low: { model: 'claude-opus', effort: 'medium' } }] },
     opencode: {
@@ -74,9 +75,8 @@ test('config-order: unpinned rosters follow config order with host last regardle
       ],
     },
     agy: { targets: [{ low: { model: 'gemini-pro', effort: 'low' } }] },
-  };
+  } satisfies Record<string, ReadDelegate>;
   const allPolicy = { rounds: { low: 1 }, targets: { low: 'all' as const } };
-  const slotIds = (r: ReturnType<typeof resolveRoster>) => r.targets.map((slot) => slot.slot);
 
   assert.deepEqual(
     slotIds(
@@ -102,7 +102,7 @@ test('config-order: unpinned rosters follow config order with host last regardle
   );
 
   // Changing candidate model and effort does not alter platform or target order.
-  const alteredDelegates: Record<string, ReadDelegate> = {
+  const alteredDelegates = {
     ...multiDelegates,
     opencode: {
       targets: [
@@ -112,7 +112,7 @@ test('config-order: unpinned rosters follow config order with host last regardle
         { low: { model: 'oc-b', effort: 'high' } },
       ],
     },
-  };
+  } satisfies Record<string, ReadDelegate>;
   assert.deepEqual(
     slotIds(
       resolveRoster({
@@ -252,14 +252,15 @@ test('underfill-native-exclusion: native-only providers of another host are list
   assert.equal(resolveRoster({ ...base, readDelegates, orchestrator: { platform: 'copilot' } }).underfill, undefined);
 });
 
+const ids = (roster: ReturnType<typeof resolveRoster>) => [
+  roster.targets.map((slot) => slot.slot),
+  roster.reserves.map((slot) => slot.slot),
+];
+
 // SECTION: Sandbox support
 
 test('sandbox-unsupported provider leaves targets and reserves unless opted out or pinned', () => {
   const policy = { rounds: { low: 1 }, targets: { low: 2 } };
-  const ids = (roster: ReturnType<typeof resolveRoster>) => [
-    roster.targets.map((slot) => slot.slot),
-    roster.reserves.map((slot) => slot.slot),
-  ];
   assert.deepEqual(ids(resolveRoster({ ...base, policy })), [
     ['codex[0]', 'codex[1]'],
     ['agy[0]', 'claude[0]', 'claude[1]'],
@@ -343,15 +344,16 @@ test('underfill names the sandbox gap once per provider and only when a provider
   );
 });
 
+const hasHost = (roster: ReturnType<typeof resolveRoster>) =>
+  roster.targets.some((slot) => slot.provider === 'claude') ||
+  roster.reserves.some((slot) => slot.provider === 'claude');
+
 test('host provider slots survive missing CLI and unsupported sandbox', () => {
   const policy = { rounds: { low: 1 }, targets: { low: 2 } };
   const readDelegates = {
     claude: { targets: [{ low: { model: 'c1' } }, { low: { model: 'c2' } }] },
     codex: { targets: [{ low: { model: 'g1' } }] },
   };
-  const hasHost = (roster: ReturnType<typeof resolveRoster>) =>
-    roster.targets.some((slot) => slot.provider === 'claude') ||
-    roster.reserves.some((slot) => slot.provider === 'claude');
   const missingCli = resolveRoster({
     level: 'low',
     readDelegates,

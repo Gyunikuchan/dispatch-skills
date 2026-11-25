@@ -2,10 +2,13 @@ import type { Manifest } from '../lib/session.ts';
 import { strictEvidence } from './evidence.ts';
 import { candidate } from './writers.ts';
 import { integrationRecord, pendingIntegration } from './integration-state.ts';
-import { confirmGate, gate, latest, levelGate, type Fold, type Hashes } from './ledger.ts';
+import { confirmGate, gate, latest, levelGate } from './ledger.ts';
+import type { Fold, Hashes } from './ledger.ts';
 import { clipBytes } from './output.ts';
 import { checks, loadPlan, taskCriteria, taskSection } from './plan-view.ts';
 import { isStale } from './writers.ts';
+import { isRecord } from '../lib/config.ts';
+import { present } from './narrow.ts';
 
 export const HINT_MAX_BYTES = 240;
 
@@ -25,25 +28,26 @@ export function isHintExcludedAction(action: string): boolean {
 }
 
 function formatHint(text: string): string {
-  return clipBytes(text.replace(/[\r\n]+/g, ' '), HINT_MAX_BYTES);
+  return clipBytes(text.replaceAll(/[\r\n]+/g, ' '), HINT_MAX_BYTES);
 }
 
 function verifiedLiveTree(value: unknown): string | undefined {
-  const rows =
-    value && typeof value === 'object' && !Array.isArray(value) ? (value as { checks?: unknown }).checks : undefined;
-  if (!Array.isArray(rows) || rows.length === 0) return undefined;
-  const first = (rows[0] as { tree?: unknown } | undefined)?.tree;
+  const checked: unknown = isRecord(value) ? value['checks'] : undefined;
+  if (!Array.isArray(checked) || checked.length === 0) {
+    return undefined;
+  }
+  const rows: ReadonlyArray<unknown> = checked;
+  const [head] = rows;
+  const first = isRecord(head) ? head['tree'] : undefined;
   return typeof first === 'string' &&
     first &&
     rows.every(
       (row) =>
-        row &&
-        typeof row === 'object' &&
-        !Array.isArray(row) &&
-        row.clean === true &&
-        row.before === row.after &&
-        row.exit === 0 &&
-        row.tree === first,
+        isRecord(row) &&
+        row['clean'] === true &&
+        row['before'] === row['after'] &&
+        row['exit'] === 0 &&
+        row['tree'] === first,
     )
     ? first
     : undefined;
@@ -52,34 +56,53 @@ function verifiedLiveTree(value: unknown): string | undefined {
 function hasOpenEscalation(fold: Fold): boolean {
   const states = new Map<string, unknown>();
   for (const record of fold.records) {
-    if (record.kind === 'escalation') states.set(String(record.data['id']), record.data['state']);
+    if (record.kind === 'escalation') {
+      states.set(String(record.data['id']), record.data['state']);
+    }
   }
   for (const state of states.values()) {
-    if (state === 'open') return true;
+    if (state === 'open') {
+      return true;
+    }
   }
   return false;
 }
 
+const renderReview = (targetArg: string) =>
+  `Run review — help review run — review run ${targetArg} --session <session> --host <platform> [--pins <pins>]`;
+
 /** Derives a bounded one-line advisory next-step hint from the post-write fold and current hashes. */
 export function stepHint({ fold, current, action, result, session, manifest }: StepHintInput): string | undefined {
   // Row 1: failed calls and native-pending pauses omit hints.
-  if (!result.ok || result.reason === 'native-pending') return undefined;
+  if (!result.ok || result.reason === 'native-pending') {
+    return undefined;
+  }
   // Row 2: standalone, terminal, and review-adjudication actions omit hints.
-  if (isHintExcludedAction(action)) return undefined;
+  if (isHintExcludedAction(action)) {
+    return undefined;
+  }
   // Row 3: open escalations block downstream guidance until resolved.
-  if (hasOpenEscalation(fold)) return undefined;
+  if (hasOpenEscalation(fold)) {
+    return undefined;
+  }
   // Row 4: unapproved extreme run level requires user selection.
-  if (!levelGate(fold).allowed) return undefined;
+  if (!levelGate(fold).allowed) {
+    return undefined;
+  }
   // Row 5: bind precedes review and implementation hints.
   const bind = latest(fold, 'bind');
-  if (!bind) return undefined;
+  if (!bind) {
+    return undefined;
+  }
   // Row 6: intent confirmation gate precedes review and implementation hints.
-  if (!confirmGate(fold, current.spec).allowed) return undefined;
+  if (!confirmGate(fold, current.spec).allowed) {
+    return undefined;
+  }
 
   // Row 7: freshly appended non-deduped plan/design bind after level selection, with no subsequent approval or ruling.
   const last = fold.records.at(-1);
-  const deduped = (result.value as { deduped?: unknown } | undefined)?.deduped === true;
-  const boundTarget = last?.kind === 'bind' ? last.data?.['plan'] || last.data?.['design'] : undefined;
+  const deduped = isRecord(result.value) && result.value['deduped'] === true;
+  const boundTarget: unknown = last?.kind === 'bind' ? last.data?.['plan'] || last.data?.['design'] : undefined;
   if (
     action === 'ledger append' &&
     !deduped &&
@@ -89,8 +112,6 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
     boundTarget.length > 0 &&
     !fold.records.some((record) => (record.kind === 'approval' || record.kind === 'ruling') && record.seq > last.seq)
   ) {
-    const renderReview = (targetArg: string) =>
-      `Run review — help review run — review run ${targetArg} --session <session> --host <platform> [--pins <pins>]`;
     const candidateHint = /^[A-Za-z0-9._/][A-Za-z0-9._/-]*$/.test(boundTarget) ? renderReview(boundTarget) : undefined;
     return candidateHint && Buffer.byteLength(candidateHint, 'utf8') <= HINT_MAX_BYTES
       ? candidateHint
@@ -98,15 +119,23 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
   }
 
   // Row 8: full gate (approval + non-intent edit chain).
-  if (!gate(fold, current).allowed) return undefined;
+  if (!gate(fold, current).allowed) {
+    return undefined;
+  }
   // Row 9: bound plan and opened integration worktree precede implementation hints.
   const integration = integrationRecord(fold);
-  if (!bind?.data?.['plan'] || !integration) return undefined;
+  if (!bind?.data?.['plan'] || !integration) {
+    return undefined;
+  }
   // Row 10: closed integration emits no hint.
-  const integratePhase = latest(fold, 'integrate')?.data?.['phase'];
-  if (integratePhase === 'closed') return undefined;
+  const integratePhase: unknown = latest(fold, 'integrate')?.data?.['phase'];
+  if (integratePhase === 'closed') {
+    return undefined;
+  }
   // Row 11: pending integration conflict or in-progress pick requires orchestrator decision.
-  if (pendingIntegration(fold)) return undefined;
+  if (pendingIntegration(fold)) {
+    return undefined;
+  }
 
   // Row 12: uncommitted delivery points to walkthrough completion (committed does not repeat it).
   if (action === 'worktree deliver' && integratePhase === 'delivered') {
@@ -126,7 +155,9 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
     return launch ? [{ task, launch }] : [];
   });
   if (candidates.length > 0) {
-    if (!session || !manifest) return undefined;
+    if (!session || !manifest) {
+      return undefined;
+    }
     try {
       const plan = loadPlan(session, manifest);
       const lastDone = fold.records.findLast(
@@ -138,9 +169,13 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
           (check) => taskCritIds.has(check.criterion) && check.evidenceClass !== 'review',
         );
         if (autoChecks.length > 0) {
-          if (action !== 'check run') return undefined;
+          if (action !== 'check run') {
+            return undefined;
+          }
           const liveTree = verifiedLiveTree(result.value);
-          if (!liveTree) return undefined;
+          if (!liveTree) {
+            return undefined;
+          }
           const lastFix = fold.records.findLast(
             (record) =>
               record.kind === 'integrate' &&
@@ -149,7 +184,9 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
           );
           const minSeq = lastFix?.seq ?? lastDone.seq;
           const evs = autoChecks.map((check) => strictEvidence(fold, check));
-          if (evs.some((ev) => !ev || ev.seq <= minSeq || ev.data['tree'] !== liveTree)) return undefined;
+          if (evs.some((ev) => !ev || ev.seq <= minSeq || ev.data['tree'] !== liveTree)) {
+            return undefined;
+          }
         }
       }
       const hasPlanOrTaskEdit = (baseSeq: number, task: string) =>
@@ -161,17 +198,21 @@ export function stepHint({ fold, current, action, result, session, manifest }: S
               (Array.isArray(record.data['affects']) && record.data['affects'].includes(task))),
         );
       const nonStale = candidates
-        .filter(
-          ({ task, launch }) =>
-            !isStale(fold, launch.record, taskSection(plan, task)) &&
-            !hasPlanOrTaskEdit(launch.record.data['base'].seq, task),
-        )
+        .filter(({ task, launch }) => {
+          if (isStale(fold, launch.record, taskSection(plan, task))) {
+            return false;
+          }
+          const base: unknown = launch.record.data['base'];
+          return !hasPlanOrTaskEdit(Number(isRecord(base) ? base['seq'] : undefined), task);
+        })
         .sort(
           (left, right) =>
-            left.launch.finished!.seq - right.launch.finished!.seq || left.task.localeCompare(right.task),
+            present(left.launch.finished, 'finished record').seq -
+              present(right.launch.finished, 'finished record').seq || left.task.localeCompare(right.task),
         );
-      if (nonStale.length > 0) {
-        const chosen = nonStale[0]!.task;
+      const [first] = nonStale;
+      if (first) {
+        const chosen = first.task;
         return formatHint(
           `Integrate ${chosen} — help worktree integrate — worktree integrate ${chosen} --session <session>`,
         );

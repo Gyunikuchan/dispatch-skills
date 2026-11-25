@@ -3,26 +3,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
 import {
   optionalDiagnostics,
   sessionFacts,
   writeDiagnostics,
 } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import {
-  heuristics,
-  normalizeUsage,
-  sanitizeFacts,
-} from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
-import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
+import { normalizeUsage, sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+
 import { sessionFixture } from './helpers/session.ts';
-import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
+import { flag, nullable, optional, parseJson, readJson, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
+import { fakeGit } from './helpers/fake-git.ts';
+import type { FakeGitState } from './helpers/fake-git.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
@@ -158,7 +151,7 @@ test('Copilot accounting detail folds before the report cap with closed markup a
       ? Array.from({ length: 1000 }, (_, i) => ({ key: `phase-${i}-` + 'x'.repeat(110), name: 'implementation' }))
       : [];
     const text = renderDiagnostics([{ phases, reviews: [], invocations: [], hostUsage }]).text;
-    assert.ok(Buffer.byteLength(text) <= 131072);
+    assert.ok(Buffer.byteLength(text) <= 131_072);
     assert.equal((text.match(/<details>/g) ?? []).length, (text.match(/<\/details>/g) ?? []).length);
     assert.doesNotMatch(text, /Truncated at the report size limit/);
     assert.equal(text.trim().endsWith('</details>'), true);
@@ -166,8 +159,11 @@ test('Copilot accounting detail folds before the report cap with closed markup a
     const note = text.split('\n').find((line) => line.startsWith('Detail coverage partial:'))!;
     assert.match(note, new RegExp(`Detail coverage partial: ${crowded ? 900 : 868} accounting rows omitted`));
     assert.match(note, /868 beyond the 32-row detail cap/);
-    if (crowded) assert.match(note, /32 additional rows omitted at the report size limit/);
-    else assert.doesNotMatch(note, /report size limit/);
+    if (crowded) {
+      assert.match(note, /32 additional rows omitted at the report size limit/);
+    } else {
+      assert.doesNotMatch(note, /report size limit/);
+    }
   }
 });
 
@@ -220,128 +216,13 @@ const writeJson = (file: string, value: unknown) => {
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
 
-const rosterSlot = (
-  slot: string,
-  provider: string,
-  options: { native?: boolean; reserve?: boolean; model?: string } = {},
-) => ({
-  slot,
-  provider,
-  index: 0,
-  native: options.native ?? false,
-  reserve: options.reserve ?? false,
-  model: options.model ?? 'model-a',
-});
-
-const finding = (
-  id: string,
-  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: string[] } = {},
-) => ({
-  id,
-  severity: marker.severity ?? 'SHOULD',
-  category: 'correctness',
-  locus: 'scripts/dispatch.ts:L1',
-  defect: `Finding ${id} describes a repeat`,
-  requiredChange: `Resolve ${id}`,
-  sources: marker.sources ?? ['claude[0]'],
-  scope: 'in',
-  ...(marker.recurrence ? { recurrence: marker.recurrence } : {}),
-  ...(marker.unresolved ? { unresolved: marker.unresolved } : {}),
-});
-
-const slotFile = (reviewDir: string, round: number, slot: string, generation = 1) =>
-  path.join(reviewDir, `round-${round}`, `gen-${generation}`, 'slots', `${slot}.json`);
-
-const roundSubject = (session: string, review: string, round: number, generation = 1) =>
-  crypto
-    .createHash('sha256')
-    .update(path.join(session, '.state', 'reviews', review, `round-${round}`, `gen-${generation}`))
-    .digest('hex')
-    .slice(0, 16);
-
-const captureRuns = (session: string, invocations: unknown[]) =>
+const captureRuns = (session: string, invocations: Array<unknown>) =>
   writeJson(path.join(session, '.state', 'diagnostics', 'run-1.json'), {
     capture: { state: 'completed', start: 0, end: 1 },
     phases: [],
     invocations,
     reviews: [],
   });
-
-const attempt = (
-  subject: string,
-  input: {
-    slot: string;
-    provider: string;
-    model: string;
-    attempt?: number;
-    targetSlot?: string;
-    outcome?: string;
-    launched?: boolean;
-    tokens?: number;
-  },
-) => ({
-  phase: 'plan-review',
-  subject,
-  attempt: input.attempt ?? 1,
-  provider: input.provider,
-  model: input.model,
-  mode: 'cli',
-  surface: 'cli',
-  launched: input.launched ?? true,
-  outcome: input.outcome ?? 'ok',
-  slot: input.slot,
-  ...(input.targetSlot ? { targetSlot: input.targetSlot } : {}),
-  ...(input.tokens === undefined ? {} : { usage: { input: input.tokens, output: 0 } }),
-});
-
-const ruling = (seq: number, review: string, id: string, value: string) => ({
-  seq,
-  key: `ruling-${seq}`,
-  at: `2026-01-01T00:00:0${seq}Z`,
-  kind: 'ruling',
-  by: 'tool',
-  data: { subject: `review:${review}:${id}`, ruling: value, rationale: 'Recorded.' },
-});
-
-function saveRound(input: {
-  session: string;
-  review: string;
-  round: number;
-  roster: ReturnType<typeof rosterSlot>[];
-  outcomes: unknown[];
-  findings?: unknown[];
-  generation?: number;
-}) {
-  const generation = input.generation ?? 1;
-  const reviewDir = path.join(input.session, '.state', 'reviews', input.review);
-  const roundDir = path.join(reviewDir, `round-${input.round}`);
-  writeJson(path.join(roundDir, 'round.json'), {
-    round: input.round,
-    generation,
-    cap: 4,
-    level: 'high',
-    roster: input.roster,
-    scope: 'Full review',
-    startSeq: 0,
-    spec: { path: 'spec.md', hash: 'sha256:' + 'a'.repeat(64) },
-    target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
-  });
-  input.outcomes.forEach((outcome) => {
-    const slot = (outcome as { slot: string }).slot;
-    writeJson(slotFile(reviewDir, input.round, slot, generation), outcome);
-  });
-  if (input.findings) {
-    writeJson(path.join(roundDir, 'findings.json'), {
-      review: input.review,
-      round: input.round,
-      cap: 4,
-      level: 'high',
-      findings: input.findings,
-      clusters: [],
-      failed: input.outcomes.filter((outcome) => (outcome as { state: string }).state === 'failed'),
-    });
-  }
-}
 
 const hostTest_HEAD = 'a'.repeat(40);
 const hostTest_TREE = 'b'.repeat(40);
@@ -394,17 +275,22 @@ async function hostTest_fixture() {
   return { ...f, skillRoot };
 }
 
-async function hostTest_invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
+async function hostTest_invoke(
+  f: ReturnType<typeof sessionFixture>,
+  tool: string,
+  action: string,
+  ...args: Array<string>
+) {
   f.lines.splice(0);
   const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
   assert.equal(f.lines.length, 1);
   return {
     exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
+    output: parseJson(f.lines[0]!, shape({ ok: flag, reason: optional(text), summary: text, path: nullable(text) })),
   };
 }
 
-async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
+async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: JsonObject) {
   const file = f.artifact(`event-${++hostTest_eventNumber}.json`, JSON.stringify(record));
   const result = await hostTest_invoke(f, 'ledger', 'append', file);
   assert.equal(result.exit, 0, result.output.summary);
@@ -456,11 +342,13 @@ async function hostTest_evidence(
   return evidencePath;
 }
 
-async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
+async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: Array<string>) {
   const plan = loadPlan(f.session, readManifest(f.session));
   const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
   const paths = new Map<string, string>();
-  for (const row of rows) paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
+  for (const row of rows) {
+    paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
+  }
   return paths;
 }
 
@@ -486,50 +374,11 @@ async function hostTest_deliver(
   });
 }
 
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
-  let n = BigInt(val);
-  while (n > 0x7fn) {
-    bytes.push(Number((n & 0x7fn) | 0x80n));
-    n >>= 7n;
-  }
-  bytes.push(Number(n & 0x7fn));
-  return bytes;
-}
-function encodeTag(fieldNum: number, wireType: number): number[] {
-  return encodeVarint((fieldNum << 3) | wireType);
-}
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
-  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
-  return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
-}
-function buildGenMetadataBlob(options: {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  reasoning?: number;
-  modelSlug?: string;
-  displayName?: string;
-  lastStepIndex?: number;
-}): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
-  if (options.lastStepIndex !== undefined) {
-    const kv = [
-      ...encodeLengthDelimited(1, 'last_step_index'),
-      ...encodeLengthDelimited(2, String(options.lastStepIndex)),
-    ];
-    tag1Fields.push(...encodeLengthDelimited(20, kv));
-  }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
-  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
-}
+const stageRow = (text: string) =>
+  text
+    .split('### Tokens by stage')[1]!
+    .split('\n')
+    .find((line) => line.startsWith('| — | claude | delegate | claude-sonnet-5-5'))!;
 
 test('diagnostics render honors the enabled toggle across render, cost, failure and retro paths', async (t) => {
   // diagnostics render writes the session report when enabled and reports off when disabled
@@ -624,11 +473,6 @@ test('diagnostics render honors the enabled toggle across render, cost, failure 
         new URL('../../../skills/dispatch/references/pricing.json', import.meta.url),
         'utf8',
       );
-      const stageRow = (text: string) =>
-        text
-          .split('### Tokens by stage')[1]!
-          .split('\n')
-          .find((line) => line.startsWith('| — | claude | delegate | claude-sonnet-5-5'))!;
 
       assert.match(render(true), /^- Estimated cost not estimated \(rate table unavailable\)/m, 'missing table');
       assert.ok(stageRow(render(true)).endsWith('| 1/1 | — | — |'));
@@ -671,7 +515,9 @@ test('diagnostics render honors the enabled toggle across render, cost, failure 
       fs.writeFileSync(file, 'older report\n');
       const rename = fs.renameSync;
       t.mock.method(fs, 'renameSync', ((from: fs.PathLike, to: fs.PathLike) => {
-        if (String(to) === file) throw new Error('rename failure');
+        if (String(to) === file) {
+          throw new Error('rename failure');
+        }
         return rename(from, to);
       }) as typeof fs.renameSync);
       assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 4);
@@ -841,7 +687,7 @@ test('diagnostics render honors the enabled toggle across render, cost, failure 
       assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
       let output = f.output();
       assert.equal(output.ok, true);
-      let value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
+      let value = readJson(output.path!, shape({ path: nullable(text), warning: optional(text) }));
       assert.ok(value.warning?.includes(retroPath));
       assert.ok(value.warning?.includes('merge retro notes'));
       assert.ok(output.summary.includes(retroPath));
@@ -852,7 +698,7 @@ test('diagnostics render honors the enabled toggle across render, cost, failure 
       assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0);
       output = f.output();
       assert.equal(output.ok, true);
-      value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { path: string | null; warning?: string };
+      value = readJson(output.path!, shape({ path: nullable(text), warning: optional(text) }));
       assert.equal(value.warning, undefined);
       assert.ok(!output.summary.includes('merge retro notes'));
     } finally {
@@ -894,12 +740,14 @@ test('retro warning handles malformed, missing-grounding and clean retros', asyn
       const state = path.join(f.session, '.state');
       fs.mkdirSync(state, { recursive: true });
       setup(path.join(state, 'retro.json'));
-      if (kind) writeJson(path.join(state, 'results', 'brief-explorer-0001.json'), { kind });
+      if (kind) {
+        writeJson(path.join(state, 'results', 'brief-explorer-0001.json'), { kind });
+      }
 
       assert.equal(await main(['diagnostics', 'render', '--session', f.session], f.deps), 0, name);
       const output = f.output();
       assert.equal(output.ok, true, name);
-      const value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { warning?: string };
+      const value = readJson(output.path!, shape({ warning: optional(text) }));
       if (!warning) {
         assert.equal(value.warning, undefined, name);
       } else {
@@ -1105,8 +953,9 @@ test('round workload render rereads host usage for started rounds and flags over
         '| subject aaaaaaaaaaaaaaaa | 1 | 6 | — | 26 |',
         '| subject bbbbbbbbbbbbbbbb | 2 | 6 | — | — |',
         '| subject cccccccccccccccc | 3 | 7 | — | 30 |',
-      ])
+      ]) {
         assert.ok(text.includes(row), row);
+      }
       const budget = text.split('\n').find((line) => line.startsWith('Advisory budget'));
       assert.equal(
         budget,

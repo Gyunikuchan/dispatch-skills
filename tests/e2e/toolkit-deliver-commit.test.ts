@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { arrayOf, defined, isBoolean, isString, maybe, narrow, objectWith } from './helpers/json.ts';
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
 type Session = Pick<Repo, 'session' | 'run' | 'level'>;
 const rows = (r: Pick<Repo, 'session'>, phase: string) =>
@@ -18,7 +19,7 @@ const base = {
 const binary = Buffer.from([0, 255, 254, 10, 32, 32, 13, 10, 32, 32]);
 const subject = 'deliver increment';
 // Cases use independent repositories, so run them concurrently and name the failing case.
-const each = (modes: string[], fn: (mode: string) => Promise<void>) =>
+const each = (modes: Array<string>, fn: (mode: string) => Promise<void>) =>
   Promise.all(
     modes.map((mode) =>
       fn(mode).catch((error: unknown) => {
@@ -29,7 +30,7 @@ const each = (modes: string[], fn: (mode: string) => Promise<void>) =>
 async function integrate(r: Repo, files: Record<string, string> = {}) {
   await r.level();
   const made = await r.run(['worktree', 'create', 'T1']);
-  const writer = path.join(r.session, made.value.path);
+  const writer = path.join(r.session, narrow(made.value, objectWith({ path: isString })).path);
   fs.writeFileSync(path.join(writer, 'src/file.ts'), 'delivered\n');
   for (const [name, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(writer, name)), { recursive: true });
@@ -77,11 +78,17 @@ const deliveredPaths = (r: Pick<Repo, 'git'>, from: string, source: string) =>
 const head = (r: Pick<Repo, 'git'>) => r.git(['rev-parse', 'HEAD']);
 const noCommit = (r: Pick<Repo, 'git'>) =>
   assert.ok(!r.git(['log', '--all', '--format=%s']).includes(subject), 'no commit was made');
-const refused = (result: { exit: number; output: { reason: string } }, reason: string) => {
+const refused = (result: { exit: number; output: { reason: string | undefined } }, reason: string) => {
   assert.equal(result.exit, 4, JSON.stringify(result));
   assert.equal(result.output.reason, reason);
 };
 
+const userCommit = (r: Repo, from: string, source: string) => {
+  r.git(['add', '-A', '--', ...deliveredPaths(r, from, source)]);
+  r.git(['update-index', '--chmod=+x', 'exec.sh']);
+  r.git(['commit', '-q', '-m', 'user commit']);
+  return head(r);
+};
 describe('worktree deliver --commit', () => {
   it('commits exactly the delivered paths on the caller branch, runs hooks and records the commit', async () => {
     const { r, from, source } = await delivered();
@@ -92,13 +99,23 @@ describe('worktree deliver --commit', () => {
         result = await commit(r);
       assert.equal(result.exit, 0, JSON.stringify(result));
       const made = head(r);
+      const val = narrow(
+        result.value,
+        objectWith({
+          committed: isBoolean,
+          recordOnly: isBoolean,
+          commit: isString,
+          source: isString,
+          from: isString,
+        }),
+      );
       assert.deepEqual(
         {
-          committed: result.value.committed,
-          recordOnly: result.value.recordOnly,
-          commit: result.value.commit,
-          source: result.value.source,
-          from: result.value.from,
+          committed: val.committed,
+          recordOnly: val.recordOnly,
+          commit: val.commit,
+          source: val.source,
+          from: val.from,
         },
         { committed: true, recordOnly: false, commit: made, source, from },
       );
@@ -153,7 +170,9 @@ describe('worktree deliver --commit', () => {
         try {
           const file = path.join(r.root, 'src/file.ts'),
             from = head(r);
-          if (mode === 'other-branch') r.git(['switch', '-q', '-c', 'other']);
+          if (mode === 'other-branch') {
+            r.git(['switch', '-q', '-c', 'other']);
+          }
           if (mode === 'staged-other') {
             fs.writeFileSync(path.join(r.root, 'keep.txt'), 'staged');
             r.git(['add', 'keep.txt']);
@@ -162,20 +181,36 @@ describe('worktree deliver --commit', () => {
             fs.writeFileSync(file, 'different');
             r.git(['add', 'src/file.ts']);
           }
-          if (mode === 'changed-content') fs.writeFileSync(file, 'different');
-          if (mode === 'head-not-descendant') r.git(['commit', '-q', '--amend', '--allow-empty', '-m', 'rewritten']);
-          if (mode === 'uncommitted-after-move') r.git(['commit', '-q', '--allow-empty', '-m', 'moved']);
-          if (mode === 'failed-hook') hook(r, 'pre-commit', 'echo blocked >&2; exit 1');
-          if (mode === 'failed-hook') r.git(['add', 'src/file.ts']);
+          if (mode === 'changed-content') {
+            fs.writeFileSync(file, 'different');
+          }
+          if (mode === 'head-not-descendant') {
+            r.git(['commit', '-q', '--amend', '--allow-empty', '-m', 'rewritten']);
+          }
+          if (mode === 'uncommitted-after-move') {
+            r.git(['commit', '-q', '--allow-empty', '-m', 'moved']);
+          }
+          if (mode === 'failed-hook') {
+            hook(r, 'pre-commit', 'echo blocked >&2; exit 1');
+          }
+          if (mode === 'failed-hook') {
+            r.git(['add', 'src/file.ts']);
+          }
           const staged = r.git(['write-tree']);
           const result = await commit(r, (p) => {
-            if (p !== 'deliver:before-commit') return;
+            if (p !== 'deliver:before-commit') {
+              return;
+            }
             if (mode === 'late-index') {
               fs.writeFileSync(path.join(r.root, 'keep.txt'), 'late');
               r.git(['add', 'keep.txt']);
             }
-            if (mode === 'late-head') r.git(['commit', '-q', '--allow-empty', '-m', 'late']);
-            if (mode === 'late-branch') r.git(['switch', '-q', '-c', 'other']);
+            if (mode === 'late-head') {
+              r.git(['commit', '-q', '--allow-empty', '-m', 'late']);
+            }
+            if (mode === 'late-branch') {
+              r.git(['switch', '-q', '-c', 'other']);
+            }
           });
           const reason = {
             'other-branch': 'caller-moved',
@@ -212,19 +247,25 @@ describe('worktree deliver --commit', () => {
     await each(['amend', 'unstaged-edit'], async (mode) => {
       const { r, source } = await delivered();
       try {
-        if (mode === 'amend')
+        if (mode === 'amend') {
           hook(
             r,
             'post-commit',
             '[ -f .git/amended ] && exit 0\necho extra > extra.txt && git add extra.txt && : > .git/amended && git commit -q --amend --no-edit',
           );
-        else hook(r, 'pre-commit', 'echo edited >> src/file.ts');
+        } else {
+          hook(r, 'pre-commit', 'echo edited >> src/file.ts');
+        }
         const result = await commit(r);
         assert.equal(result.exit, 0, JSON.stringify(result));
         const expected = mode === 'amend' ? 'extra.txt' : 'src/file.ts';
-        assert.deepEqual(result.value.differing, [expected]);
-        assert.match(result.value.warning, new RegExp(expected.replace('.', '\\.')));
-        assert.equal(result.value.commit, head(r));
+        const val = narrow(
+          result.value,
+          objectWith({ differing: arrayOf(isString), warning: isString, commit: isString }),
+        );
+        assert.deepEqual(val.differing, [expected]);
+        assert.match(val.warning, new RegExp(expected.replace('.', String.raw`\.`)));
+        assert.equal(val.commit, head(r));
         assert.deepEqual(rows(r, 'committed')[0]!.data['differing'], [expected]);
         assert.equal(rows(r, 'committed')[0]!.data['source'], source);
       } finally {
@@ -269,7 +310,9 @@ describe('worktree deliver --commit', () => {
     const { r, from } = await delivered();
     try {
       const stopped = await commit(r, (p) => {
-        if (p === 'deliver:after-commit') throw Error('stop');
+        if (p === 'deliver:after-commit') {
+          throw Error('stop');
+        }
       });
       assert.equal(stopped.exit, 2);
       const made = head(r);
@@ -277,12 +320,13 @@ describe('worktree deliver --commit', () => {
       assert.equal(rows(r, 'committed').length, 0);
       const retry = await commit(r);
       assert.equal(retry.exit, 0, JSON.stringify(retry));
-      assert.equal(retry.value.recordOnly, true);
-      assert.equal(retry.value.commit, made);
+      const retryVal = narrow(retry.value, objectWith({ recordOnly: isBoolean, commit: isString }));
+      assert.equal(retryVal.recordOnly, true);
+      assert.equal(retryVal.commit, made);
       assert.equal(head(r), made);
       assert.equal(r.git(['rev-list', '--count', from + '..HEAD']), '1');
       assert.deepEqual(
-        rows(r, 'committed').map((x) => x.data['commit']),
+        rows(r, 'committed').map((x) => narrow(x.data['commit'], isString)),
         [made],
       );
     } finally {
@@ -291,17 +335,13 @@ describe('worktree deliver --commit', () => {
   });
 
   describe('record-only path', () => {
-    const userCommit = (r: Repo, from: string, source: string) => {
-      r.git(['add', '-A', '--', ...deliveredPaths(r, from, source)]);
-      r.git(['update-index', '--chmod=+x', 'exec.sh']);
-      r.git(['commit', '-q', '-m', 'user commit']);
-      return head(r);
-    };
     it('records the HEAD the user committed without making a commit, and warns only for delivered paths that changed', async () => {
       await each(['same-content', 'changed-delivered', 'later-other-paths'], async (mode) => {
         const { r, from, source } = await delivered();
         try {
-          if (mode === 'changed-delivered') fs.writeFileSync(path.join(r.root, 'src/file.ts'), 'user change\n');
+          if (mode === 'changed-delivered') {
+            fs.writeFileSync(path.join(r.root, 'src/file.ts'), 'user change\n');
+          }
           let made = userCommit(r, from, source);
           if (mode === 'later-other-paths') {
             fs.writeFileSync(path.join(r.root, 'keep.txt'), 'later\n');
@@ -310,19 +350,28 @@ describe('worktree deliver --commit', () => {
           }
           const result = await commit(r);
           assert.equal(result.exit, 0, JSON.stringify(result));
-          assert.equal(result.value.recordOnly, true);
-          assert.equal(result.value.commit, made);
+          const val = narrow(
+            result.value,
+            objectWith({
+              recordOnly: isBoolean,
+              commit: isString,
+              differing: maybe(arrayOf(isString)),
+              warning: maybe(isString),
+            }),
+          );
+          assert.equal(val.recordOnly, true);
+          assert.equal(val.commit, made);
           assert.equal(head(r), made);
           assert.equal(r.git(['log', '--all', '--format=%s']).includes(subject), false);
           if (mode === 'changed-delivered') {
-            assert.deepEqual(result.value.differing, ['src/file.ts']);
-            assert.match(result.value.warning, /src\/file\.ts/);
+            assert.deepEqual(val.differing, ['src/file.ts']);
+            assert.match(defined(val.warning, 'warning'), /src\/file\.ts/);
           } else {
-            assert.equal(result.value.differing, undefined);
-            assert.equal(result.value.warning, undefined);
+            assert.equal(val.differing, undefined);
+            assert.equal(val.warning, undefined);
           }
           assert.deepEqual(
-            rows(r, 'committed').map((x) => x.data['commit']),
+            rows(r, 'committed').map((x) => narrow(x.data['commit'], isString)),
             [made],
           );
         } finally {
@@ -360,9 +409,11 @@ describe('worktree deliver --commit', () => {
         made = head(r);
       const again = await commit(r);
       assert.equal(again.exit, 0);
+      const firstVal = narrow(first.value, objectWith({ commit: isString, source: isString }));
+      const againVal = narrow(again.value, objectWith({ committed: isBoolean, commit: isString, source: isString }));
       assert.deepEqual(
-        { committed: again.value.committed, commit: again.value.commit, source: again.value.source },
-        { committed: false, commit: first.value.commit, source: first.value.source },
+        { committed: againVal.committed, commit: againVal.commit, source: againVal.source },
+        { committed: false, commit: firstVal.commit, source: firstVal.source },
       );
       assert.equal(foldLedger(r.session).records.length, count);
       assert.equal(head(r), made);
@@ -395,7 +446,7 @@ describe('worktree deliver --commit', () => {
       const open = async (s: Session, text: (current: string) => string) => {
         await s.level();
         const made = await s.run(['worktree', 'create', 'T1']);
-        const file = path.join(s.session, made.value.path, 'src/file.ts');
+        const file = path.join(s.session, narrow(made.value, objectWith({ path: isString })).path, 'src/file.ts');
         fs.writeFileSync(file, text(fs.readFileSync(file, 'utf8')));
         assert.equal((await s.run(['worktree', 'submit', 'T1'])).exit, 0);
         assert.equal((await s.run(['worktree', 'integrate', 'T1'])).exit, 0);

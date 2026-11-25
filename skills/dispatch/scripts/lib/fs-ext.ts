@@ -11,12 +11,16 @@ export interface LinkFs {
   /** File text, or null when absent. */
   readText(file: string): string | null;
   /** Entry names in `dir`, or [] when absent. */
-  list(dir: string): string[];
+  list(dir: string): Array<string>;
   remove(file: string): void;
 }
 
-export const isEexist = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EEXIST';
+export const nodeErrorCode = (error: unknown): string | undefined =>
+  error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined;
+
+export const isEexist = (error: unknown): boolean => nodeErrorCode(error) === 'EEXIST';
 
 /** Removes one leading UTF-8 BOM so agent-authored JSON parses; a second BOM still fails the parser. */
 export const stripBom = (text: string): string => (text.startsWith('\uFEFF') ? text.slice(1) : text);
@@ -31,7 +35,9 @@ export function publishExclusive(fs: LinkFs, final: string, text: string): boole
     fs.link(temp, final);
     return true;
   } catch (error) {
-    if (isEexist(error)) return false;
+    if (isEexist(error)) {
+      return false;
+    }
     throw error;
   } finally {
     fs.remove(temp);

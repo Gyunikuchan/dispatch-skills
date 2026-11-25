@@ -51,7 +51,7 @@ test('turns: codex counts resumed host and direct child usage row fields once by
     [rollout('00-06', 'delegate')]: lines(meta('', 'cli'), context, event(22)),
     [rollout('00-07', 'guardian')]: lines(meta('host', 'guardian_review'), context, event(23)),
   };
-  const result = codex.read({ ...query, budget: { remaining: 100000 } }, memoryFs(files));
+  const result = codex.read({ ...query, budget: { remaining: 100_000 } }, memoryFs(files));
   assert.deepEqual(
     result.rows.map((row) => row.turns),
     [1, 1, 1, 1, 1, 1],
@@ -108,7 +108,7 @@ test('codex ignores a pre-window token total copied into a resumed rollout', () 
   const host = rollout('00-01', 'host');
   const resumed = rollout('00-02', 'host');
   const result = codex.read(
-    { ...query, startMs: 2000, budget: { remaining: 10000 } },
+    { ...query, startMs: 2000, budget: { remaining: 10_000 } },
     memoryFs({
       [host]: lines(context, event(3, 1000)),
       [resumed]: lines(context, event(3, 3000)),
@@ -122,10 +122,10 @@ test('codex requires an exact host id before reading rollout candidates', () => 
   const file = '/home/.codex/sessions/1970/01/01/rollout-1970-01-01T00-00-01-host-long.jsonl';
   const other = rollout('00-02', 'other');
   const fs = memoryFs({ [file]: 'private', [other]: lines(meta('host'), context, event(2)) });
-  const stats: string[] = [];
+  const stats: Array<string> = [];
   let reads = 0;
   const result = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       stat: (candidate) => {
@@ -168,7 +168,7 @@ test('codex keeps child rows when the host transcript is compressed or oversized
   const host = rollout('00-01', 'host', true);
   const child = rollout('00-02', 'child');
   const fs = memoryFs({ [host]: 'compressed', [child]: lines(meta('host'), context, event(4)) });
-  const unsupported = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
+  const unsupported = codex.read({ ...query, budget: { remaining: 10_000 } }, fs);
   assert.equal(unsupported.unavailable, 'zstd unavailable');
   assert.equal(unsupported.rows[0]?.role, 'subagent');
 
@@ -178,7 +178,7 @@ test('codex keeps child rows when the host transcript is compressed or oversized
     {
       ...oversizedFs,
       stat: (file) =>
-        file.endsWith('host.jsonl.zst') ? { size: 128 * 1024 * 1024 + 1, mtimeMs: 10000 } : oversizedFs.stat(file),
+        file.endsWith('host.jsonl.zst') ? { size: 128 * 1024 * 1024 + 1, mtimeMs: 10_000 } : oversizedFs.stat(file),
     },
   );
   assert.equal(oversized.unavailable, 'transcript over size cap');
@@ -191,7 +191,8 @@ test('codex keeps child rows when the host transcript is compressed or oversized
     { ...query, budget: { remaining: 256 * 1024 * 1024 } },
     {
       ...plainFs,
-      stat: (file) => (file.endsWith('host.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10000 } : plainFs.stat(file)),
+      stat: (file) =>
+        file.endsWith('host.jsonl') ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10_000 } : plainFs.stat(file),
     },
   );
   assert.equal(plainResult.unavailable, 'transcript over size cap');
@@ -211,9 +212,9 @@ test('codex reports unsupported, oversized, and over-budget child transcripts', 
       ...fs,
       stat: (file) =>
         file.endsWith('big.jsonl')
-          ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10000 }
+          ? { size: MAX_FILE_BYTES + 1, mtimeMs: 10_000 }
           : file.endsWith('big-zip.jsonl.zst')
-            ? { size: MAX_FILE_BYTES * 2 + 1, mtimeMs: 10000 }
+            ? { size: MAX_FILE_BYTES * 2 + 1, mtimeMs: 10_000 }
             : fs.stat(file),
     },
   );
@@ -254,7 +255,7 @@ test('codex ignores stale and removed children while deduplicating resumed child
   );
   let removedStats = 0;
   const result = codex.read(
-    { ...query, startMs: 2000, budget: { remaining: 100000 } },
+    { ...query, startMs: 2000, budget: { remaining: 100_000 } },
     {
       ...fs,
       stat: (file) => (file.endsWith('removed.jsonl') && ++removedStats > 1 ? null : fs.stat(file)),
@@ -306,7 +307,7 @@ test('codex ignores unrelated lines and malformed events do not poison token tot
       event(10),
     ),
   });
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
+  const result = codex.read({ ...query, budget: { remaining: 10_000 } }, fs);
   assert.equal(result.unavailable, undefined);
   assert.deepEqual(
     result.rows.map((row) => row.input),
@@ -316,7 +317,7 @@ test('codex ignores unrelated lines and malformed events do not poison token tot
 
   const child = rollout('00-02', 'child');
   const partial = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     memoryFs({
       [host]: '{bad\n',
       [child]: lines(meta('host'), context, event(3)),
@@ -338,10 +339,10 @@ test('codex lists rollout dates but stats only candidates in the bounded window'
     [old]: 'old',
     [future]: 'future',
   });
-  const stats: string[] = [];
-  const lists: string[] = [];
+  const stats: Array<string> = [];
+  const lists: Array<string> = [];
   const result = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       stat: (file) => {
@@ -356,13 +357,13 @@ test('codex lists rollout dates but stats only candidates in the bounded window'
   );
   assert.equal(result.rows.length, 2);
   assert.ok(stats.every((file) => !file.includes('old.jsonl') && !file.includes('future.jsonl')));
-  assert.equal(lists.filter((dir) => dir.endsWith('1969\\12\\31') || dir.endsWith('1969/12/31')).length, 1);
-  assert.equal(lists.filter((dir) => dir.endsWith('1970\\01\\04') || dir.endsWith('1970/01/04')).length, 1);
+  assert.equal(lists.filter((dir) => dir.endsWith(String.raw`1969\12\31`) || dir.endsWith('1969/12/31')).length, 1);
+  assert.equal(lists.filter((dir) => dir.endsWith(String.raw`1970\01\04`) || dir.endsWith('1970/01/04')).length, 1);
 });
 
 test('codex caps candidates and keeps the newest ones', () => {
   const host = rollout('00-00', 'host');
-  const files: Record<string, string> = { [host]: lines(context, event(4)) };
+  const files = { [host]: lines(context, event(4)) };
   for (let i = 0; i < 257; i++) {
     const time = `${String(Math.floor(i / 60) + 1).padStart(2, '0')}-${String(i % 60).padStart(2, '0')}`;
     files[rollout(time, `child-${i}`)] = lines(meta('host'), context, event(i + 1));
@@ -373,16 +374,16 @@ test('codex caps candidates and keeps the newest ones', () => {
   assert.equal(result.rows.filter((row) => row.role === 'subagent').length, 256);
   assert.ok(!fs.reads.some((file) => file.includes('child-0.jsonl')));
 
-  const resumedFiles: Record<string, string> = { [host]: lines(context, event(1)) };
+  const resumedFiles = { [host]: lines(context, event(1)) };
   const times: Record<string, number> = {};
   for (let i = 0; i < 257; i++) {
     const time = `${String(Math.floor(i / 60) + 1).padStart(2, '0')}-${String(i % 60).padStart(2, '0')}`;
     const file = rollout(time, 'child');
     resumedFiles[file] = lines(meta('host'), context, event(i + 1));
-    times[file] = i === 256 ? 10000 : 1000;
+    times[file] = i === 256 ? 10_000 : 1000;
   }
   const resumedFs = memoryFs(resumedFiles, times);
-  const resumedResult = codex.read({ ...query, startMs: 2000, budget: { remaining: 1000000 } }, resumedFs);
+  const resumedResult = codex.read({ ...query, startMs: 2000, budget: { remaining: 1_000_000 } }, resumedFs);
   assert.equal(resumedResult.notes?.subagent?.['too many candidates'], 1);
   assert.equal(resumedResult.rows.filter((row) => row.role === 'subagent').length, 0);
   assert.equal(resumedFs.reads.length, 1);
@@ -397,7 +398,7 @@ test('codex finds direct children from the earliest host rollout date', () => {
     [lateHost]: lines(context, event(2)),
     [earlyChild]: lines(meta('host'), context, event(3)),
   });
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
+  const result = codex.read({ ...query, budget: { remaining: 10_000 } }, fs);
   assert.equal(result.rows.filter((row) => row.role === 'host').length, 2);
   assert.equal(result.rows.filter((row) => row.role === 'subagent').length, 1);
 });
@@ -411,13 +412,13 @@ test('codex reads compressed host and child rollouts within the decoded-byte bud
     [host]: zstdCompressSync(Buffer.from(hostText)),
     [child]: zstdCompressSync(Buffer.from(childText)),
   });
-  const budget = { remaining: 10000 };
+  const budget = { remaining: 10_000 };
   const result = codex.read({ ...query, budget }, { ...fs, decompress: nodeHostUsageFs.decompress });
   assert.deepEqual(
     result.rows.map((row) => row.role),
     ['host', 'subagent'],
   );
-  assert.equal(budget.remaining, 10000 - Buffer.byteLength(hostText) - Buffer.byteLength(childText));
+  assert.equal(budget.remaining, 10_000 - Buffer.byteLength(hostText) - Buffer.byteLength(childText));
 });
 
 test('codex hides host and child read errors while retaining other child usage', () => {
@@ -426,12 +427,16 @@ test('codex hides host and child read errors while retaining other child usage',
   const good = rollout('00-03', 'good');
   const fs = memoryFs({ [host]: 'x', [bad]: 'x', [good]: lines(meta('host'), context, event(2)) });
   const result = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       read: (file, max) => {
-        if (file.endsWith('host.jsonl')) throw Object.assign(new Error('private'), { code: 'EPERM' });
-        if (file.endsWith('bad.jsonl')) throw Error('private');
+        if (file.endsWith('host.jsonl')) {
+          throw Object.assign(new Error('private'), { code: 'EPERM' });
+        }
+        if (file.endsWith('bad.jsonl')) {
+          throw Error('private');
+        }
         return fs.read(file, max);
       },
     },
@@ -444,12 +449,13 @@ test('codex hides host and child read errors while retaining other child usage',
   const degraded = memoryFs({ [host]: lines(context, event(1)), [bad]: lines(meta('host'), context, event(2)) });
   let listCount = 0;
   const listFailure = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...degraded,
       list: (dir) => {
-        if (/1970[\\/]01[\\/]01$/.test(dir) && ++listCount === 2)
+        if (/1970[\\/]01[\\/]01$/.test(dir) && ++listCount === 2) {
           throw Object.assign(Error('private'), { code: 'EACCES' });
+        }
         return degraded.list(dir);
       },
     },
@@ -457,11 +463,13 @@ test('codex hides host and child read errors while retaining other child usage',
   assert.equal(listFailure.rows[0]?.role, 'host');
   assert.equal(listFailure.notes?.subagent?.['unreadable files'], 1);
   const statFailure = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...degraded,
       stat: (file) => {
-        if (file.endsWith('bad.jsonl')) throw Error('private');
+        if (file.endsWith('bad.jsonl')) {
+          throw Error('private');
+        }
         return degraded.stat(file);
       },
     },
@@ -481,14 +489,16 @@ test('codex validates the first nonblank child header before counting rows', () 
     [resumed]: '\n' + lines(meta('host'), context, event(7)),
     [other]: '\n' + lines(meta('other'), context, event(8)),
   });
-  const result = codex.read({ ...query, budget: { remaining: 10000 } }, fs);
+  const result = codex.read({ ...query, budget: { remaining: 10_000 } }, fs);
   assert.equal(result.rows.filter((row) => row.role === 'subagent').length, 1);
 });
 test('codex repeated compressed overflows exhaust the shared decode budget', () => {
   const host = rollout('00-01', 'host');
   const text = lines(context, event(1));
-  const files: Record<string, string> = { [host]: text };
-  for (let i = 2; i <= 4; i++) files[rollout(`00-0${i}`, `child-${i}`, true)] = 'x';
+  const files = { [host]: text };
+  for (let i = 2; i <= 4; i++) {
+    files[rollout(`00-0${i}`, `child-${i}`, true)] = 'x';
+  }
   const fs = memoryFs(files);
   const result = codex.read(
     { ...query, budget: { remaining: Buffer.byteLength(text) + 2 * MAX_FILE_BYTES } },
@@ -526,7 +536,9 @@ test('codex does not count resumed child usage after unreadable or oversized his
             ? { size: MAX_FILE_BYTES + 1, mtimeMs: 1000 }
             : fs.stat(file),
         read: (file, max) => {
-          if (failure === 'read' && file.includes('00-00-02-child.jsonl')) throw Error('private');
+          if (failure === 'read' && file.includes('00-00-02-child.jsonl')) {
+            throw Error('private');
+          }
           return fs.read(file, max);
         },
       },
@@ -542,7 +554,7 @@ test('codex does not count resumed child usage after unreadable or oversized his
   });
   let priorStats = 0;
   const vanishedResult = codex.read(
-    { ...query, startMs: 2000, budget: { remaining: 10000 } },
+    { ...query, startMs: 2000, budget: { remaining: 10_000 } },
     {
       ...vanished,
       stat: (file) => (file.includes('00-00-02-child.jsonl') && ++priorStats > 1 ? null : vanished.stat(file)),
@@ -563,11 +575,13 @@ test('codex keeps earlier child rows but stops that thread after later read fail
     [last]: lines(meta('host'), context, event(8)),
   });
   const result = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       read: (file, max) => {
-        if (file.includes('00-00-03-child.jsonl')) throw Error('private');
+        if (file.includes('00-00-03-child.jsonl')) {
+          throw Error('private');
+        }
         return fs.read(file, max);
       },
     },
@@ -587,11 +601,13 @@ test('codex omits a readable child when another date directory cannot be searche
   });
   let dateLists = 0;
   const result = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       list: (dir) => {
-        if (/1970[\\/]01[\\/]02$/.test(dir) && ++dateLists === 2) throw Error('private');
+        if (/1970[\\/]01[\\/]02$/.test(dir) && ++dateLists === 2) {
+          throw Error('private');
+        }
         return fs.list(dir);
       },
     },
@@ -605,11 +621,13 @@ test('codex omits a readable child when another date directory cannot be searche
   const olderHidden = '/home/.codex/sessions/1969/12/31/rollout-1969-12-31T00-00-01-other.jsonl';
   const blockedFs = memoryFs({ [hostOnly]: lines(context, event(1)), [olderHidden]: 'x' });
   const blocked = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...blockedFs,
       list: (dir) => {
-        if (/1969[\\/]12[\\/]31$/.test(dir)) throw Object.assign(Error('private'), { code: 'EACCES' });
+        if (/1969[\\/]12[\\/]31$/.test(dir)) {
+          throw Object.assign(Error('private'), { code: 'EACCES' });
+        }
         return blockedFs.list(dir);
       },
     },
@@ -625,12 +643,16 @@ test('codex reports and blocks listed files that vanish before discovery stat', 
   for (const failure of ['vanish', 'throw'] as const) {
     const fs = memoryFs(files);
     const vanished = codex.read(
-      { ...query, budget: { remaining: 100000 } },
+      { ...query, budget: { remaining: 100_000 } },
       {
         ...fs,
         stat: (file) => {
-          if (!file.includes('00-00-02-child.jsonl')) return fs.stat(file);
-          if (failure === 'vanish') return null;
+          if (!file.includes('00-00-02-child.jsonl')) {
+            return fs.stat(file);
+          }
+          if (failure === 'vanish') {
+            return null;
+          }
           throw Object.assign(Error('private'), { code: 'EACCES' });
         },
       },
@@ -642,7 +664,7 @@ test('codex reports and blocks listed files that vanish before discovery stat', 
   const single = memoryFs({ [rollout('00-01', 'host')]: lines(context, event(1)) });
   let calls = 0;
   const vanishRead = codex.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     { ...single, stat: (file) => (file.endsWith('host.jsonl') && ++calls === 2 ? null : single.stat(file)) },
   );
   assert.equal(vanishRead.unavailable, 'read-error:ENOENT');
@@ -656,7 +678,7 @@ test('codex nested subagents count depth-3 and out-of-order headers without noti
   const depth1 = rollout('00-03', 'd1');
   const unrelated = rollout('00-04', 'unrelated');
   const result = codex.read(
-    { ...query, budget: { remaining: 100000 } },
+    { ...query, budget: { remaining: 100_000 } },
     memoryFs({
       [host]: lines(meta('', ''), context, event(1)),
       [depth3]: lines(meta('d2'), context, event(4)),
@@ -743,7 +765,7 @@ test('codex real-shape rollout extracts tool calls and tool turns while omitting
       event(5, 2700),
     ),
   });
-  const result = codex.read({ ...query, budget: { remaining: 100000 } }, fs);
+  const result = codex.read({ ...query, budget: { remaining: 100_000 } }, fs);
   assert.equal(result.userTurns, undefined);
   assert.equal(result.userTurnsByStage, undefined);
   assert.deepEqual(
@@ -792,7 +814,7 @@ test('codex counts explicit event_msg user_message turns by stage', () => {
       event(5, 2700),
     ),
   });
-  const result = codex.read({ ...query, budget: { remaining: 100000 } }, fs);
+  const result = codex.read({ ...query, budget: { remaining: 100_000 } }, fs);
   assert.equal(result.userTurns, 3);
   assert.deepEqual(result.userTurnsByStage, { spec: 1, plan: 2 });
   assert.equal(result.rows[0]?.toolCalls, undefined);

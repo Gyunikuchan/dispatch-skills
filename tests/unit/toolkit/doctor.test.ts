@@ -1,11 +1,48 @@
+import { doctorReport, doctorReportWithProbe } from '../../../skills/dispatch/scripts/toolkit/doctor.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import type { ProbeDeps } from '../../../skills/dispatch/scripts/providers/probe.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/lib/integrity.ts';
 import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import {
+  anything,
+  dictionaryOf,
+  flag,
+  listOf,
+  nullable,
+  numeric,
+  optional,
+  readJson,
+  shape,
+  text,
+} from './helpers/json.ts';
 import { sessionFixture } from './helpers/session.ts';
+
+const doctorRunShape = shape({
+  ok: flag,
+  level: optional(text),
+  reason: optional(text),
+  explorers: optional(anything),
+  sandboxRemoved: optional(listOf(text)),
+  writeConcurrency: optional(numeric),
+  config: shape({
+    path: optional(text),
+    problems: listOf(text),
+    warnings: optional(listOf(text)),
+  }),
+  writers: optional(dictionaryOf(shape({ models: listOf(text), effort: nullable(text), launchAs: text }))),
+  utility: optional(
+    dictionaryOf(shape({ models: listOf(text), effort: nullable(text), contextLimit: numeric, launchAs: text })),
+  ),
+});
+
+function readDoctorOutput(filePath: string | null | undefined) {
+  assert.ok(filePath, 'doctor output path');
+  return readJson(filePath, doctorRunShape);
+}
 
 test('doctor report resolves writers and level and reports integrity and config failures', async () => {
   const f = sessionFixture({ memory: true });
@@ -19,14 +56,14 @@ test('doctor report resolves writers and level and reports integrity and config 
       config,
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
         'write-subagents': {
           codex: { low: { model: ['first', 'second'], effort: 'low' }, high: { model: 'large', effort: 'max' } },
           claude: { high: { model: 'other' } },
         },
       }),
     );
-    const run = async (args: string[] = []) => {
+    const run = async (args: Array<string> = []) => {
       f.lines.length = 0;
       assert.equal(
         await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
@@ -35,7 +72,7 @@ test('doctor report resolves writers and level and reports integrity and config 
         }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
     let report = await run();
     assert.equal(report.ok, true);
@@ -48,7 +85,7 @@ test('doctor report resolves writers and level and reports integrity and config 
     await appendRecord(f.session, { kind: 'level', by: 'orchestrator', key: 'level', data: { level: 'high' } }, f.deps);
     report = await run();
     assert.equal(report.level, 'high');
-    assert.deepEqual(report.writers.codex, {
+    assert.deepEqual(report.writers?.['codex'], {
       models: ['large'],
       effort: 'max',
       launchAs: 'launch: model large, effort max',
@@ -87,11 +124,11 @@ test('doctor utility entry resolves contextLimit, reports missing host entry, an
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'write-subagents': { codex: { low: { model: 'writer-low', effort: 'low' } } },
         'utility-subagents': {
-          codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300000 },
+          codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300_000 },
         },
       }),
     );
-    const run = async (args: string[] = []) => {
+    const run = async (args: Array<string> = []) => {
       f.lines.length = 0;
       assert.equal(
         await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
@@ -100,17 +137,17 @@ test('doctor utility entry resolves contextLimit, reports missing host entry, an
         }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
 
     // Resolves contextLimit and removes explorers field
     const report = await run();
     assert.equal(report.ok, true);
     assert.equal(report.explorers, undefined);
-    assert.deepEqual(report.utility.codex, {
+    assert.deepEqual(report.utility?.['codex'], {
       models: ['fast-explorer'],
       effort: 'low',
-      contextLimit: 300000,
+      contextLimit: 300_000,
       launchAs: 'launch: model fast-explorer, effort low',
     });
 
@@ -120,7 +157,7 @@ test('doctor utility entry resolves contextLimit, reports missing host entry, an
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'utility-subagents': {
-          claude: { model: 'cheap', effort: 'medium', 'context-limit': 150000 },
+          claude: { model: 'cheap', effort: 'medium', 'context-limit': 150_000 },
         },
       }),
     );
@@ -150,7 +187,7 @@ test('doctor utility entry resolves contextLimit, reports missing host entry, an
       }),
     );
     const writerFallback = await run();
-    assert.equal(writerFallback.utility.codex, undefined);
+    assert.equal(writerFallback.utility?.['codex'], undefined);
     assert.ok(writerFallback.config.problems.some((p: string) => p.includes('utility-subagents.codex')));
   } finally {
     f.cleanup();
@@ -170,10 +207,10 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'utility-subagents': {
-          'claude-code': { model: 'cheap', effort: 'medium', 'context-limit': 150000 },
-          'openai-codex': { model: ['mid-a', 'mid-b'], effort: 'low', 'context-limit': 300000 },
-          agy: { model: 'agy-high', 'context-limit': 300000 },
-          opencode: { model: 'anthropic/claude-haiku', effort: 'low', 'context-limit': 200000 },
+          'claude-code': { model: 'cheap', effort: 'medium', 'context-limit': 150_000 },
+          'openai-codex': { model: ['mid-a', 'mid-b'], effort: 'low', 'context-limit': 300_000 },
+          agy: { model: 'agy-high', 'context-limit': 300_000 },
+          opencode: { model: 'anthropic/claude-haiku', effort: 'low', 'context-limit': 200_000 },
         },
         'write-subagents': {
           claude: { low: { model: 'writer-low', effort: 'low' } },
@@ -186,7 +223,7 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
         },
       }),
     );
-    const run = async (args: string[] = []) => {
+    const run = async (args: Array<string> = []) => {
       f.lines.length = 0;
       assert.equal(
         await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
@@ -195,31 +232,31 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
         }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
     const expected = {
       claude: {
         models: ['cheap'],
         effort: 'medium',
-        contextLimit: 150000,
+        contextLimit: 150_000,
         launchAs: 'launch: model cheap, effort medium',
       },
       codex: {
         models: ['mid-a', 'mid-b'],
         effort: 'low',
-        contextLimit: 300000,
+        contextLimit: 300_000,
         launchAs: 'launch: model mid-a, effort low, else mid-b',
       },
       agy: {
         models: ['agy-high'],
         effort: null,
-        contextLimit: 300000,
+        contextLimit: 300_000,
         launchAs: 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set',
       },
       opencode: {
         models: ['anthropic/claude-haiku'],
         effort: 'low',
-        contextLimit: 200000,
+        contextLimit: 200_000,
         launchAs:
           'launch: `subagent` with `model: "anthropic/claude-haiku#low"` (user-configured; set it despite the tool\'s default guidance)',
       },
@@ -255,12 +292,14 @@ test('doctor resolves the utility subagent per canonical platform', async () => 
   }
 });
 
+const entry = (name: string) => ({ low: { model: name + '-model-with-a-long-identifier', effort: 'low' } });
+
 test('doctor reports the session host and keeps it inside the capped summary', async () => {
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
     fs.mkdirSync(skill);
-    const entry = (name: string) => ({ low: { model: name + '-model-with-a-long-identifier', effort: 'low' } });
+
     const platforms = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
     fs.writeFileSync(
       path.join(skill, 'config.jsonc'),
@@ -270,7 +309,7 @@ test('doctor reports the session host and keeps it inside the capped summary', a
         'utility-subagents': Object.fromEntries(
           platforms.map((name) => [
             name,
-            { model: name + '-explorer-with-a-long-identifier', effort: 'low', 'context-limit': 300000 },
+            { model: name + '-explorer-with-a-long-identifier', effort: 'low', 'context-limit': 300_000 },
           ]),
         ),
       }),
@@ -317,7 +356,7 @@ test('doctor lists sandbox removals only for dropped delegates excluding the hos
           copilot: { targets },
         },
         'write-subagents': { agy: { low: { model: 'writer' } } },
-        'utility-subagents': { agy: { model: 'sub', 'context-limit': 300000 } },
+        'utility-subagents': { agy: { model: 'sub', 'context-limit': 300_000 } },
       }),
     );
     const run = async (sandboxSupported: Record<string, boolean> | undefined, liveness: Record<string, boolean>) => {
@@ -326,9 +365,9 @@ test('doctor lists sandbox removals only for dropped delegates excluding the hos
         ...f.deps,
         skillRoot: skill,
         liveness,
-        ...(sandboxSupported ? { sandboxSupported } : {}),
+        ...(sandboxSupported && { sandboxSupported }),
       });
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
     const live = { opencode: true, claude: true, codex: true, copilot: true };
     const unsupported = { opencode: false, claude: false, codex: false, copilot: true };
@@ -343,11 +382,11 @@ test('doctor lists sandbox removals only for dropped delegates excluding the hos
       { ...live, agy: true },
     );
     assert.ok(
-      !hostUnsupported.sandboxRemoved.includes('agy'),
+      !hostUnsupported.sandboxRemoved?.includes('agy'),
       'host leaves sandboxRemoved: ' + JSON.stringify(hostUnsupported.sandboxRemoved),
     );
     assert.ok(
-      hostUnsupported.sandboxRemoved.includes('claude'),
+      hostUnsupported.sandboxRemoved?.includes('claude'),
       'non-host stays: ' + JSON.stringify(hostUnsupported.sandboxRemoved),
     );
   } finally {
@@ -368,7 +407,7 @@ test('doctor reports configured writeConcurrency defaulting to 1 when omitted or
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'write-subagents': { codex: { low: { model: 'writer' } } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
         'write-concurrency': 3,
       }),
     );
@@ -378,7 +417,7 @@ test('doctor reports configured writeConcurrency defaulting to 1 when omitted or
         await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
     const configured = await run();
     assert.equal(configured.writeConcurrency, 3);
@@ -388,7 +427,7 @@ test('doctor reports configured writeConcurrency defaulting to 1 when omitted or
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'write-subagents': { codex: { low: { model: 'writer' } } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
       }),
     );
     const omitted = await run();
@@ -412,7 +451,7 @@ test('doctor pricing override problems are warnings that never fail the report',
     const base = {
       'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
       'write-subagents': { codex: { low: { model: 'writer' } } },
-      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
     };
     const run = async (config: string) => {
       fs.writeFileSync(path.join(skill, 'config.jsonc'), config);
@@ -421,7 +460,7 @@ test('doctor pricing override problems are warnings that never fail the report',
         await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
     let report = await run(JSON.stringify(base));
     assert.deepEqual([report.ok, report.config.problems, report.config.warnings], [true, [], []]);
@@ -483,7 +522,7 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
         await main(['doctor', 'run', '--session', f.session, '--host', host], { ...f.deps, skillRoot: skill }),
         0,
       );
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readDoctorOutput(f.output().path);
     };
 
     // Missing host writer entry (other host present)
@@ -491,7 +530,7 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
       config,
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
         'write-subagents': { claude: { low: { model: 'writer', effort: 'low' } } },
       }),
     );
@@ -505,7 +544,7 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
       config,
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { claude: { model: 'reader', 'context-limit': 150000 } },
+        'utility-subagents': { claude: { model: 'reader', 'context-limit': 150_000 } },
         'write-subagents': { 'claude-code': { low: { model: 'writer', effort: 'low' } } },
       }),
     );
@@ -519,7 +558,6 @@ test('doctor requires an alias-normalized write-subagents entry for the host', a
   }
 });
 test('doctorReportWithProbe preserves static doctor output and wires sandboxRequired and probe-failed', async () => {
-  const { doctorReport, doctorReportWithProbe } = await import('../../../skills/dispatch/scripts/toolkit/doctor.ts');
   const f = sessionFixture({ memory: true });
   try {
     const skill = path.join(f.root, 'skill');
@@ -528,16 +566,16 @@ test('doctorReportWithProbe preserves static doctor output and wires sandboxRequ
     const targets = [{ low: { model: 'reader' } }];
     const base = {
       'write-subagents': { codex: { low: { model: 'writer' } } },
-      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
     };
-    const calls: string[] = [];
-    const probe: import('../../../skills/dispatch/scripts/providers/probe.ts').ProbeDeps = {
+    const calls: Array<string> = [];
+    const probe: ProbeDeps = {
       platform: {
         os: 'win32',
         bubblewrap: false,
         arch: 'x64',
         wsl: false,
-        argvLimit: 10000,
+        argvLimit: 10_000,
         home: '/home/probe',
         path: [],
         pathExt: [],

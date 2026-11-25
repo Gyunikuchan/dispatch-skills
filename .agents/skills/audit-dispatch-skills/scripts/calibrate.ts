@@ -14,7 +14,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 // ============================================================================
 // SECTION: Types
@@ -28,24 +28,24 @@ export type CalibrationCase = {
   severity?: string;
   scenario: string;
   source: { commit: string; parent: string | null };
-  excerpts: Excerpt[];
+  excerpts: Array<Excerpt>;
   answer: Record<string, string>;
 };
-export type BriefRef = { commit: string | null; paths: { path: string; blob: string | null }[] };
-export type CalibrationFixture = { version: 1; briefs: Record<Arm, BriefRef>; cases: CalibrationCase[] };
+export type BriefRef = { commit: string | null; paths: Array<{ path: string; blob: string | null }> };
+export type CalibrationFixture = { version: 1; briefs: Record<Arm, BriefRef>; cases: Array<CalibrationCase> };
 export type Arm = 'old' | 'new';
 export type Settings = { host: string; model: string; effort: string };
-export type Claim = { id: string; verdict: 'defect' | 'opportunity' | 'none'; claim: string; evidence: string[] };
+export type Claim = { id: string; verdict: 'defect' | 'opportunity' | 'none'; claim: string; evidence: Array<string> };
 export type Adjudication = { arms: Record<Arm, Record<string, { match: string | null; rationale: string }>> };
 export type Usage = Partial<Record<Arm, Partial<Record<UsageMetric, number | null>>>>;
 type UsageMetric = (typeof USAGE_METRICS)[number];
 export type ArmResult = {
-  recovered: string[];
-  missed: string[];
-  highMissed: string[];
-  controlFalseDefects: { caseId: string; claim: string }[];
-  missingCases: string[];
-  unsupported: string[];
+  recovered: Array<string>;
+  missed: Array<string>;
+  highMissed: Array<string>;
+  controlFalseDefects: Array<{ caseId: string; claim: string }>;
+  missingCases: Array<string>;
+  unsupported: Array<string>;
   pass: boolean;
 };
 
@@ -53,7 +53,7 @@ export type ArmResult = {
 // SECTION: Configuration
 // ============================================================================
 
-export const ARMS: readonly Arm[] = ['old', 'new'];
+export const ARMS: ReadonlyArray<Arm> = ['old', 'new'];
 const DEFECT_CATEGORIES = ['ambiguity', 'handoff', 'efficiency', 'recovery', 'contradiction'];
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const HIGH = new Set(['high', 'critical']);
@@ -61,14 +61,13 @@ const CONTROLS = 3;
 const MIN_RECOVERED = 4;
 const USAGE_METRICS = ['inputTokens', 'outputTokens', 'toolCalls', 'wallSeconds'] as const;
 const SHA = /^[0-9a-f]{40}$/;
-const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SKILL_DIR = path.resolve(import.meta.dirname, '..');
 const REPO_ROOT = path.resolve(SKILL_DIR, '..', '..', '..');
 export const DEFAULT_FIXTURE_PATH = path.join(SKILL_DIR, 'fixtures', 'calibration', 'cases.json');
 
 const sha256 = (text: string) => `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 const dirOf = (workDir: string) => path.join(workDir, 'calibration');
-const readJson = <T>(file: string): T => JSON.parse(fs.readFileSync(file, 'utf8')) as T;
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -78,14 +77,38 @@ const writeJson = (file: string, value: unknown) => {
 // SECTION: Validation
 // ============================================================================
 
+type ClaimsManifest = { fixedClaims: Record<string, string>; settings: Settings };
+type ClaimsFile = { cases: Record<string, Array<Claim>> };
+
+function readJson<T>(file: string, isShape: (value: unknown) => value is T): T {
+  const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!isShape(value)) {
+    throw new Error(`${file}: unexpected JSON shape`);
+  }
+  return value;
+}
+
+// Shape gates cover the containers read below; `validateFixture` and scoring check their contents.
+const isObject = (value: unknown): value is object => typeof value === 'object' && value !== null;
+const isFixture = (value: unknown): value is CalibrationFixture =>
+  isObject(value) && 'cases' in value && Array.isArray(value.cases);
+const isClaimsManifest = (value: unknown): value is ClaimsManifest =>
+  isObject(value) && 'fixedClaims' in value && isObject(value.fixedClaims) && 'settings' in value;
+const isClaimsFile = (value: unknown): value is ClaimsFile =>
+  isObject(value) && 'cases' in value && isObject(value.cases);
+const isAdjudication = (value: unknown): value is Adjudication =>
+  isObject(value) && 'arms' in value && isObject(value.arms);
+// Every Usage member is optional; `usageReport` marks whatever is absent or non-numeric unavailable.
+const isUsage = (value: unknown): value is Usage => isObject(value);
+
 // Only controls carry rationale comments, so their presence would reveal the answer; strip them from every packet alike.
 // The packet keeps the source sha256 so provenance stays checkable against the corpus.
 const RATIONALE_LINE = /^[ \t]*(?:\/\/|#|\*)\s*(?:NOTE|WHY|RATIONALE)\b.*(?:\r?\n|$)/gim;
-export const redactRationale = (text: string): string => text.replace(RATIONALE_LINE, '');
+export const redactRationale = (text: string): string => text.replaceAll(RATIONALE_LINE, '');
 
 /** Throws with every corpus defect: counts, categories, provenance, excerpt hashes and answer keys. */
 export function validateFixture(fixture: CalibrationFixture): void {
-  const errors: string[] = [];
+  const errors: Array<string> = [];
   const defects = fixture.cases.filter((c) => c.kind === 'defect');
   const controls = fixture.cases.filter((c) => c.kind === 'control');
   if (defects.length !== DEFECT_CATEGORIES.length || controls.length !== CONTROLS) {
@@ -94,33 +117,57 @@ export function validateFixture(fixture: CalibrationFixture): void {
     );
   }
   const categories = defects.map((c) => c.category).sort();
-  if (categories.join() !== [...DEFECT_CATEGORIES].sort().join())
+  if (categories.join() !== [...DEFECT_CATEGORIES].sort().join()) {
     errors.push(`defect categories must be exactly ${DEFECT_CATEGORIES.join(', ')}; found ${categories.join(', ')}`);
-  if (new Set(fixture.cases.map((c) => c.id)).size !== fixture.cases.length) errors.push('case ids must be unique');
+  }
+  if (new Set(fixture.cases.map((c) => c.id)).size !== fixture.cases.length) {
+    errors.push('case ids must be unique');
+  }
   for (const c of fixture.cases) {
-    if (!nonEmpty(c.id) || !nonEmpty(c.scenario)) errors.push(`${c.id}: needs an id and scenario`);
-    if (!SHA.test(c.source?.commit ?? '')) errors.push(`${c.id}: source commit must be a full hash`);
+    if (!nonEmpty(c.id) || !nonEmpty(c.scenario)) {
+      errors.push(`${c.id}: needs an id and scenario`);
+    }
+    if (!SHA.test(c.source?.commit ?? '')) {
+      errors.push(`${c.id}: source commit must be a full hash`);
+    }
     if (c.kind === 'defect') {
-      if (!SHA.test(c.source?.parent ?? '')) errors.push(`${c.id}: defect source parent must be a full hash`);
-      if (!SEVERITIES.includes(c.severity ?? ''))
+      if (!SHA.test(c.source?.parent ?? '')) {
+        errors.push(`${c.id}: defect source parent must be a full hash`);
+      }
+      if (!SEVERITIES.includes(c.severity ?? '')) {
         errors.push(`${c.id}: severity must be one of ${SEVERITIES.join(', ')}`);
-      if (!nonEmpty(c.answer?.['rootCause']) || !nonEmpty(c.answer?.['fixRationale']))
+      }
+      if (!nonEmpty(c.answer?.['rootCause']) || !nonEmpty(c.answer?.['fixRationale'])) {
         errors.push(`${c.id}: answer needs rootCause and fixRationale`);
+      }
     } else if (c.kind === 'control') {
-      if (!nonEmpty(c.answer?.['intent'])) errors.push(`${c.id}: control answer needs intent`);
-    } else errors.push(`${c.id}: kind must be defect or control`);
-    if (!Array.isArray(c.excerpts) || c.excerpts.length === 0) errors.push(`${c.id}: needs at least one excerpt`);
+      if (!nonEmpty(c.answer?.['intent'])) {
+        errors.push(`${c.id}: control answer needs intent`);
+      }
+    } else {
+      errors.push(`${c.id}: kind must be defect or control`);
+    }
+    if (!Array.isArray(c.excerpts) || c.excerpts.length === 0) {
+      errors.push(`${c.id}: needs at least one excerpt`);
+    }
     for (const e of c.excerpts ?? []) {
-      if (!nonEmpty(e.path) || !SHA.test(e.commit ?? '') || !SHA.test(e.blob ?? '') || !nonEmpty(e.lines))
+      if (!nonEmpty(e.path) || !SHA.test(e.commit ?? '') || !SHA.test(e.blob ?? '') || !nonEmpty(e.lines)) {
         errors.push(`${c.id}: excerpt ${e.path} needs path, commit, blob and lines`);
-      if (!nonEmpty(e.text) || sha256(e.text) !== e.sha256)
+      }
+      if (!nonEmpty(e.text) || sha256(e.text) !== e.sha256) {
         errors.push(`${c.id}: excerpt ${e.path}:${e.lines} text does not match its sha256`);
+      }
     }
   }
-  if (!SHA.test(fixture.briefs?.old?.commit ?? '') || !fixture.briefs.old.paths.every((p) => SHA.test(p.blob ?? '')))
+  if (!SHA.test(fixture.briefs?.old?.commit ?? '') || !fixture.briefs.old.paths.every((p) => SHA.test(p.blob ?? ''))) {
     errors.push('old brief needs a baseline commit and blob per path');
-  if (!fixture.briefs?.new?.paths?.length) errors.push('new brief needs paths');
-  if (errors.length) throw new Error(`invalid calibration corpus:\n- ${errors.join('\n- ')}`);
+  }
+  if (!fixture.briefs?.new?.paths?.length) {
+    errors.push('new brief needs paths');
+  }
+  if (errors.length) {
+    throw new Error(`invalid calibration corpus:\n- ${errors.join('\n- ')}`);
+  }
 }
 
 // ============================================================================
@@ -137,15 +184,17 @@ export type PrepareOptions = {
 };
 
 /** Writes one answer-free packet per arm and case plus the calibration manifest; returns packet paths. */
-export function prepare(options: PrepareOptions): string[] {
+export function prepare(options: PrepareOptions): Array<string> {
   const { fixture, workDir, settings } = options;
   validateFixture(fixture);
-  for (const key of ['host', 'model', 'effort'] as const)
-    if (!nonEmpty(settings[key]))
+  for (const key of ['host', 'model', 'effort'] as const) {
+    if (!nonEmpty(settings[key])) {
       throw new Error(`calibration settings need ${key}; both arms run with identical host/model settings`);
+    }
+  }
   const readBrief =
     options.readBrief ?? ((p: string) => fs.readFileSync(path.join(REPO_ROOT, ...p.split('/')), 'utf8'));
-  const arms: Record<Arm, unknown> = {
+  const arms = {
     old: fixture.briefs.old,
     new: {
       commit: null,
@@ -158,9 +207,10 @@ export function prepare(options: PrepareOptions): string[] {
   const packetIds = Object.fromEntries(
     fixture.cases.map((c) => [c.id, `case-${sha256(`${preparedAt}\0${c.id}`).slice(7, 15)}`]),
   );
-  if (new Set(Object.values(packetIds)).size !== fixture.cases.length)
+  if (new Set(Object.values(packetIds)).size !== fixture.cases.length) {
     throw new Error('opaque packet ids collided; prepare again');
-  const written: string[] = [];
+  }
+  const written: Array<string> = [];
   for (const arm of ARMS) {
     for (const c of fixture.cases) {
       const file = path.join(dir, 'packets', arm, `${packetIds[c.id]}.json`);
@@ -205,8 +255,10 @@ export function prepare(options: PrepareOptions): string[] {
 export function fixClaims(workDir: string, arm: Arm): string {
   const dir = dirOf(workDir);
   const manifestPath = path.join(dir, 'manifest.json');
-  const manifest = readJson<{ fixedClaims: Record<string, string> }>(manifestPath);
-  if (manifest.fixedClaims[arm]) throw new Error(`${arm} claims are already fixed`);
+  const manifest = readJson(manifestPath, isClaimsManifest);
+  if (manifest.fixedClaims[arm]) {
+    throw new Error(`${arm} claims are already fixed`);
+  }
   const hash = sha256(fs.readFileSync(path.join(dir, 'claims', `${arm}.json`), 'utf8'));
   manifest.fixedClaims[arm] = hash;
   writeJson(manifestPath, manifest);
@@ -227,20 +279,22 @@ export type SummarizeOptions = {
 export function summarize(options: SummarizeOptions) {
   const { fixture, workDir, adjudication } = options;
   const dir = dirOf(workDir);
-  const manifest = readJson<{ fixedClaims: Record<string, string>; settings: Settings }>(
-    path.join(dir, 'manifest.json'),
-  );
-  const claims = {} as Record<Arm, Record<string, Claim[]>>;
-  for (const arm of ARMS) {
+  const manifest = readJson(path.join(dir, 'manifest.json'), isClaimsManifest);
+  const fixedCases = (arm: Arm) => {
     const file = path.join(dir, 'claims', `${arm}.json`);
     const fixed = manifest.fixedClaims[arm];
-    if (!fixed) throw new Error(`${arm} claims are not fixed; run fix before revealing answer keys or scoring`);
-    if (sha256(fs.readFileSync(file, 'utf8')) !== fixed) throw new Error(`${arm} claims changed after they were fixed`);
-    claims[arm] = readJson<{ cases: Record<string, Claim[]> }>(file).cases;
-  }
-  const arms = Object.fromEntries(
-    ARMS.map((arm) => [arm, scoreArm(fixture, claims[arm], adjudication.arms[arm] ?? {}, arm)]),
-  ) as Record<Arm, ArmResult>;
+    if (!fixed) {
+      throw new Error(`${arm} claims are not fixed; run fix before revealing answer keys or scoring`);
+    }
+    if (sha256(fs.readFileSync(file, 'utf8')) !== fixed) {
+      throw new Error(`${arm} claims changed after they were fixed`);
+    }
+    return readJson(file, isClaimsFile).cases;
+  };
+  // Both arms' claims are verified before either is scored.
+  const claims: Record<Arm, ClaimsFile['cases']> = { old: fixedCases('old'), new: fixedCases('new') };
+  const score = (arm: Arm) => scoreArm(fixture, claims[arm], adjudication.arms[arm] ?? {}, arm);
+  const arms: Record<Arm, ArmResult> = { old: score('old'), new: score('new') };
   const summary = { settings: manifest.settings, arms, usage: usageReport(options.usage), pass: arms.new.pass };
   writeJson(path.join(dir, 'summary.json'), summary);
   return summary;
@@ -248,7 +302,7 @@ export function summarize(options: SummarizeOptions) {
 
 function scoreArm(
   fixture: CalibrationFixture,
-  cases: Record<string, Claim[]>,
+  cases: Record<string, Array<Claim>>,
   matches: Adjudication['arms'][Arm],
   arm: Arm,
 ): ArmResult {
@@ -265,14 +319,22 @@ function scoreArm(
     const caseClaims = cases[c.id];
     if (!Array.isArray(caseClaims)) {
       result.missingCases.push(c.id);
-      if (c.kind === 'defect') result.missed.push(c.id);
+      if (c.kind === 'defect') {
+        result.missed.push(c.id);
+      }
       continue;
     }
-    for (const claim of caseClaims)
-      if (claim.verdict === 'defect' && !(claim.evidence ?? []).some(nonEmpty)) result.unsupported.push(claim.id);
+    for (const claim of caseClaims) {
+      if (claim.verdict === 'defect' && !(claim.evidence ?? []).some(nonEmpty)) {
+        result.unsupported.push(claim.id);
+      }
+    }
     if (c.kind === 'control') {
-      for (const claim of caseClaims)
-        if (claim.verdict === 'defect') result.controlFalseDefects.push({ caseId: c.id, claim: claim.id });
+      for (const claim of caseClaims) {
+        if (claim.verdict === 'defect') {
+          result.controlFalseDefects.push({ caseId: c.id, claim: claim.id });
+        }
+      }
       continue;
     }
     const ruling = matches[c.id];
@@ -280,13 +342,18 @@ function scoreArm(
       const claim = caseClaims.find((x) => x.id === ruling.match);
       // The briefs classify static repetition as an opportunity until measured, so an efficiency case accepts one.
       const accepted = c.category === 'efficiency' ? ['defect', 'opportunity'] : ['defect'];
-      if (!claim || !accepted.includes(claim.verdict))
+      if (!claim || !accepted.includes(claim.verdict)) {
         throw new Error(
           `${arm}/${c.id}: match ${ruling.match} is not a fixed ${accepted.join(' or ')} claim of this case`,
         );
-      if (!nonEmpty(ruling.rationale)) throw new Error(`${arm}/${c.id}: a root-cause match needs a rationale`);
+      }
+      if (!nonEmpty(ruling.rationale)) {
+        throw new Error(`${arm}/${c.id}: a root-cause match needs a rationale`);
+      }
       result.recovered.push(c.id);
-    } else result.missed.push(c.id);
+    } else {
+      result.missed.push(c.id);
+    }
   }
   result.highMissed = result.missed.filter((id) => HIGH.has(fixture.cases.find((c) => c.id === id)?.severity ?? ''));
   result.pass =
@@ -300,16 +367,23 @@ function scoreArm(
 
 /** Reports measured usage per arm; a metric missing from either arm is unavailable and yields no comparison. */
 function usageReport(usage: Usage) {
-  const unavailable: string[] = [];
-  const comparison = {} as Record<UsageMetric, number | 'unavailable'>;
-  for (const metric of USAGE_METRICS) {
+  const unavailable: Array<string> = [];
+  const delta = (metric: UsageMetric): number | 'unavailable' => {
     const values = ARMS.map((arm) => usage[arm]?.[metric]);
     ARMS.forEach((arm, i) => {
-      if (typeof values[i] !== 'number') unavailable.push(`${arm}.${metric}`);
+      if (typeof values[i] !== 'number') {
+        unavailable.push(`${arm}.${metric}`);
+      }
     });
     const [before, after] = values;
-    comparison[metric] = typeof before === 'number' && typeof after === 'number' ? after - before : 'unavailable';
-  }
+    return typeof before === 'number' && typeof after === 'number' ? after - before : 'unavailable';
+  };
+  const comparison: Record<UsageMetric, number | 'unavailable'> = {
+    inputTokens: delta('inputTokens'),
+    outputTokens: delta('outputTokens'),
+    toolCalls: delta('toolCalls'),
+    wallSeconds: delta('wallSeconds'),
+  };
   return { measured: usage, comparison, unavailable, complete: unavailable.length === 0 };
 }
 
@@ -317,43 +391,51 @@ function usageReport(usage: Usage) {
 // SECTION: CLI
 // ============================================================================
 
-function flag(argv: string[], name: string): string | undefined {
+function flag(argv: Array<string>, name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-function main(argv: string[]): void {
+function main(argv: Array<string>): void {
   const [command] = argv;
   const runId = flag(argv, '--run');
-  if (!runId) throw new Error('--run <yyyy-mm-dd-hhmm> is required');
+  if (!runId) {
+    throw new Error('--run <yyyy-mm-dd-hhmm> is required');
+  }
   const workDir = path.join(REPO_ROOT, '.scratch', 'audits', `${runId}-work`);
-  if (!fs.existsSync(path.join(workDir, 'manifest.json')))
+  if (!fs.existsSync(path.join(workDir, 'manifest.json'))) {
     throw new Error(`No audit run reserved at ${workDir}; run baseline first.`);
-  const fixture = readJson<CalibrationFixture>(DEFAULT_FIXTURE_PATH);
+  }
+  const fixture = readJson(DEFAULT_FIXTURE_PATH, isFixture);
   if (command === 'prepare') {
     const settings = {
       host: flag(argv, '--host') ?? '',
       model: flag(argv, '--model') ?? '',
       effort: flag(argv, '--effort') ?? 'default',
     };
-    for (const file of prepare({ fixture, workDir, settings }))
+    for (const file of prepare({ fixture, workDir, settings })) {
       process.stdout.write(`${path.relative(REPO_ROOT, file).split(path.sep).join('/')}\n`);
+    }
   } else if (command === 'fix') {
     const arm = flag(argv, '--arm');
-    if (arm !== 'old' && arm !== 'new') throw new Error('--arm must be old or new');
+    if (arm !== 'old' && arm !== 'new') {
+      throw new Error('--arm must be old or new');
+    }
     process.stdout.write(`${fixClaims(workDir, arm)}\n`);
   } else if (command === 'summarize') {
-    const adjudication = readJson<Adjudication>(flag(argv, '--adjudication') ?? '');
-    const usage = readJson<Usage>(flag(argv, '--usage') ?? '');
+    const adjudication = readJson(flag(argv, '--adjudication') ?? '', isAdjudication);
+    const usage = readJson(flag(argv, '--usage') ?? '', isUsage);
     process.stdout.write(`${JSON.stringify(summarize({ fixture, workDir, adjudication, usage }), null, 2)}\n`);
-  } else throw new Error('command must be prepare, fix or summarize');
+  } else {
+    throw new Error('command must be prepare, fix or summarize');
+  }
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   try {
     main(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`${(error as Error).message}\n`);
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }

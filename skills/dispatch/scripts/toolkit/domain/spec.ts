@@ -2,7 +2,9 @@
 
 import { CRITERION_ID_SOURCE } from './criterion-id.ts';
 import { documentTitle, lintLongParagraphs, LONG_PARAGRAPH_WORDS, lintSectionOrder } from './document-lint.ts';
-import { sectionRanges, structuralLines, type StructuralLine } from './markdown-structure.ts';
+import { defined } from './defined.ts';
+import { sectionRanges, structuralLines } from './markdown-structure.ts';
+import type { StructuralLine } from './markdown-structure.ts';
 const SPEC_SECTION_ORDER = [
   '## At a Glance',
   '## Intent & Problem',
@@ -28,13 +30,13 @@ type SpecDefectCode =
 type SpecDefect = { code: SpecDefectCode; severity: 'defect' | 'warning'; line: number | null; message: string };
 type ParsedSpec = {
   title: string | null;
-  reqIds: readonly string[];
-  decIds: readonly string[];
-  sections: readonly string[];
+  reqIds: ReadonlyArray<string>;
+  decIds: ReadonlyArray<string>;
+  sections: ReadonlyArray<string>;
 };
 type SpecResult =
-  | { ok: true; spec: ParsedSpec; warnings: SpecDefect[] }
-  | { ok: false; defects: SpecDefect[]; warnings: SpecDefect[] };
+  | { ok: true; spec: ParsedSpec; warnings: Array<SpecDefect> }
+  | { ok: false; defects: Array<SpecDefect>; warnings: Array<SpecDefect> };
 
 const defect = (code: SpecDefectCode, line: number | null, message: string, blocking = false): SpecDefect => ({
   code,
@@ -51,23 +53,29 @@ export function governedSpecText(source: string): string {
 // NOTE: plan, criterion, increment, and finding ID shapes; a spec heading using one would collide with downstream IDs.
 const COLLIDING = new RegExp(`^(?:T\\d+|${CRITERION_ID_SOURCE}|I\\d{2}|R\\d+(?:-F\\d+)?)\\b`, 'i');
 
-type Block = { id: number; heading: StructuralLine; body: StructuralLine[] };
+type Block = { id: number; heading: StructuralLine; body: Array<StructuralLine> };
 
 /** Lints every `heading` section; a repeat is a defect, and its blocks still lint so no ID or acceptance gap hides. */
-function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ' | 'DEC', out: SpecDefect[]): Block[] {
+function lintIds(
+  lines: ReadonlyArray<StructuralLine>,
+  heading: string,
+  prefix: 'REQ' | 'DEC',
+  out: Array<SpecDefect>,
+): Array<Block> {
   const idDefect = (code: SpecDefectCode, line: number | null, message: string) =>
     defect(code, line, message, prefix === 'REQ' && ['malformed-id', 'colliding-id', 'id-sequence'].includes(code));
   const ranges = sectionRanges(lines, heading);
-  for (const extra of ranges.slice(1))
+  for (const extra of ranges.slice(1)) {
     out.push(
       idDefect(
         'duplicate-section',
-        lines[extra.start]!.line,
+        defined(lines[extra.start]).line,
         `${heading} appears more than once; merge it into one section.`,
       ),
     );
+  }
   const pattern = new RegExp(`^${prefix}-([1-9]\\d*) — \\S`);
-  const blocks: Block[] = [];
+  const blocks: Array<Block> = [];
   for (const range of ranges) {
     let current: Block | null = null;
     for (const entry of lines.slice(range.start + 1, range.end)) {
@@ -83,7 +91,7 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
         continue;
       }
       current = null;
-      if (COLLIDING.test(sub))
+      if (COLLIDING.test(sub)) {
         out.push(
           idDefect(
             'colliding-id',
@@ -91,7 +99,7 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
             `Heading "${sub}" uses a plan, criterion, increment, or finding ID; use ${prefix}-<n>.`,
           ),
         );
-      else
+      } else {
         out.push(
           idDefect(
             'malformed-id',
@@ -99,13 +107,14 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
             `Heading "${sub}" under ${heading} must be "### ${prefix}-<n> — <title>".`,
           ),
         );
+      }
     }
   }
   const seen = new Set<number>();
   blocks.forEach((block, index) => {
-    if (seen.has(block.id))
+    if (seen.has(block.id)) {
       out.push(idDefect('id-sequence', block.heading.line, `${prefix}-${block.id} appears more than once.`));
-    else if (block.id !== index + 1)
+    } else if (block.id !== index + 1) {
       out.push(
         idDefect(
           'id-sequence',
@@ -113,6 +122,7 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
           `${prefix}-${block.id} is out of sequence; expected ${prefix}-${index + 1}.`,
         ),
       );
+    }
     seen.add(block.id);
   });
   return blocks;
@@ -121,14 +131,16 @@ function lintIds(lines: readonly StructuralLine[], heading: string, prefix: 'REQ
 /** Parses and lints a spec; any defect fails the parse. Prose is not scanned for IDs. */
 export function parseSpec(source: string): SpecResult {
   const lines = structuralLines(source);
-  const defects: SpecDefect[] = [];
+  const defects: Array<SpecDefect> = [];
   for (const heading of SPEC_SECTION_ORDER) {
-    if (!sectionRanges(lines, heading).length)
+    if (!sectionRanges(lines, heading).length) {
       defects.push(defect('missing-section', null, `Spec requires ${heading}.`, heading === '## Requirements'));
+    }
   }
-  for (const item of lintSectionOrder(lines, SPEC_SECTION_ORDER))
+  for (const item of lintSectionOrder(lines, SPEC_SECTION_ORDER)) {
     defects.push(defect('section-order', item.line, item.message));
-  for (const { line, words } of lintLongParagraphs(lines))
+  }
+  for (const { line, words } of lintLongParagraphs(lines)) {
     defects.push(
       defect(
         'long-paragraph',
@@ -136,12 +148,14 @@ export function parseSpec(source: string): SpecResult {
         `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`,
       ),
     );
+  }
   const reqs = lintIds(lines, '## Requirements', 'REQ', defects);
   const decs = lintIds(lines, '## Decisions', 'DEC', defects);
-  if (sectionRanges(lines, '## Requirements').length && !reqs.length)
+  if (sectionRanges(lines, '## Requirements').length && !reqs.length) {
     defects.push(
       defect('missing-requirement', null, 'Requirements needs at least one ### REQ-<n> — <title> block.', true),
     );
+  }
   for (const block of reqs) {
     if (!block.body.some(({ text }) => /^\s*[-*]\s+Acceptance:\s*\S/.test(text))) {
       defects.push(
@@ -151,7 +165,9 @@ export function parseSpec(source: string): SpecResult {
   }
   const warnings = defects.filter((item) => item.severity === 'warning');
   const blocking = defects.filter((item) => item.severity === 'defect');
-  if (blocking.length) return { ok: false, defects: blocking, warnings };
+  if (blocking.length) {
+    return { ok: false, defects: blocking, warnings };
+  }
   const sections = lines
     .map((entry) => entry.text.trimEnd())
     .filter((text) => /^##\s+\S/.test(text) && !text.startsWith('###'));

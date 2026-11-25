@@ -20,9 +20,10 @@ test('quota reprobe validates its exact session action', () => {
     ['--host', 'claude'],
     ['--', 'x'],
     ['--'],
-  ])
+  ]) {
     assert.throws(() => parseCommand([...args, ...extra]));
-  for (const action of ['init', 'reactivate'])
+  }
+  for (const action of ['init', 'reactivate']) {
     for (const name of ['provider', 'model', 'mode']) {
       assert.throws(() =>
         parseCommand([
@@ -36,6 +37,7 @@ test('quota reprobe validates its exact session action', () => {
         ]),
       );
     }
+  }
 });
 
 test('session init and reactivate require a host value', () => {

@@ -3,13 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
+import { loadProbe } from '../helpers/audit-probe.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { SPECS } from '../../skills/dispatch/scripts/providers/index.ts';
 import { DEFAULT_CONFIG_PATH, loadAuditConfig } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
-// The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
-const probe = await import(
-  new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
-);
+const probe = await loadProbe();
 
 // SECTION: Fakes
 
@@ -18,7 +16,7 @@ const limits = () => loadAuditConfig(DEFAULT_CONFIG_PATH).limits;
 
 function fakeClock() {
   let t = 1_000_000;
-  const timers: { at: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
   return {
     timers,
     now: () => t,
@@ -31,20 +29,21 @@ function fakeClock() {
     },
     advance(ms: number) {
       t += ms;
-      for (const timer of timers)
+      for (const timer of timers) {
         if (timer.live && timer.at <= t) {
           timer.live = false;
           timer.fn();
         }
+      }
     },
   };
 }
 
 function fakeProcess(script: (n: number) => Result) {
-  const launches: { argv: readonly string[]; stdin: string | null; capBytes: number }[] = [];
+  const launches: Array<{ argv: ReadonlyArray<string>; stdin: string | null; capBytes: number }> = [];
   return {
     launches,
-    start(launch: { argv: readonly string[]; stdin: string | null }, io: { logPath: string; capBytes: number }) {
+    start(launch: { argv: ReadonlyArray<string>; stdin: string | null }, io: { logPath: string; capBytes: number }) {
       launches.push({ argv: launch.argv, stdin: launch.stdin, capBytes: io.capBytes });
       const r = script(launches.length);
       fs.writeFileSync(io.logPath, r.stdout);
@@ -66,7 +65,9 @@ function fakeProcess(script: (n: number) => Result) {
   };
 }
 
-function fakeSpec(extra: Record<string, unknown> = {}) {
+type SpecOverrides = { argv?: unknown; parse?: unknown; prepare?: unknown; modes?: unknown; modeCascadeOn?: unknown };
+
+function fakeSpec(extra: SpecOverrides = {}) {
   return {
     id: 'claude',
     modes: [],
@@ -92,7 +93,7 @@ function setup(script: (n: number) => Result, spec = fakeSpec(), clock = fakeClo
   const stageDir = path.join(root, 'stage');
   fs.mkdirSync(stageDir, { recursive: true });
   const process = fakeProcess(script);
-  const states: { id: string; lifecycle: string }[] = [];
+  const states: Array<{ id: string; lifecycle: string }> = [];
   const ctx = {
     fixture,
     stageDir,
@@ -102,7 +103,8 @@ function setup(script: (n: number) => Result, spec = fakeSpec(), clock = fakeClo
   };
   return { ctx, process, clock, fixture, states, stageDir };
 }
-const target = (extra: Record<string, unknown> = {}) => ({
+type TargetOverrides = { id?: string; provider?: string; binary?: string; effort?: string; sandbox?: boolean };
+const target = (extra: TargetOverrides = {}) => ({
   id: 'claude',
   provider: 'claude',
   mode: 'cli',
@@ -133,7 +135,7 @@ test('probe cleanup reason: success retains bounded removal options and no reaso
   }
   assert.equal(calls, 0);
 
-  const cases: { code: unknown; expectedCode: string }[] = [
+  const cases: Array<{ code: unknown; expectedCode: string }> = [
     { code: 'EBUSY', expectedCode: 'EBUSY' },
     { code: undefined, expectedCode: 'unknown' },
     { code: 'x'.repeat(500), expectedCode: 'unknown' },
@@ -152,9 +154,9 @@ test('probe cleanup reason: success retains bounded removal options and no reaso
     });
   }
 
-  const successCalls: unknown[][] = [];
+  const successCalls: Array<Array<unknown>> = [];
   const successIo = {
-    rmSync: (...args: unknown[]) => {
+    rmSync: (...args: Array<unknown>) => {
       successCalls.push(args);
     },
   };
@@ -198,11 +200,11 @@ test('audit probe selection uses low configuration and one reachable mode per pr
     targets.map((t: { id: string }) => t.id),
     ['claude', 'codex'],
   );
-  assert.equal(targets[0].mode, 'cli');
-  assert.equal(targets[0].model, 'small-model');
-  assert.equal(targets[0].effort, 'low');
-  assert.equal(targets[1].model, 'codex-model');
-  assert.equal(targets[1].skip, null);
+  assert.equal(targets[0]!.mode, 'cli');
+  assert.equal(targets[0]!.model, 'small-model');
+  assert.equal(targets[0]!.effort, 'low');
+  assert.equal(targets[1]!.model, 'codex-model');
+  assert.equal(targets[1]!.skip, null);
   assert.equal(probe.PROBE_LEVEL, 'low');
 });
 
@@ -215,14 +217,15 @@ test('audit probe --modes widening beyond the launch limit is skipped without la
       ['claude/desktop', false],
     ],
   );
-  assert.match(targets[1].skip, /probeLaunchesPerProvider/);
+  assert.match(targets[1]!.skip!, /probeLaunchesPerProvider/);
 });
 
+const doctor = () => [
+  { provider: 'claude', mode: 'cli', path: '/bin/claude', status: 'path' },
+  { provider: 'agy', mode: 'cli', path: '/bin/agy', status: 'path' },
+];
+
 test('audit probe --only filtering narrows discovery to the named providers', async () => {
-  const doctor = () => [
-    { provider: 'claude', mode: 'cli', path: '/bin/claude', status: 'path' },
-    { provider: 'agy', mode: 'cli', path: '/bin/agy', status: 'path' },
-  ];
   const found = await probe.discover({}, ['agy'], { doctor });
   assert.deepEqual(
     found.map((r: { provider: string }) => r.provider),
@@ -243,7 +246,7 @@ test('audit probe refuses a runner-internal retry beyond one launch', async () =
 
 test('audit probe passes config read commands to the provider request', async () => {
   const spec = fakeSpec({
-    argv: (req: { prompt: string; cwd: string; readCommands?: readonly string[] }) => ({
+    argv: (req: { prompt: string; cwd: string; readCommands?: ReadonlyArray<string> }) => ({
       argv: ['fake-cli', ...(req.readCommands ?? []), req.prompt],
       stdin: null,
       env: {},
@@ -255,15 +258,16 @@ test('audit probe passes config read commands to the provider request', async ()
   assert.ok(process.launches[0]?.argv.includes('codegraph explore'));
 });
 
+const read = (text: string) => (file: string) => (file.endsWith('config.local.jsonc') ? text : null);
+
 test('audit probe config load validates read commands like production fan-out', () => {
-  const read = (text: string) => (file: string) => (file.endsWith('config.local.jsonc') ? text : null);
   assert.deepEqual(probe.loadConfig('/repo', read('{"read-commands":["codegraph explore"]}')).readCommands, [
     'codegraph explore',
   ]);
   const invalid = probe.loadConfig('/repo', read('{"read-commands":["git *"]}'));
   assert.equal(invalid.config, null);
   assert.deepEqual(invalid.readCommands, []);
-  assert.match(invalid.error, /read-commands/);
+  assert.match(invalid.error!, /read-commands/);
 });
 
 test('audit probe validates the denylisted attachment without any launch', async () => {
@@ -325,7 +329,7 @@ test('audit probe caps captured output at the configured byte limit', async () =
   assert.equal(process.launches[0]?.capBytes, 16_384);
   assert.equal(record.cause, 'output-cap');
   assert.equal(record.lifecycle, 'failed');
-  assert.ok(fs.statSync(path.join(ctx.stageDir, record.capture)).size <= 16_384);
+  assert.ok(fs.statSync(path.join(ctx.stageDir, record.capture!)).size <= 16_384);
 });
 
 test('audit probe does not relaunch a target whose recorded liveness is unknown', async () => {
@@ -361,7 +365,7 @@ const READ_ONLY_AGENTS = [
 ];
 const opencodeTarget = () => target({ id: 'opencode', provider: 'opencode', binary: 'fake-opencode', sandbox: false });
 
-function opencodeSetup(introspect: (command: 'config' | 'agents') => Promise<unknown>) {
+function opencodeSetup(introspect: (command: 'config' | 'agents') => Promise<Array<object>>) {
   const { ctx, process } = setup(() => ({ exit: 0, stdout: 'ok' }));
   const ports = {
     ...ctx.ports,

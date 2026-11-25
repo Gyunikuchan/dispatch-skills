@@ -1,4 +1,5 @@
-import { isDetailWrapper, sectionRanges, structuralLines, type StructuralLine } from './markdown-structure.ts';
+import { isDetailWrapper, sectionRanges, structuralLines } from './markdown-structure.ts';
+import type { StructuralLine } from './markdown-structure.ts';
 import type {
   ChangeAction,
   EvidenceClass,
@@ -10,6 +11,7 @@ import type {
   PlanTask,
 } from './types.ts';
 import { criterionHeading } from './criterion-id.ts';
+import { defined } from './defined.ts';
 import { joinTaskMap, lintTaskSections, lintTasks } from './plan-graph.ts';
 import {
   boxValues,
@@ -23,8 +25,8 @@ import {
   parseSummaryBox,
   RESOLUTION_HEADING,
   SPEC_PIN_VALUE,
-  type PlaceholderVocabulary,
 } from './document-lint.ts';
+import type { PlaceholderVocabulary } from './document-lint.ts';
 import {
   ACTION_HEADING,
   TASK_HEADING,
@@ -43,6 +45,7 @@ import {
 } from './plan-lint.ts';
 
 const TASK_MAP_HEADING = '## Task Map';
+const CHANGE_ACTIONS: ReadonlyArray<ChangeAction> = ['NEW', 'MODIFY', 'DELETE', 'GENERATED'];
 
 /** Plan section order after the title and summary box; every section is optional to this lint. */
 const PLAN_SECTION_ORDER = [
@@ -73,13 +76,15 @@ const CONSTRAINT_FIELD = /^[-*+]\s+Constraints:\s*(.*?)\s*$/i;
 const OVERLAP_FIELD = /^[-*+]\s+Overlap:\s*(.*?)\s*$/i;
 const MARKER_HEADING = /^####\s+\[([A-Z][A-Z-]*)\]\s+\S/;
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
-const EVIDENCE: readonly EvidenceClass[] = ['red', 'check', 'review'];
+const EVIDENCE: ReadonlyArray<EvidenceClass> = ['red', 'check', 'review'];
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
 
 /** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
-function planIdPattern(ids: readonly string[]): RegExp | null {
-  if (!ids.length) return null;
-  const escaped = ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+function planIdPattern(ids: ReadonlyArray<string>): RegExp | null {
+  if (!ids.length) {
+    return null;
+  }
+  const escaped = ids.map((id) => id.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`));
   return new RegExp(`(?<![A-Za-z0-9-])(?:${escaped.join('|')})(?![A-Za-z0-9])`, 'i');
 }
 
@@ -87,8 +92,8 @@ const FINDING_ID = /\bR\d+-F\d+\b/gi;
 const CRITICAL = /\b(?:correctness|safety|recovery|durability|protocol)\b/i;
 
 export type Criterion = PlanCriterion & {
-  satisfies: readonly string[];
-  verifyLines: number[];
+  satisfies: ReadonlyArray<string>;
+  verifyLines: Array<number>;
   testsLine: number | null;
   redCommandLine: number | null;
   integration: string | null;
@@ -102,15 +107,15 @@ export type Criterion = PlanCriterion & {
 };
 
 type PlanResult =
-  | { ok: true; plan: ParsedPlan; warnings: LintDefect[] }
-  | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
+  | { ok: true; plan: ParsedPlan; warnings: Array<LintDefect> }
+  | { ok: false; defects: Array<LintDefect>; warnings: Array<LintDefect> };
 
 type PlanOptions = { placeholders?: PlaceholderVocabulary };
 
 /** Parses and lints a plan; any defect-severity diagnostic fails the parse. */
 export function parsePlan(source: string, options: PlanOptions = {}): PlanResult {
   const lines = structuralLines(source);
-  const out: LintDefect[] = [];
+  const out: Array<LintDefect> = [];
   const { changes, tasks: sections } = parseChanges(lines, out);
   const taskRows = parseTaskMap(lines, out);
   const tasks = joinTaskMap(sections, taskRows, out);
@@ -139,10 +144,11 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const overlapWarnings = lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
-  if (!sectionRanges(lines, '## At a Glance').length)
+  if (!sectionRanges(lines, '## At a Glance').length) {
     out.push(lint('missing-section', null, 'Plan has no ## At a Glance section.'));
+  }
   lintGlanceRestatesTaskMap(lines, taskRows, out);
-  for (const { line, words } of lintLongParagraphs(lines))
+  for (const { line, words } of lintLongParagraphs(lines)) {
     out.push(
       lint(
         'long-paragraph',
@@ -150,19 +156,24 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
         `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`,
       ),
     );
+  }
   out.push(...lintSectionOrder(lines, PLAN_SECTION_ORDER));
   for (const entry of lines) {
-    if (PROSE_PLACEHOLDER.test(entry.text.replace(/`[^`]*`/g, '')))
+    if (PROSE_PLACEHOLDER.test(entry.text.replaceAll(/`[^`]*`/g, ''))) {
       out.push(lint('placeholder', entry.line, 'Plan contains a prose placeholder.'));
+    }
   }
   out.push(...lintSummaryBox(source, BOX_LABELS, { Parent: PARENT_VALUE }));
   if (options.placeholders) {
-    for (const { token, line } of findPlaceholders(source, options.placeholders))
+    for (const { token, line } of findPlaceholders(source, options.placeholders)) {
       out.push(lint('leftover-placeholder', line, `Leftover template placeholder ${token}.`));
+    }
   }
   const defects = out.filter((item) => item.severity === 'defect');
   const warnings = out.filter((item) => item.severity === 'warning');
-  if (defects.length) return { ok: false, defects, warnings };
+  if (defects.length) {
+    return { ok: false, defects, warnings };
+  }
   const plan: ParsedPlan = {
     title: documentTitle(source),
     box: boxValues(source),
@@ -239,9 +250,11 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
 }
 
 /** Index of the first line after the Task Map, or of the first later-ordered section when the plan has no Task Map. */
-function sharedContextEnd(lines: readonly StructuralLine[]): number {
+function sharedContextEnd(lines: ReadonlyArray<StructuralLine>): number {
   const map = sectionRanges(lines, TASK_MAP_HEADING)[0];
-  if (map) return map.end;
+  if (map) {
+    return map.end;
+  }
   const later = new Set<string>(PLAN_SECTION_ORDER.slice(PLAN_SECTION_ORDER.indexOf(TASK_MAP_HEADING) + 1));
   const next = lines.findIndex((entry) => later.has(entry.text.trimEnd()));
   return next === -1 ? lines.length : next;
@@ -256,27 +269,33 @@ function sharedPlanContext(text: string): string {
     .replace(/\s+$/, '\n');
 }
 
-function bullets(lines: readonly StructuralLine[], heading: string): string[] {
+function bullets(lines: ReadonlyArray<StructuralLine>, heading: string): Array<string> {
   const range = sectionRanges(lines, heading)[0];
-  if (!range) return [];
+  if (!range) {
+    return [];
+  }
   return lines.slice(range.start + 1, range.end).flatMap(({ text }) => {
     const match = /^[-*+]\s+(.+)$/.exec(text);
     return match?.[1] ? [match[1].trim()] : [];
   });
 }
 
-export function parseGlance(lines: readonly StructuralLine[]): Glance | null {
+export function parseGlance(lines: ReadonlyArray<StructuralLine>): Glance | null {
   const range = sectionRanges(lines, '## At a Glance')[0];
-  if (!range) return null;
+  if (!range) {
+    return null;
+  }
   const entries = lines.slice(range.start + 1, range.end);
   const values = { what: '', how: '' };
   let active: keyof typeof values | null = null;
   let lastSummaryIndex = -1;
   let visualStart: number | null = null;
   for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index]!;
+    const entry = defined(entries[index]);
     if (entry.fenced) {
-      if (lastSummaryIndex !== -1 && visualStart === null) visualStart = index;
+      if (lastSummaryIndex !== -1 && visualStart === null) {
+        visualStart = index;
+      }
       active = null;
       continue;
     }
@@ -294,7 +313,9 @@ export function parseGlance(lines: readonly StructuralLine[]): Glance | null {
     }
     if (entry.text.trim()) {
       active = null;
-      if (lastSummaryIndex !== -1 && visualStart === null) visualStart = index;
+      if (lastSummaryIndex !== -1 && visualStart === null) {
+        visualStart = index;
+      }
     }
   }
   const visuals =
@@ -304,17 +325,21 @@ export function parseGlance(lines: readonly StructuralLine[]): Glance | null {
           .slice(visualStart)
           .map(({ original }) => original)
           .join('\n')
-          .replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '');
+          .replaceAll(/^(?:\r?\n)+|(?:\r?\n)+$/g, '');
   return { ...values, visuals };
 }
 
-function keyValues(lines: readonly StructuralLine[], heading: string): Record<string, string> | null {
+function keyValues(lines: ReadonlyArray<StructuralLine>, heading: string): Record<string, string> | null {
   const range = sectionRanges(lines, heading)[0];
-  if (!range) return null;
+  if (!range) {
+    return null;
+  }
   const values: Record<string, string> = {};
   for (const { text } of lines.slice(range.start + 1, range.end)) {
     const match = /^[-*+]\s+([^:]+):\s*(.*)$/.exec(text);
-    if (match?.[1]) values[match[1].trim()] = (match[2] ?? '').trim();
+    if (match?.[1]) {
+      values[match[1].trim()] = (match[2] ?? '').trim();
+    }
   }
   return values;
 }
@@ -325,45 +350,48 @@ export function parentPin(
   const value = parseSummaryBox(source)
     ?.entries.find((entry) => entry.label === 'Parent')
     ?.value.trim();
-  if (!value) return null;
+  if (!value) {
+    return null;
+  }
   const spec = SPEC_PIN_VALUE.exec(value);
-  if (spec) return { kind: 'spec', path: spec[1]!, hash: `sha256:${spec[2]!}` };
+  if (spec) {
+    return { kind: 'spec', path: defined(spec[1]), hash: `sha256:${defined(spec[2])}` };
+  }
   const design = DESIGN_PIN_VALUE.exec(value);
-  return design ? { kind: 'design', path: design[1]!, increment: design[2]! } : null;
+  return design ? { kind: 'design', path: defined(design[1]), increment: defined(design[2]) } : null;
 }
 
 // SECTION: Proposed changes and authored tasks
 
 export type DraftTask = Omit<PlanTask, 'constraints' | 'behaviour'> & {
-  constraints: string[];
-  behaviour: string[];
+  constraints: Array<string>;
+  behaviour: Array<string>;
   prerequisitesLine: number | null;
   criteriaLine: number | null;
   summaryLine: number;
-  overlapLines: number[];
+  overlapLines: Array<number>;
 };
 
 export type AuthoredTaskRow = {
   id: string;
   title: string;
   outcome: string;
-  prerequisites: string[];
-  criteria: string[];
+  prerequisites: Array<string>;
+  criteria: Array<string>;
   line: number;
 };
 
-function parseChanges(
-  lines: readonly StructuralLine[],
-  out: LintDefect[],
-): { changes: PlanChange[]; tasks: DraftTask[] } {
+type ProposedChanges = { changes: Array<PlanChange>; tasks: Array<DraftTask> };
+
+function parseChanges(lines: ReadonlyArray<StructuralLine>, out: Array<LintDefect>): ProposedChanges {
   const ranges = sectionRanges(lines, '## Proposed Changes');
   const range = ranges[0];
   if (ranges.length !== 1 || !range) {
     out.push(lint('proposed-changes', null, 'Expected exactly one ## Proposed Changes section.'));
     return { changes: [], tasks: [] };
   }
-  const changes: PlanChange[] = [];
-  const tasks: DraftTask[] = [];
+  const changes: Array<PlanChange> = [];
+  const tasks: Array<DraftTask> = [];
   // Same-owner repeats are malformed; lintOverlaps classifies cross-task repeats once the task graph is known.
   const seen = new Map<DraftTask | null, Map<string, string>>();
   const body = taskStructuralView(lines).slice(range.start + 1, range.end);
@@ -373,8 +401,12 @@ function parseChanges(
   let inHeader = false;
   let beforeDetails = true;
   body.forEach((entry, offset) => {
-    if (inHeader && task && entry.text.trim() === '<details>') beforeDetails = false;
-    if (isDetailWrapper(entry.text)) return;
+    if (inHeader && task && entry.text.trim() === '<details>') {
+      beforeDetails = false;
+    }
+    if (isDetailWrapper(entry.text)) {
+      return;
+    }
     if (/^###\s/.test(entry.text)) {
       const heading = TASK_HEADING.exec(entry.text);
       inHeader = true;
@@ -406,15 +438,16 @@ function parseChanges(
       tasks.push(task);
       return;
     }
-    const current = task as DraftTask | null;
+    const current = task;
     const match = ACTION_HEADING.exec(entry.text);
     if (!match) {
-      if (/^\s*[-*+]\s+####\s+\[/.test(entry.text))
+      if (/^\s*[-*+]\s+####\s+\[/.test(entry.text)) {
         out.push(
           lint('change-heading', entry.line, 'Nested file entries require "- #### [ACTION] path" at task level.'),
         );
+      }
       const marker = MARKER_HEADING.exec(entry.text)?.[1];
-      if (marker)
+      if (marker) {
         out.push(
           lint(
             'unknown-change-marker',
@@ -422,17 +455,20 @@ function parseChanges(
             `Unknown change marker [${marker}]; use [NEW], [MODIFY], [DELETE], or [GENERATED].`,
           ),
         );
-      if (inHeader && current) readTaskHeader(current, entry, out, beforeDetails);
+      }
+      if (inHeader && current) {
+        readTaskHeader(current, entry, out, beforeDetails);
+      }
       return;
     }
     inHeader = false;
-    const action = match[1] as ChangeAction;
+    const action = defined(CHANGE_ACTIONS.find((candidate) => candidate === match[1]));
     const listed = headingPaths(action, match[2] ?? '');
     if ('error' in listed) {
       out.push(lint('change-heading', entry.line, listed.error));
       return;
     }
-    const paths: string[] = [];
+    const paths: Array<string> = [];
     for (const normalized of listed.paths) {
       if (!normalized.path) {
         out.push(lint('invalid-change-path', entry.line, `Invalid change path: ${normalized.reason ?? 'empty'}.`));
@@ -443,7 +479,7 @@ function parseChanges(
       const owned = seen.get(current) ?? new Map<string, string>();
       seen.set(current, owned);
       const prior = owned.get(folded);
-      if (prior !== undefined)
+      if (prior !== undefined) {
         out.push(
           lint(
             'duplicate-change-path',
@@ -453,9 +489,12 @@ function parseChanges(
               : `Change path "${normalized.path}" aliases "${prior}" on case-insensitive filesystems.`,
           ),
         );
+      }
       owned.set(folded, normalized.path);
-      if (EXCLUDED_CHANGE_PATH.test(normalized.path)) out.push(excluded(entry.line, normalized.path));
-      if (!current && !malformed)
+      if (EXCLUDED_CHANGE_PATH.test(normalized.path)) {
+        out.push(excluded(entry.line, normalized.path));
+      }
+      if (!current && !malformed) {
         out.push(
           lint(
             'task-ownership',
@@ -463,34 +502,45 @@ function parseChanges(
             `Change "${normalized.path}" has no owning task; group every change under "### T<n> — <outcome title>" (reauthor component-form plans).`,
           ),
         );
+      }
       paths.push(normalized.path);
     }
-    if (!paths.length) return;
-    const block: string[] = [];
+    if (!paths.length) {
+      return;
+    }
+    const block: Array<string> = [];
     for (const next of body.slice(offset + 1)) {
-      if (/^#{2,4}\s+/.test(next.text)) break;
-      if (!isDetailWrapper(next.text)) block.push(next.text);
+      if (/^#{2,4}\s+/.test(next.text)) {
+        break;
+      }
+      if (!isDetailWrapper(next.text)) {
+        block.push(next.text);
+      }
     }
     const bullet = (name: string) => block.find((text) => text.match(/^[-*+]\s+(\w+):/)?.[1] === name);
     const command =
       action === 'GENERATED'
         ? (/^[-*+]\s+Command:\s*`([^`]+)`\s*$/.exec(bullet('Command') ?? '')?.[1]?.trim() ?? null)
         : null;
-    if (action === 'GENERATED' && !command)
+    if (action === 'GENERATED' && !command) {
       out.push(
         lint('generated-command', entry.line, 'A [GENERATED] path requires a "- Command: `<generator>`" bullet.'),
       );
+    }
     // Only [DELETE] lists several paths, so GENERATED inputs stay single-path.
     if (current) {
       current.paths = [...current.paths, ...paths];
-      if (action === 'GENERATED')
+      if (action === 'GENERATED') {
         current.generated = [
           ...current.generated,
           ...paths.map((path) => ({ path, inputs: generatedInputs(bullet('Inputs'), entry.line, out) })),
         ];
+      }
     }
     const note = changeNote(block);
-    for (const path of paths) changes.push({ action, path, note, command, line: entry.line });
+    for (const path of paths) {
+      changes.push({ action, path, note, command, line: entry.line });
+    }
   });
   if (
     !changes.length &&
@@ -506,7 +556,7 @@ function parseChanges(
   return { changes, tasks };
 }
 
-function parseTaskMap(lines: readonly StructuralLine[], out: LintDefect[]): AuthoredTaskRow[] {
+function parseTaskMap(lines: ReadonlyArray<StructuralLine>, out: Array<LintDefect>): Array<AuthoredTaskRow> {
   const ranges = sectionRanges(lines, TASK_MAP_HEADING);
   if (ranges.length !== 1 || !ranges[0]) {
     out.push(
@@ -529,40 +579,51 @@ function parseTaskMap(lines: readonly StructuralLine[], out: LintDefect[]): Auth
     return [];
   }
   const expected = ['ID', 'Title', 'Outcome', 'Prerequisites', 'Criteria'];
-  const header = splitTaskMapRow(entries[0]!.text);
-  const divider = splitTaskMapRow(entries[1]!.text);
+  const header = splitTaskMapRow(defined(entries[0]).text);
+  const divider = splitTaskMapRow(defined(entries[1]).text);
   if (!header || header.length !== expected.length || header.some((value, index) => value !== expected[index])) {
-    failRow(entries[0]!.line, 'Task Map columns must be ID, Title, Outcome, Prerequisites, Criteria in that order.');
+    failRow(
+      defined(entries[0]).line,
+      'Task Map columns must be ID, Title, Outcome, Prerequisites, Criteria in that order.',
+    );
     return [];
   }
   if (!divider || divider.length !== expected.length || divider.some((value) => !/^:?-{3,}:?$/.test(value))) {
-    failRow(entries[1]!.line, 'Task Map requires a Markdown delimiter row with five cells.');
+    failRow(defined(entries[1]).line, 'Task Map requires a Markdown delimiter row with five cells.');
     return [];
   }
   if (entries.length === 2) {
-    failRow(entries[1]!.line, 'Task Map requires at least one task row.');
+    failRow(defined(entries[1]).line, 'Task Map requires at least one task row.');
     return [];
   }
-  const rows: AuthoredTaskRow[] = [];
+  const rows: Array<AuthoredTaskRow> = [];
   const seen = new Set<string>();
   for (const entry of entries.slice(2)) {
     const cells = splitTaskMapRow(entry.text);
     if (!cells || cells.length !== expected.length) {
       failRow(
         entry.line,
-        'Task Map rows require exactly five cells; escape literal pipes as \\|, including inside inline code.',
+        String.raw`Task Map rows require exactly five cells; escape literal pipes as \|, including inside inline code.`,
       );
       continue;
     }
-    const id = cells[0]!.replace(/^`|`$/g, '').trim().toUpperCase();
-    const title = cells[1]!.trim();
-    const outcome = cells[2]!.trim();
-    if (!/^T[1-9]\d*$/.test(id)) failRow(entry.line, 'Task Map ID must use T[1-9][0-9]*.');
-    if (!title) failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Title cell.`);
-    if (!outcome) failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Outcome cell.`);
-    if (seen.has(id)) out.push(lint('duplicate-id', entry.line, `Task Map contains duplicate task ${id}.`));
+    const id = defined(cells[0]).replaceAll(/^`|`$/g, '').trim().toUpperCase();
+    const title = defined(cells[1]).trim();
+    const outcome = defined(cells[2]).trim();
+    if (!/^T[1-9]\d*$/.test(id)) {
+      failRow(entry.line, 'Task Map ID must use T[1-9][0-9]*.');
+    }
+    if (!title) {
+      failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Title cell.`);
+    }
+    if (!outcome) {
+      failRow(entry.line, `Task ${id || '(blank)'} requires a nonempty Outcome cell.`);
+    }
+    if (seen.has(id)) {
+      out.push(lint('duplicate-id', entry.line, `Task Map contains duplicate task ${id}.`));
+    }
     seen.add(id);
-    const list = (value: string, label: 'Prerequisites' | 'Criteria', noneAllowed: boolean): string[] => {
+    const list = (value: string, label: 'Prerequisites' | 'Criteria', noneAllowed: boolean): Array<string> => {
       const text = value.trim();
       if (!text) {
         failRow(
@@ -572,27 +633,30 @@ function parseTaskMap(lines: readonly StructuralLine[], out: LintDefect[]): Auth
         return [];
       }
       if (/^none$/i.test(text)) {
-        if (!noneAllowed)
+        if (!noneAllowed) {
           failRow(entry.line, `Task ${id || '(blank)'} Criteria cell must name at least one criterion.`);
+        }
         return [];
       }
-      const values = text.split(',').map((item) => item.trim().replace(/^`|`$/g, '').toUpperCase());
-      if (values.some((item) => !item))
+      const values = text.split(',').map((item) => item.trim().replaceAll(/^`|`$/g, '').toUpperCase());
+      if (values.some((item) => !item)) {
         failRow(entry.line, `Task ${id || '(blank)'} ${label} must be a comma-separated list of IDs.`);
+      }
       const pattern = label === 'Prerequisites' ? /^T[1-9]\d*$/ : /^SC[1-9]\d*$/;
-      if (values.some((item) => !pattern.test(item)))
+      if (values.some((item) => !pattern.test(item))) {
         failRow(
           entry.line,
           `Task ${id || '(blank)'} ${label} must contain ${label === 'Prerequisites' ? 'task IDs T[1-9][0-9]*' : 'criterion IDs SC[1-9][0-9]*'}.`,
         );
+      }
       return [...new Set(values.filter((item) => pattern.test(item)))];
     };
     rows.push({
       id,
       title,
       outcome,
-      prerequisites: list(cells[3]!, 'Prerequisites', true),
-      criteria: list(cells[4]!, 'Criteria', false),
+      prerequisites: list(defined(cells[3]), 'Prerequisites', true),
+      criteria: list(defined(cells[4]), 'Criteria', false),
       line: entry.line,
     });
   }
@@ -600,8 +664,10 @@ function parseTaskMap(lines: readonly StructuralLine[], out: LintDefect[]): Auth
 }
 
 /** Task headers accept visible behaviour and owned constraint/overlap fields; Task Map fields stay outside the header. */
-function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[], beforeDetails: boolean): void {
-  if (!beforeDetails || entry.fenced || isDetailWrapper(entry.text)) return;
+function readTaskHeader(task: DraftTask, entry: StructuralLine, out: Array<LintDefect>, beforeDetails: boolean): void {
+  if (!beforeDetails || entry.fenced || isDetailWrapper(entry.text)) {
+    return;
+  }
   const overlap = OVERLAP_FIELD.exec(entry.text);
   if (overlap) {
     const parts = /^(.+?)\s+[—–-]\s+(\S.*)$/.exec(overlap[1] ?? '');
@@ -617,9 +683,11 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[
   const constraint = CONSTRAINT_FIELD.exec(entry.text);
   if (constraint) {
     const value = constraint[1]?.trim() ?? '';
-    if (!value)
+    if (!value) {
       out.push(lint('task-map', entry.line, `Task ${task.id} Constraints must contain a task-specific instruction.`));
-    else task.constraints.push(value);
+    } else {
+      task.constraints.push(value);
+    }
     return;
   }
   const field = TASK_FIELD.exec(entry.text);
@@ -635,8 +703,10 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[
     return;
   }
   const trimmed = entry.text.trim();
-  if (trimmed.startsWith('|') || /^Text summary:\s*\S/i.test(trimmed)) return;
-  if (trimmed)
+  if (trimmed.startsWith('|') || /^Text summary:\s*\S/i.test(trimmed)) {
+    return;
+  }
+  if (trimmed) {
     out.push(
       lint(
         'task-map',
@@ -644,17 +714,20 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, out: LintDefect[
         `Task ${task.id} outcome belongs in Task Map; keep task-specific detail under Constraints or Overlap.`,
       ),
     );
+  }
 }
 
-function generatedInputs(raw: string | undefined, line: number, out: LintDefect[]): string[] {
+function generatedInputs(raw: string | undefined, line: number, out: Array<LintDefect>): Array<string> {
   const value = raw?.replace(/^[-*+]\s+Inputs:\s*/, '').trim();
   if (!value) {
     out.push(lint('generated-inputs', line, 'A [GENERATED] path requires a "- Inputs: <path>[, <path>...]" bullet.'));
     return [];
   }
   return value.split(',').flatMap((item) => {
-    const normalized = normalizePlanPath(item.replace(/`/g, ''));
-    if (normalized.path) return [normalized.path];
+    const normalized = normalizePlanPath(item.replaceAll('`', ''));
+    if (normalized.path) {
+      return [normalized.path];
+    }
     out.push(
       lint('generated-inputs', line, `Invalid generated input "${item.trim()}": ${normalized.reason ?? 'empty'}.`),
     );
@@ -663,13 +736,17 @@ function generatedInputs(raw: string | undefined, line: number, out: LintDefect[
 }
 
 /** Keep primary change detail and explicitly labelled file invariants in the owned brief. */
-function changeNote(block: readonly string[]): string {
+function changeNote(block: ReadonlyArray<string>): string {
   const labelled = block.findIndex((text) => /^[-*+]\s+(?:Changes|Purpose):/.test(text));
   const continuations = (index: number) => {
-    const result: string[] = [];
+    const result: Array<string> = [];
     for (const text of block.slice(index + 1)) {
-      if (/^[-*+]\s/.test(text) || /^\S/.test(text)) break;
-      if (text.trim()) result.push(text);
+      if (/^[-*+]\s/.test(text) || /^\S/.test(text)) {
+        break;
+      }
+      if (text.trim()) {
+        result.push(text);
+      }
     }
     return result;
   };
@@ -704,7 +781,7 @@ function excluded(line: number, value: string): LintDefect {
 
 // SECTION: Verification and criteria
 
-function parseVerification(lines: readonly StructuralLine[], out: LintDefect[]): ParsedPlan['verification'] {
+function parseVerification(lines: ReadonlyArray<StructuralLine>, out: Array<LintDefect>): ParsedPlan['verification'] {
   const empty = { automated: [], none: null, manual: [] };
   const ranges = sectionRanges(lines, '## Verification Plan');
   const range = ranges[0];
@@ -714,38 +791,48 @@ function parseVerification(lines: readonly StructuralLine[], out: LintDefect[]):
   }
   const headings = lines.flatMap((entry, index) => (entry.text.trimEnd() === '### Automated Tests' ? [index] : []));
   const owned = headings.filter((index) => index > range.start && index < range.end);
-  if (owned.length !== 1)
+  if (owned.length !== 1) {
     out.push(lint('automated-tests', null, 'Expected exactly one ### Automated Tests under Verification Plan.'));
-  if (headings.some((index) => !owned.includes(index)))
+  }
+  if (headings.some((index) => !owned.includes(index))) {
     out.push(lint('automated-tests-owner', null, 'Automated Tests must belong to Verification Plan.'));
+  }
   const start = owned[0];
-  if (owned.length !== 1 || start === undefined) return empty;
+  if (owned.length !== 1 || start === undefined) {
+    return empty;
+  }
   const subsection = (from: number) => {
     let end = range.end;
-    for (let index = from + 1; index < end; index++)
+    for (let index = from + 1; index < end; index++) {
       if (/^#{2,3}\s+/.test(lines[index]?.text ?? '')) {
         end = index;
         break;
       }
+    }
     return lines.slice(from + 1, end);
   };
   const section = subsection(start);
-  const automated: string[] = [];
+  const automated: Array<string> = [];
   for (const entry of section) {
     const direct = /^-\s+`([^`]+)`\s*$/.exec(entry.text)?.[1];
-    if (direct) automated.push(direct.trim());
-    if (/^-\s+.*`[^`]+`.*`[^`]+`/.test(entry.text))
+    if (direct) {
+      automated.push(direct.trim());
+    }
+    if (/^-\s+.*`[^`]+`.*`[^`]+`/.test(entry.text)) {
       out.push(lint('ambiguous-command', entry.line, 'Automated-test bullet contains multiple inline-code spans.'));
+    }
   }
   const noneEntry = section.find(({ text }) => /^-\s+None:\s*\S.*$/.test(text));
   const none = noneEntry ? noneEntry.text.replace(/^-\s+None:\s*/, '').trim() : null;
-  if (noneEntry)
+  if (noneEntry) {
     out.push(lint('automated-tests-unavailable', noneEntry.line, 'Automated tests are explicitly unavailable.'));
+  }
   // Fenced commands are not parsed into `automated`, so they cannot satisfy the section.
-  if (!automated.length && !noneEntry)
+  if (!automated.length && !noneEntry) {
     out.push(
       lint('automated-command', lines[start]?.line ?? null, 'Automated Tests requires a command or - None: <reason>.'),
     );
+  }
   const manualIndex = lines.findIndex(
     (entry, index) => index > range.start && index < range.end && entry.text.trimEnd() === '### Manual Verification',
   );
@@ -757,10 +844,10 @@ function parseVerification(lines: readonly StructuralLine[], out: LintDefect[]):
 }
 
 function parseCriteria(
-  lines: readonly StructuralLine[],
-  changes: readonly PlanChange[],
-  out: LintDefect[],
-): Criterion[] {
+  lines: ReadonlyArray<StructuralLine>,
+  changes: ReadonlyArray<PlanChange>,
+  out: Array<LintDefect>,
+): Array<Criterion> {
   const ranges = sectionRanges(lines, '## Success Criteria');
   if (!ranges.length) {
     out.push(lint('missing-success-criteria', null, 'Plan has no Success Criteria section.'));
@@ -773,16 +860,20 @@ function parseCriteria(
   }
   const approved = new Set(changes.map((change) => change.path));
   const ids = new Set<string>();
-  const criteria: Criterion[] = [];
+  const criteria: Array<Criterion> = [];
   let current: Criterion | null = null;
   const finish = () => {
     if (current) {
       finishCriterion(current, out);
-      if (current.valid) criteria.push(current);
+      if (current.valid) {
+        criteria.push(current);
+      }
     }
   };
   for (const entry of lines.slice(range.start + 1, range.end)) {
-    if (isDetailWrapper(entry.text)) continue;
+    if (isDetailWrapper(entry.text)) {
+      continue;
+    }
     if (entry.text.trim().startsWith('|')) {
       out.push(lint('criterion-format', entry.line, 'Success Criteria requires detailed [SC#] entries.'));
       continue;
@@ -793,10 +884,12 @@ function parseCriteria(
       current = startCriterion(item, entry.line, ids, out);
       continue;
     }
-    if (current) readMapping(current, entry, approved, out);
+    if (current) {
+      readMapping(current, entry, approved, out);
+    }
   }
   finish();
-  if (!ids.size)
+  if (!ids.size) {
     out.push(
       lint(
         'success-criteria',
@@ -804,10 +897,11 @@ function parseCriteria(
         'Success Criteria requires at least one detailed [SC#] entry.',
       ),
     );
+  }
   return criteria;
 }
 
-function startCriterion(text: string, line: number, ids: Set<string>, out: LintDefect[]): Criterion {
+function startCriterion(text: string, line: number, ids: Set<string>, out: Array<LintDefect>): Criterion {
   const id = criterionHeading(text);
   const base: Criterion = {
     id: '',
@@ -839,7 +933,9 @@ function startCriterion(text: string, line: number, ids: Set<string>, out: LintD
     out.push(lint('criterion-id', line, 'Success criterion requires a stable [SC#] identifier.'));
     return base;
   }
-  if (ids.has(id.id)) out.push(lint('criterion-id', line, `Duplicate criterion ${id.id}.`));
+  if (ids.has(id.id)) {
+    out.push(lint('criterion-id', line, `Duplicate criterion ${id.id}.`));
+  }
   ids.add(id.id);
   return { ...base, id: id.id, title: id.title, valid: true };
 }
@@ -848,7 +944,7 @@ function readMapping(
   current: Criterion,
   entry: StructuralLine,
   approved: ReadonlySet<string>,
-  out: LintDefect[],
+  out: Array<LintDefect>,
 ): void {
   const field = (name: string) => new RegExp(`^ {2,}[-*+] ${name}:\\s*(.*)$`, 'i').exec(entry.text)?.[1]?.trim();
   const satisfies = field('Satisfies');
@@ -859,34 +955,41 @@ function readMapping(
         !out.some(
           (defect) => defect.code === 'missing-satisfies' && defect.line !== null && defect.line >= current.line,
         )
-      )
+      ) {
         out.push(lint('missing-satisfies', entry.line, 'Satisfies requires comma-separated REQ-<n> IDs.'));
-    } else current.satisfies = ids;
+      }
+    } else {
+      current.satisfies = ids;
+    }
   }
   const changes = field('Changes');
   if (changes !== undefined && changes !== '') {
     current.mapped = true;
-    const paths: string[] = [...current.changes];
+    const paths: Array<string> = [...current.changes];
     for (const value of changes.split(',')) {
       const normalized = normalizePlanPath(value);
-      if (normalized.path && EXCLUDED_CHANGE_PATH.test(normalized.path))
+      if (normalized.path && EXCLUDED_CHANGE_PATH.test(normalized.path)) {
         out.push(excluded(entry.line, normalized.path));
-      else if (!normalized.path || !approved.has(normalized.path))
+      } else if (!normalized.path || !approved.has(normalized.path)) {
         out.push(
           lint('criterion-change-path', entry.line, `Criterion references unknown change path "${value.trim()}".`),
         );
-      if (normalized.path) paths.push(normalized.path);
+      }
+      if (normalized.path) {
+        paths.push(normalized.path);
+      }
     }
     current.changes = paths;
   }
   const tests = field('Tests');
   if (tests !== undefined) {
     current.testsLine ??= entry.line;
-    const paths: string[] = [...current.tests];
+    const paths: Array<string> = [...current.tests];
     for (const value of tests.split(',')) {
       const normalized = normalizePlanPath(value);
-      if (normalized.path) paths.push(normalized.path);
-      else
+      if (normalized.path) {
+        paths.push(normalized.path);
+      } else {
         out.push(
           lint(
             'criterion-tests-path',
@@ -894,6 +997,7 @@ function readMapping(
             `Tests requires comma-separated relative test paths; "${value.trim()}" is ${normalized.reason}.`,
           ),
         );
+      }
     }
     current.tests = [...new Set(paths)];
   }
@@ -901,19 +1005,22 @@ function readMapping(
   const redCommand = field('RED');
   if (redCommand !== undefined) {
     const command = /^`([^`]+)`\s*$/.exec(redCommand)?.[1]?.trim();
-    if (current.redCommandLine !== null)
+    if (current.redCommandLine !== null) {
       out.push(lint('criterion-red-command', entry.line, 'Criterion requires at most one RED command.'));
-    else if (!command)
+    } else if (!command) {
       out.push(lint('criterion-red-command', entry.line, 'RED requires exactly one inline-code command.'));
-    else current.red = command;
+    } else {
+      current.red = command;
+    }
     current.redCommandLine = entry.line;
   }
   const check = field('Check');
   if (check !== undefined) {
     current.mapped = true;
     const command = /^`([^`]+)`\s*$/.exec(check);
-    if (!command?.[1]) out.push(lint('criterion-check', entry.line, 'Check requires exactly one inline-code command.'));
-    else {
+    if (!command?.[1]) {
+      out.push(lint('criterion-check', entry.line, 'Check requires exactly one inline-code command.'));
+    } else {
       current.verify = [...current.verify, { command: command[1].trim() }];
       current.verifyLines = [...current.verifyLines, entry.line];
     }
@@ -923,16 +1030,18 @@ function readMapping(
   }
   const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(entry.text)?.[1];
   if (evidence) {
-    if (current.evidenceRaw !== null)
+    if (current.evidenceRaw !== null) {
       out.push(lint('criterion-evidence', entry.line, 'Criterion requires exactly one Evidence mapping.'));
+    }
     current.evidenceRaw = evidence.toLowerCase();
     current.evidenceLine = entry.line;
     current.evidence = EVIDENCE.find((item) => item === current.evidenceRaw) ?? null;
   }
   const preExisting = field('Pre-existing');
   if (preExisting !== undefined) {
-    if (!/^(yes|no)$/i.test(preExisting))
+    if (!/^(yes|no)$/i.test(preExisting)) {
       out.push(lint('criterion-format', entry.line, 'Pre-existing must be yes or no.'));
+    }
     current.preExisting = /^yes$/i.test(preExisting);
   }
   const review = field('Review');
@@ -946,18 +1055,24 @@ function readMapping(
     current.redLine = entry.line;
   }
   const integration = field('Integration');
-  if (integration !== undefined) current.integration = integration;
+  if (integration !== undefined) {
+    current.integration = integration;
+  }
   const enforcement = field('Enforcement infeasibility');
-  if (enforcement !== undefined && enforcement.trim()) current.enforcementInfeasibility = enforcement.trim();
+  if (enforcement !== undefined && enforcement.trim()) {
+    current.enforcementInfeasibility = enforcement.trim();
+  }
 }
 
 /** A test-like Changes path outside every `Tests:` cannot feed RED capture, so the author declares it or confirms it is not a test. */
-function lintUndeclaredTestPaths(criteria: readonly Criterion[], out: LintDefect[]): void {
+function lintUndeclaredTestPaths(criteria: ReadonlyArray<Criterion>, out: Array<LintDefect>): void {
   const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
   const warned = new Set<string>();
   for (const criterion of criteria) {
     for (const path of criterion.changes) {
-      if (declared.has(path) || warned.has(path) || !isTestPath(path) || isTestSupportPath(path)) continue;
+      if (declared.has(path) || warned.has(path) || !isTestPath(path) || isTestSupportPath(path)) {
+        continue;
+      }
       warned.add(path);
       out.push(
         lint(
@@ -971,81 +1086,101 @@ function lintUndeclaredTestPaths(criteria: readonly Criterion[], out: LintDefect
 }
 
 /** Criterion IDs plus finding IDs recorded under Review Findings, which governedText strips. */
-function collectPlanIds(lines: readonly StructuralLine[], criteria: readonly Criterion[]): string[] {
+function collectPlanIds(lines: ReadonlyArray<StructuralLine>, criteria: ReadonlyArray<Criterion>): Array<string> {
   const ids = new Set(criteria.map((criterion) => criterion.id));
   for (const range of sectionRanges(lines, RESOLUTION_HEADING)) {
-    for (const { text } of lines.slice(range.start + 1, range.end))
-      for (const id of text.match(FINDING_ID) ?? []) ids.add(id.toUpperCase());
+    for (const { text } of lines.slice(range.start + 1, range.end)) {
+      for (const id of text.match(FINDING_ID) ?? []) {
+        ids.add(id.toUpperCase());
+      }
+    }
   }
   return [...ids].sort();
 }
 
 /** Tests outlive plans, so Check commands and test file names must not carry plan-scoped IDs. */
 function lintPlanIdNames(
-  criteria: readonly Criterion[],
-  changes: readonly PlanChange[],
-  ids: readonly string[],
-  out: LintDefect[],
+  criteria: ReadonlyArray<Criterion>,
+  changes: ReadonlyArray<PlanChange>,
+  ids: ReadonlyArray<string>,
+  out: Array<LintDefect>,
 ): void {
   const pattern = planIdPattern(ids);
-  if (!pattern) return;
+  if (!pattern) {
+    return;
+  }
   const check = (where: string, value: string, line: number) => {
     const id = pattern.exec(value)?.[0];
-    if (id)
+    if (id) {
       out.push(
         lint('plan-id-in-test-name', line, `${where} names plan ID ${id.toUpperCase()}; name the behavior instead.`),
       );
+    }
   };
   for (const criterion of criteria) {
     criterion.verify.forEach((item, index) =>
       check(`Criterion ${criterion.id} Check`, item.command, criterion.verifyLines[index] ?? criterion.line),
     );
-    if (criterion.red !== null)
+    if (criterion.red !== null) {
       check(`Criterion ${criterion.id} RED`, criterion.red, criterion.redCommandLine ?? criterion.line);
+    }
   }
   const declared = new Set(criteria.flatMap((criterion) => criterion.tests));
   for (const change of changes) {
-    if (declared.has(change.path))
+    if (declared.has(change.path)) {
       check(`Test path ${change.path}`, change.path.slice(change.path.lastIndexOf('/') + 1), change.line);
+    }
   }
 }
 
 /** `- Seams: <entry>[, <entry>...]` bullets directly under Verification Plan, before its first subsection. */
-function parseSeamDeclarations(lines: readonly StructuralLine[]): { value: string }[] {
+function parseSeamDeclarations(lines: ReadonlyArray<StructuralLine>): Array<{ value: string }> {
   const range = sectionRanges(lines, '## Verification Plan')[0];
-  if (!range) return [];
-  const declarations: { value: string }[] = [];
+  if (!range) {
+    return [];
+  }
+  const declarations: Array<{ value: string }> = [];
   for (const { text } of lines.slice(range.start + 1, range.end)) {
-    if (/^###\s/.test(text)) break;
+    if (/^###\s/.test(text)) {
+      break;
+    }
     const value = /^[-*+]\s+Seams:\s*(.*?)\s*$/i.exec(text)?.[1];
-    if (value !== undefined) declarations.push({ value });
+    if (value !== undefined) {
+      declarations.push({ value });
+    }
   }
   return declarations;
 }
 
-function seamsFromDeclarations(declarations: readonly { value: string }[]): string[] {
-  const seams: string[] = [];
+function seamsFromDeclarations(declarations: ReadonlyArray<{ value: string }>): Array<string> {
+  const seams: Array<string> = [];
   for (const { value } of declarations) {
-    if (/^none$/i.test(value)) continue;
+    if (/^none$/i.test(value)) {
+      continue;
+    }
     // A comma inside a code span belongs to its entry.
     for (const item of value.match(/(?:`[^`]*`|[^,])+/g) ?? []) {
-      const seam = item.replace(/`/g, '').trim();
-      if (seam) seams.push(seam);
+      const seam = item.replaceAll('`', '').trim();
+      if (seam) {
+        seams.push(seam);
+      }
     }
   }
   return seams;
 }
 
-function finishCriterion(current: Criterion, out: LintDefect[]): void {
+function finishCriterion(current: Criterion, out: Array<LintDefect>): void {
   if (
     !current.satisfies?.length &&
     !out.some((defect) => defect.code === 'missing-satisfies' && defect.line !== null && defect.line >= current.line)
-  )
+  ) {
     out.push(lint('missing-satisfies', current.line, 'Criterion requires Satisfies: REQ-<n>.'));
+  }
   const name = current.id || 'without an ID';
-  if (!current.mapped)
+  if (!current.mapped) {
     out.push(lint('criterion-mapping', current.line, 'Criterion requires Changes or Check mapping.'));
-  if (current.evidenceRaw === null)
+  }
+  if (current.evidenceRaw === null) {
     out.push(
       lint(
         'criterion-evidence',
@@ -1053,7 +1188,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
         `Criterion ${name} requires exactly one Evidence mapping: red, check, or review.`,
       ),
     );
-  else if (!current.evidence)
+  } else if (!current.evidence) {
     out.push(
       lint(
         'criterion-evidence',
@@ -1061,6 +1196,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
         `Unknown Evidence class "${current.evidenceRaw}"; accepted classes are red, check, review.`,
       ),
     );
+  }
   if (current.redException !== null && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) {
     out.push(
       lint(
@@ -1112,7 +1248,9 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
       ),
     );
   }
-  if (current.evidence !== 'review') return;
+  if (current.evidence !== 'review') {
+    return;
+  }
   if (current.review === null) {
     out.push(
       lint(
@@ -1124,13 +1262,15 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
     return;
   }
   // Each label needs a non-empty value up to the next `;`.
-  if (!/(?:artifact|file|path)\s*:\s*[^;\s]/i.test(current.review))
+  if (!/(?:artifact|file|path)\s*:\s*[^;\s]/i.test(current.review)) {
     out.push(
       lint('criterion-review', current.reviewLine, 'Review must name the artifact with artifact:, file:, or path:.'),
     );
-  if (!/scenario\s*:\s*[^;\s]/i.test(current.review))
+  }
+  if (!/scenario\s*:\s*[^;\s]/i.test(current.review)) {
     out.push(lint('criterion-review', current.reviewLine, 'Review must name a bounded scenario with scenario:.'));
-  if (!/(?:pass|observable)\s*:\s*[^;\s]/i.test(current.review))
+  }
+  if (!/(?:pass|observable)\s*:\s*[^;\s]/i.test(current.review)) {
     out.push(
       lint(
         'criterion-review',
@@ -1138,6 +1278,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
         'Review must name the observable pass condition with pass: or observable:.',
       ),
     );
+  }
   if (current.critical && current.enforcementInfeasibility === null) {
     out.push(
       lint(

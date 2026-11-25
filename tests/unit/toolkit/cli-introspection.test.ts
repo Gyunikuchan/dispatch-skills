@@ -7,7 +7,56 @@ import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-pro
 import type { DelegateRequest, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { main, nodeDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { narrow } from './helpers/json.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+
+function withSettleGroup(port: typeof nodeProcess): Required<typeof nodeProcess> {
+  return narrow(
+    port,
+    (value): value is Required<typeof nodeProcess> =>
+      typeof value === 'object' && value !== null && 'settleGroup' in value && typeof value.settleGroup === 'function',
+  );
+}
+
+const unusedRequest = (): DelegateRequest => ({
+  promptPath: '/unused',
+  model: null,
+  effort: null,
+  sandbox: true,
+  schemaPath: null,
+  resume: null,
+  cwd: process.cwd(),
+  timeoutMs: 1000,
+  outputCapBytes: 1024,
+  attachments: [],
+  logPath: '/unused',
+  briefPath: '/unused',
+});
+
+function deferredResult() {
+  let resolve!: (value: ProcessResult) => void;
+  const done = new Promise<ProcessResult>((settle) => {
+    resolve = settle;
+  });
+  return { done, resolve };
+}
+
+const taskResult = (stderrTail = '', stdout = '[]'): ProcessResult => ({
+  exit: stderrTail ? 2 : 0,
+  signal: null,
+  stdout,
+  stdoutPath: '/unused',
+  stderrTail,
+  durationMs: 0,
+  timedOut: false,
+  truncated: false,
+});
+
+const flush = async () => {
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
+};
 
 test('OpenCode preparation classifies bounded lifecycle failures through the native delegate caller', async (t) => {
   const request: DelegateRequest = {
@@ -18,67 +67,55 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
     schemaPath: null,
     resume: null,
     cwd: process.cwd(),
-    timeoutMs: 60000,
+    timeoutMs: 60_000,
     agent: null,
     outputCapBytes: 1000,
     attachments: [],
     logPath: '/unused',
     briefPath: '/unused',
   };
-  const result = (stderrTail = '', stdout = '[]'): ProcessResult => ({
-    exit: stderrTail ? 2 : 0,
-    signal: null,
-    stdout,
-    stdoutPath: '/unused',
-    stderrTail,
-    durationMs: 0,
-    timedOut: false,
-    truncated: false,
-  });
+
   t.mock.timers.enable();
   t.mock.method(fs, 'existsSync', () => true);
   t.mock.method(fs, 'statSync', () => ({ isFile: () => true, mode: 0o755 }));
   t.mock.method(fs, 'readdirSync', () => []);
   t.mock.method(fs, 'unlinkSync', () => {});
   let currentScenario = '';
-  let settle: (value: ProcessResult) => void = () => {};
-  let childDone = new Promise<ProcessResult>((resolve) => {
-    settle = resolve;
-  });
-  let launches: string[][] = [];
-  t.mock.method(nodeProcess, 'start', (launch: { argv: string[] }) => {
+  let child = deferredResult();
+  let launches: Array<Array<string>> = [];
+  t.mock.method(nodeProcess, 'start', (launch: { argv: Array<string> }) => {
     launches.push(launch.argv);
     if (launch.argv[0] === 'taskkill') {
       if (currentScenario === 'killer-unconfirmed') {
-        settle(result());
+        child.resolve(taskResult());
         return { pid: 2, done: new Promise(() => {}) };
       }
-      if (currentScenario === 'timeout') settle(result('terminated'));
-      return { pid: 2, done: Promise.resolve(result()) };
+      if (currentScenario === 'timeout') {
+        child.resolve(taskResult('terminated'));
+      }
+      return { pid: 2, done: Promise.resolve(taskResult()) };
     }
     return {
       pid: currentScenario === 'spawn-failure' ? -1 : 50,
       done:
         currentScenario === 'unsupported'
-          ? Promise.resolve(result('Unrecognized flag: --standalone in command opencode debug config'))
+          ? Promise.resolve(taskResult('Unrecognized flag: --standalone in command opencode debug config'))
           : currentScenario === 'permission'
-            ? Promise.resolve(result('permission denied'))
+            ? Promise.resolve(taskResult('permission denied'))
             : currentScenario === 'group-unconfirmed'
-              ? Promise.resolve(result())
+              ? Promise.resolve(taskResult())
               : currentScenario === 'invalid-json'
-                ? Promise.resolve(result('', 'credential-must-not-leak'))
-                : childDone,
+                ? Promise.resolve(taskResult('', 'credential-must-not-leak'))
+                : child.done,
     };
   });
-  t.mock.method(
-    nodeProcess as Required<typeof nodeProcess>,
-    'settleGroup',
-    async () => currentScenario !== 'group-unconfirmed',
-  );
+  t.mock.method(withSettleGroup(nodeProcess), 'settleGroup', async () => currentScenario !== 'group-unconfirmed');
   let signals = 0;
   t.mock.method(nodeProcess, 'signal', () => {
     signals++;
-    if (currentScenario === 'timeout') settle(result('terminated'));
+    if (currentScenario === 'timeout') {
+      child.resolve(taskResult('terminated'));
+    }
   });
 
   for (const scenario of [
@@ -91,13 +128,13 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
     'group-unconfirmed',
     'spawn-failure',
   ] as const) {
-    if (scenario === 'killer-unconfirmed' && process.platform !== 'win32') continue;
+    if (scenario === 'killer-unconfirmed' && process.platform !== 'win32') {
+      continue;
+    }
     currentScenario = scenario;
     signals = 0;
     launches = [];
-    childDone = new Promise<ProcessResult>((resolve) => {
-      settle = resolve;
-    });
+    child = deferredResult();
     let restorePlatform: (() => void) | undefined;
     if (scenario === 'group-unconfirmed') {
       const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -106,15 +143,14 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
     }
     try {
       const pending = nodeDeps().delegate('opencode', request, 'cli');
-      const flush = async () => {
-        for (let i = 0; i < 12; i++) await Promise.resolve();
-      };
+
       await flush();
       if (['child-unconfirmed', 'killer-unconfirmed', 'timeout', 'spawn-failure'].includes(scenario)) {
-        t.mock.timers.tick(10000);
+        t.mock.timers.tick(10_000);
         await flush();
-        if (scenario === 'spawn-failure') settle(result('spawn opencode ENOENT'));
-        else {
+        if (scenario === 'spawn-failure') {
+          child.resolve(taskResult('spawn opencode ENOENT'));
+        } else {
           t.mock.timers.tick(1000);
           await flush();
         }
@@ -127,7 +163,9 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
       assert.equal(settled, true, 'inspection must settle at the per-command deadline plus grace');
       const run = await pending;
       assert.equal(run.outcome.status, 'fail');
-      if (run.outcome.status !== 'fail') return;
+      if (run.outcome.status !== 'fail') {
+        return;
+      }
       assert.equal(
         run.outcome.cls,
         ['child-unconfirmed', 'killer-unconfirmed', 'timeout', 'group-unconfirmed'].includes(scenario)
@@ -136,8 +174,9 @@ test('OpenCode preparation classifies bounded lifecycle failures through the nat
         run.outcome.detail,
       );
       assert.doesNotMatch(run.outcome.detail, /credential-must-not-leak/);
-      if (run.outcome.cls === 'timeout')
+      if (run.outcome.cls === 'timeout') {
         assert.match(run.outcome.detail, /effective-config-unverified: opencode-lifecycle-timeout/);
+      }
       assert.equal(run.invocations[0]?.launched, false);
       assert.equal(launches.filter((argv) => argv[0] !== 'taskkill').length, 1);
       assert.deepEqual(launches[0]?.slice(-3), ['--standalone', 'debug', 'config']);
@@ -160,7 +199,7 @@ test('OpenCode inspection preserves an in-budget result when confirmed group set
   Object.defineProperty(process, 'platform', { ...descriptor, value: 'linux' });
   t.after(() => Object.defineProperty(process, 'platform', descriptor));
   t.mock.method(fs, 'unlinkSync', () => {});
-  const request = { cwd: process.cwd(), logPath: '/unused' } as DelegateRequest;
+  const request = unusedRequest();
   for (const scenario of ['success', 'nonzero', 'truncated'] as const) {
     let finish!: (result: ProcessResult) => void;
     let confirm!: (value: boolean) => void;
@@ -171,7 +210,7 @@ test('OpenCode inspection preserves an in-budget result when confirmed group set
       }),
     }));
     t.mock.method(
-      nodeProcess as Required<typeof nodeProcess>,
+      withSettleGroup(nodeProcess),
       'settleGroup',
       () =>
         new Promise<boolean>((resolve) => {
@@ -181,7 +220,7 @@ test('OpenCode inspection preserves an in-budget result when confirmed group set
     const pending = nativeOpencodeIntrospection('opencode', request, {}, 100)('config');
     const checked = pending.then(
       (value) => ({ value, error: null }),
-      (error) => ({ value: null, error: String(error) }),
+      (error: unknown) => ({ value: null, error: String(error) }),
     );
     t.mock.timers.tick(90);
     finish({
@@ -194,12 +233,17 @@ test('OpenCode inspection preserves an in-budget result when confirmed group set
       timedOut: false,
       truncated: scenario === 'truncated',
     });
-    for (let i = 0; i < 8; i++) await Promise.resolve();
+    for (let i = 0; i < 8; i++) {
+      await Promise.resolve();
+    }
     t.mock.timers.tick(100);
     confirm(true);
     const result = await checked;
-    if (scenario === 'success') assert.deepEqual(result, { value: [], error: null });
-    else assert.match(result.error ?? '', /effective-config-unverified: native introspection failed/);
+    if (scenario === 'success') {
+      assert.deepEqual(result, { value: [], error: null });
+    } else {
+      assert.match(result.error ?? '', /effective-config-unverified: native introspection failed/);
+    }
   }
 });
 
@@ -209,7 +253,7 @@ test('tool calls take the orchestrator from the recorded host and ignore env pla
     const manifestFile = path.join(f.session, 'manifest.json');
     const setHost = (host: unknown) =>
       fs.writeFileSync(manifestFile, JSON.stringify({ ...readManifest(f.session), host }));
-    const seen: unknown[] = [];
+    const seen: Array<unknown> = [];
     const base = {
       ...f.deps,
       handler: async ({ deps }: { deps: { orchestrator: unknown } }) => {
@@ -256,8 +300,8 @@ test('blocked sandbox starts no introspection and returns the runner refusal', a
   // Neither OpenCode nor Claude has a delegate sandbox on native Windows.
   Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' });
   t.after(() => Object.defineProperty(process, 'platform', descriptor));
-  const started: string[][] = [];
-  t.mock.method(nodeProcess, 'start', (launch: { argv: string[] }) => {
+  const started: Array<Array<string>> = [];
+  t.mock.method(nodeProcess, 'start', (launch: { argv: Array<string> }) => {
     started.push(launch.argv);
     return {
       pid: 50,
@@ -282,7 +326,7 @@ test('blocked sandbox starts no introspection and returns the runner refusal', a
     schemaPath: null,
     resume: null,
     cwd: process.cwd(),
-    timeoutMs: 60000,
+    timeoutMs: 60_000,
     agent: null,
     outputCapBytes: 1000,
     attachments: [],
@@ -292,9 +336,22 @@ test('blocked sandbox starts no introspection and returns the runner refusal', a
   const run = await deps.delegate('opencode', request, 'cli');
   assert.deepEqual(started, []);
   assert.equal(run.outcome.status, 'fail');
-  if (run.outcome.status === 'fail') assert.equal(run.outcome.cls, 'sandbox-unsupported');
+  if (run.outcome.status === 'fail') {
+    assert.equal(run.outcome.cls, 'sandbox-unsupported');
+  }
   assert.equal(run.invocations[0]?.launched, false);
   assert.deepEqual(deps.sandboxSupported, { claude: false, agy: true, copilot: true, opencode: false, codex: true });
+});
+
+const streamResult = (stdout: string, stderrTail = ''): ProcessResult => ({
+  exit: stderrTail ? 137 : 0,
+  signal: null,
+  stdout,
+  stdoutPath: '/unused',
+  stderrTail,
+  durationMs: 0,
+  timedOut: false,
+  truncated: false,
 });
 
 test('introspection allows 10000 ms per command and fails past it', async (t) => {
@@ -303,17 +360,8 @@ test('introspection allows 10000 ms per command and fails past it', async (t) =>
   Object.defineProperty(process, 'platform', { ...descriptor, value: 'linux' });
   t.after(() => Object.defineProperty(process, 'platform', descriptor));
   t.mock.method(fs, 'unlinkSync', () => {});
-  t.mock.method(nodeProcess as Required<typeof nodeProcess>, 'settleGroup', async () => true);
-  const result = (stdout: string, stderrTail = ''): ProcessResult => ({
-    exit: stderrTail ? 137 : 0,
-    signal: null,
-    stdout,
-    stdoutPath: '/unused',
-    stderrTail,
-    durationMs: 0,
-    timedOut: false,
-    truncated: false,
-  });
+  t.mock.method(withSettleGroup(nodeProcess), 'settleGroup', async () => true);
+
   let finish!: (value: ProcessResult) => void;
   t.mock.method(nodeProcess, 'start', () => ({
     pid: 50,
@@ -321,31 +369,29 @@ test('introspection allows 10000 ms per command and fails past it', async (t) =>
       finish = resolve;
     }),
   }));
-  t.mock.method(nodeProcess, 'signal', () => finish(result('', 'killed')));
-  const request = { cwd: process.cwd(), logPath: '/unused' } as DelegateRequest;
-  const flush = async () => {
-    for (let i = 0; i < 12; i++) await Promise.resolve();
-  };
+  t.mock.method(nodeProcess, 'signal', () => finish(streamResult('', 'killed')));
+  const request = unusedRequest();
+
   const inspect = () =>
     nativeOpencodeIntrospection(
       'opencode',
       request,
       {},
-      60000,
+      60_000,
     )('config').then(
       (value) => ({ value, error: '' }),
-      (error) => ({ value: null, error: String(error) }),
+      (error: unknown) => ({ value: null, error: String(error) }),
     );
 
   const slow = inspect();
   t.mock.timers.tick(9999);
   await flush();
-  finish(result('[]'));
+  finish(streamResult('[]'));
   await flush();
   assert.deepEqual(await slow, { value: [], error: '' });
 
   const hung = inspect();
-  t.mock.timers.tick(10000);
+  t.mock.timers.tick(10_000);
   await flush();
   assert.match((await hung).error, /effective-config-unverified: opencode-lifecycle-timeout/);
 });

@@ -7,8 +7,8 @@ import { MAX_FILE_BYTES } from '../../../../skills/dispatch/scripts/lib/usage/re
 import type { HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
+function encodeVarint(val: number | bigint): Array<number> {
+  const bytes: Array<number> = [];
   let n = BigInt(val);
   while (n > 0x7fn) {
     bytes.push(Number((n & 0x7fn) | 0x80n));
@@ -18,11 +18,11 @@ function encodeVarint(val: number | bigint): number[] {
   return bytes;
 }
 
-function encodeTag(fieldNum: number, wireType: number): number[] {
+function encodeTag(fieldNum: number, wireType: number): Array<number> {
   return encodeVarint((fieldNum << 3) | wireType);
 }
 
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
+function encodeLengthDelimited(fieldNum: number, content: Uint8Array | Array<number> | string): Array<number> {
   const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
   return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
 }
@@ -36,14 +36,26 @@ function buildGenMetadataBlob(options: {
   displayName?: string;
   lastStepIndex?: number;
 }): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  const tag1Fields: Array<number> = [];
+  const counters: Array<number> = [];
+  if (options.input !== undefined) {
+    counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
+  }
+  if (options.output !== undefined) {
+    counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
+  }
+  if (options.cacheRead !== undefined) {
+    counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
+  }
+  if (options.reasoning !== undefined) {
+    counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
+  }
+  if (counters.length > 0) {
+    tag1Fields.push(...encodeLengthDelimited(4, counters));
+  }
+  if (options.modelSlug !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  }
   if (options.lastStepIndex !== undefined) {
     const kv = [
       ...encodeLengthDelimited(1, 'last_step_index'),
@@ -51,22 +63,26 @@ function buildGenMetadataBlob(options: {
     ];
     tag1Fields.push(...encodeLengthDelimited(20, kv));
   }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  if (options.displayName !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  }
   return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
 
 function createAgyFs(
   files: Record<string, string | Buffer>,
   times: Record<string, number> = {},
-  sqliteDbs: Record<string, readonly Uint8Array[] | (() => readonly Uint8Array[])> = {},
-): HostUsageFs & { reads: string[] } {
+  sqliteDbs: Record<string, ReadonlyArray<Uint8Array> | (() => ReadonlyArray<Uint8Array>)> = {},
+): HostUsageFs & { reads: Array<string> } {
   const base = memoryFs(files, times);
   return {
     ...base,
     sqliteGenMetadata: (file: string) => {
       const normalized = path.normalize(file);
       const entry = sqliteDbs[normalized] ?? sqliteDbs[file];
-      if (typeof entry === 'function') return entry();
+      if (typeof entry === 'function') {
+        return entry();
+      }
       return entry ?? null;
     },
   };
@@ -104,7 +120,7 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
   const hostOutOfWindow = {
     step_index: 8,
     type: 'PLANNER_RESPONSE',
-    created_at: new Date(25000).toISOString(),
+    created_at: new Date(25_000).toISOString(),
     input_tokens: 500,
     output_tokens: 50,
   };
@@ -205,7 +221,7 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
   const grandchildTranscript = path.join(root, 'brain', grandchildId, '.system_generated', 'logs', 'transcript.jsonl');
   const grandchildDb = path.join(root, 'conversations', `${grandchildId}.db`);
 
-  const files: Record<string, string | Buffer> = {
+  const files = {
     [hostTranscript]: lines(hostStep0, hostGeneric, hostStep1, hostOutOfWindow),
     [hostDb]: Buffer.alloc(10),
     [child1Descriptor]: JSON.stringify({
@@ -233,7 +249,7 @@ test('turns: agy collects host and recursive subagent usage row fields with gen_
       ...query,
       sessionId: hostId,
       startMs: 1000,
-      endMs: 10000,
+      endMs: 10_000,
       stages: [
         { stage: 'spec', atMs: 1000 },
         { stage: 'plan', atMs: 2000 },
@@ -515,7 +531,7 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
 
   // 5. Live-first 256 candidate cap with stale child filtering
   const subagentsDir = path.join(root, 'brain', hostId, '.system_generated', 'subagents');
-  const capFiles: Record<string, string | Buffer> = {
+  const capFiles = {
     [hostTranscript]: lines(hostStep),
   };
   const capTimes: Record<string, number> = {};
@@ -611,7 +627,7 @@ test('agy degrades without db and enforces budget size candidate caps and allowl
   assert.equal(resDescBudget.notes?.subagent?.['read budget reached'], 1);
 
   // Large descriptor (>64KiB) capped at 64KiB without exhausting budget when budget has room
-  const largeDescContent = JSON.stringify({ conversationId: child1Id, pad: 'x'.repeat(70000) });
+  const largeDescContent = JSON.stringify({ conversationId: child1Id, pad: 'x'.repeat(70_000) });
   const fsLargeDesc = createAgyFs({
     [hostTranscript]: lines(singleStep),
     [child1Descriptor]: largeDescContent,

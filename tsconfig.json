@@ -18,5 +18,12 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["skills/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", ".agents/skills/optimise-tests/**/*.ts", ".agents/skills/link-reader/**/*.ts"]
+  "include": [
+    "skills/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    ".agents/skills/audit-dispatch-skills/**/*.ts",
+    ".agents/skills/optimise-tests/**/*.ts",
+    ".agents/skills/link-reader/**/*.ts"
+  ]
 }

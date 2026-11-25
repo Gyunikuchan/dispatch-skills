@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-export function checkTerms(root: string): string[] {
-  const errors: string[] = [],
+export function checkTerms(root: string): Array<string> {
+  const errors: Array<string> = [],
     skills = path.resolve(root, 'skills');
-  if (!fs.existsSync(skills)) return [`${skills}: skills directory missing`];
+  if (!fs.existsSync(skills)) {
+    return [`${skills}: skills directory missing`];
+  }
   const glossary = path.join(skills, 'dispatch/references/glossary.md');
-  const banned: { word: string; term: string }[] = [];
+  const banned: Array<{ word: string; term: string }> = [];
   try {
     let column = -1;
     for (const line of fs.readFileSync(glossary, 'utf8').split(/\r?\n/)) {
@@ -15,7 +17,7 @@ export function checkTerms(root: string): string[] {
         continue;
       }
       const cells = line
-        .replace(/^\||\|$/g, '')
+        .replaceAll(/^\||\|$/g, '')
         .split('|')
         .map((cell) => cell.trim());
       const header = cells.findIndex((cell) => /^Banned synonyms?$/i.test(cell));
@@ -23,17 +25,22 @@ export function checkTerms(root: string): string[] {
         column = header;
         continue;
       }
-      if (column < 0 || cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
+      if (column < 0 || cells.every((cell) => /^:?-+:?$/.test(cell))) {
+        continue;
+      }
       for (const word of (cells[column] ?? '')
         .split(/[,/]/)
         .map((word) => word.trim())
-        .filter(Boolean))
+        .filter(Boolean)) {
         banned.push({ word, term: cells[0] ?? '' });
+      }
     }
   } catch (error) {
     return [`${glossary}: ${String(error)}`];
   }
-  if (!banned.length) return [`${glossary}: define a Banned synonym column`];
+  if (!banned.length) {
+    return [`${glossary}: define a Banned synonym column`];
+  }
   for (const relative of fs.readdirSync(skills, { recursive: true })) {
     const file = path.join(skills, String(relative));
     if (
@@ -42,8 +49,9 @@ export function checkTerms(root: string): string[] {
       file === glossary ||
       file.endsWith('README.md') ||
       file.includes(`${path.sep}readme${path.sep}`)
-    )
+    ) {
       continue;
+    }
     const text = fs.readFileSync(file, 'utf8');
     let fence = false;
     for (const [index, line] of text.split(/\r?\n/).entries()) {
@@ -51,20 +59,32 @@ export function checkTerms(root: string): string[] {
         fence = !fence;
         continue;
       }
-      if (fence) continue;
-      const prose = line.replace(/(`+)[^`]*?\1/g, ' ');
-      for (const { word, term } of banned)
-        if (new RegExp(`(?<![\\w-])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?(?![\\w-])`, 'i').test(prose))
+      if (fence) {
+        continue;
+      }
+      const prose = line.replaceAll(/(`+)[^`]*?\1/g, ' ');
+      for (const { word, term } of banned) {
+        if (
+          new RegExp(`(?<![\\w-])${word.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}s?(?![\\w-])`, 'i').test(
+            prose,
+          )
+        ) {
           errors.push(`${file}:${index + 1}: ${word} (use ${term})`);
+        }
+      }
     }
   }
   return errors;
 }
-export function toolingRoot(args: readonly string[]): string {
+export function toolingRoot(args: ReadonlyArray<string>): string {
   const index = args.indexOf('--root');
-  if (index < 0) return '.';
+  if (index < 0) {
+    return '.';
+  }
   const value = args[index + 1];
-  if (!value || value.startsWith('--')) throw new Error('--root requires a directory value');
+  if (!value || value.startsWith('--')) {
+    throw new Error('--root requires a directory value');
+  }
   return value;
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {

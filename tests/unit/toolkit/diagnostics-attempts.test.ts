@@ -1,30 +1,23 @@
+import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
-import {
-  optionalDiagnostics,
-  sessionFacts,
-  writeDiagnostics,
-} from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { heuristics, normalizeUsage } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
+import { sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { heuristics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { readDelegateSession } from '../../../skills/dispatch/scripts/lib/usage/delegate.ts';
 import { memoryFs } from '../lib/usage/helpers/memory-fs.ts';
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
+import type { DelegateRequest, ProviderUsageContext } from '../../../skills/dispatch/scripts/providers/types.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
+import { flag, narrow, shape, text } from './helpers/json.ts';
+import type { JsonValue } from './helpers/json.ts';
 import { sessionFixture } from './helpers/session.ts';
-import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
-import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+
 import { recoveryTargetHash } from '../../../skills/dispatch/scripts/toolkit/review-state.ts';
-import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
 
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -44,22 +37,6 @@ const rosterSlot = (
   model: options.model ?? 'model-a',
 });
 
-const finding = (
-  id: string,
-  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: string[] } = {},
-) => ({
-  id,
-  severity: marker.severity ?? 'SHOULD',
-  category: 'correctness',
-  locus: 'scripts/dispatch.ts:L1',
-  defect: `Finding ${id} describes a repeat`,
-  requiredChange: `Resolve ${id}`,
-  sources: marker.sources ?? ['claude[0]'],
-  scope: 'in',
-  ...(marker.recurrence ? { recurrence: marker.recurrence } : {}),
-  ...(marker.unresolved ? { unresolved: marker.unresolved } : {}),
-});
-
 const slotFile = (reviewDir: string, round: number, slot: string, generation = 1) =>
   path.join(reviewDir, `round-${round}`, `gen-${generation}`, 'slots', `${slot}.json`);
 
@@ -70,7 +47,7 @@ const roundSubject = (session: string, review: string, round: number, generation
     .digest('hex')
     .slice(0, 16);
 
-const captureRuns = (session: string, invocations: unknown[]) =>
+const captureRuns = (session: string, invocations: Array<unknown>) =>
   writeJson(path.join(session, '.state', 'diagnostics', 'run-1.json'), {
     capture: { state: 'completed', start: 0, end: 1 },
     phases: [],
@@ -101,26 +78,40 @@ const attempt = (
   launched: input.launched ?? true,
   outcome: input.outcome ?? 'ok',
   slot: input.slot,
-  ...(input.targetSlot ? { targetSlot: input.targetSlot } : {}),
-  ...(input.tokens === undefined ? {} : { usage: { input: input.tokens, output: 0 } }),
+  ...(input.targetSlot && { targetSlot: input.targetSlot }),
+  ...(!(input.tokens === undefined) && { usage: { input: input.tokens, output: 0 } }),
 });
 
-const ruling = (seq: number, review: string, id: string, value: string) => ({
-  seq,
-  key: `ruling-${seq}`,
-  at: `2026-01-01T00:00:0${seq}Z`,
-  kind: 'ruling',
-  by: 'tool',
-  data: { subject: `review:${review}:${id}`, ruling: value, rationale: 'Recorded.' },
-});
+const delegateReq = (logPath: string, targetSlot?: string): DelegateRequest => {
+  const req: DelegateRequest = {
+    promptPath: '/p.md',
+    model: null,
+    effort: null,
+    sandbox: false,
+    schemaPath: null,
+    resume: null,
+    cwd: '/repo',
+    timeoutMs: 5000,
+    outputCapBytes: 100,
+    attachments: [],
+    logPath,
+    briefPath: '/b.md',
+  };
+  if (targetSlot !== undefined) {
+    req.targetSlot = targetSlot;
+  }
+  return req;
+};
+
+type RoundOutcome = { slot: string; state?: string; cls?: string; responder?: JsonValue };
 
 function saveRound(input: {
   session: string;
   review: string;
   round: number;
-  roster: ReturnType<typeof rosterSlot>[];
-  outcomes: unknown[];
-  findings?: unknown[];
+  roster: Array<ReturnType<typeof rosterSlot>>;
+  outcomes: Array<RoundOutcome>;
+  findings?: Array<unknown>;
   generation?: number;
 }) {
   const generation = input.generation ?? 1;
@@ -138,8 +129,7 @@ function saveRound(input: {
     target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
   });
   input.outcomes.forEach((outcome) => {
-    const slot = (outcome as { slot: string }).slot;
-    writeJson(slotFile(reviewDir, input.round, slot, generation), outcome);
+    writeJson(slotFile(reviewDir, input.round, outcome.slot, generation), outcome);
   });
   if (input.findings) {
     writeJson(path.join(roundDir, 'findings.json'), {
@@ -149,156 +139,13 @@ function saveRound(input: {
       level: 'high',
       findings: input.findings,
       clusters: [],
-      failed: input.outcomes.filter((outcome) => (outcome as { state: string }).state === 'failed'),
+      failed: input.outcomes.filter((outcome) => outcome.state === 'failed'),
     });
   }
 }
 
-const hostTest_HEAD = 'a'.repeat(40);
-const hostTest_TREE = 'b'.repeat(40);
-
-function hostTest_planSource(): string {
-  return [
-    '# Report fixture',
-    '',
-    '## Task Map',
-    '| ID | Title | Outcome | Prerequisites | Criteria |',
-    '| --- | --- | --- | --- | --- |',
-    '| T1 | Task 1 | Works | none | SC1 |',
-    '',
-    '## Proposed Changes',
-    '',
-    '### T1 — Task 1',
-    '#### [NEW] src/task-1.ts',
-    '- Purpose: implements the fixture behavior.',
-    '',
-    '## Success Criteria',
-    '- [SC1] Criterion works',
-    '  - Changes: src/task-1.ts',
-    '  - Check: `node verify-1.js`',
-    '  - Evidence: check',
-    '',
-    '## Verification Plan',
-    '### Automated Tests',
-    '- `node verify-1.js`',
-    '- `node contract-check.js`',
-    '',
-  ].join('\n');
-}
-
-let hostTest_eventNumber = 0;
-
-async function hostTest_fixture() {
-  const f = sessionFixture({ memory: true });
-  const skillRoot = path.join(f.root, 'isolated-skill');
-  fs.mkdirSync(skillRoot);
-  fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
-  f.deps.skillRoot = skillRoot;
-  f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', hostTest_planSource());
-  await hostTest_append(f, {
-    kind: 'bind',
-    by: 'tool',
-    key: `bind:${++hostTest_eventNumber}`,
-    data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
-  });
-  return { ...f, skillRoot };
-}
-
-async function hostTest_invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
-  f.lines.splice(0);
-  const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
-  assert.equal(f.lines.length, 1);
-  return {
-    exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
-  };
-}
-
-async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
-  const file = f.artifact(`event-${++hostTest_eventNumber}.json`, JSON.stringify(record));
-  const result = await hostTest_invoke(f, 'ledger', 'append', file);
-  assert.equal(result.exit, 0, result.output.summary);
-  return result.output;
-}
-
-async function hostTest_integrate(
-  f: ReturnType<typeof sessionFixture>,
-  state: FakeGitState,
-  dest = { path: f.root, branch: 'main' },
-) {
-  const worktree = path.join(f.session, '.state', 'worktrees', 'integration');
-  fs.mkdirSync(worktree, { recursive: true });
-  state.session = f.session;
-  f.deps.run = fakeGit(state);
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:opened:${++hostTest_eventNumber}`,
-    data: {
-      phase: 'opened',
-      path: '.state/worktrees/integration',
-      branch: 'dispatch/test/integration',
-      base: 'f'.repeat(40),
-      dest,
-    },
-  });
-  return worktree;
-}
-
-async function hostTest_evidence(
-  f: ReturnType<typeof sessionFixture>,
-  criterion: string,
-  commandDigest: string,
-  tree: string,
-) {
-  const data = { criterion, commandDigest, tree, clean: true, before: tree, after: tree, exit: 0 };
-  const digest = crypto.createHash('sha256').update(stableValue(data)).digest('hex');
-  const evidencePath = `.state/evidence/${digest}.json`;
-  const evidenceFile = path.join(f.session, evidencePath);
-  fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
-  fs.writeFileSync(evidenceFile, JSON.stringify(data));
-  await hostTest_append(f, {
-    kind: 'evidence',
-    by: 'tool',
-    key: `evidence:${digest}`,
-    data: { ...data, path: evidencePath },
-  });
-  return evidencePath;
-}
-
-async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
-  const plan = loadPlan(f.session, readManifest(f.session));
-  const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
-  const paths = new Map<string, string>();
-  for (const row of rows) paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
-  return paths;
-}
-
-function hostTest_gitState(
-  session: string,
-  head = hostTest_HEAD,
-  tree = hostTest_TREE,
-  testedTree = tree,
-): FakeGitState {
-  return { session, head, tree, testedTree, changes: [], calls: [] };
-}
-
-async function hostTest_deliver(
-  f: ReturnType<typeof sessionFixture>,
-  head: string,
-  dest = { path: f.root, branch: 'main' },
-) {
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:delivered:${++hostTest_eventNumber}`,
-    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
-  });
-}
-
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
+function encodeVarint(val: number | bigint): Array<number> {
+  const bytes: Array<number> = [];
   let n = BigInt(val);
   while (n > 0x7fn) {
     bytes.push(Number((n & 0x7fn) | 0x80n));
@@ -307,10 +154,10 @@ function encodeVarint(val: number | bigint): number[] {
   bytes.push(Number(n & 0x7fn));
   return bytes;
 }
-function encodeTag(fieldNum: number, wireType: number): number[] {
+function encodeTag(fieldNum: number, wireType: number): Array<number> {
   return encodeVarint((fieldNum << 3) | wireType);
 }
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
+function encodeLengthDelimited(fieldNum: number, content: Uint8Array | Array<number> | string): Array<number> {
   const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
   return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
 }
@@ -323,14 +170,26 @@ function buildGenMetadataBlob(options: {
   displayName?: string;
   lastStepIndex?: number;
 }): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  const tag1Fields: Array<number> = [];
+  const counters: Array<number> = [];
+  if (options.input !== undefined) {
+    counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
+  }
+  if (options.output !== undefined) {
+    counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
+  }
+  if (options.cacheRead !== undefined) {
+    counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
+  }
+  if (options.reasoning !== undefined) {
+    counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
+  }
+  if (counters.length > 0) {
+    tag1Fields.push(...encodeLengthDelimited(4, counters));
+  }
+  if (options.modelSlug !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  }
   if (options.lastStepIndex !== undefined) {
     const kv = [
       ...encodeLengthDelimited(1, 'last_step_index'),
@@ -338,9 +197,18 @@ function buildGenMetadataBlob(options: {
     ];
     tag1Fields.push(...encodeLengthDelimited(20, kv));
   }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  if (options.displayName !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  }
   return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
+
+const step = (name: string, elapsedMs: number, budgetMs: number, outcome: string) => ({
+  step: name,
+  elapsedMs,
+  budgetMs,
+  outcome,
+});
 
 test('OpenCode lifecycle steps survive failure without private data', async () => {
   const f = sessionFixture({ memory: true });
@@ -349,12 +217,7 @@ test('OpenCode lifecycle steps survive failure without private data', async () =
     fs.mkdirSync(skill);
     fs.writeFileSync(path.join(skill, 'config.jsonc'), '{"diagnostics":true}');
     f.deps.skillRoot = skill;
-    const step = (name: string, elapsedMs: number, budgetMs: number, outcome: string) => ({
-      step: name,
-      elapsedMs,
-      budgetMs,
-      outcome,
-    });
+
     const kept = [
       step('debug-config', 12, 5000, 'ok'),
       step('prepare', 3, 400, 'failed'),
@@ -365,14 +228,14 @@ test('OpenCode lifecycle steps survive failure without private data', async () =
       step('prepare', 1, 1, 'ok'),
       step('debug-agents', -1, 5, 'ok'),
       step('debug-agents', 1.5, 5, 'ok'),
-      step('debug-agents', 1, 2147483648, 'ok'),
+      step('debug-agents', 1, 2_147_483_648, 'ok'),
       step('custom', 1, 1, 'ok'),
-      step('debug-agents', 1, 2, 'C:\private\path'),
+      step('debug-agents', 1, 2, String.raw`C:\private\path`),
       { ...step('debug-agents', 1, 2, 'failed'), detail: '/home/private/secret' },
     ];
-    const seen: Record<string, unknown> = {};
+    const seen = new Map<string, boolean | undefined>();
     f.deps.delegate = async (provider, request) => {
-      seen[provider] = request.collectLifecycle;
+      seen.set(provider, request.collectLifecycle);
       throw Object.assign(new Error('private error'), {
         invocations: [
           {
@@ -387,15 +250,16 @@ test('OpenCode lifecycle steps survive failure without private data', async () =
       });
     };
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-    for (const provider of ['opencode', 'claude'] as const)
+    for (const provider of ['opencode', 'claude'] as const) {
       await assert.rejects(
-        observer.deps.delegate(
-          provider,
-          { logPath: path.join(f.session, 'logs', provider + '[0].log') } as never,
-          'cli',
-        ),
+        observer.deps.delegate(provider, delegateReq(path.join(f.session, 'logs', provider + '[0].log')), 'cli'),
       );
-    assert.deepEqual(seen, { opencode: true, claude: undefined }, 'only OpenCode collects lifecycle steps');
+    }
+    assert.deepEqual(
+      Object.fromEntries(seen),
+      { opencode: true, claude: undefined },
+      'only OpenCode collects lifecycle steps',
+    );
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(
       facts.invocations.map((i) => i.lifecycleSteps),
@@ -448,11 +312,11 @@ test('nudge marker persists only for boolean resume launches', async () => {
     });
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
     const dir = path.join(f.session, 'work');
-    await observer.deps.delegate('codex', { logPath: path.join(dir, 'logs', 'codex[0].log') } as never, 'cli');
+    await observer.deps.delegate('codex', delegateReq(path.join(dir, 'logs', 'codex[0].log')), 'cli');
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.equal(facts.invocations.length, 2);
-    assert.equal((facts.invocations[1] as Record<string, unknown>)['nudge'], true);
+    assert.equal(narrow(facts.invocations[1], shape({ nudge: flag })).nudge, true);
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /ok · nudge/);
   } finally {
@@ -488,7 +352,7 @@ test('nudge marker persists only for boolean resume launches', async () => {
         nudge: 1,
       },
     ]);
-    const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+    const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.ok(facts.invocations.every((i) => !('nudge' in i)));
     const report = fs.readFileSync(writeDiagnostics(g.session, facts), 'utf8');
     assert.doesNotMatch(report, /ok · nudge/);
@@ -515,7 +379,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
           nudge: true,
         },
       ]);
-      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       assert.deepEqual(
         heuristics(facts).filter((finding) => finding.source === 'H1'),
         [],
@@ -535,7 +399,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
         },
         { ...attempt(subject, { slot: 'codex[1]', provider: 'codex', model: 'm', attempt: 1, outcome: 'timeout' }) },
       ]);
-      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       assert.deepEqual(
         heuristics(facts).filter((finding) => finding.source === 'H1'),
         [],
@@ -559,7 +423,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
           validationOutcome: 'timeout',
         },
       ]);
-      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
       assert.equal(findings.length, 1, 'failed validation on ok resume still yields waste');
       assert.match(findings[0]!.evidence, /`timeout`: 2 of 2 CLI attempts failed/);
@@ -602,7 +466,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
           nudge: true,
         },
       ]);
-      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
       assert.equal(findings.length, 1, 'unrelated failures of another model');
       assert.match(findings[0]!.evidence, /`timeout`: 2 of 4 CLI attempts failed/);
@@ -631,7 +495,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
           nudge: true,
         },
       ]);
-      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       assert.deepEqual(
         heuristics(facts).filter((finding) => finding.source === 'H1'),
         [],
@@ -656,7 +520,7 @@ test('nudge and resume chains account recovered-stall waste exactly', async () =
           nudge: true,
         },
       ]);
-      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+      const facts = sessionFacts(g.session, { records: [], lastSeq: 0, torn: null }, 'complete');
       const findings = heuristics(facts).filter((finding) => finding.source === 'H1');
       assert.equal(findings.length, 1);
       assert.match(findings[0]!.evidence, /`timeout`: 3 of 3 CLI attempts failed/);
@@ -688,7 +552,7 @@ test('attempt rows persist once across callback and launch failure', async () =>
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [row] };
     };
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate('claude', delegateReq(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
     assert.equal(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations.length, 1);
   } finally {
     f.cleanup();
@@ -713,7 +577,7 @@ test('attempt rows persist once across callback and launch failure', async () =>
     };
     const observer = observeTool(g.session, 'ask', 'run', undefined, g.deps)!;
     await assert.rejects(
-      observer.deps.delegate('claude', { logPath: path.join(g.session, 'logs', 'claude[0].log') } as never, 'cli'),
+      observer.deps.delegate('claude', delegateReq(path.join(g.session, 'logs', 'claude[0].log')), 'cli'),
       /launch/,
     );
     assert.equal(sessionFacts(g.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations.length, 1);
@@ -730,16 +594,17 @@ test('the first persisted row keeps its preflight lifecycle steps', async (t) =>
     writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
     f.deps.skillRoot = skill;
     const { nodeDeps } = await import('../../../skills/dispatch/scripts/toolkit/cli.ts');
-    const { nodeProcess } = await import('../../../skills/dispatch/scripts/providers/node-process.ts');
     t.mock.method(fs, 'existsSync', () => true);
     const stat = fs.statSync;
-    t.mock.method(fs, 'statSync', ((...args: Parameters<typeof fs.statSync>) => {
+    t.mock.method(fs, 'statSync', (filePath: fs.PathLike) => {
       try {
-        return stat(...args);
+        return stat(filePath);
       } catch {
-        return { isFile: () => true, mode: 0o755 } as ReturnType<typeof fs.statSync>;
+        const fallback = stat(process.execPath);
+        fallback.mode = 0o755;
+        return fallback;
       }
-    }) as typeof fs.statSync);
+    });
     t.mock.method(nodeProcess, 'start', () => ({
       pid: 50,
       done: Promise.resolve({
@@ -753,7 +618,6 @@ test('the first persisted row keeps its preflight lifecycle steps', async (t) =>
         truncated: false,
       }),
     }));
-    t.mock.method(nodeProcess as Required<typeof nodeProcess>, 'settleGroup', async () => true);
     const native = nodeDeps();
     f.deps.delegate = native.delegate;
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
@@ -767,7 +631,7 @@ test('the first persisted row keeps its preflight lifecycle steps', async (t) =>
         schemaPath: null,
         resume: null,
         cwd: f.root,
-        timeoutMs: 60000,
+        timeoutMs: 60_000,
         outputCapBytes: 1000,
         attachments: [],
         logPath: path.join(f.session, 'logs', 'opencode[0].log'),
@@ -819,7 +683,7 @@ test('attempt persistence retries a failed write without repeating successful wr
       request.onInvocation?.(row);
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [row] };
     };
-    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate('claude', delegateReq(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
     assert.equal(writes, 2, 'return retries failed callback persistence');
     assert.deepEqual(
       sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations.map((i) => [
@@ -834,7 +698,7 @@ test('attempt persistence retries a failed write without repeating successful wr
       request.onInvocation?.(second);
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [second] };
     };
-    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate('claude', delegateReq(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
     assert.equal(writes, 1, 'return does not repeat successful callback persistence');
   } finally {
     t.mock.restoreAll();
@@ -857,7 +721,9 @@ test('capture reread retains selected usage sources and rejects legacy failed ze
         model: 'fallback',
         outcome: 'ok' as const,
         usage: { ...usage, input: 3, provenance: 'stdout' },
-        coverage: ['transcript unavailable', 'invalid counters'] as ('transcript unavailable' | 'invalid counters')[],
+        coverage: ['transcript unavailable', 'invalid counters'] as Array<
+          'transcript unavailable' | 'invalid counters'
+        >,
       },
     ];
     f.deps.delegate = async (_provider, request) => {
@@ -865,7 +731,7 @@ test('capture reread retains selected usage sources and rejects legacy failed ze
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: rows };
     };
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate('claude', delegateReq(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
     const legacy = { ...invocation, surface: 'cli', outcome: 'quota' };
     captureRuns(f.session, [
@@ -873,16 +739,28 @@ test('capture reread retains selected usage sources and rejects legacy failed ze
       { ...legacy, model: 'legacy-nonzero', usage: { input: 2, output: 0 }, usageSource: 'private-source' },
     ]);
     const observed = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete').invocations;
-    assert.deepEqual(observed.map((row) => [row.model, row.usage?.input, row.usageSource, row.coverage]).sort(), [
-      ['event-zero', 0, 'session', undefined],
-      ['fallback', 3, 'stdout', ['transcript unavailable', 'invalid counters']],
-      ['legacy-nonzero', 2, undefined, undefined],
-      ['legacy-zero', undefined, undefined, ['transcript unavailable', 'unverified zero']],
-    ]);
+    assert.deepEqual(
+      observed
+        .map((row) => [row.model, row.usage?.input, row.usageSource, row.coverage])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      [
+        ['event-zero', 0, 'session', undefined],
+        ['fallback', 3, 'stdout', ['transcript unavailable', 'invalid counters']],
+        ['legacy-nonzero', 2, undefined, undefined],
+        ['legacy-zero', undefined, undefined, ['transcript unavailable', 'unverified zero']],
+      ],
+    );
   } finally {
     f.cleanup();
   }
 });
+
+const event = (id: string, at: number) =>
+  JSON.stringify({
+    type: 'assistant',
+    timestamp: new Date(at).toISOString(),
+    message: { id, model: 'm', usage: { input_tokens: 42, output_tokens: 1 } },
+  });
 
 test('response evidence retains verified aliases across captures and distinguishes zero from unknown', async () => {
   const f = sessionFixture({ memory: true });
@@ -890,12 +768,7 @@ test('response evidence retains verified aliases across captures and distinguish
     const skill = path.join(f.root, 'skill');
     writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
     f.deps.skillRoot = skill;
-    const event = (id: string, at: number) =>
-      JSON.stringify({
-        type: 'assistant',
-        timestamp: new Date(at).toISOString(),
-        message: { id, model: 'm', usage: { input_tokens: 42, output_tokens: 1 } },
-      });
+
     const first = 'private-session-one';
     const second = 'private-session-two';
     const files = memoryFs({
@@ -936,11 +809,7 @@ test('response evidence retains verified aliases across captures and distinguish
         ],
       });
       const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-      await observer.deps.delegate(
-        'claude',
-        { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never,
-        'cli',
-      );
+      await observer.deps.delegate('claude', delegateReq(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
       observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
     }
     const legacy = { provider: 'claude', model: 'legacy', launched: true, outcome: 'ok' };
@@ -1029,7 +898,19 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
       lastStepIndex: 5,
     });
 
-    const context = {
+    const context: ProviderUsageContext = {
+      mode: 'cli',
+      platform: {
+        os: 'linux',
+        arch: 'x64',
+        wsl: false,
+        bubblewrap: false,
+        argvLimit: 120_000,
+        home: '/home',
+        path: [],
+        pathExt: [],
+      },
+      env: {},
       appDataDir: '/home/.gemini/antigravity-cli',
       readSqliteGenMetadata: (file: string) => (file.includes('conv-init') ? [turnInit] : [turnInit, turnResume]),
     };
@@ -1043,8 +924,8 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
       usage: { input_tokens: 250, output_tokens: 50, cache_read_tokens: 110, thinking_tokens: 25 },
     });
 
-    const usageInit = agy.usage?.(stdoutInit, context as never);
-    const usageResume = agy.usage?.(stdoutResume, context as never);
+    const usageInit = agy.usage?.(stdoutInit, context);
+    const usageResume = agy.usage?.(stdoutResume, context);
 
     f.deps.delegate = async (_provider, request) => {
       const isResume = Boolean(request.resume);
@@ -1056,8 +937,8 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
         mode: 'cli' as const,
         launched: true,
         outcome: 'ok',
-        ...(isResume ? { nudge: true as const } : {}),
-        ...(usage ? { usage } : {}),
+        ...(isResume && { nudge: true as const }),
+        ...(usage && { usage }),
       };
       request.onInvocation?.(row);
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [row] };
@@ -1080,7 +961,7 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
         attachments: [],
         logPath: path.join(dir, 'logs', 'agy[0].log'),
         briefPath: '/b.md',
-      } as never,
+      },
       'cli',
     );
     await observer.deps.delegate(
@@ -1098,7 +979,7 @@ test('agy delegate invocations render resolved model and effort in diagnostics r
         attachments: [],
         logPath: path.join(dir, 'logs', 'agy[0].log'),
         briefPath: '/b.md',
-      } as never,
+      },
       'cli',
     );
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
@@ -1160,7 +1041,7 @@ test('coverage list: observeTool preserves coverage list for copilot', async () 
         attachments: [],
         logPath: path.join(f.session, 'work', 'logs', 'copilot[0].log'),
         briefPath: '/b.md',
-      } as never,
+      },
       'cli',
     );
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
@@ -1222,7 +1103,7 @@ test('review timing joins current generation and reserve attempts', async () => 
     const generation = path.join(f.session, '.state', 'reviews', 'plan-a', 'round-1', 'gen-2');
     await observer.deps.delegate(
       'claude',
-      { logPath: path.join(generation, 'logs', 'claude[0].log'), targetSlot: 'codex[0]' } as never,
+      delegateReq(path.join(generation, 'logs', 'claude[0].log'), 'codex[0]'),
       'cli',
     );
     observer.deps.diagnostics!({
@@ -1235,9 +1116,7 @@ test('review timing joins current generation and reserve attempts', async () => 
     });
     await observer.deps.delegate(
       'claude',
-      {
-        logPath: path.join(f.session, '.state', 'reviews', 'plan-a', 'round-1', 'gen-1', 'logs', 'codex[0].log'),
-      } as never,
+      delegateReq(path.join(f.session, '.state', 'reviews', 'plan-a', 'round-1', 'gen-1', 'logs', 'codex[0].log')),
       'cli',
     );
     observer.deps.diagnostics!({
@@ -1250,17 +1129,15 @@ test('review timing joins current generation and reserve attempts', async () => 
     });
     await observer.deps.delegate(
       'claude',
-      {
-        logPath: path.join(f.session, '.state', 'reviews', 'plan-a', 'round-2', 'gen-1', 'logs', 'codex[0].log'),
-      } as never,
+      delegateReq(path.join(f.session, '.state', 'reviews', 'plan-a', 'round-2', 'gen-1', 'logs', 'codex[0].log')),
       'cli',
     );
     await observer.deps.delegate(
       'claude',
-      {
-        logPath: path.join(f.session, '.state', 'reviews', 'plan-a', 'round-2', 'gen-1', 'logs', 'claude[0].log'),
-        targetSlot: 'native[0]',
-      } as never,
+      delegateReq(
+        path.join(f.session, '.state', 'reviews', 'plan-a', 'round-2', 'gen-1', 'logs', 'claude[0].log'),
+        'native[0]',
+      ),
       'cli',
     );
     observer.deps.diagnostics!({
@@ -1272,7 +1149,7 @@ test('review timing joins current generation and reserve attempts', async () => 
       state: 'failed',
     });
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.roundTiming?.[1]?.slots, [
       { slot: 'codex[0]', attempts: [{ surface: 'cli', startMs: 0, endMs: 30 }] },
       { slot: 'native[0]', attempts: [{ surface: 'cli', startMs: 0, endMs: 30 }, { surface: 'native' }] },
@@ -1317,9 +1194,10 @@ test('native substitution preserves the legacy gap and the measured CLI span', (
         })),
       ),
     );
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
-    for (const round of facts.roundTiming!)
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
+    for (const round of facts.roundTiming!) {
       assert.deepEqual(round.slots[0]!.attempts, [{ surface: 'cli', startMs: 0, endMs: 1000 }, { surface: 'native' }]);
+    }
     const report = fs.readFileSync(writeDiagnostics(f.session, facts), 'utf8');
     assert.match(report, /codex\[0\] \| — \| —/);
     assert.doesNotMatch(report, /✓/);
@@ -1364,7 +1242,7 @@ test('failed native reserve remains unmeasured after terminal failure', () => {
       state: 'failed',
     });
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.roundTiming?.[0]?.slots[0]?.attempts, [
       { surface: 'cli', startMs: 0, endMs: 1000 },
       { surface: 'native' },
@@ -1429,12 +1307,12 @@ test('links a completed explicit selection to observed logical slot work', async
     ordinary.finish({ ok: true, exit: 0, summary: 'ok', value: {} });
     await review.deps.delegate(
       'claude',
-      { logPath: path.join(subject, 'logs', 'claude[1].log'), targetSlot: 'opencode[0]' } as never,
+      delegateReq(path.join(subject, 'logs', 'claude[1].log'), 'opencode[0]'),
       'cli',
     );
     await review.deps.delegate(
       'claude',
-      { logPath: path.join(subject, 'logs', 'claude[2].log'), targetSlot: 'opencode[0]' } as never,
+      delegateReq(path.join(subject, 'logs', 'claude[2].log'), 'opencode[0]'),
       'cli',
     );
     review.deps.diagnostics!({ kind: 'slot', subject, slot: 'opencode[0]', attempt: 1, state: 'done', replay: true });
@@ -1489,7 +1367,7 @@ test('status returns a recovery ref only after an enabled capture completes', as
 
     fs.unlinkSync(diagnosticDir);
     assert.equal(await run(), 0);
-    const { resumeRef } = result as typeof value & { resumeRef: string };
+    const { resumeRef } = narrow(result, shape({ resumeRef: text }));
     const capture = JSON.parse(fs.readFileSync(path.join(diagnosticDir, resumeRef + '.json'), 'utf8'));
     assert.deepEqual(capture.recoverySelection, recoverySelection);
     assert.equal(capture.capture.state, 'completed');

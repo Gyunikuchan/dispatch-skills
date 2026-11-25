@@ -4,10 +4,13 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { test } from 'node:test';
-import { main, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { capSummary, summaryWithItems } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { anything, flag, listOf, nullable, optional, parseJson, readJson, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 function sessionFixture() {
   // Quota ancestor checks stay inside this shallow virtual root.
@@ -25,7 +28,7 @@ function sessionFixture() {
       repositoryRoot: fs.realpathSync(root),
     }),
   );
-  const lines: string[] = [],
+  const lines: Array<string> = [],
     replies = new Map<string, string>();
   const deps: CliDeps = {
     run: async () => {
@@ -33,7 +36,9 @@ function sessionFixture() {
     },
     delegate: async (provider, request) => {
       const text = replies.get(provider + ':' + request.model);
-      if (text === undefined) throw new Error('Unscripted delegate ' + provider + ':' + request.model);
+      if (text === undefined) {
+        throw new Error('Unscripted delegate ' + provider + ':' + request.model);
+      }
       return { outcome: { status: 'ok', text, resume: null, sessionId: null }, invocations: [] };
     },
     modes: () => ['cli'],
@@ -62,23 +67,24 @@ function sessionFixture() {
     script: (provider: string, model: string, text: string) => replies.set(provider + ':' + model, text),
     output: () => {
       assert.equal(lines.length, 1);
-      return JSON.parse(lines[0]!) as { ok: boolean; summary: string; path: string | null; reason?: string };
+      return parseJson(lines[0]!, shape({ ok: flag, summary: text, path: nullable(text), reason: optional(text) }));
     },
   };
 }
 
 test('summary byte cap preserves large ask answers review findings and native slots', async () => {
-  const missingReasons: string[] = [];
+  const missingReasons: Array<string> = [];
   for (const scenario of ['ask', 'findings', 'native'] as const) {
     const f = sessionFixture();
     try {
       const skill = path.join(f.root, 'skill');
       fs.mkdirSync(path.join(skill, 'references/templates'), { recursive: true });
-      for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md', 'review-severity.md'])
+      for (const file of ['review-prompt.md', 'review-prompt-plan.md', 'quality-bar.md', 'review-severity.md']) {
         fs.copyFileSync(
           path.join(f.deps.skillRoot, 'references/templates', file),
           path.join(skill, 'references/templates', file),
         );
+      }
       fs.copyFileSync(
         path.join(f.deps.skillRoot, 'references/spec-stage.md'),
         path.join(skill, 'references/spec-stage.md'),
@@ -97,7 +103,9 @@ test('summary byte cap preserves large ask answers review findings and native sl
         }),
       );
       f.deps.skillRoot = skill;
-      if (native) f.deps.orchestrator = { platform: 'codex', model: null };
+      if (native) {
+        f.deps.orchestrator = { platform: 'codex', model: null };
+      }
       const answer = '日本語😀'.repeat(2000);
       const findings = Array.from({ length: 300 }, (_, i) => ({
         impact: 'degrades',
@@ -109,7 +117,9 @@ test('summary byte cap preserves large ask answers review findings and native sl
       }));
       f.script('codex', 'fixture', scenario === 'ask' ? answer : JSON.stringify({ status: 'FINDINGS', findings }));
       const target = f.artifact(scenario === 'ask' ? 'question.md' : 'work.plan.md', '# Work\n## Work\n日本語\n');
-      if (scenario === 'ask') f.artifact('work.plan.md', '# Work\n');
+      if (scenario === 'ask') {
+        f.artifact('work.plan.md', '# Work\n');
+      }
       f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nPreserve results.\n');
       await appendRecord(
         f.session,
@@ -138,10 +148,12 @@ test('summary byte cap preserves large ask answers review findings and native sl
       const output = f.output();
       assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
       assert.equal(output.ok, !native);
-      if (!Object.hasOwn(output, 'reason')) missingReasons.push(scenario);
+      if (!Object.hasOwn(output, 'reason')) {
+        missingReasons.push(scenario);
+      }
       assert.ok(output.path);
-      const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
-      if (scenario === 'ask')
+      if (scenario === 'ask') {
+        const result = readJson(output.path, shape({ answers: listOf(anything) }));
         assert.deepEqual(result.answers, [
           {
             slot: 'codex[0]',
@@ -150,23 +162,25 @@ test('summary byte cap preserves large ask answers review findings and native sl
             text: answer,
           },
         ]);
+      }
       if (scenario === 'findings') {
-        const captured = JSON.parse(fs.readFileSync(result.path, 'utf8'));
+        const result = readJson(output.path, shape({ path: text }));
+        const captured = readJson(result.path, shape({ findings: listOf(shape({ defect: text })) }));
         assert.equal(captured.findings.length, 300);
         assert.deepEqual(
-          captured.findings.map((finding: { defect: string }) => finding.defect),
+          captured.findings.map((finding) => finding.defect),
           findings.map((finding) => finding.defect),
         );
       }
       if (native) {
+        const result = readJson(
+          output.path,
+          shape({ pending: listOf(shape({ slot: text, promptPath: text, replyPath: text })) }),
+        );
         assert.equal(output.reason, 'native-pending');
         assert.equal(result.pending.length, 20);
-        assert.equal(new Set(result.pending.map((slot: { slot: string }) => slot.slot)).size, 20);
-        assert.ok(
-          result.pending.every(
-            (slot: { promptPath: string; replyPath: string }) => fs.existsSync(slot.promptPath) && slot.replyPath,
-          ),
-        );
+        assert.equal(new Set(result.pending.map((slot) => slot.slot)).size, 20);
+        assert.ok(result.pending.every((slot) => fs.existsSync(slot.promptPath) && slot.replyPath));
       }
     } finally {
       f.cleanup();
@@ -205,13 +219,14 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
     const skill = path.join(f.root, 'skill');
     const templates = path.join(skill, 'references/templates');
     fs.mkdirSync(templates, { recursive: true });
-    for (const file of ['writer-brief.md', 'quality-bar.md'])
+    for (const file of ['writer-brief.md', 'quality-bar.md']) {
       fs.copyFileSync(path.join(f.deps.skillRoot, 'references/templates', file), path.join(templates, file));
+    }
     fs.copyFileSync(
       path.join(f.deps.skillRoot, 'references/spec-stage.md'),
       path.join(skill, 'references/spec-stage.md'),
     );
-    const add = (kind: string, data: object, extra: object = {}) =>
+    const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
       appendRecord(f.session, { kind, by: 'orchestrator', key: kind, data, ...extra }, f.deps);
     await add('bind', { spec: 'mission.spec.md', plan: 'large-multibyte.plan.md' });
     await add(
@@ -234,7 +249,9 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
         ...f.deps,
         skillRoot: skill,
         hook: (point) => {
-          if (point === 'brief:after-gate') fs.writeFileSync(plan, 'UNGATED');
+          if (point === 'brief:after-gate') {
+            fs.writeFileSync(plan, 'UNGATED');
+          }
         },
       }),
       0,
@@ -254,7 +271,7 @@ test('summary byte cap keeps the full gated multibyte brief for two hundred crit
 test('summary byte cap applies to every tool with full result files including refusals', async () => {
   const f = sessionFixture();
   try {
-    const records: unknown[] = Array.from({ length: 500 }, (_, i) => ({
+    const records: Array<unknown> = Array.from({ length: 500 }, (_, i) => ({
       seq: i + 1,
       key: 'n' + i,
       at: 'now',
@@ -311,10 +328,18 @@ test('summary byte cap applies to every tool with full result files including re
       assert.ok(Buffer.byteLength(output.summary) <= 1024);
       assert.ok(fs.existsSync(output.path!));
       const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
-      if (args[0] === 'lint' && exit === 4) assert.ok(result.warnings.length >= 200);
-      if (args[0] === 'doctor') assert.ok(result.config.problems.length >= 200);
-      if (args[0] === 'status') assert.equal(result.escalations.length, 100);
-      if (args[0] === 'ledger' && args[1] === 'query' && exit === 0) assert.equal(result.length, 601);
+      if (args[0] === 'lint' && exit === 4) {
+        assert.ok(result.warnings.length >= 200);
+      }
+      if (args[0] === 'doctor') {
+        assert.ok(result.config.problems.length >= 200);
+      }
+      if (args[0] === 'status') {
+        assert.equal(result.escalations.length, 100);
+      }
+      if (args[0] === 'ledger' && args[1] === 'query' && exit === 0) {
+        assert.equal(result.length, 601);
+      }
     }
   } finally {
     f.cleanup();
@@ -385,19 +410,26 @@ test('summary byte cap keeps all report rows in its result file', async () => {
     assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
     assert.equal(output.ok, true);
     assert.ok(output.path);
-    const result = JSON.parse(fs.readFileSync(output.path, 'utf8'));
-    const criteria = result.statuses.filter((row: { criterion: string }) => row.criterion !== 'contract');
+    const result = readJson(
+      output.path,
+      shape({
+        statuses: listOf(shape({ criterion: text, state: text })),
+        deviations: shape({ edits: listOf(shape({ affects: listOf(text) })) }),
+        userRecords: listOf(shape({ quote: text })),
+      }),
+    );
+    const criteria = result.statuses.filter((row) => row.criterion !== 'contract');
     assert.deepEqual(
-      criteria.map((row: { criterion: string; state: string }) => [row.criterion, row.state]),
+      criteria.map((row) => [row.criterion, row.state]),
       ids.map((id) => [id, 'waived']),
     );
     assert.equal(result.deviations.edits.length, 300);
     assert.deepEqual(
-      result.deviations.edits.map((edit: { affects: string[] }) => edit.affects[0]),
+      result.deviations.edits.map((edit) => edit.affects[0]),
       ids,
     );
     assert.deepEqual(
-      result.userRecords.map((record: { quote: string }) => record.quote),
+      result.userRecords.map((record) => record.quote),
       quotes,
     );
   } finally {

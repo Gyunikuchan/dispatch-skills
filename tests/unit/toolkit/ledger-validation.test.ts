@@ -6,17 +6,22 @@ import { validateRecord } from '../../../skills/dispatch/scripts/toolkit/records
 import { parseRepositoryNoteKey } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
+import type { JsonObject } from './helpers/json.ts';
+import { isError, narrow, toolFailure } from './helpers/json.ts';
+
+const record = (kind: string, data: JsonObject) => ({ kind, data, key: 'binding', by: 'user', quote: 'Approved' });
 
 test('design-stage bindings require a spec and a plan or design while approval requires a plan', () => {
-  const record = (kind: string, data: object) => ({ kind, data, key: 'binding', by: 'user', quote: 'Approved' });
   const hash = 'sha256:' + 'a'.repeat(64);
   for (const data of [
     { spec: 's.spec.md', design: 'd.design.md' },
     { spec: 's.spec.md', plan: 'p.plan.md' },
-  ])
+  ]) {
     assert.doesNotThrow(() => validateRecord(record('bind', data)));
-  for (const data of [{ spec: 's.spec.md' }, { design: 'd.design.md' }])
+  }
+  for (const data of [{ spec: 's.spec.md' }, { design: 'd.design.md' }]) {
     assert.throws(() => validateRecord(record('bind', data)), { reason: 'invalid-record' });
+  }
   assert.throws(() => validateRecord(record('approval', { spec: hash, design: hash })), { reason: 'invalid-record' });
 });
 
@@ -32,11 +37,11 @@ test('ledger records validate closed fields and user-only input', async () => {
       const output = f.output();
       return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
     };
-    const add = (kind: string, data: object, extra: object = {}) =>
+    const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
       call({ kind, data, by: 'orchestrator', key: 'k' + n++, ...extra });
     const hash = 'sha256:' + 'a'.repeat(64),
       git = 'a'.repeat(40);
-    const invalid: [string, object, string][] = [
+    const invalid: Array<[string, object, string]> = [
       ['bind', { plan: 'p' }, 'spec'],
       ['level', { level: 'unknown' }, 'level'],
       ['escalation', { id: 'x', state: 'bad', summary: 's' }, 'state'],
@@ -84,16 +89,18 @@ test('ledger records validate closed fields and user-only input', async () => {
       exit: 0,
       path: 'p',
     };
-    for (const field of ['tree', 'before', 'after', 'commandDigest'])
+    for (const field of ['tree', 'before', 'after', 'commandDigest']) {
       invalid.push(['evidence', { ...evidence, [field]: 'bad' }, field]);
-    for (const field of ['tree', 'before', 'after', 'commandDigest'])
+    }
+    for (const field of ['tree', 'before', 'after', 'commandDigest']) {
       invalid.push([
         'evidence',
         { ...evidence, [field]: field === 'commandDigest' ? 'sha256:' + 'A'.repeat(64) : 'A'.repeat(40) },
         field,
       ]);
+    }
     invalid.push(['approval', { spec: 'sha256:' + 'A'.repeat(64), plan: hash }, 'spec']);
-    for (const field of ['before', 'after'])
+    for (const field of ['before', 'after']) {
       invalid.push([
         'edit',
         {
@@ -108,22 +115,24 @@ test('ledger records validate closed fields and user-only input', async () => {
         },
         field,
       ]);
+    }
     invalid.push(['writer', { phase: 'finished', task: 't', launch: 1, candidate: 'A'.repeat(64) }, 'candidate']);
-    for (const [kind, data, field] of invalid)
+    for (const [kind, data, field] of invalid) {
       assert.throws(
         () => validateRecord({ kind, data, key: 'case', by: 'user', quote: 'yes' }),
         (error) => {
-          assert.equal((error as { reason: string }).reason, 'invalid-record');
-          assert.match((error as Error).message, new RegExp(field));
+          assert.equal(narrow(error, toolFailure).reason, 'invalid-record');
+          assert.match(narrow(error, isError).message, new RegExp(field));
           return true;
         },
       );
+    }
     const invalidCli = await add('note', { text: 2 });
     assert.equal(invalidCli.exit, 1);
     assert.equal(invalidCli.output.reason, 'invalid-record');
     assert.match(invalidCli.output.summary, /text/);
-    for (const kind of ['approval', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note']) {
-      const data: Record<string, object> = {
+    for (const kind of ['approval', 'level', 'bind', 'escalation', 'edit', 'ruling', 'note'] as const) {
+      const data = {
         approval: { spec: hash, plan: hash },
         level: { level: 'low' },
         bind: { spec: 's', plan: 'p' },
@@ -140,14 +149,15 @@ test('ledger records validate closed fields and user-only input', async () => {
         ruling: { subject: 's', ruling: 'r', rationale: 'r' },
         note: { text: 'n' },
       };
-      assert.throws(() => validateRecord({ kind, data: data[kind]!, by: 'user', quote: 'yes' }), {
+      assert.throws(() => validateRecord({ kind, data: data[kind], by: 'user', quote: 'yes' }), {
         reason: 'missing-key',
       });
     }
-    for (const level of ['xhigh', 'max'])
+    for (const level of ['xhigh', 'max']) {
       assert.throws(() => validateRecord({ kind: 'level', data: { level }, key: 'level', by: 'user', quote: ' ' }), {
         reason: 'user-only',
       });
+    }
     const missingKey = await call({ kind: 'note', data: { text: 'n' }, by: 'orchestrator' });
     assert.equal(missingKey.exit, 1);
     assert.equal(missingKey.output.reason, 'missing-key');
@@ -219,7 +229,7 @@ test('review focus records require link evidence on every bullet', async () => {
       'http://example.test/review',
       '/absolute/report.md',
       'C:/repo/report.md',
-      '\\\\server\\share\\report.md',
+      String.raw`\\server\share\report.md`,
     ]) {
       assert.throws(
         () =>
@@ -230,8 +240,8 @@ test('review focus records require link evidence on every bullet', async () => {
             data: { bullets: [{ text: 'Review this', evidence }] },
           }),
         (error) => {
-          assert.equal((error as { reason: string }).reason, 'invalid-record');
-          assert.match((error as Error).message, /data\.bullets\.0\.evidence/);
+          assert.equal(narrow(error, toolFailure).reason, 'invalid-record');
+          assert.match(narrow(error, isError).message, /data\.bullets\.0\.evidence/);
           return true;
         },
         evidence,
@@ -275,15 +285,16 @@ test('review focus records require link evidence on every bullet', async () => {
         'data.visual',
       ],
       [{ kind: 'focus', by: 'tool', key: 'focus:wrong-author', data: { bullets: [] } }, 'record.by'],
-    ] as const)
+    ] as const) {
       assert.throws(
         () => validateRecord(record),
         (error) => {
-          assert.equal((error as { reason: string }).reason, 'invalid-record');
-          assert.match((error as Error).message, new RegExp(field));
+          assert.equal(narrow(error, toolFailure).reason, 'invalid-record');
+          assert.match(narrow(error, isError).message, new RegExp(field));
           return true;
         },
       );
+    }
     assert.throws(() => validateRecord({ kind: 'focus', by: 'orchestrator', data: { bullets: [] } }), {
       reason: 'missing-key',
     });
@@ -292,30 +303,37 @@ test('review focus records require link evidence on every bullet', async () => {
   }
 });
 
+const integrateRecord = (data: JsonObject) => validateRecord({ kind: 'integrate', by: 'tool', data });
+
 test('uncommitted records accept exact identities and refuse missing or unknown fields', () => {
   const commit = 'a'.repeat(40),
-    dest = { path: 'repo', branch: 'main' },
-    record = (data: Record<string, unknown>) => validateRecord({ kind: 'integrate', by: 'tool', data });
+    dest = { path: 'repo', branch: 'main' };
   for (const phase of ['deliver-started', 'delivered']) {
     const data = { phase, mode: 'uncommitted', dest, from: commit, source: commit };
-    assert.doesNotThrow(() => record(data));
+    assert.doesNotThrow(() => integrateRecord(data));
     for (const field of ['mode', 'from', 'source', 'dest']) {
-      const partial: Record<string, unknown> = { ...data };
-      delete partial[field];
-      assert.throws(() => record(partial), { reason: 'invalid-record' });
+      const partial = Object.fromEntries(Object.entries(data).filter(([key]) => key !== field));
+      assert.throws(() => integrateRecord(partial), { reason: 'invalid-record' });
     }
-    for (const field of ['from', 'source'])
-      assert.throws(() => record({ ...data, [field]: 'bad' }), { reason: 'invalid-record' });
-    assert.throws(() => record({ ...data, to: commit }), { reason: 'invalid-record' });
-    assert.throws(() => record({ ...data, extra: true }), { reason: 'invalid-record' });
+    for (const field of ['from', 'source']) {
+      assert.throws(() => integrateRecord({ ...data, [field]: 'bad' }), { reason: 'invalid-record' });
+    }
+    assert.throws(() => integrateRecord({ ...data, to: commit }), { reason: 'invalid-record' });
+    assert.throws(() => integrateRecord({ ...data, extra: true }), { reason: 'invalid-record' });
     if (phase === 'delivered') {
-      assert.doesNotThrow(() => record({ ...data, noop: true }));
-      assert.throws(() => record({ ...data, noop: 'yes' }), { reason: 'invalid-record' });
-    } else assert.throws(() => record({ ...data, noop: true }), { reason: 'invalid-record' });
+      assert.doesNotThrow(() => integrateRecord({ ...data, noop: true }));
+      assert.throws(() => integrateRecord({ ...data, noop: 'yes' }), { reason: 'invalid-record' });
+    } else {
+      assert.throws(() => integrateRecord({ ...data, noop: true }), { reason: 'invalid-record' });
+    }
   }
-  for (const phase of ['deliver-started', 'delivered'])
-    for (const mode of ['squash', 'other'])
-      assert.throws(() => record({ phase, mode, dest, from: commit, source: commit }), { reason: 'invalid-record' });
+  for (const phase of ['deliver-started', 'delivered']) {
+    for (const mode of ['squash', 'other']) {
+      assert.throws(() => integrateRecord({ phase, mode, dest, from: commit, source: commit }), {
+        reason: 'invalid-record',
+      });
+    }
+  }
 });
 
 test('cap-ending SHOULD fixes validate integration metadata', () => {
@@ -329,7 +347,7 @@ test('cap-ending SHOULD fixes validate integration metadata', () => {
         phase: 'fix',
         commit,
         reason: 'repair accepted SHOULD',
-        ...(metadata === undefined ? {} : { reviewFix: metadata }),
+        ...(!(metadata === undefined) && { reviewFix: metadata }),
       },
     });
   assert.doesNotThrow(() => record(reviewFix));
@@ -342,8 +360,9 @@ test('cap-ending SHOULD fixes validate integration metadata', () => {
     { ...reviewFix, findings: ['R3-F001', 'R3-F001'] },
     { ...reviewFix, from: 'bad' },
     { ...reviewFix, extra: true },
-  ])
+  ]) {
     assert.throws(() => record(invalid), { reason: 'invalid-record' });
+  }
   assert.throws(
     () => validateRecord({ kind: 'integrate', by: 'tool', data: { phase: 'done', task: 'T1', commit, reviewFix } }),
     { reason: 'invalid-record' },
@@ -368,7 +387,7 @@ test('cap-ending SHOULD fixes validate integration metadata', () => {
 
 test('confirm records are user-only with a quote, a key and a spec hash', () => {
   const hash = 'sha256:' + 'a'.repeat(64);
-  const confirm = (overrides: object) => ({
+  const confirm = (overrides: JsonObject) => ({
     kind: 'confirm',
     by: 'user',
     quote: 'Approved',
@@ -389,10 +408,18 @@ test('confirm records are user-only with a quote, a key and a spec hash', () => 
   assert.throws(() => validateRecord(confirm({ data: {} })), { reason: 'invalid-record' });
 });
 
+const recordWithTarget = (targetId: string, summary: string) => ({
+  kind: 'escalation',
+  by: 'user',
+  quote: 'User decision',
+  key: targetId + ':resolved',
+  data: { id: targetId, state: 'resolved', summary },
+});
+
 test('ceiling resolution requires user quote', () => {
   const id = 'ceiling:plan-work.plan:4',
     key = id + ':resolved';
-  const record = (overrides: object = {}) => ({
+  const record = (overrides: JsonObject = {}) => ({
     kind: 'escalation',
     by: 'user',
     quote: 'User decision',
@@ -404,7 +431,7 @@ test('ceiling resolution requires user quote', () => {
   assert.throws(() => validateRecord(record({ by: 'orchestrator' })), { reason: 'user-only' });
   assert.throws(() => validateRecord(record({ by: 'tool' })), { reason: 'user-only' });
   assert.throws(() => validateRecord(record({ quote: ' ' })), { reason: 'user-only' });
-  const { quote, ...missing } = record();
+  const { quote: _quote, ...missing } = record();
   assert.throws(() => validateRecord(missing), { reason: 'user-only' });
 
   const recordWithSummary = (summary: string) => ({
@@ -414,53 +441,61 @@ test('ceiling resolution requires user quote', () => {
     key: id + ':resolved',
     data: { id, state: 'resolved', summary },
   });
-  for (const summary of ['raise the ceiling', ' re-author: rewrite', 'Re-author: rewrite', 'defer'])
+  for (const summary of ['raise the ceiling', ' re-author: rewrite', 'Re-author: rewrite', 'defer']) {
     assert.throws(
       () => validateRecord(recordWithSummary(summary)),
       (error) => {
-        const failure = error as Error & { reason: string };
+        const failure = narrow(error, toolFailure);
         assert.equal(failure.reason, 'invalid-record');
         assert.match(failure.message, /data\.summary/);
         return true;
       },
       summary,
     );
+  }
   for (const summary of [
     're-author: rewrite',
     'model-effort: raise effort',
     'relax-split: narrow scope',
     'close: proceed with fixes',
     'defer: rule remaining MUST deferred',
-  ])
+  ]) {
     assert.doesNotThrow(() => validateRecord(recordWithSummary(summary)));
+  }
 
-  const recordWithTarget = (targetId: string, summary: string) => ({
-    kind: 'escalation',
-    by: 'user',
-    quote: 'User decision',
-    key: targetId + ':resolved',
-    data: { id: targetId, state: 'resolved', summary },
-  });
   const code = 'ceiling:code-integration:4';
-  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes'])
+  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes']) {
     assert.throws(
       () => validateRecord(recordWithTarget(code, summary)),
       (error) => {
-        const failure = error as Error & { reason: string };
+        const failure = narrow(error, toolFailure);
         assert.equal(failure.reason, 'invalid-record');
         assert.match(failure.message, /data\.id/);
         return true;
       },
       summary,
     );
+  }
   assert.doesNotThrow(() => validateRecord(recordWithTarget(code, 're-author: rewrite the fix')));
-  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes'])
+  for (const summary of ['defer: accept as follow-up', 'close: proceed with fixes']) {
     assert.doesNotThrow(() => validateRecord(recordWithTarget('ceiling:design-strategy.design:6', summary)));
+  }
 });
+
+const refused = (value: JsonObject, field: RegExp) =>
+  assert.throws(
+    () => validateRecord(value),
+    (error) => {
+      const failure = narrow(error, toolFailure);
+      assert.equal(failure.reason, 'invalid-record');
+      assert.match(failure.message, field);
+      return true;
+    },
+  );
 
 test('coverage override records require a quoted user decision in the exact summary grammar', () => {
   const id = 'coverage:code-integration:1';
-  const record = (overrides: object = {}, data: object = {}) => ({
+  const record = (overrides: JsonObject = {}, data: JsonObject = {}) => ({
     kind: 'escalation',
     by: 'user',
     quote: 'User decision',
@@ -471,21 +506,15 @@ test('coverage override records require a quoted user decision in the exact summ
   assert.doesNotThrow(() => validateRecord(record()));
   assert.doesNotThrow(() => validateRecord(record({}, { summary: 'accept: codex[0]' })));
   assert.doesNotThrow(() => validateRecord(record({}, { summary: 'grant: provider restored' })));
-  for (const by of ['orchestrator', 'tool'])
+  for (const by of ['orchestrator', 'tool']) {
     assert.throws(() => validateRecord(record({ by })), { reason: 'user-only' }, by);
-  for (const quote of [' ', '']) assert.throws(() => validateRecord(record({ quote })), { reason: 'user-only' });
-  const { quote, ...unquoted } = record();
+  }
+  for (const quote of [' ', '']) {
+    assert.throws(() => validateRecord(record({ quote })), { reason: 'user-only' });
+  }
+  const { quote: _quote, ...unquoted } = record();
   assert.throws(() => validateRecord(unquoted), { reason: 'user-only' });
-  const refused = (value: object, field: RegExp) =>
-    assert.throws(
-      () => validateRecord(value),
-      (error) => {
-        const failure = error as Error & { reason: string };
-        assert.equal(failure.reason, 'invalid-record');
-        assert.match(failure.message, field);
-        return true;
-      },
-    );
+
   refused(record({}, { state: 'open' }), /data\.state/);
   for (const summary of [
     'accept:',
@@ -501,13 +530,15 @@ test('coverage override records require a quoted user decision in the exact summ
     'grant:reason',
     'defer: later',
     're-author: split',
-  ])
+  ]) {
     refused(record({}, { summary }), /data\.summary/);
-  for (const bad of ['coverage:code-integration', 'coverage::1', 'coverage:code-integration:'])
+  }
+  for (const bad of ['coverage:code-integration', 'coverage::1', 'coverage:code-integration:']) {
     refused(record({}, { id: bad }), /data\.id/);
+  }
 });
 
-const correction = (data: object, extra: object = {}) => ({
+const correction = (data: JsonObject, extra: JsonObject = {}) => ({
   kind: 'ruling',
   by: 'orchestrator',
   key: 'correction',
@@ -522,13 +553,14 @@ const correction = (data: object, extra: object = {}) => ({
 
 test('severity correction refused: a lone dimension, an invalid value or a severity key', () => {
   assert.doesNotThrow(() => validateRecord(correction({ impact: 'degrades', trigger: 'realistic' })));
-  for (const data of [{ impact: 'degrades' }, { trigger: 'realistic' }])
+  for (const data of [{ impact: 'degrades' }, { trigger: 'realistic' }]) {
     assert.throws(() => validateRecord(correction(data)), { reason: 'invalid-record' });
+  }
   assert.throws(
     () => validateRecord(correction({ impact: 'severe', trigger: 'realistic' })),
     (error) => {
-      assert.equal((error as { reason: string }).reason, 'invalid-record');
-      assert.match((error as Error).message, /data\.impact/);
+      assert.equal(narrow(error, toolFailure).reason, 'invalid-record');
+      assert.match(narrow(error, isError).message, /data\.impact/);
       return true;
     },
   );
@@ -536,15 +568,16 @@ test('severity correction refused: a lone dimension, an invalid value or a sever
   assert.throws(
     () => validateRecord(correction({ impact: 'blocks', trigger: 'realistic', severity: 'MUST' })),
     (error) => {
-      assert.equal((error as { reason: string }).reason, 'invalid-record');
-      assert.match((error as Error).message, /data\.severity/);
+      assert.equal(narrow(error, toolFailure).reason, 'invalid-record');
+      assert.match(narrow(error, isError).message, /data\.severity/);
       return true;
     },
   );
-  for (const ruling of ['rejected', 'duplicate', 'deferred'])
+  for (const ruling of ['rejected', 'duplicate', 'deferred']) {
     assert.throws(() => validateRecord(correction({ impact: 'blocks', trigger: 'realistic', ruling })), {
       reason: 'invalid-record',
     });
+  }
   assert.throws(() => validateRecord(correction({ impact: 'blocks', trigger: 'realistic', subject: 'plan:T1' })), {
     reason: 'invalid-record',
   });
@@ -569,20 +602,21 @@ test('severity correction names the allowed finding when the target is absent', 
   }
 });
 
+const rerunNote = (overrides: JsonObject = {}) => ({
+  kind: 'note',
+  by: 'user',
+  quote: 'Rerun the affected voices',
+  key: 'repository-rerun:code-worktree-abc:1:12',
+  data: { text: 'rerun' },
+  ...overrides,
+});
+
 test('checkout rerun notes require a quoted user decision while keep notes accept any author', () => {
-  const rerun = (overrides: object = {}) => ({
-    kind: 'note',
-    by: 'user',
-    quote: 'Rerun the affected voices',
-    key: 'repository-rerun:code-worktree-abc:1:12',
-    data: { text: 'rerun' },
-    ...overrides,
-  });
-  assert.doesNotThrow(() => validateRecord(rerun()));
-  assert.throws(() => validateRecord(rerun({ by: 'orchestrator' })), { reason: 'user-only' });
-  assert.throws(() => validateRecord(rerun({ by: 'tool' })), { reason: 'user-only' });
-  assert.throws(() => validateRecord(rerun({ quote: ' ' })), { reason: 'user-only' });
-  assert.throws(() => validateRecord(rerun({ quote: '' })), { reason: 'user-only' });
+  assert.doesNotThrow(() => validateRecord(rerunNote()));
+  assert.throws(() => validateRecord(rerunNote({ by: 'orchestrator' })), { reason: 'user-only' });
+  assert.throws(() => validateRecord(rerunNote({ by: 'tool' })), { reason: 'user-only' });
+  assert.throws(() => validateRecord(rerunNote({ quote: ' ' })), { reason: 'user-only' });
+  assert.throws(() => validateRecord(rerunNote({ quote: '' })), { reason: 'user-only' });
   const keep = {
     kind: 'note',
     by: 'orchestrator',
@@ -592,24 +626,28 @@ test('checkout rerun notes require a quoted user decision while keep notes accep
   assert.doesNotThrow(() => validateRecord(keep));
 });
 
+const rerunWithKey = (key: string) => ({
+  kind: 'note',
+  by: 'user',
+  quote: 'Rerun the affected voices',
+  key,
+  data: { text: 'rerun' },
+});
+
+const change = (key: string) => ({ kind: 'note', by: 'orchestrator', key, data: { text: 'explained' } });
+
 // SECTION: Repository rerun and change note keys.
 
 test('repository note keys require a report suffix', () => {
-  const rerun = (key: string) => ({
-    kind: 'note',
-    by: 'user',
-    quote: 'Rerun the affected voices',
-    key,
-    data: { text: 'rerun' },
-  });
-  assert.doesNotThrow(() => validateRecord(rerun('repository-rerun:code-worktree-abc:1:12')));
+  assert.doesNotThrow(() => validateRecord(rerunWithKey('repository-rerun:code-worktree-abc:1:12')));
   for (const key of [
     'repository-rerun:code-worktree-abc:1',
     'repository-rerun:code-worktree-abc',
     'repository-rerun:code-worktree-abc:1:x',
-  ])
-    assert.throws(() => validateRecord(rerun(key)), { reason: 'invalid-record' });
-  const change = (key: string) => ({ kind: 'note', by: 'orchestrator', key, data: { text: 'explained' } });
+  ]) {
+    assert.throws(() => validateRecord(rerunWithKey(key)), { reason: 'invalid-record' });
+  }
+
   assert.doesNotThrow(() =>
     validateRecord({
       kind: 'note',
@@ -624,8 +662,9 @@ test('repository note keys require a report suffix', () => {
     'repository-changes:code-worktree-abc:1',
     'repository-changes:code-worktree-abc',
     'repository-changes:code-worktree-abc:1:x',
-  ])
+  ]) {
     assert.throws(() => validateRecord(change(key)), { reason: 'invalid-record' });
+  }
   assert.equal(parseRepositoryNoteKey('repository-changes:code-worktree-abc:1'), null);
   assert.equal(parseRepositoryNoteKey('repository-rerun:code-worktree-abc:1'), null);
   assert.deepEqual(parseRepositoryNoteKey('repository-changes:code-worktree-abc:1:99'), {
@@ -645,7 +684,7 @@ test('repository note keys require a report suffix', () => {
 test('malformed data errors include the kind allowed field shape within 1024 UTF-8 bytes', () => {
   const hash = 'sha256:' + 'a'.repeat(64);
   const git = 'a'.repeat(40);
-  const cases: [Record<string, unknown>, RegExp][] = [
+  const cases: Array<[JsonObject, RegExp]> = [
     [
       { kind: 'note', by: 'orchestrator', key: 'k', data: { text: 2 } },
       /^data\.text is invalid; expected a non-blank string; allowed for note: an object with text$/,
@@ -688,7 +727,7 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
     assert.throws(
       () => validateRecord(record),
       (error) => {
-        const failure = error as Error & { reason: string };
+        const failure = narrow(error, toolFailure);
         assert.equal(failure.reason, 'invalid-record');
         assert.match(failure.message, pattern);
         assert.ok(Buffer.byteLength(failure.message, 'utf8') <= 1024, failure.message);
@@ -699,7 +738,7 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
   assert.throws(
     () => validateRecord({ kind: 'note', by: 'orchestrator', key: 'k', data: [] }),
     (error) => {
-      const failure = error as Error & { reason: string };
+      const failure = narrow(error, toolFailure);
       assert.equal(failure.reason, 'invalid-record');
       assert.equal(failure.message, 'data is invalid; expected an object with text');
       return true;
@@ -723,7 +762,7 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
       assert.throws(
         () => validateRecord({ kind, by: 'tool', data }),
         (error) => {
-          const failure = error as Error & { reason: string };
+          const failure = narrow(error, toolFailure);
           assert.equal(failure.reason, 'invalid-record');
           assert.match(failure.message, prefix);
           assert.ok(failure.message.endsWith(expectedSuffix), failure.message);
@@ -745,7 +784,7 @@ test('malformed data errors include the kind allowed field shape within 1024 UTF
     assert.throws(
       () => validateRecord({ kind, by: 'orchestrator', key: 'k', data: { [key]: 1 } }),
       (error) => {
-        const failure = error as Error & { reason: string };
+        const failure = narrow(error, toolFailure);
         assert.equal(failure.reason, 'invalid-record');
         assert.ok(failure.message.endsWith(expectedSuffix), failure.message);
         assert.ok(
@@ -779,7 +818,7 @@ test('test-cleanup records require trees', () => {
     assert.throws(
       () => validateRecord({ kind: 'integrate', by: 'tool', data: { ...base, ...patch } }),
       (error) => {
-        const failure = error as Error & { reason: string };
+        const failure = narrow(error, toolFailure);
         assert.equal(failure.reason, 'invalid-record');
         assert.match(failure.message, /trees/);
         return true;
@@ -798,7 +837,7 @@ test('only accepted review rulings can declare unique normalized correction path
       rationale: 'Correct source and test',
     };
     const paths = ['src/file.ts', 'tests/file with spaces.test.ts'];
-    const append = async (data: object) => {
+    const append = async (data: JsonObject) => {
       f.lines.length = 0;
       fs.writeFileSync(input, JSON.stringify({ kind: 'ruling', by: 'orchestrator', key: 'correction', data }));
       const exit = await main(['ledger', 'append', '--session', f.session, input], f.deps);
@@ -817,7 +856,7 @@ test('only accepted review rulings can declare unique normalized correction path
       ['src/./file.ts'],
       ['src//file.ts'],
       ['src/file.ts/'],
-      ['src\\file.ts'],
+      [String.raw`src\file.ts`],
       ['src/file.ts', 'src/file.ts'],
     ]) {
       const { exit, output } = await append({ ...ruling, paths: invalid });

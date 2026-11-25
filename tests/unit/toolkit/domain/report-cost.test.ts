@@ -1,68 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  formatCost,
-  resolvePricing,
-  sumCost,
-  type Cost,
-  type Pricer,
-} from '../../../../skills/dispatch/scripts/lib/pricing.ts';
-import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
-import {
-  REVIEW_TAGS_BY_KIND,
-  collectFindings,
-  matchFinding,
-  parseReport,
-} from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
-import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
-
-const finding = (overrides: Record<string, string> = {}) => ({
-  impact: 'blocks',
-  trigger: 'realistic',
-  locus: 'src/fetch.ts:L12',
-  tag: 'correctness',
-  defect: 'retry loop never terminates on persistent failure',
-  requiredChange: 'bound the retry loop with a counter',
-  ...overrides,
-});
-const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
-
-const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
-
-const failure = (text: string, truncated = false) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
-  return result.ok ? null : result.failure.kind;
-};
-
-const parseDetail = (text: string) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
-  return result.ok ? null : result.failure.detail;
-};
-
-const MARK = 'unresolved-locus: ';
-const planLocus = '§ Work';
-const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
-  const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
-  assert.ok(result.ok);
-  return result.findings.map((item) => item.locus);
-};
+import { formatCost, resolvePricing, sumCost } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
+import type { Cost, Pricer } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 
 // SECTION: Unknown tag recovery
-
-const planFinding = (tag: string, heading: string, defect: string) => ({
-  impact: 'degrades',
-  trigger: 'realistic',
-  locus: `§ ${heading}`,
-  tag,
-  defect,
-  requiredChange: `revise ${heading} to address the gap`,
-});
-const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
-  const result = parseReport({ kind, source: 'agy[0]', text });
-  assert.ok(result.ok, result.ok ? '' : result.failure.detail);
-  return result.findings;
-};
 
 // SECTION: Diagnostics reports
 
@@ -72,21 +14,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CATEGORIES,
-  COMPONENTS,
   DIAGNOSTIC_LIMITS,
   formatDuration,
-  heuristics,
-  normalizeUsage,
   renderDiagnostics,
-  retroObservations,
-  sanitizeFacts,
-  type Finding,
-  type InvocationFacts,
-  type RunFacts,
-  type Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type {
+  InvocationFacts,
+  RunFacts,
+  Usage,
+} from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
 
@@ -130,76 +66,14 @@ const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
   reviews: [],
   ...overrides,
 });
-const observation = (overrides: Record<string, unknown> = {}) => ({
-  id: 'o1',
-  component: 'scripts/toolkit/records.ts',
-  category: 'instruction-clarity',
-  evidence: 'The `rule` frame reply template omits the allowed verdict values.',
-  impact: 'Hosts send invalid rulings and need a second turn.',
-  proposedFix: 'List the verdict values in the reply template and check them in validate.',
-  ...overrides,
-});
-const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
-
-const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
-function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
-  assert.ok(finding, 'finding expected');
-  assert.equal(finding.category, category);
-  assert.ok(COMPONENTS.has(finding.component), `dispatch component: ${finding.component}`);
-  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) assert.ok(field.trim().length > 0);
-  return finding;
-}
 
 // SECTION: Layout, durations, and token columns
 
 // SECTION: Heuristics, severity, and model attribution
 
-const rejections = (tool: string, action: string, cls: string, count = 2) =>
-  Array.from({ length: count }, () => ({ tool, action, cls }));
-const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
-
-const stageRows = (text: string) =>
-  text
-    .split('### Tokens by stage')[1]!
-    .split('### Review yield')[0]!
-    .split('\n')
-    .filter((line) => line.startsWith('|'));
-
 // SECTION: Scope gate and redaction
 
-const LEAKS = [
-  'see /home/alice/repo/src/app.ts',
-  'at ~/work/app',
-  'path C:\\Users\\alice\\repo',
-  'path d:/work/repo',
-  'share \\\\server\\team\\x',
-  'docs at https://intranet.example/x',
-  'host www.example.org',
-  'host build.example.com',
-  'mail alice@example.com',
-  'session 123e4567-e89b-12d3-a456-426614174000',
-  `hash ${'a1'.repeat(20)}`,
-];
-const CLEAN =
-  'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
-
 // SECTION: Finding origin
-
-const originReply = (...origins: (string | undefined)[]) =>
-  report(
-    origins.map((origin, index) =>
-      finding({
-        defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index,
-        locus: 'src/file' + index + '.ts:L1',
-        ...(origin === undefined ? {} : { origin }),
-      }),
-    ),
-  );
-const draftsOf = (text: string) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
-  assert.ok(result.ok, JSON.stringify(result));
-  return result.findings;
-};
 
 // SECTION: Estimated cost rendering
 
@@ -218,7 +92,7 @@ const PRICES = {
   },
 };
 const pricer = resolvePricing(PRICES, undefined)!;
-const costRender = (runs: RunFacts[], priced: Pricer | null = pricer) =>
+const costRender = (runs: Array<RunFacts>, priced: Pricer | null = pricer) =>
   renderDiagnostics(runs, priced ?? undefined).text;
 const tableLines = (text: string, heading: string) =>
   text
@@ -263,8 +137,9 @@ const summaryCost = (text: string) => /^- Estimated cost ([^\s·]+)/m.exec(text)
 
 // Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
 type Source = { key: string; tokens: number; cost: Cost };
+type SourceRow = { model: string; tokens: number; cost: Cost };
 const exactCost = (usd: number): Cost => ({ low: usd, high: usd, priced: true, reasons: new Set() });
-function sourceRow(index: number): { model: string; tokens: number; cost: Cost } {
+function sourceRow(index: number): SourceRow {
   const m = (index % 7) + 1,
     quarter = 250_000 * m;
   switch (index % 4) {
@@ -286,22 +161,22 @@ function sourceRow(index: number): { model: string; tokens: number; cost: Cost }
       return { model: 'free', tokens: 1000 * ((index % 13) + 1), cost: exactCost(0) };
   }
 }
-const rankOrder = (rows: readonly Source[]) =>
+const rankOrder = (rows: ReadonlyArray<Source>) =>
   [...rows].sort(
     (a, b) => b.cost.high - a.cost.high || b.cost.low - a.cost.low || b.tokens - a.tokens || byKey(a.key, b.key),
   );
-const totalOf = (rows: readonly Source[]) => formatCost(sumCost(rows.map((r) => r.cost)));
-const reasonsOf = (rows: readonly Source[]) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
+const totalOf = (rows: ReadonlyArray<Source>) => formatCost(sumCost(rows.map((r) => r.cost)));
+const reasonsOf = (rows: ReadonlyArray<Source>) => [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].sort();
 
 /** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
 function assertFolded(
-  kept: readonly string[][],
-  folded: readonly string[],
-  keyOf: (cells: string[]) => string,
-  all: readonly Source[],
+  kept: ReadonlyArray<Array<string>>,
+  folded: ReadonlyArray<string>,
+  keyOf: (cells: Array<string>) => string,
+  all: ReadonlyArray<Source>,
   tokensColumn: number,
   costColumn: number,
-): Source[] {
+): Array<Source> {
   const keptKeys = kept.map(keyOf);
   assert.equal(new Set(keptKeys).size, kept.length, 'kept rows are distinct');
   assert.deepEqual(
@@ -318,6 +193,18 @@ function assertFolded(
   assert.equal(folded[costColumn], totalOf(rest));
   return rest;
 }
+
+const roleLine = (t: string) => /^\| CLI delegates \|.*$/m.exec(t)?.[0];
+
+const host = (phase: string | undefined, role: 'host' | 'subagent', model: string, input: number) => ({
+  stage: 'plan' as const,
+  ...(phase && { phase }),
+  role,
+  model,
+  effort: null,
+  input,
+  output: 0,
+});
 
 test('cost cells price units, sum phases and attribute coverage across tables', () => {
   // cost cells show estimated cost in the Summary, Phases, Tokens by platform and Tokens by stage
@@ -351,13 +238,14 @@ test('cost cells price units, sum phases and attribute coverage across tables', 
       tableLines(plain, '### Tokens by stage').some((line) => line.endsWith('| 1/1 | — | — |')),
       plain,
     );
-    const roleLine = (t: string) => /^\| CLI delegates \|.*$/m.exec(t)?.[0];
+
     assert.ok(roleLine(text) && roleLine(plain));
   }
 
   // cost cells keep unpriced units out of the sum
   {
-    const cost = (invocations: InvocationFacts[]) => phaseCost(costRender([facts({ invocations })]), 'code review')[0];
+    const cost = (invocations: Array<InvocationFacts>) =>
+      phaseCost(costRender([facts({ invocations })]), 'code review')[0];
     assert.equal(cost([mega('beta', 'low', M), mega('mystery', 'low', M)]), '~$2.00');
     assert.equal(cost([mega('mystery', 'low', M)]), '—');
     const text = costRender([
@@ -368,15 +256,6 @@ test('cost cells price units, sum phases and attribute coverage across tables', 
 
   // phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total
   {
-    const host = (phase: string | undefined, role: 'host' | 'subagent', model: string, input: number) => ({
-      stage: 'plan' as const,
-      ...(phase ? { phase } : {}),
-      role,
-      model,
-      effort: null,
-      input,
-      output: 0,
-    });
     const run = facts({
       phases: [
         { key: 'p1', name: 'plan', outcome: 'complete' },
@@ -442,7 +321,7 @@ test('cost cells price units, sum phases and attribute coverage across tables', 
               input: 0,
               output: M,
               reasoning: M,
-              ...(reasoningInOutput === undefined ? {} : { reasoningInOutput }),
+              ...(!(reasoningInOutput === undefined) && { reasoningInOutput }),
             },
           ],
         },
@@ -453,7 +332,7 @@ test('cost cells price units, sum phases and attribute coverage across tables', 
 
   // cost drivers share bars rank keys by cost midpoint share, with exact strings for each edge
   {
-    const sharesOf = (invocations: InvocationFacts[]) => {
+    const sharesOf = (invocations: Array<InvocationFacts>) => {
       const text = costRender([facts({ invocations })]);
       return tableLines(text, '## Cost drivers')
         .slice(2)
@@ -550,7 +429,7 @@ test('cost folding folds the lowest-ranked Tokens by stage rows into one trailin
     ...sourceRow(index),
     effort: `e${String(index).padStart(4, '0')}`,
   }));
-  const all: Source[] = rows.map((r) => ({ key: `${r.model}/${r.effort}`, tokens: r.tokens, cost: r.cost }));
+  const all: Array<Source> = rows.map((r) => ({ key: `${r.model}/${r.effort}`, tokens: r.tokens, cost: r.cost }));
   const hostRows = rows.map((r) => ({
     stage: 'plan' as const,
     phase: 'p',
@@ -607,7 +486,7 @@ test('cost folding folds Phases rows for many review subjects and keeps the run 
     key: `review-${index.toString(16).padStart(16, '0')}`,
     wallMs: 1000 * (index + 1),
   }));
-  const all: Source[] = rows.map(({ key, tokens, cost }) => ({ key, tokens, cost }));
+  const all: Array<Source> = rows.map(({ key, tokens, cost }) => ({ key, tokens, cost }));
   const run = facts({
     phases: rows.map((r) => ({ key: r.key, name: 'code review', outcome: 'complete', wallMs: r.wallMs })),
     invocations: rows.map((r) => mega(r.model, 'low', r.tokens, { phase: r.key })),
@@ -641,7 +520,7 @@ test('cost folding folds Tokens by platform rows last, after earlier tables fold
     ...sourceRow(index),
     platform: `p${String(index).padStart(4, '0')}`,
   }));
-  const all: Source[] = rows.map((r) => ({ key: r.platform, tokens: r.tokens, cost: r.cost }));
+  const all: Array<Source> = rows.map((r) => ({ key: r.platform, tokens: r.tokens, cost: r.cost }));
   const text = renderDiagnostics(
     [facts({ invocations: rows.map((r) => mega(r.model, 'low', r.tokens, { provider: r.platform })) })],
     foldPricer,
@@ -676,12 +555,14 @@ test('cost folding folds Tokens by platform rows last, after earlier tables fold
     'small tables stay whole',
   );
 });
+const phase = (key: string, name: string) => ({ key, name, outcome: 'complete' });
+
 test('cost end to end: mixed-platform facts price in all four locations and survive an oversized report', () => {
   const shipped = JSON.parse(fs.readFileSync(path.join(SKILL_ROOT, 'references/pricing.json'), 'utf8'));
   const endPricer = resolvePricing(shipped, { 'lmstudio/*': { rates: { input: 0, output: 0 } } })!;
   const lmstudio = 'lmstudio/qwen3.8-27b-ridge';
-  const phase = (key: string, name: string) => ({ key, name, outcome: 'complete' });
-  const run = (extra: InvocationFacts[] = []) =>
+
+  const run = (extra: Array<InvocationFacts> = []) =>
     facts({
       phases: [phase('plan', 'plan'), phase('review', 'code review')],
       hostUsage: {
@@ -822,6 +703,8 @@ test('apart reasoning counts once in every token total and token share', () => {
   assert.ok(text.includes('| 30 (in output) | 120 | ok |'), text);
 });
 
+const run = (startedAt?: string) => facts({ ...(startedAt && { startedAt }), invocations: [mega('alpha', 'low', M)] });
+
 test('run start date selects rate period and falls back to base rates when absent', () => {
   const datedPricer = resolvePricing(
     {
@@ -836,8 +719,7 @@ test('run start date selects rate period and falls back to base rates when absen
     },
     undefined,
   )!;
-  const run = (startedAt?: string) =>
-    facts({ ...(startedAt ? { startedAt } : {}), invocations: [mega('alpha', 'low', M)] });
+
   assert.equal(summaryCost(costRender([run('2026-11-30')], datedPricer)), '~$1.00');
   assert.equal(summaryCost(costRender([run('2026-12-01')], datedPricer)), '~$4.00');
   assert.equal(summaryCost(costRender([run()], datedPricer)), '~$1.00');
@@ -868,15 +750,17 @@ test('multi-host Summary lists every host and names the covered host thread', ()
   assert.match(noHostUsage, /^- Host: claude, agy · no host thread is measured · OS: windows$/m);
 });
 
+const drivers = (text: string) => text.split('## Cost drivers')[1]!.split('\n## ')[0]!;
+
+const shareNum = (cell: string) => Number(cell.split(' ').at(-1)!.replace('%', ''));
+
 test('Cost drivers ranks up to five groups with remainder summing to 100% and cache-hit ratio', () => {
-  const drivers = (text: string) => text.split('## Cost drivers')[1]!.split('\n## ')[0]!;
   const rows = (text: string) =>
     drivers(text)
       .split('\n')
       .filter((l) => l.startsWith('|'))
       .slice(2)
       .map((l) => l.slice(2, -2).split(' | '));
-  const shareNum = (cell: string) => Number(cell.split(' ').at(-1)!.replace('%', ''));
 
   // 7 priced groups -> top 5 + remainder, shares total 100%, cache-hit = 50%
   const pricedRun = facts({

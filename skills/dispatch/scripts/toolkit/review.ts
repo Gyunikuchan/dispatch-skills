@@ -9,17 +9,19 @@ import {
   sameReviewCapture,
   reviewRulingSnapshot,
   readStoredJson,
-  type Round,
-  type ReviewTarget,
 } from './review-state.ts';
+import type { Round, ReviewTarget } from './review-state.ts';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isRecord } from '../lib/config.ts';
+import { isLevel, present, textValue } from './narrow.ts';
 import { nodeLinkFs, renameRetrying } from '../lib/node-fs-ext.ts';
 import { atomic } from './fanout/state.ts';
-import { stripBom } from '../lib/fs-ext.ts';
+import { nodeErrorCode, stripBom } from '../lib/fs-ext.ts';
 import type { HandlerContext, HandlerResult } from './cli.ts';
 import { artifactKind } from './artifacts.ts';
-import { confirmGate, foldLedger, latest, levelGate, withLedger, hasCleanupCheckpoint, type Fold } from './ledger.ts';
+import { confirmGate, foldLedger, latest, levelGate, withLedger, hasCleanupCheckpoint } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { withLockFile } from './lock.ts';
 import {
   assertHostNotSandboxed,
@@ -30,9 +32,8 @@ import {
   underfillNote,
   cliWaveState,
   nativePendingNote,
-  type SlotOutcome,
-  type Validation,
 } from './fanout.ts';
+import type { SlotOutcome, Validation } from './fanout.ts';
 import { isUnresolvedLocus, parseReport } from './domain/report.ts';
 import { effectiveSeverity, severityOf } from './domain/severity.ts';
 import { parsePlan } from './domain/plan.ts';
@@ -40,7 +41,8 @@ import { structuralLines } from './domain/markdown-structure.ts';
 import { parseIncrementGraph } from './domain/design.ts';
 import type { Finding, ReviewKind, RosterSlot } from './domain/types.ts';
 import type { InterRound } from './domain/prompt.ts';
-import { changedHeadings, confirmationPrompt, reviewPrompt, type Settled } from './prompts.ts';
+import { changedHeadings, confirmationPrompt, reviewPrompt } from './prompts.ts';
+import type { Settled } from './prompts.ts';
 import {
   admission,
   finalizeRound,
@@ -51,9 +53,8 @@ import {
   rerunNotesFor,
   renderBudget,
   repositoryRerunRounds,
-  type Finalized,
-  type FindingsValue,
 } from './findings.ts';
+import type { Finalized, FindingsValue } from './findings.ts';
 import { git, gitPaths } from './git.ts';
 import {
   CODE_TARGETS,
@@ -62,8 +63,8 @@ import {
   specHashFor,
   writeReviewerInput,
   writeRoundSnapshots,
-  type Capture,
 } from './review-capture.ts';
+import type { Capture } from './review-capture.ts';
 import {
   carryCheckoutBaseline,
   compareForRound,
@@ -71,20 +72,14 @@ import {
   writeBaselineIfMissing,
   writeCheckoutReport,
 } from './review-checkout.ts';
-import { blockedNotice, blockedStateFor, hotUnitsNotice, userDecisions, type BlockedState } from './review-notices.ts';
+import { blockedNotice, blockedStateFor, hotUnitsNotice, userDecisions } from './review-notices.ts';
+import type { BlockedState } from './review-notices.ts';
 import { currentRuntimeVerification, integrationRecord } from './integration-state.ts';
 import { loadPlan, ownedPaths } from './plan-view.ts';
-import { LEVELS, type Level } from './types.ts';
 import { clipBytes, summaryWithItems, ToolError } from './output.ts';
 import { redGaps } from './red.ts';
-import {
-  applicableReviewIds,
-  loadRejections,
-  reviewId,
-  rejectionRequest,
-  type RejectionRequest,
-  type ConfirmationRound,
-} from './confirmations.ts';
+import { applicableReviewIds, loadRejections, reviewId, rejectionRequest } from './confirmations.ts';
+import type { RejectionRequest, ConfirmationRound } from './confirmations.ts';
 import { refreshFindingsSection, renderFindingsFile, rulingsTemplate } from './review-findings.ts';
 import { coverageState } from './coverage.ts';
 import { failureReasonEvidence } from './domain/blocker.ts';
@@ -95,6 +90,14 @@ import type { LedgerRecord } from './records.ts';
 import { launches } from './writers.ts';
 
 const label = (target: ReviewTarget) => (typeof target === 'string' ? target : target.head);
+// An artifact target is a bare hash, so it has no base or head.
+const baseOf = (target: ReviewTarget) => (typeof target === 'string' ? undefined : target.base);
+const headOf = (target: ReviewTarget) => (typeof target === 'string' ? undefined : target.head);
+const REVIEW_KINDS = ['code', 'plan', 'design'] as const;
+type Replacement = { targets: ReadonlyArray<RosterSlot>; narrowed: boolean; coverage?: 'open' | 'full' };
+// A confirmation-only round re-uses the previous target.
+const confirmationOnly = ({ metadata }: ConfirmationRound) =>
+  /\(confirmation-only\)/i.test(String(('scope' in metadata ? metadata.scope : undefined) ?? ''));
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
 const UNCHANGED_TEXT = 'none; the governed text is unchanged since the previous round.';
 
@@ -106,7 +109,7 @@ const planPaths = (source: string) => {
 };
 const designPaths = (source: string) =>
   parseIncrementGraph(structuralLines(source)).increments.flatMap((increment) => increment.paths);
-const turnTarget = (paths: string[]) => 6 + 2 * new Set(paths).size;
+const turnTarget = (paths: Array<string>) => 6 + 2 * new Set(paths).size;
 
 async function cleanupComplete(ctx: HandlerContext, records: Fold['records'], cwd: string): Promise<boolean> {
   if (
@@ -115,12 +118,22 @@ async function cleanupComplete(ctx: HandlerContext, records: Fold['records'], cw
         (row.kind === 'integrate' && row.data['phase'] === 'test-cleanup') ||
         (row.kind === 'note' && row.key === 'test-cleanup:skip'),
     )
-  )
+  ) {
     return true;
+  }
   try {
-    const report = JSON.parse(stripBom(fs.readFileSync(path.join(ctx.session, '.state/test-cleanup.json'), 'utf8')));
-    if (!Array.isArray(report?.removed) || report.removed.length || report.deleted !== 0 || report.merged !== 0)
+    const report: unknown = JSON.parse(
+      stripBom(fs.readFileSync(path.join(ctx.session, '.state/test-cleanup.json'), 'utf8')),
+    );
+    if (
+      !isRecord(report) ||
+      !Array.isArray(report['removed']) ||
+      report['removed'].length ||
+      report['deleted'] !== 0 ||
+      report['merged'] !== 0
+    ) {
       return false;
+    }
     const status = await git(ctx.deps, cwd, [
       '--no-optional-locks',
       'status',
@@ -141,46 +154,65 @@ async function reviewWarning(ctx: HandlerContext, target: string, cwd: string, h
     target === 'worktree' &&
     latest(fold, 'bind')?.data['plan'] &&
     fold.records.some((row) => row.kind === 'integrate' && row.data['phase'] === 'done')
-  )
+  ) {
     return 'implement code review targets integration, not worktree';
-  if (target !== 'integration') return '';
-  const opened = integrationRecord(fold)!;
+  }
+  if (target !== 'integration') {
+    return '';
+  }
+  const opened = present(integrationRecord(fold), 'the opened integration record');
   // Use the delivery proof rule so a subsequent cleanup commit preserves verification.
-  const warnings: string[] = [];
-  if (!currentRuntimeVerification(fold, opened.seq))
+  const warnings: Array<string> = [];
+  if (!currentRuntimeVerification(fold, opened.seq)) {
     warnings.push('no current runtime verification recorded before integration review');
+  }
   if (
     !(await cleanupComplete(ctx, fold.records, cwd)) &&
     !(await hasCleanupCheckpoint(ctx.session, fold, ctx.deps, cwd, head))
-  )
+  ) {
     warnings.push('no test cleanup recorded before integration review');
+  }
   return warnings.join('; ');
 }
 
 export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
   const { session, manifest, deps } = ctx;
-  if (ctx.args.length !== 1)
+  if (ctx.args.length !== 1) {
     throw new ToolError(
       1,
       'invalid-input',
       'One review target is required: ' + CODE_TARGETS + '; plan and design targets are artifact paths',
     );
-  const requested = ctx.args[0]!;
+  }
+  const requested = present(ctx.args[0], 'the review target');
   const inferred = artifactKind(requested);
-  const kind = (ctx.values['kind'] ?? (inferred === 'plan' || inferred === 'design' ? inferred : 'code')) as ReviewKind;
-  if (!['code', 'plan', 'design'].includes(kind))
+  const requestedKind: unknown =
+    ctx.values['kind'] ?? (inferred === 'plan' || inferred === 'design' ? inferred : 'code');
+  const knownKind = REVIEW_KINDS.find((value) => value === requestedKind);
+  if (!knownKind) {
     throw new ToolError(1, 'invalid-input', 'Review kind must be code, plan or design');
+  }
+  const kind: ReviewKind = knownKind;
   const fold = foldLedger(session);
-  const level = (ctx.values['level'] ?? latest(fold, 'level')?.data['level'] ?? 'medium') as Level;
-  if (!LEVELS.includes(level)) throw new ToolError(1, 'invalid-input', 'Unknown level');
+  const requestedLevel: unknown = ctx.values['level'] ?? latest(fold, 'level')?.data['level'] ?? 'medium';
+  if (!isLevel(requestedLevel)) {
+    throw new ToolError(1, 'invalid-input', 'Unknown level');
+  }
+  const level = requestedLevel;
   const gate = levelGate(fold, level);
-  if (!gate.allowed) throw new ToolError(4, gate.reason!, gate.reason!);
-  const confirmInput = ctx.values['spec'] ?? latest(fold, 'bind')?.data['spec'];
+  if (!gate.allowed) {
+    throw new ToolError(4, gate.reason, gate.reason);
+  }
+  const confirmInput: unknown = ctx.values['spec'] ?? latest(fold, 'bind')?.data['spec'];
   if (kind !== 'code') {
     // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
-    if (typeof confirmInput !== 'string') throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
+    if (typeof confirmInput !== 'string') {
+      throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
+    }
     const confirmation = confirmGate(fold, specHashFor(manifest.repositoryRoot, confirmInput));
-    if (!confirmation.allowed) throw new ToolError(4, confirmation.reason!, confirmation.reason!);
+    if (!confirmation.allowed) {
+      throw new ToolError(4, confirmation.reason, confirmation.reason);
+    }
   }
   const pins = parsePinsFlag(ctx.values['pins']);
   const roster = resolveSlots(kind, level, deps, pins),
@@ -208,9 +240,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       // An unusable plan cannot classify tasks, but standalone revision review still works.
       if (
         !(error instanceof ToolError && error.reason === 'lint-errors') &&
-        !['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
-      )
+        !['ENOENT', 'EACCES', 'EPERM', 'EISDIR'].includes(nodeErrorCode(error) ?? '')
+      ) {
         throw error;
+      }
     }
   }
   const gitTarget = kind === 'code' && requested !== 'integration' && !taskTarget;
@@ -223,14 +256,17 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       '--end-of-options',
       'HEAD^{commit}',
     ]);
-    if (head.exit) throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD; ' + CODE_TARGETS);
+    if (head.exit) {
+      throw new ToolError(1, 'invalid-input', 'Cannot resolve revision HEAD; ' + CODE_TARGETS);
+    }
     series = '@' + head.stdout.trim();
   }
   const review = reviewId(kind, artifact, gitTarget ? series : undefined);
   const rejectionStates = () => loadRejections(session, foldLedger(session), [review]);
   const initialRejections = rejectionStates();
-  if (initialRejections.some((state) => state.state === 'escalated'))
+  if (initialRejections.some((state) => state.state === 'escalated')) {
     throw new ToolError(4, 'escalation-open', 'Resolve the disputed MUST rejection before another confirmation round');
+  }
   const directory = reviewDirectory(session, review);
   fs.mkdirSync(directory, { recursive: true });
 
@@ -248,18 +284,22 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const publicBlocked = () =>
       blockedStateOf().blocked.map(({ slot, provider, model, reason }) => ({ slot, provider, model, reason }));
     // The corrected severity of a finding, from every ruling recorded for it.
-    const effective = (finding: Finding, rows: readonly LedgerRecord[]) =>
+    const effective = (finding: Finding, rows: ReadonlyArray<LedgerRecord>) =>
       effectiveSeverity(
         finding,
         rows.filter((row) => row.data['subject'] === 'review:' + review + ':' + finding.id),
       );
     // A fresh review may skip at a zero-round level; an existing review runs the saved-cap checks below.
-    if (!cap && !rounds) return { ok: true, exit: 0, value: { skipped: true }, summary: 'review skipped at ' + level };
+    if (!cap && !rounds) {
+      return { ok: true, exit: 0, value: { skipped: true }, summary: 'review skipped at ' + level };
+    }
     // An incomplete round is reused before the ceiling checks; the round-cap predicate still applies.
-    if (admitted.state === 'escalation-open')
+    if (admitted.state === 'escalation-open') {
       throw new ToolError(4, 'escalation-open', 'Resolve the review ceiling escalation before another round');
-    if (admitted.state === 'requires-continuation')
+    }
+    if (admitted.state === 'requires-continuation') {
       throw new ToolError(4, 'round-cap', 'Review reached round cap ' + cap1);
+    }
     if (admitted.state === 'requires-ceiling-resolution') {
       const id = 'ceiling:' + review + ':' + admitted.ceiling;
       await withLedger(session, 'review ceiling', deps, async (tx) => {
@@ -276,10 +316,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         'Review reached ceiling ' + admitted.ceiling + '; resolve the review escalation before another round',
       );
     }
-    if (admitted.coverage?.state === 'unreadable')
+    if (admitted.coverage?.state === 'unreadable') {
       throw new ToolError(4, 'coverage-required', 'Cannot establish coverage for ' + review);
+    }
     // NOTE: a started all-failed round has no findings.json and counts as neither complete nor incomplete, so its reuse skips the new-round decision.
-    if (admitted.state === 'requires-coverage-decision')
+    if (admitted.state === 'requires-coverage-decision') {
       throw new ToolError(
         4,
         'coverage-decision',
@@ -293,31 +334,34 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
             : ' or grant one more coverage round (summary "grant: <reason>")') +
           ', with their quote',
       );
+    }
     // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
     const existingRound = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n)));
-    if (!cap && !existingRound && !rejectionStates().some((state) => state.state === 'pending'))
+    if (!cap && !existingRound && !rejectionStates().some((state) => state.state === 'pending')) {
       throw new ToolError(
         4,
         'level-unapproved',
         'Review at ' + level + ' has no reviewers; raise the level to continue',
       );
+    }
     const dir = reviewRoundDirectory(directory, n);
     const current = await capture();
     fs.mkdirSync(dir, { recursive: true });
     const roundFile = reviewRoundFile(dir),
       pendingFile = reviewPendingFile(dir);
     let round = readStoredJson<Round>(roundFile);
-    if (series && '@' + (current.target as { base: string }).base !== series)
+    if (series && '@' + baseOf(current.target) !== series) {
       throw new ToolError(4, 'target-moved', 'HEAD moved before worktree capture');
+    }
     const warning =
       kind === 'code' && (requested === 'integration' || requested === 'worktree')
         ? await reviewWarning(ctx, requested, current.cwd, label(current.target))
         : '';
     const warningPrefix = warning ? 'warning: ' + warning + '; ' : '';
     const warningValue = warning ? { warning } : {};
-    const prior: FindingsValue[] = [],
+    const prior: Array<FindingsValue> = [],
       priorTargets: Record<number, ReviewTarget> = {},
-      confirmationRounds: ConfirmationRound[] = [];
+      confirmationRounds: Array<ConfirmationRound> = [];
     for (let i = 1; i < n; i++) {
       const value = readStoredJson<FindingsValue>(reviewFindingsFile(reviewRoundDirectory(directory, i)));
       const metadata = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, i)));
@@ -329,12 +373,12 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     const rulingRows = () =>
       foldLedger(session).records.filter(
-        (row) => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + review + ':'),
+        (row) => row.kind === 'ruling' && textValue(row.data['subject']).startsWith('review:' + review + ':'),
       );
     const rulingSnapshot = () => reviewRulingSnapshot(review, prior, rulingRows());
     const settledRulings = rulingRows(),
       settledRejections = rejectionStates();
-    const settled: Settled[] = prior.flatMap((value) =>
+    const settled: Array<Settled> = prior.flatMap((value) =>
       value.findings.flatMap((finding) => {
         const ruling = settledRulings.findLast((row) => row.data['subject'] === 'review:' + review + ':' + finding.id);
         const state = settledRejections.find((state) => state.request.finding === finding.id);
@@ -345,9 +389,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
                 locus: finding.locus,
                 defect: finding.defect,
                 severity: effective(finding, settledRulings),
-                ...(state ? { rejectionConfirmed: state.state === 'confirmed' } : {}),
-                ruling: ruling.data['ruling'],
-                reason: ruling.data['rationale'],
+                ...(state && { rejectionConfirmed: state.state === 'confirmed' }),
+                ruling: textValue(ruling.data['ruling']),
+                reason: textValue(ruling.data['rationale']),
               },
             ]
           : [];
@@ -361,16 +405,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       [...confirmationRounds.flatMap((value) => value.metadata.roster), ...(round?.roster ?? [])].find(
         (slot) => slot.slot === name,
       );
-    // A confirmation-only round re-uses the previous target, so later rounds anchor
-    // target selection and decisive rulings to the latest substantive round.
-    const confirmationOnly = (value: ConfirmationRound) =>
-      /\(confirmation-only\)/i.test((value.metadata as { scope?: string }).scope ?? '');
+    // Later rounds anchor target selection and decisive rulings to the latest substantive round.
     const latestSubstantive = (): ConfirmationRound | undefined =>
       n > 1
         ? confirmationRounds.filter((value) => value.metadata.round < n && !confirmationOnly(value)).at(-1)
         : undefined;
     const decisiveRound = (value: ConfirmationRound | undefined): boolean => {
-      if (!value) return false;
+      if (!value) {
+        return false;
+      }
       const rulings = rulingRows();
       return value.findings.findings.some(
         (finding) =>
@@ -381,45 +424,63 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       );
     };
     function isRerunRound(): boolean {
-      if (n <= 1) return false;
+      if (n <= 1) {
+        return false;
+      }
       const fold = foldLedger(session);
-      if (!repositoryRerunRounds(fold, review).includes(n - 1)) return false;
-      if (!rerunNotesFor(fold, review, n - 1).length) return false;
+      if (!repositoryRerunRounds(fold, review).includes(n - 1)) {
+        return false;
+      }
+      if (!rerunNotesFor(fold, review, n - 1).length) {
+        return false;
+      }
       // The decision binds to the report it acknowledges: a stale decision
       // for an earlier report under a reused number grants nothing for the
       // current one.
-      if (!rerunGranted(session, fold, review, n - 1)) return false;
+      if (!rerunGranted(session, fold, review, n - 1)) {
+        return false;
+      }
       // The close decision binds to the actual report acknowledged: a later
       // report under a reused round number still admits the rerun, including
       // the equal-seq case with no intervening ledger record.
       const seqs = reportSeqs(session, review, n - 1);
-      if (!seqs.length) return false;
-      if (isReportsClosed(fold, review, n - 1, seqs)) return false;
+      if (!seqs.length) {
+        return false;
+      }
+      if (isReportsClosed(fold, review, n - 1, seqs)) {
+        return false;
+      }
       return true;
     }
-    function replacement(): { targets: readonly RosterSlot[]; narrowed: boolean; coverage?: 'open' | 'full' } {
-      if (pins) return { targets: roster.targets, narrowed: false };
+    function replacement(): Replacement {
+      if (pins) {
+        return { targets: roster.targets, narrowed: false };
+      }
       const previous = latestSubstantive();
       // A rerun note admits its named round + 1 at whole-target scope with every
       // logical target of the named round on its current route. Earlier findings stay
       // in `prior`; the next round uses normal targets.
       if (isRerunRound()) {
         const logical = previous?.metadata.roster.filter((slot) => !slot.reserve) ?? [];
-        if (logical.length) return { targets: logical, narrowed: false };
+        if (logical.length) {
+          return { targets: logical, narrowed: false };
+        }
         // An all-failed named round has no findings and no confirmation
         // round: its saved round.json keeps the roster for the same
         // whole-target rerun, and its failed report stays open until that
         // rerun finalizes.
         const failedRound = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n - 1)));
         const failedLogical = failedRound?.roster.filter((slot) => !slot.reserve) ?? [];
-        if (failedLogical.length) return { targets: failedLogical, narrowed: false };
+        if (failedLogical.length) {
+          return { targets: failedLogical, narrowed: false };
+        }
       }
       const target = previous?.metadata.roster.find((slot) => !slot.reserve);
       const decisive = decisiveRound(previous);
       // Open coverage replaces the narrowed slot, and a decisive finding keeps the full roster; both run at whole-target scope.
       const open =
         review === INTEGRATION_REVIEW ? coverageState(session, foldLedger(session), review, applies).open : [];
-      if (open.length && n > 1)
+      if (open.length && n > 1) {
         return {
           targets:
             target && !decisive
@@ -431,12 +492,15 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           narrowed: false,
           coverage: target && !decisive ? 'open' : 'full',
         };
+      }
       return { targets: target && !decisive ? [target] : roster.targets, narrowed: !!target && !decisive };
     }
     // Accepted findings that no reviewer has checked yet: accepted after the latest round that reviewed a target.
     function acceptedSinceReview(): InterRound['accepted'] {
       const window = latestSubstantive()?.metadata.startSeq;
-      if (window === undefined) return [];
+      if (window === undefined) {
+        return [];
+      }
       const rows = rulingRows();
       return prior.flatMap((value) =>
         value.findings.flatMap((finding) => {
@@ -449,18 +513,27 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     // NOTE: a failed diff never refuses the round; REQ-4 keeps every gate, so extra information adds none.
     async function interRoundDiff(captured: Capture, confirmationOnlyRound: boolean): Promise<string> {
-      if (confirmationOnlyRound) return UNCHANGED_TARGET;
+      if (confirmationOnlyRound) {
+        return UNCHANGED_TARGET;
+      }
       try {
         const previous = readStoredJson<Round>(reviewRoundFile(reviewRoundDirectory(directory, n - 1)));
-        if (!previous) return 'unavailable.';
-        if (kind === 'code')
+        if (!previous) {
+          return 'unavailable.';
+        }
+        if (kind === 'code') {
           return label(previous.target) === label(captured.target)
             ? UNCHANGED_TARGET
             : '`git diff ' + label(previous.target) + ' ' + label(captured.target) + '`';
+        }
         const before = reviewerInputPath(directory, n - 1),
           after = reviewerInputPath(directory, n);
-        if (!fs.existsSync(before) || !fs.existsSync(after)) return 'unavailable.';
-        if (fs.readFileSync(before).equals(fs.readFileSync(after))) return UNCHANGED_TEXT;
+        if (!fs.existsSync(before) || !fs.existsSync(after)) {
+          return 'unavailable.';
+        }
+        if (fs.readFileSync(before).equals(fs.readFileSync(after))) {
+          return UNCHANGED_TEXT;
+        }
         const result = await git(deps, directory, [
           'diff',
           '--no-index',
@@ -471,7 +544,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           after,
         ]);
         // --no-index also exits 1 on an inaccessible path, so exit 1 needs output.
-        if (result.exit !== 1 || !result.stdout) return 'unavailable.';
+        if (result.exit !== 1 || !result.stdout) {
+          return 'unavailable.';
+        }
         const file = path.resolve(dir, 'inter-round.diff');
         fs.writeFileSync(file, result.stdout);
         return '`' + file + '` (unified diff of the governed text)';
@@ -495,22 +570,22 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         requests.length > 0 &&
         !decisiveRound(latestSubstantive()) &&
         previousRound !== undefined &&
-        sameReviewCapture(previousRound.metadata as Round, captured);
+        sameReviewCapture(previousRound.metadata, captured);
       let scope = 'Full review',
         changedPaths = captured.changed;
-      const changedHeadingsSince = (round: number): string[] => {
+      const changedHeadingsSince = (round: number): Array<string> => {
         const snapshot = path.join(reviewRoundDirectory(directory, round), 'target.snapshot.md');
         return kind !== 'code' && captured.source !== undefined && fs.existsSync(snapshot)
           ? changedHeadings(fs.readFileSync(snapshot, 'utf8'), captured.source)
           : [];
       };
       if (confirmationOnlyRound) {
-        scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
+        scope = `Re-review round ${n} (confirmation-only) — comparison: ${label(present(priorTargets[n - 1], 'the previous round target'))}..${label(captured.target)}`;
       } else if (rerun && !coverage) {
         const comparison =
           typeof captured.target === 'string'
             ? captured.target
-            : (captured.target as { base: string }).base + '..' + label(captured.target);
+            : baseOf(captured.target) + '..' + label(captured.target);
         scope +=
           kind === 'code'
             ? ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison
@@ -518,16 +593,16 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
                 changed.length
                   ? ' — changed: ' + changed.join(', ') + '; comparison: ' + comparison
                   : ' — comparison: ' + comparison)(changedHeadingsSince(n - 1));
-      } else if (coverage)
-        scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${(captured.target as { base: string }).base}..${label(captured.target)}`;
-      else if (n > 1) {
+      } else if (coverage) {
+        scope = `Re-review round ${n} (coverage) — changed paths: ${captured.changed.join(', ')}; comparison: ${String(baseOf(captured.target))}..${label(captured.target)}`;
+      } else if (n > 1) {
         changedPaths =
           kind === 'code'
             ? await gitPaths(deps, manifest.repositoryRoot, [
                 'diff',
                 '--name-only',
                 '-z',
-                label(priorTargets[n - 1]!),
+                label(present(priorTargets[n - 1], 'the previous round target')),
                 label(captured.target),
               ])
             : [];
@@ -535,26 +610,32 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           kind === 'code'
             ? 'changed paths: ' + changedPaths.join(', ')
             : ((headings) => (headings.length ? 'changed: ' + headings.join(', ') : ''))(changedHeadingsSince(n - 1));
-        scope = `Re-review round ${n} (full) — ${changed ? changed + '; ' : ''}comparison: ${label(priorTargets[n - 1]!)}..${label(captured.target)}`;
+        scope = `Re-review round ${n} (full) — ${changed ? changed + '; ' : ''}comparison: ${label(present(priorTargets[n - 1], 'the previous round target'))}..${label(captured.target)}`;
       } else if (kind === 'code') {
-        const target = captured.target as { base: string; head: string };
-        scope +=
-          ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + target.base + '..' + target.head;
+        const comparison = String(baseOf(captured.target)) + '..' + String(headOf(captured.target));
+        scope += ' — changed paths: ' + captured.changed.join(', ') + '; comparison: ' + comparison;
       }
       // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
-      if (narrowed && !confirmationOnlyRound) scope = scope.replace('(full)', '(narrowed)');
+      if (narrowed && !confirmationOnlyRound) {
+        scope = scope.replace('(full)', '(narrowed)');
+      }
       const turnPaths =
-        kind === 'code' ? changedPaths : kind === 'plan' ? planPaths(captured.source!) : designPaths(captured.source!);
-      let slots: RosterSlot[];
+        kind === 'code'
+          ? changedPaths
+          : (kind === 'plan' ? planPaths : designPaths)(present(captured.source, 'the artifact source'));
+      let slots: Array<RosterSlot>;
       if (confirmationOnlyRound) {
         // Only the assigned source slots and configured reserves are staffed; the
         // reserves answer the source slot's own prompt when that slot fails.
-        const resolved: RosterSlot[] = [];
-        for (const source of [...new Set(requests.flatMap((request) => request.sourceSlots))]) {
+        const resolved: Array<RosterSlot> = [];
+        for (const source of new Set(requests.flatMap((request) => request.sourceSlots))) {
           const saved = savedSlot(source);
-          if (!saved)
+          if (!saved) {
             throw new ToolError(4, 'review-confirmation-required', 'Missing original reviewer slot ' + source);
-          if (!resolved.some((slot) => slot.slot === source)) resolved.push({ ...saved, reserve: false });
+          }
+          if (!resolved.some((slot) => slot.slot === source)) {
+            resolved.push({ ...saved, reserve: false });
+          }
         }
         slots = [
           ...resolved,
@@ -565,24 +646,30 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           ...targets,
           ...roster.reserves.filter((reserve) => !targets.some((slot) => slot.slot === reserve.slot)),
         ];
-        for (const request of requests)
-          for (const source of request.sourceSlots)
+        for (const request of requests) {
+          for (const source of request.sourceSlots) {
             if (!slots.some((slot) => slot.slot === source && !slot.reserve)) {
               const saved = savedSlot(source);
-              if (!saved)
+              if (!saved) {
                 throw new ToolError(4, 'review-confirmation-required', 'Missing original reviewer slot ' + source);
+              }
               const existing = slots.findIndex((slot) => slot.slot === source);
-              if (existing >= 0) slots.splice(existing, 1);
+              if (existing >= 0) {
+                slots.splice(existing, 1);
+              }
               slots.push({ ...saved, reserve: false });
             }
+          }
+        }
       }
       const contextMapPath = contextMapFile && fs.existsSync(contextMapFile) ? contextMapFile : undefined;
+      const pinsFlag: unknown = ctx.values['pins'];
       const value: Round = {
         round: n,
         generation,
         cap: cap1,
         level,
-        pins: (ctx.values['pins'] as string | undefined) ?? null,
+        pins: typeof pinsFlag === 'string' ? pinsFlag : null,
         roster: slots,
         requests,
         rulingSnapshot: rulingSnapshot(),
@@ -591,24 +678,26 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         spec: captured.spec,
         target: captured.target,
         turnTarget: turnTarget(turnPaths),
-        ...(contextMapPath ? { contextMapPath } : {}),
-        ...(captured.artifactPath ? { artifactPath: captured.artifactPath } : {}),
-        ...(captured.artifacts ? { artifacts: captured.artifacts } : {}),
-        ...(roster.underfill ? { underfill: roster.underfill } : {}),
-        ...(coverage ? { coverage } : {}),
-        ...(admitted.coverage?.state === 'readable' && admitted.coverage.use
-          ? { coverageUse: admitted.coverage.use }
-          : {}),
+        ...(contextMapPath && { contextMapPath }),
+        ...(captured.artifactPath && { artifactPath: captured.artifactPath }),
+        ...(captured.artifacts && { artifacts: captured.artifacts }),
+        ...(roster.underfill && { underfill: roster.underfill }),
+        ...(coverage && { coverage }),
+        ...(admitted.coverage?.state === 'readable' && admitted.coverage.use && { coverageUse: admitted.coverage.use }),
       };
-      if (!slots.some((entry) => !entry.reserve)) throw new ToolError(4, 'level-unapproved', noReviewer());
+      if (!slots.some((entry) => !entry.reserve)) {
+        throw new ToolError(4, 'level-unapproved', noReviewer());
+      }
       // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
-      if ((kind === 'plan' || kind === 'design') && captured.source !== undefined)
+      if ((kind === 'plan' || kind === 'design') && captured.source !== undefined) {
         writeReviewerInput(directory, n, kind, captured.source);
-      if (n > 1)
+      }
+      if (n > 1) {
         value.interRound = {
           diff: await interRoundDiff(captured, confirmationOnlyRound),
           accepted: acceptedSinceReview(),
         };
+      }
       fs.mkdirSync(reviewGenerationDirectory(dir, generation), { recursive: true });
       writeRoundSnapshots(dir, kind, captured);
       atomic(roundFile, value);
@@ -616,9 +705,13 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
 
     const assertCitations = (source: string | undefined) => {
-      if ((kind !== 'plan' && kind !== 'design') || source === undefined) return;
+      if ((kind !== 'plan' && kind !== 'design') || source === undefined) {
+        return;
+      }
       const defects = lintCitations(source, kind, repositoryReader(manifest.repositoryRoot));
-      if (defects.length) throw new ToolError(4, 'lint-errors', JSON.stringify(defects));
+      if (defects.length) {
+        throw new ToolError(4, 'lint-errors', JSON.stringify(defects));
+      }
     };
 
     async function supersede(captured: Capture) {
@@ -632,19 +725,26 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
               confirmationRounds.some((round) => round.metadata.roster.some((slot) => slot.slot === source)),
             ),
           );
-      if (!staffed) throw new ToolError(4, 'level-unapproved', noReviewer());
-      const previousGeneration = round!.generation;
+      if (!staffed) {
+        throw new ToolError(4, 'level-unapproved', noReviewer());
+      }
+      const previousGeneration = present(round, 'the review round').generation;
       const pending = readStoredJson<Finalized>(pendingFile);
       if (pending) {
         await withLedger(session, 'review supersede', deps, async (tx) => {
           for (const escalation of pending.escalations) {
-            if (String(escalation.data['id']).startsWith('rejection:')) continue;
-            if (!tx.fold.records.some((row) => row.key === escalation.key)) continue;
+            if (String(escalation.data['id']).startsWith('rejection:')) {
+              continue;
+            }
+            if (!tx.fold.records.some((row) => row.key === escalation.key)) {
+              continue;
+            }
+            const id: unknown = escalation.data['id'];
             await tx.append({
               kind: 'escalation',
               by: 'tool',
               key: escalation.key + ':superseded',
-              data: { id: escalation.data['id'], state: 'resolved', summary: 'superseded: target moved' },
+              data: { id, state: 'resolved', summary: 'superseded: target moved' },
             });
           }
         });
@@ -657,28 +757,33 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     }
     const hadPending = fs.existsSync(pendingFile);
     if (!round) {
-      if (!hadPending) assertCitations(current.source);
+      if (!hadPending) {
+        assertCitations(current.source);
+      }
       round = await start(1, current);
     } else if (
       !sameReviewCapture(round, current) ||
       (round.rulingSnapshot !== undefined && round.rulingSnapshot !== rulingSnapshot())
     ) {
       await supersede(current);
-      if (hadPending) throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
+      if (hadPending) {
+        throw new ToolError(4, 'target-moved', 'Review target moved during finalization');
+      }
     }
     // Plan and design reviewers read governed text only; a resumed round reuses the same path and bytes.
     let reviewerArtifact = artifact;
     if (kind === 'plan' || kind === 'design') {
       const inputPath = reviewerInputPath(directory, n);
       if (!fs.existsSync(inputPath)) {
-        if (current.source === undefined)
+        if (current.source === undefined) {
           throw new ToolError(2, 'review-failed', 'Cannot write reviewer input ' + inputPath + ': missing source');
+        }
         writeReviewerInput(directory, n, kind, current.source);
       }
       reviewerArtifact = inputPath;
     }
     let pending = readStoredJson<Finalized>(pendingFile);
-    const ignoredFailureReports: string[] = [];
+    const ignoredFailureReports: Array<string> = [];
     const computeUnits = () => {
       const rows = rulingRows();
       const rounds = Array.from({ length: n }, (_, i) => {
@@ -691,12 +796,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           try {
             text = fs.readFileSync(reviewerInputPath(directory, number), 'utf8');
           } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            if (nodeErrorCode(error) !== 'ENOENT') {
+              throw error;
+            }
           }
         }
         return {
           findings: value?.findings ?? [],
-          ...(text === undefined ? {} : { text }),
+          ...(!(text === undefined) && { text }),
           startSeq: metadata?.startSeq ?? 0,
         };
       });
@@ -708,10 +815,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         planPath: bind
           ? path.relative(manifest.repositoryRoot, path.resolve(manifest.repositoryRoot, String(bind.data['plan'])))
           : '',
-        ruling: (id, seq) =>
-          rows.findLast((row) => row.seq <= seq && row.data['subject'] === 'review:' + review + ':' + id)?.data[
-            'ruling'
-          ] as string | undefined,
+        ruling: (id, seq) => {
+          const row = rows.findLast((row) => row.seq <= seq && row.data['subject'] === 'review:' + review + ':' + id);
+          const ruling: unknown = row?.data['ruling'];
+          return typeof ruling === 'string' ? ruling : undefined;
+        },
       });
     };
     const fanoutDir = reviewGenerationDirectory(dir, round.generation);
@@ -725,44 +833,51 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         : undefined;
     if (!pending) {
       const bind = latest(foldLedger(session), 'bind');
-      const requestsBySlot = new Map<string, RejectionRequest[]>();
-      for (const request of round.requests ?? [])
-        for (const slot of request.sourceSlots)
+      const requestsBySlot = new Map<string, Array<RejectionRequest>>();
+      for (const request of round.requests ?? []) {
+        for (const slot of request.sourceSlots) {
           requestsBySlot.set(slot, [...(requestsBySlot.get(slot) ?? []), request]);
-      const targets = round!.roster.filter((entry) => !entry.reserve);
-      const confirmationRound = round!.scope.includes('(confirmation-only)');
-      const interRound = round!.interRound ? { interRound: round!.interRound } : {};
+        }
+      }
+      const targets = round.roster.filter((entry) => !entry.reserve);
+      const confirmationRound = round.scope.includes('(confirmation-only)');
+      const interRound = round.interRound ? { interRound: round.interRound } : {};
       // Decisions use the round's own start: a re-entered round keeps the list it first received.
-      const decisions = userDecisions(foldLedger(session).records, review, round!.startSeq);
+      const decisions = userDecisions(foldLedger(session).records, review, round.startSeq);
       const prompt = (slot: RosterSlot) => {
-        if (confirmationRound)
+        const live = present(round, 'the review round');
+        const planPath = bind?.data['plan']
+          ? path.resolve(manifest.repositoryRoot, textValue(bind.data['plan']))
+          : undefined;
+        if (confirmationRound) {
           return confirmationPrompt(kind, {
             ...interRound,
-            spec: round!.spec,
+            spec: live.spec,
             artifact: reviewerArtifact,
-            target: round!.target,
+            target: live.target,
             cwd: current.cwd,
-            scope: round!.scope,
+            scope: live.scope,
             taskSummary: current.taskSummary,
-            ...(bind?.data['plan'] ? { planPath: path.resolve(manifest.repositoryRoot, bind.data['plan']) } : {}),
+            ...(planPath && { planPath }),
             requests: requestsBySlot.get(slot.slot) ?? [],
             settled: decisions,
           });
+        }
         const position = targets.findIndex((entry) => entry.slot === slot.slot);
         return reviewPrompt(kind, {
           skillRoot: deps.skillRoot,
-          spec: round!.spec,
+          spec: live.spec,
           artifact: reviewerArtifact,
-          scope: round!.scope,
+          scope: live.scope,
           taskSummary: current.taskSummary,
-          turnTarget: round!.turnTarget,
-          ...(round!.contextMapPath ? { contextMapPath: round!.contextMapPath } : {}),
-          ...(bind?.data['plan'] ? { planPath: path.resolve(manifest.repositoryRoot, bind.data['plan']) } : {}),
+          turnTarget: live.turnTarget,
+          ...(live.contextMapPath && { contextMapPath: live.contextMapPath }),
+          ...(planPath && { planPath }),
           settled: [...settled, ...decisions],
           ...interRound,
           requests: requestsBySlot.get(slot.slot) ?? [],
           rotation: position < 0 ? 0 : position,
-          round: round!.round,
+          round: live.round,
         });
       };
       const validate = (text: string, logicalSlot: string): Validation => {
@@ -772,7 +887,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
           text,
           expectedRequestIds: (requestsBySlot.get(logicalSlot) ?? []).map((request) => request.requestId),
         });
-        if (parsed.ok) return { ok: true };
+        if (parsed.ok) {
+          return { ok: true };
+        }
         if (parsed.failure.kind === 'blocked') {
           const blocked = failureReasonEvidence(parsed.failure.detail.trim());
           return { ok: false, cls: 'blocked', reason: 'blocked: ' + blocked.reason, blocked };
@@ -782,13 +899,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       };
       // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
       const onFailed = (slot: string, outcome: { cls: string }) => {
-        const file = path.join(reviewGenerationDirectory(dir, round!.generation), 'attempts.json');
+        const live = present(round, 'the review round');
+        const file = path.join(reviewGenerationDirectory(dir, live.generation), 'attempts.json');
         atomic(file, [
-          ...(readStoredJson<object[]>(file) ?? []),
+          ...(readStoredJson<Array<object>>(file) ?? []),
           {
             slot,
             seq: foldLedger(session).lastSeq,
-            wholeTarget: round!.scope.startsWith('Full review') || round!.coverage !== undefined,
+            wholeTarget: live.scope.startsWith('Full review') || live.coverage !== undefined,
             outcome: outcome.cls,
           },
         ]);
@@ -845,11 +963,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
             round: n,
             pending: native,
             ...warningValue,
-            ...(wave !== undefined ? { cliWave: wave } : {}),
-            ...(ignoredFailureReports.length ? { ignoredFailureReports } : {}),
-            ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
-            ...(state.blockers.length ? { blockers: state.blockers } : {}),
-            ...(round.underfill ? { underfill: round.underfill } : {}),
+            ...(wave !== undefined && { cliWave: wave }),
+            ...(ignoredFailureReports.length && { ignoredFailureReports }),
+            ...(state.blocked.length && { blocked: publicBlocked() }),
+            ...(state.blockers.length && { blockers: state.blockers }),
+            ...(round.underfill && { underfill: round.underfill }),
           },
           summary: summaryWithItems(
             warningPrefix +
@@ -913,10 +1031,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         }
         throw new ToolError(2, 'review-failed', failedSummary);
       }
-      const changedSince: Record<number, string[]> = {},
-        owners: Record<string, string[]> = {};
+      const changedSince: Record<number, Array<string>> = {},
+        owners: Record<string, Array<string>> = {};
       if (kind === 'code' && requested === 'integration') {
-        for (const [number, target] of Object.entries(priorTargets))
+        for (const [number, target] of Object.entries(priorTargets)) {
           changedSince[Number(number)] = await gitPaths(deps, manifest.repositoryRoot, [
             'diff',
             '--name-only',
@@ -924,8 +1042,11 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
             label(target),
             label(round.target),
           ]);
+        }
         const plan = loadPlan(session, manifest);
-        for (const task of plan.tasks) owners[task.id] = ownedPaths(plan, task.id);
+        for (const task of plan.tasks) {
+          owners[task.id] = ownedPaths(plan, task.id);
+        }
       }
       pending = finalizeRound({
         review,
@@ -948,8 +1069,8 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         confirmationRounds,
         spec: round.spec,
         roster: round.roster,
-        ...(checkout.repositoryChanges ? { repositoryChanges: checkout.repositoryChanges } : {}),
-        ...(checkout.repositoryCheck ? { repositoryCheck: checkout.repositoryCheck } : {}),
+        ...(checkout.repositoryChanges && { repositoryChanges: checkout.repositoryChanges }),
+        ...(checkout.repositoryCheck && { repositoryCheck: checkout.repositoryCheck }),
       });
       try {
         writeCheckoutReport(dir, round.generation, checkout);
@@ -959,14 +1080,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       if (kind === 'code' && !gitTarget) {
         const plan = loadPlan(session, manifest),
           currentFold = foldLedger(session);
-        const bind = latest(currentFold, 'bind')!;
+        const bind = present(latest(currentFold, 'bind'), 'the bind record');
         const tasks =
           requested === 'integration'
             ? [
                 ...new Set(
                   currentFold.records
                     .filter((row) => row.kind === 'integrate' && row.data['phase'] === 'done')
-                    .map((row) => row.data['task'] as string),
+                    .map((row) => textValue(row.data['task'])),
                 ),
               ]
             : [requested];
@@ -997,11 +1118,14 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
                 path.join(session, '.state/briefs', task + '-' + launch?.launch + '.red', criterion.id + '.exit'),
               );
             } catch (error) {
-              if (error instanceof SyntaxError) continue;
+              if (error instanceof SyntaxError) {
+                continue;
+              }
               throw error;
             }
-            if (wrapper && (typeof wrapper.status === 'number' || wrapper.status === null))
+            if (wrapper && (typeof wrapper.status === 'number' || wrapper.status === null)) {
               redExits.set(criterion.id, wrapper.status);
+            }
           }
           for (const gap of redGaps({ plan, task, changed: captured.changed, report, redExits })) {
             const defect = 'missing-red: ' + task + ' ' + gap.criterion;
@@ -1016,9 +1140,10 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
                     row.data['subject'] === 'review:' + review + ':' + finding.id && row.data['ruling'] === 'rejected',
                 ),
               )
-            )
+            ) {
               continue;
-            const file = path.resolve(manifest.repositoryRoot, bind.data['plan']);
+            }
+            const file = path.resolve(manifest.repositoryRoot, textValue(bind.data['plan']));
             const finding: Finding & { unresolved?: { of: string } } = {
               id: 'R' + n + '-RED' + String(++redCount).padStart(2, '0'),
               impact: 'degrades',
@@ -1038,8 +1163,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
               const changed =
                 requested === 'integration'
                   ? (changedSince[previous.round] ?? []).some((file) => ownedPaths(plan, task).includes(file))
-                  : typeof previousTarget !== 'string' &&
-                    previousTarget?.head !== (round.target as { head: string }).head;
+                  : typeof previousTarget !== 'string' && previousTarget?.head !== headOf(round.target);
               if (changed) {
                 const id =
                   'missing-red:' + review + ':' + task + ':' + gap.criterion + ':R' + n + ':g' + round.generation;
@@ -1049,12 +1173,17 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
                   key: id,
                   data: { id, state: 'open', summary: finding.defect },
                 });
-              } else finding.unresolved = { of: previous.finding.id };
+              } else {
+                finding.unresolved = { of: previous.finding.id };
+              }
             }
             pending.findings.push(finding);
             const cluster = pending.clusters.find((cluster) => cluster.file === file);
-            if (cluster) cluster.findings.push(finding.id);
-            else pending.clusters.push({ file, findings: [finding.id] });
+            if (cluster) {
+              cluster.findings.push(finding.id);
+            } else {
+              pending.clusters.push({ file, findings: [finding.id] });
+            }
           }
         }
       }
@@ -1074,7 +1203,9 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
       throw new ToolError(4, 'target-moved', 'Review ruling moved during finalization');
     }
     await withLedger(session, 'review finalize', deps, async (tx) => {
-      for (const escalation of pending!.escalations) await tx.append(escalation);
+      for (const escalation of pending.escalations) {
+        await tx.append(escalation);
+      }
     });
     await deps.hook?.('review:after-append');
     const finalCapture = await capture();
@@ -1088,7 +1219,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     nodeLinkFs.writeAtomic(path.join(session, findingsFile), renderFindingsFile(pending.findings));
     atomic(path.join(session, rulingsFile), rulingsTemplate(review, n, pending.findings));
     renameRetrying(pendingFile, reviewFindingsFile(dir));
-    const counts = (severity: string) => pending!.findings.filter((finding) => finding.severity === severity).length;
+    const counts = (severity: string) => pending.findings.filter((finding) => finding.severity === severity).length;
     const recurrences = pending.findings.filter((finding) => finding.recurrence).length;
     const fixInduced = pending.findings.filter((finding) => finding.origin === 'fix-induced').length;
     const file = reviewFindingsFile(dir);
@@ -1102,7 +1233,7 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
     const state = blockedStateOf(),
       blockedSummary = blockedNotice(state.blocked, state.blockers);
     const bySeverity = ['MUST', 'SHOULD', 'CONSIDER'].flatMap((severity) =>
-      pending!.findings.filter((finding) => finding.severity === severity),
+      pending.findings.filter((finding) => finding.severity === severity),
     );
     const unresolved = bySeverity.filter((finding) => isUnresolvedLocus(finding.locus));
     // Advisory only: reporting a boundary opens no escalation and grants no round.
@@ -1139,21 +1270,21 @@ export async function reviewRun(ctx: HandlerContext): Promise<HandlerResult> {
         findingsFile,
         rulingsFile,
         ...warningValue,
-        ...(ignoredFailureReports.length ? { ignoredFailureReports } : {}),
-        ...(pending.repositoryChanges ? { repositoryChanges: pending.repositoryChanges } : {}),
-        ...(pending.repositoryCheck ? { repositoryCheck: pending.repositoryCheck } : {}),
-        ...(findings ? { findingsSection: findings, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
-        ...(state.blocked.length ? { blocked: publicBlocked() } : {}),
-        ...(state.blockers.length ? { blockers: state.blockers } : {}),
-        ...(round.underfill ? { underfill: round.underfill } : {}),
+        ...(ignoredFailureReports.length && { ignoredFailureReports }),
+        ...(pending.repositoryChanges && { repositoryChanges: pending.repositoryChanges }),
+        ...(pending.repositoryCheck && { repositoryCheck: pending.repositoryCheck }),
+        ...(findings && { findingsSection: findings, ...(findingsSectionReason && { findingsSectionReason }) }),
+        ...(state.blocked.length && { blocked: publicBlocked() }),
+        ...(state.blockers.length && { blockers: state.blockers }),
+        ...(round.underfill && { underfill: round.underfill }),
         // The summary is bounded, so only this list names every marked finding.
-        ...(unresolved.length ? { unresolvedLoci: unresolved.map(({ id, locus }) => ({ id, locus })) } : {}),
+        ...(unresolved.length && { unresolvedLoci: unresolved.map(({ id, locus }) => ({ id, locus })) }),
       },
       summary: summaryWithItems(summaryHead, [
         ...unresolved.map((finding) => `${finding.id} ${finding.severity}: ${finding.locus} — ${finding.defect}`),
-        ...bySeverity
-          .filter((finding) => !isUnresolvedLocus(finding.locus))
-          .map((finding) => `${finding.id} ${finding.severity}: ${finding.defect}`),
+        ...bySeverity.flatMap((finding) =>
+          isUnresolvedLocus(finding.locus) ? [] : [`${finding.id} ${finding.severity}: ${finding.defect}`],
+        ),
       ]),
     };
   });

@@ -2,31 +2,25 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { sessionFixture } from './helpers/session.ts';
-
-function useMemoryAtomicWrite(): () => void {
-  const writeAtomic = nodeLinkFs.writeAtomic;
-  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
-  return () => {
-    nodeLinkFs.writeAtomic = writeAtomic;
-  };
-}
+import { sessionFixture, useMemoryAtomicWrite as mockAtomicWrite } from './helpers/session.ts';
+import type { JsonObject } from './helpers/json.ts';
+import { optional, parseJson, shape, text } from './helpers/json.ts';
 
 type Seeded = { id: string; severity: string; impact?: string; trigger?: string };
+const storedRow = shape({ kind: text, data: shape({ impact: optional(text), trigger: optional(text) }) });
 function correctionHarness() {
   const f = sessionFixture({ memory: true });
-  const restoreAtomicWrite = useMemoryAtomicWrite();
+  const restoreAtomicWrite = mockAtomicWrite();
   let keyCount = 0;
-  const append = async (record: object) => {
+  const append = async (record: JsonObject) => {
     const file = path.join(f.root, 'record.json');
     fs.writeFileSync(file, JSON.stringify(record));
     f.lines.length = 0;
     const exit = await main(['ledger', 'append', file, '--session', f.session], f.deps);
     return { exit, output: f.output() };
   };
-  const seed = (review: string, findings: readonly Seeded[]) => {
+  const seed = (review: string, findings: ReadonlyArray<Seeded>) => {
     const directory = path.join(f.session, '.state', 'reviews', review, 'round-1');
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(
@@ -35,7 +29,7 @@ function correctionHarness() {
     );
     fs.writeFileSync(path.join(directory, 'findings.json'), JSON.stringify({ review, round: 1, findings }));
   };
-  const ruling = (subject: string, data: object = {}) =>
+  const ruling = (subject: string, data: JsonObject = {}) =>
     append({
       kind: 'ruling',
       by: 'orchestrator',
@@ -60,7 +54,7 @@ function correctionHarness() {
       .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
       .trim()
       .split(/\r?\n/)
-      .map((row) => JSON.parse(row));
+      .map((row) => parseJson(row, storedRow));
   return {
     f,
     append,
@@ -90,7 +84,9 @@ describe('severity corrections through the CLI', () => {
         await h.ruling(`review:${PLAN}:R1-RED01`, raise),
         await h.ruling('review:code-integration:R1-F001', { impact: 'degrades', trigger: 'realistic' }),
       ];
-      for (const result of results) assert.equal(result.exit, 0, result.output.summary);
+      for (const result of results) {
+        assert.equal(result.exit, 0, result.output.summary);
+      }
       const rulings = h.stored().filter((record) => record.kind === 'ruling');
       assert.deepEqual(
         rulings.map((record) => [record.data.impact, record.data.trigger]),

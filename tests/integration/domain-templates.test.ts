@@ -1,3 +1,4 @@
+import { REVIEW_TAGS_BY_KIND } from '../../skills/dispatch/scripts/toolkit/domain/report.ts';
 import { measureBrief } from '../../scripts/brief-size.ts';
 import { qualityBar, qualityCriteria } from '../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import assert from 'node:assert/strict';
@@ -42,7 +43,7 @@ test('code review evidence is actionable with and without a bound plan', () => {
       scope: 'Full review',
       turnTarget: 10,
       round: 1,
-      ...(planPath ? { planPath } : {}),
+      ...(planPath && { planPath }),
     });
     assert.ok(prompt.includes(`- Plan: ${planPath ?? 'None'}`));
     assert.doesNotMatch(prompt, /absent or unfilled table|<Walkthrough Path>/);
@@ -52,13 +53,22 @@ test('code review evidence is actionable with and without a bound plan', () => {
   }
 });
 
+const headings = (text: string) =>
+  [...text.matchAll(/^##? .+$/gm)].flatMap((match) => (match[0].startsWith('## ') ? [match[0]] : []));
+const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
+const summaryLabels = (text: string) =>
+  [...text.matchAll(/^- \*\*(What|Artifacts|Summary|Counts):\*\*/gm)].map((match) => match[1]);
+
 test('readable artifact templates: human layout sections, callouts, details and diagrams', async (t) => {
   for (const name of ['spec.md', 'design.md', 'plan.md', 'walkthrough.md']) {
     const template = readFileSync(new URL(name, root), 'utf8');
     const skeleton = template.split('````markdown\n')[1]!.split('````')[0]!;
     assert.equal(skeleton.match(/^## .+$/m)?.[0], '## At a Glance', name);
-    if (name !== 'walkthrough.md')
-      for (const type of ['NOTE', 'IMPORTANT']) assert.ok(template.includes(`[!${type}]`), `${name}: ${type}`);
+    if (name !== 'walkthrough.md') {
+      for (const type of ['NOTE', 'IMPORTANT']) {
+        assert.ok(template.includes(`[!${type}]`), `${name}: ${type}`);
+      }
+    }
     if (name !== 'spec.md') {
       assert.match(skeleton, /<details>\n/, name);
       assert.match(skeleton, /\n\n<\/details>/, name);
@@ -69,13 +79,15 @@ test('readable artifact templates: human layout sections, callouts, details and 
       assert.match(increment, /- <Observable behaviour this increment implements and how it works\.>\n\n<details>/);
       assert.doesNotMatch(increment, /<summary>/);
     }
-    if (name === 'walkthrough.md') assert.match(skeleton, /<summary>Audit records<\/summary>/, name);
+    if (name === 'walkthrough.md') {
+      assert.match(skeleton, /<summary>Audit records<\/summary>/, name);
+    }
     if (name === 'plan.md') {
       const task = skeleton.split('### T<n> — <Task title>')[1]!.split('\n## Success Criteria')[0]!;
       assert.match(task, /- <Observable behaviour this task implements and how it works\.>[\s\S]*?<details>/);
       assert.doesNotMatch(task, /<summary>/);
       const criteria = skeleton.split('## Success Criteria\n')[1]!.split('\n## Verification Plan')[0]!;
-      assert.match(criteria, /- \[SC1\] <checkable outcome>\n  <details>\n\n  - Satisfies:/);
+      assert.match(criteria, /- \[SC1\] <checkable outcome>\n {2}<details>\n\n {2}- Satisfies:/);
       assert.doesNotMatch(criteria, /<summary>/);
     }
     if (name === 'plan.md' || name === 'design.md') {
@@ -85,7 +97,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
   }
 
   await t.test('design template parses under layered lint and preserves executable fields and exclusions', () => {
-    const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
+    const template = readFileSync(new URL('design.md', root), 'utf8').replaceAll('\r\n', '\n');
     assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
     assert.equal((template.match(/^>$/gm) ?? []).length, 3);
     const order = [
@@ -100,8 +112,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
       '## Final Integration',
       '## Review Findings & Resolutions',
     ];
-    for (let i = 1; i < order.length; i++)
+    for (let i = 1; i < order.length; i++) {
       assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!), order[i]);
+    }
     let source = template.split('````markdown\n')[1]!.split('````')[0]!;
     source = source
       .replace('<`<spec path>` · sha256:<hex>>', '`governing.spec.md` · sha256:' + 'a'.repeat(64))
@@ -112,7 +125,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
     source = source
       .replace('REQ-<n>', 'REQ-1')
       .split('\n')
-      .map((line) => (/^<\/?(?:details|summary)>/.test(line) ? line : line.replace(/<[^>]+>/g, 'Concrete behavior')))
+      .map((line) => (/^<\/?(?:details|summary)>/.test(line) ? line : line.replaceAll(/<[^>]+>/g, 'Concrete behavior')))
       .join('\n');
     const parsed = parseDesign(source);
     assert.ok(parsed.ok, JSON.stringify(parsed));
@@ -132,7 +145,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
   });
 
   await t.test('walkthrough template uses the reviewer-first layout', () => {
-    const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
+    const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replaceAll('\r\n', '\n');
     assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 0);
     assert.equal((template.match(/^>$/gm) ?? []).length, 0);
     assert.match(template, /^- \*\*Artifacts:\*\*/m);
@@ -150,8 +163,6 @@ test('readable artifact templates: human layout sections, callouts, details and 
     const labels = [...skeleton.matchAll(/^- \*\*(What|Artifacts|Summary|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(labels, ['What', 'Artifacts', 'Summary', 'Counts']);
     assert.match(skeleton, /<details>\n<summary>Detailed counts<\/summary>\n\n- \*\*Counts:\*\*/);
-    const headings = (text: string) =>
-      [...text.matchAll(/^##? .+$/gm)].map((match) => match[0]).filter((heading) => heading.startsWith('## '));
     assert.deepEqual(headings(skeleton), [
       '## At a Glance',
       '## Visuals',
@@ -163,7 +174,6 @@ test('readable artifact templates: human layout sections, callouts, details and 
       '## Review Findings & Resolutions',
       '## Appendix',
     ]);
-    const boxLabels = (text: string) => [...text.matchAll(/^> \*\*([^:]+):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(boxLabels(template), []);
     assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
 
@@ -196,10 +206,8 @@ test('readable artifact templates: human layout sections, callouts, details and 
       reviewRows: [],
       reviewRounds: [],
       reviewFixes: [],
-    } as Parameters<typeof renderWalkthrough>[0]);
+    });
     assert.deepEqual(headings(skeleton), headings(rendered));
-    const summaryLabels = (text: string) =>
-      [...text.matchAll(/^- \*\*(What|Artifacts|Summary|Counts):\*\*/gm)].map((match) => match[1]);
     assert.deepEqual(summaryLabels(skeleton), summaryLabels(rendered));
     assert.match(
       rendered,
@@ -227,10 +235,12 @@ test('readable artifact templates: human layout sections, callouts, details and 
       '## Rollback & Blast Radius',
       '## Review Findings & Resolutions',
     ];
-    for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
+    for (let i = 1; i < order.length; i++) {
+      assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
+    }
     assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
     assert.equal((template.match(/^>$/gm) ?? []).length, 3);
-    assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
+    assert.match(template, /- #### \[MODIFY\].*\n {2}- Changes:.*\n {2}- Invariants:/);
     for (const label of [
       'Omit optional empty prose sections',
       'conditional fields',
@@ -240,8 +250,9 @@ test('readable artifact templates: human layout sections, callouts, details and 
       'Integration:',
       'Overlap:',
       'Seams:',
-    ])
+    ]) {
       assert.ok(template.includes(label));
+    }
     let source = template.split('````markdown\n')[1]!.split('````')[0]!;
     source = source.replace(
       /## Success Criteria[\s\S]*?(?=## Verification Plan)/,
@@ -251,7 +262,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
       /## Verification Plan[\s\S]*?(?=## Review Findings)/,
       '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n',
     );
-    const replacements: Record<string, string> = {
+    const replacements = {
       '<Goal Description>': 'Check output',
       '<problem and outcome>': 'Keep output usable',
       '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex>>': '`governing.spec.md` · sha256:' + 'a'.repeat(64),
@@ -269,9 +280,13 @@ test('readable artifact templates: human layout sections, callouts, details and 
       '<generator command>': 'npm run generate',
       '<path> — <why this unordered task also writes the path>': 'src/edit.ts — shares the edit with an unordered task',
     };
-    for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
+    for (const [key, value] of Object.entries(replacements)) {
+      source = source.replaceAll(key, value);
+    }
     const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
-    for (const file of paths) source = source.replace('<relative-path>', file);
+    for (const file of paths) {
+      source = source.replace('<relative-path>', file);
+    }
     source = source.replace('<relative-path>[, <relative-path>...]', 'src/edit.ts');
     const result = parsePlan(source);
     assert.ok(result.ok, JSON.stringify(result));
@@ -292,7 +307,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
   });
 
   await t.test('templates: spec template skeleton lints cleanly', () => {
-    const template = readFileSync(new URL('spec.md', root), 'utf8').replace(/\r\n/g, '\n');
+    const template = readFileSync(new URL('spec.md', root), 'utf8').replaceAll('\r\n', '\n');
     const source = template
       .split('````markdown\n')[1]!
       .split('````')[0]!
@@ -308,7 +323,7 @@ test('readable artifact templates: human layout sections, callouts, details and 
 });
 
 test('decision-frame keeps four-part structure and collapses spec-approval metadata', () => {
-  const frame = readFileSync(new URL('../decision-frame.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const frame = readFileSync(new URL('../decision-frame.md', root), 'utf8').replaceAll('\r\n', '\n');
   const parts = [...frame.matchAll(/^\d\. \*\*([^*]+):\*\*/gm)].map((match) => match[1]);
   assert.deepEqual(parts, ['Conflict or blocker', 'Verified facts', 'Recommendation', 'Consequences']);
   const approval = frame.split('### Spec approval\n')[1]!.split('\n### ')[0]!;
@@ -374,8 +389,9 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
       }
       text = stripped;
     }
-    for (const token of [/<!--/, /rebuttal/i, /consensus/i])
+    for (const token of [/<!--/, /rebuttal/i, /consensus/i]) {
       assert.ok(!token.test(text), `${name} contains ${String(token)}`);
+    }
   }
 });
 
@@ -395,8 +411,9 @@ test('templates: plan.md owns task metadata in its map and keeps generated input
   assert.ok(!plan.includes('<Component Name>'));
 });
 
+const sorted = (tags: ReadonlyArray<string>) => [...tags].sort();
+
 test('review prompts offer shared family tags each defined by a quality-bar bullet', async (t) => {
-  const { REVIEW_TAGS_BY_KIND } = await import('../../skills/dispatch/scripts/toolkit/domain/report.ts');
   const families = [
     'intent',
     'spec',
@@ -414,12 +431,11 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'standards',
     'adjacent',
   ] as const;
-  const expectedByKind: Record<'code' | 'plan' | 'design', readonly string[]> = {
+  const expectedByKind: Record<'code' | 'plan' | 'design', ReadonlyArray<string>> = {
     code: families.filter((family) => family !== 'architecture' && family !== 'decomposition'),
     plan: families,
     design: families,
   };
-  const sorted = (tags: readonly string[]) => [...tags].sort();
   for (const kind of ['code', 'plan', 'design'] as const) {
     assert.deepEqual(
       sorted([...REVIEW_TAGS_BY_KIND[kind]]),
@@ -453,8 +469,9 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'observability through logs, metrics, and traces',
     'actionable diagnostics',
     'configuration, and a kill switch',
-  ])
+  ]) {
     assert.ok(section('shared').includes(rule), rule);
+  }
   assert.ok(section('code').includes('- **spec**'));
   for (const rule of [
     '- Artifact layout:',
@@ -465,11 +482,19 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'Keep machine fields outside callouts, prefer point form, and retain every required field.',
     '[!NOTE]',
     '[!IMPORTANT]',
-  ])
+  ]) {
     assert.ok(section('spec').includes(rule), rule);
+  }
   const explorer = readFileSync(new URL('explorer-brief.md', root), 'utf8');
-  for (const rule of ['Surprises', 'Not covered', '## Questions', '## Coverage checklist', '## Map, budget and output'])
+  for (const rule of [
+    'Surprises',
+    'Not covered',
+    '## Questions',
+    '## Coverage checklist',
+    '## Map, budget and output',
+  ]) {
     assert.ok(explorer.includes(rule), rule);
+  }
   // Evidence rule: one shared home, reached by every consumer, embedded in each rendered brief.
   const evidenceRule = quality.split('\n').filter((line) => line.startsWith('- Evidence:'));
   assert.equal(evidenceRule.length, 1);
@@ -479,16 +504,19 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     "search method's exclusions",
     'direct evidence the host supports',
     'mark it unverified',
-  ])
+  ]) {
     assert.ok(evidenceRule[0]!.includes(term), term);
-  for (const consumer of ['code', 'plan', 'design', 'writer'] as const)
+  }
+  for (const consumer of ['code', 'plan', 'design', 'writer'] as const) {
     assert.ok(qualityCriteria(quality, consumer, 0, specStage).includes(evidenceRule[0]!), consumer);
+  }
   assert.ok(explorer.includes('{{quality}}'));
   assert.doesNotMatch(explorer, /\]\(/);
   const planGuidance = readFileSync(new URL('plan-field-notes.md', root), 'utf8');
   assert.ok(readFileSync(new URL('plan.md', root), 'utf8').includes('plan-field-notes.md'));
-  for (const text of [evidenceRule[0]!, section('plan')])
+  for (const text of [evidenceRule[0]!, section('plan')]) {
     assert.doesNotMatch(text, /\.codegraph|node_modules|\.gitignore|package\.json|\bnpm\b|\bjest\b|\bpytest\b/);
+  }
   assert.match(planGuidance, /Ownership names who changes the outcome, not who runs the evidence/);
   assert.match(planGuidance, /review-only criterion still completes by user manual-complete/);
   const frame = readFileSync(new URL('review-prompt.md', root), 'utf8');
@@ -507,31 +535,35 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
       'for a confirmed standalone spec revision that cannot, use the [note fallback](toolkit.md#note), which grants no edit or approval authority',
     ),
   );
-  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8').replace(/\s+/g, ' ');
+  const codePrompt = readFileSync(new URL('review-prompt-code.md', root), 'utf8').replaceAll(/\s+/g, ' ');
   for (const rule of [
     'With a plan, its `## Key Decisions & Context` entries are settled',
     'An attached "Approved technical-design context"',
     'Obey an explicit Git range in Scope',
     'when the diff changes a shared invariant, contract, or signature',
-  ])
+  ]) {
     assert.ok(codePrompt.includes(rule), rule);
-  const explorerInputs: Record<string, string> = {
-    objective: 'Map a shared interface change.',
-    questions: '- Which callers and tests cover the interface?',
-    limit: '150,000 tokens',
-    splitAt: '112,500 tokens',
-    nestedLaunch: 'model `claude-haiku-5-5`, effort `medium`',
-    replyLimit: '8,192',
-    outputPath: '.scratch/session/work.spec.context.md',
-    cliPath: 'skills/dispatch/scripts/toolkit/cli.ts',
-    session: '.scratch/session',
-    mapBudget: '16,384',
-    contextMapTemplate: readFileSync(new URL('context-map.md', root), 'utf8'),
-    quality: qualityCriteria(quality, 'explorer', 0, specStage),
-  };
-  const renderedExplorer = explorer.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
-    assert.ok(Object.hasOwn(explorerInputs, name), name);
-    return explorerInputs[name]!;
+  }
+  const explorerInputs = new Map(
+    Object.entries({
+      objective: 'Map a shared interface change.',
+      questions: '- Which callers and tests cover the interface?',
+      limit: '150,000 tokens',
+      splitAt: '112,500 tokens',
+      nestedLaunch: 'model `claude-haiku-5-5`, effort `medium`',
+      replyLimit: '8,192',
+      outputPath: '.scratch/session/work.spec.context.md',
+      cliPath: 'skills/dispatch/scripts/toolkit/cli.ts',
+      session: '.scratch/session',
+      mapBudget: '16,384',
+      contextMapTemplate: readFileSync(new URL('context-map.md', root), 'utf8'),
+      quality: qualityCriteria(quality, 'explorer', 0, specStage),
+    }),
+  );
+  const renderedExplorer = explorer.replaceAll(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    const input = explorerInputs.get(name);
+    assert.ok(input !== undefined, name);
+    return input;
   });
   assert.ok(renderedExplorer.includes(evidenceRule[0]!));
   assert.ok(renderedExplorer.includes(readFileSync(new URL('context-map.md', root), 'utf8')));
@@ -540,19 +572,21 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   t.diagnostic(
     `rendered explorer brief (fixed objective/questions/outputPath/cliPath/session/mapBudget/contextMapTemplate/quality): ${measureBrief(renderedExplorer).totalBytes} UTF-8 bytes; advisory only`,
   );
-  for (const name of ['quality-bar.md', 'explorer-brief.md'])
+  for (const name of ['quality-bar.md', 'explorer-brief.md']) {
     t.diagnostic(`${name}: ${Buffer.byteLength(readFileSync(new URL(name, root), 'utf8'), 'utf8')} UTF-8 bytes`);
+  }
   t.diagnostic(
     `writer template + quality: ${Buffer.byteLength(readFileSync(new URL('writer-brief.md', root), 'utf8'), 'utf8') + Buffer.byteLength(qualityCriteria(quality, 'writer', 0, specStage), 'utf8')} UTF-8 bytes; baseline 9097, soft target <9000`,
   );
   for (const [kind, baseline] of [
-    ['code', 15627],
-    ['plan', 19533],
-    ['design', 15297],
-  ] as const)
+    ['code', 15_627],
+    ['plan', 19_533],
+    ['design', 15_297],
+  ] as const) {
     t.diagnostic(
       `${kind} golden: ${Buffer.byteLength(readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8'), 'utf8')} UTF-8 bytes; baseline ${baseline}`,
     );
+  }
   for (const kind of ['code', 'plan', 'design'] as const) {
     const offered = [...REVIEW_TAGS_BY_KIND[kind]];
     assert.deepEqual(sorted(offered), sorted(expectedByKind[kind]), `${kind} prompt families`);
@@ -581,10 +615,10 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
   assert.match(planPrompt, /The plan summary, success criteria and task graph/);
 
   // Searched equivalents and reuse checks
-  const planTemplate = readFileSync(new URL('plan.md', root), 'utf8').replace(/\r\n/g, '\n');
+  const planTemplate = readFileSync(new URL('plan.md', root), 'utf8').replaceAll('\r\n', '\n');
   assert.match(
     planTemplate,
-    /- #### \[NEW\] .*\n  - Purpose: .*\n  - Reuse: <existing equivalents searched and why not reused, or none found>\n/,
+    /- #### \[NEW\] .*\n {2}- Purpose: .*\n {2}- Reuse: <existing equivalents searched and why not reused, or none found>\n/,
   );
   const reuseRule = planTemplate.match(/^- Reuse:.*$/m)?.[0];
   assert.ok(reuseRule);
@@ -608,8 +642,9 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'CQS',
     'removes concrete concepts, files, or code paths',
     'never `blocks` or `critical` alone',
-  ])
+  ]) {
     assert.ok(codeMaintainability.includes(term), `missing ${term}`);
+  }
   for (const smell of [
     'Duplicated Code',
     'Feature Envy',
@@ -621,15 +656,16 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'Speculative Generality',
     'Refused Bequest',
     'Mysterious Name',
-  ])
+  ]) {
     assert.ok(!codeMaintainability.includes(smell), `stale ${smell}`);
+  }
   assert.ok(!codeMaintainability.includes('Smells (judgement calls'));
 
   // Unrequested consumer-boundary behaviour as intent
   const against = readFileSync(new URL('review-prompt-code.md', root), 'utf8')
     .split(/^## against$/m)[1]
     ?.split(/^## /m)[0]
-    ?.replace(/\s+/g, ' ');
+    ?.replaceAll(/\s+/g, ' ');
   assert.ok(against);
   assert.ok(
     against.includes(
@@ -671,8 +707,9 @@ test('review prompts offer shared family tags each defined by a quality-bar bull
     'search the repository by name and behaviour for an existing equivalent',
     "A task that consumes another's output without a prerequisite",
     'Weigh alternatives and trade-offs',
-  ])
+  ]) {
     assert.equal(quality.split(rule).length, 2, rule);
+  }
 });
 
 test('templates: test cleanup brief keeps the placeholders the orchestrator fills and the report block', () => {
@@ -687,20 +724,23 @@ test('templates: test cleanup brief keeps the placeholders the orchestrator fill
   assert.ok(brief.includes('{"removed": ["SC1"], "deleted": 0, "merged": 0}'));
   assert.ok(brief.includes('{{quality}}'));
   assert.doesNotMatch(brief, /\]\(/);
-  const rendered = brief.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
-    const slots: Record<string, string> = {
-      base: 'abc1234',
-      integrationPath: '.scratch/worktrees/integration',
-      planPath: 'work.plan.md',
-      quality: qualityCriteria(
-        readFileSync(new URL('quality-bar.md', root), 'utf8'),
-        'cleanup',
-        0,
-        readFileSync(new URL('../spec-stage.md', root), 'utf8'),
-      ),
-    };
-    assert.ok(Object.hasOwn(slots, name), name);
-    return slots[name]!;
+  const rendered = brief.replaceAll(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    const slots = new Map(
+      Object.entries({
+        base: 'abc1234',
+        integrationPath: '.scratch/worktrees/integration',
+        planPath: 'work.plan.md',
+        quality: qualityCriteria(
+          readFileSync(new URL('quality-bar.md', root), 'utf8'),
+          'cleanup',
+          0,
+          readFileSync(new URL('../spec-stage.md', root), 'utf8'),
+        ),
+      }),
+    );
+    const slot = slots.get(name);
+    assert.ok(slot !== undefined, name);
+    return slot;
   });
   assert.ok(rendered.includes('Run no Git write commands'));
   assert.doesNotMatch(rendered, /\{\{\w+\}\}/);
@@ -723,22 +763,24 @@ const LEAN_ANCHORS = [
   'name the assumed load',
 ];
 
+const count = (text: string, needle: string) => text.split(needle).length - 1;
+
 test('lean simplicity rules have one shared home reached by every quality consumer', () => {
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
   const leanStage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
-  const count = (text: string, needle: string) => text.split(needle).length - 1;
   for (const anchor of LEAN_ANCHORS) {
     assert.equal(count(quality, anchor), 1, `quality-bar: ${anchor}`);
-    for (const consumer of ['code', 'plan', 'design', 'writer'] as const)
+    for (const consumer of ['code', 'plan', 'design', 'writer'] as const) {
       assert.equal(count(qualityCriteria(quality, consumer, 0, leanStage), anchor), 1, `${consumer}: ${anchor}`);
+    }
   }
 });
 
 test('review prompt scope strings calibrate CLEAN, replace textbook smells, and reduce golden bytes', () => {
   const quality = readFileSync(new URL('quality-bar.md', root), 'utf8');
   const stage = readFileSync(new URL('../spec-stage.md', root), 'utf8');
-  const baselines = { code: 15627, plan: 19533, design: 15297 } as const;
-  const bytesByKind = {} as Record<'code' | 'plan' | 'design', number>;
+  const baselines = { code: 15_627, plan: 19_533, design: 15_297 } as const;
+  const bytesByKind = { code: 0, plan: 0, design: 0 };
   for (const kind of ['code', 'plan', 'design'] as const) {
     const golden = readFileSync(new URL(`../fixtures/review-prompt-golden/${kind}.md`, import.meta.url), 'utf8');
     const bytes = Buffer.byteLength(golden, 'utf8');
@@ -765,8 +807,9 @@ test('review prompt scope strings calibrate CLEAN, replace textbook smells, and 
     'CQS',
     'removes concrete concepts, files, or code paths',
     'never `blocks` or `critical` alone',
-  ])
+  ]) {
     assert.ok(hay.includes(term), `missing coupling rule: ${term}`);
+  }
   for (const smell of [
     'Duplicated Code',
     'Feature Envy',
@@ -778,8 +821,9 @@ test('review prompt scope strings calibrate CLEAN, replace textbook smells, and 
     'Speculative Generality',
     'Refused Bequest',
     'Mysterious Name',
-  ])
+  ]) {
     assert.ok(!hay.includes(smell), `stale textbook smell: ${smell}`);
+  }
   assert.ok(!hay.includes('Smells (judgement calls'), 'stale smell prefix');
   for (const term of [
     'IEEE 29148',
@@ -804,8 +848,9 @@ test('review prompt scope strings calibrate CLEAN, replace textbook smells, and 
     'POLA',
     'FIRST',
     'INVEST',
-  ])
+  ]) {
     assert.ok(hay.includes(term), `missing dense term: ${term}`);
+  }
   const codeDoc = readFileSync(new URL('review-prompt-code.md', root), 'utf8');
   assert.ok(
     codeDoc.includes('Full review — changed paths: <changed paths>; comparison: <base>..<head>'),
@@ -853,23 +898,26 @@ test('deliberate shortcuts flow from writer report to walkthrough focus and revi
     'List each deliberate shortcut under concerns as `Shortcut: <what>; limit: <limit>; upgrade when: <trigger>`.',
     'A shortcut never crosses the simplicity floor.',
     'Add a code comment for a limit only when',
-  ])
+  ]) {
     assert.ok(writer.includes(anchor), anchor);
+  }
   const implement = read('verbs/implement.md');
   for (const anchor of [
     'Shortcut-only concerns need recording, not repair or escalation.',
     'record them as focus bullets at any Risk',
     'group shortcuts in one bullet that keeps each limit and trigger',
-  ])
+  ]) {
     assert.ok(implement.includes(anchor), anchor);
+  }
   const rules = read('review-rules.md');
   for (const anchor of [
     'Reject a maintainability or performance finding against a writer-reported shortcut',
     'unless the expected load crosses that limit',
     'A shortcut that removes a simplicity-floor protection is a defect, not a shortcut.',
-  ])
+  ]) {
     assert.ok(rules.includes(anchor), anchor);
-  const walk = (dir: URL): string[] =>
+  }
+  const walk = (dir: URL): Array<string> =>
     readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory()
         ? walk(new URL(`${e.name}/`, dir))

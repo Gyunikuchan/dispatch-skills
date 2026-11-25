@@ -1,14 +1,16 @@
 import type { DiagnosticUsage } from './rows.ts';
 import { opencodeDbPath } from '../opencode-db.ts';
-import { count, note, readErrorReason, row, stageAt, type Row } from './read.ts';
-import {
-  addCounters,
-  type HostStage,
-  type HostUsageAdapter,
-  type HostUsageFs,
-  type HostUsageQuery,
-  type HostUsageResult,
-  type UsageRow,
+import { count, note, readErrorReason, row, stageAt } from './read.ts';
+import type { Row } from './read.ts';
+import { addCounters } from './rows.ts';
+import type {
+  HostNotes,
+  HostStage,
+  HostUsageAdapter,
+  HostUsageFs,
+  HostUsageQuery,
+  HostUsageResult,
+  UsageRow,
 } from './rows.ts';
 
 export const opencode: HostUsageAdapter = {
@@ -21,15 +23,19 @@ export function collectOpencodeUsage(
   fs: HostUsageFs,
   options?: { rootRole?: 'host' | 'delegate' },
 ): HostUsageResult {
-  const result: HostUsageResult = { rows: [], notes: {} };
-  const notes = result.notes!;
+  const notes: HostNotes = {};
+  const result: HostUsageResult = { rows: [], notes };
   const rootRole = options?.rootRole ?? 'host';
-  if (query.collectResponses) result.response = { basis: 'opencode-assistant-message' };
+  if (query.collectResponses) {
+    result.response = { basis: 'opencode-assistant-message' };
+  }
   if (query.budget.remaining <= 0) {
     note(notes, 'host', 'read budget reached');
     return result;
   }
-  if (!fs.opencodeMessages) return { ...result, unavailable: 'read-error:EUNKNOWN' };
+  if (!fs.opencodeMessages) {
+    return { ...result, unavailable: 'read-error:EUNKNOWN' };
+  }
 
   const dbPath = opencodeDbPath(query.home, query.env);
   let read: ReturnType<NonNullable<HostUsageFs['opencodeMessages']>>;
@@ -37,14 +43,16 @@ export function collectOpencodeUsage(
     read = fs.opencodeMessages(dbPath, query.sessionId, {
       fromMs: query.startMs,
       toMs: query.endMs,
-      ...(result.response ? { includeSessionIdentity: true } : {}),
+      ...(result.response && { includeSessionIdentity: true }),
     });
   } catch (error) {
     return { ...result, unavailable: readErrorReason(error) };
   }
 
   // Skipped or row-capped messages can come from any session in the query.
-  if (result.response && (read.skipped > 0 || read.truncated === 'rows')) result.response.limited = true;
+  if (result.response && (read.skipped > 0 || read.truncated === 'rows')) {
+    result.response.limited = true;
+  }
   for (const message of read.messages) {
     const hostRow: UsageRow & { stage: HostStage } = {
       stage: stageAt(query.stages, message.createdMs),
@@ -56,27 +64,44 @@ export function collectOpencodeUsage(
       atMs: message.createdMs,
       reasoningInOutput: false,
       turns: 1,
-      ...(message.toolCalls !== undefined
-        ? { toolCalls: message.toolCalls, toolTurns: message.toolCalls > 0 ? 1 : 0 }
-        : {}),
+      ...(message.toolCalls !== undefined && {
+        toolCalls: message.toolCalls,
+        toolTurns: message.toolCalls > 0 ? 1 : 0,
+      }),
       input: message.input,
       output: message.output,
     };
     if (result.response) {
       const actor = message.depth === 0 ? query.sessionId : message.sessionId;
-      if (actor !== undefined) hostRow.responseActor = actor;
+      if (actor !== undefined) {
+        hostRow.responseActor = actor;
+      }
     }
-    if (message.cacheRead !== undefined) hostRow.cacheRead = message.cacheRead;
-    if (message.cacheWrite !== undefined) hostRow.cacheWrite = message.cacheWrite;
-    if (message.reasoning !== undefined) hostRow.reasoning = message.reasoning;
+    if (message.cacheRead !== undefined) {
+      hostRow.cacheRead = message.cacheRead;
+    }
+    if (message.cacheWrite !== undefined) {
+      hostRow.cacheWrite = message.cacheWrite;
+    }
+    if (message.reasoning !== undefined) {
+      hostRow.reasoning = message.reasoning;
+    }
     result.rows.push(hostRow);
   }
 
   // The reader sums skipped messages across the root and its descendants without a role split.
-  if (read.skipped > 0) note(notes, 'host', 'unparsed lines', read.skipped);
-  if (read.truncated === 'rows') note(notes, 'host', 'read budget reached');
-  if (read.truncated === 'sessions') note(notes, 'subagent', 'too many candidates');
-  if (read.messages.length === 0) result.unavailable = 'no usage records';
+  if (read.skipped > 0) {
+    note(notes, 'host', 'unparsed lines', read.skipped);
+  }
+  if (read.truncated === 'rows') {
+    note(notes, 'host', 'read budget reached');
+  }
+  if (read.truncated === 'sessions') {
+    note(notes, 'subagent', 'too many candidates');
+  }
+  if (read.messages.length === 0) {
+    result.unavailable = 'no usage records';
+  }
   if (
     rootRole === 'host' &&
     !result.unavailable &&
@@ -107,11 +132,15 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
     } catch {
       return undefined;
     }
-    if (event?.['type'] !== 'step_finish') continue;
+    if (event?.['type'] !== 'step_finish') {
+      continue;
+    }
     const tokens = row(row(event['part'])?.['tokens']);
     const rawInput = tokens?.['input'],
       rawOutput = tokens?.['output'];
-    if (!tokens || !count(rawInput) || !count(rawOutput)) return undefined;
+    if (!tokens || !count(rawInput) || !count(rawOutput)) {
+      return undefined;
+    }
     const cache = row(tokens['cache']);
     const usage: DiagnosticUsage = {
       input: rawInput,
@@ -125,12 +154,19 @@ export function opencodeUsage(raw: string): DiagnosticUsage | undefined {
       ['cacheRead', cache?.['read']],
       ['cacheWrite', cache?.['write']],
     ] as const) {
-      if (value === undefined) continue;
-      if (!count(value)) return undefined;
+      if (value === undefined) {
+        continue;
+      }
+      if (!count(value)) {
+        return undefined;
+      }
       usage[key] = value;
     }
-    if (!total) total = usage;
-    else addCounters(total, usage);
+    if (!total) {
+      total = usage;
+    } else {
+      addCounters(total, usage);
+    }
   }
   return total;
 }

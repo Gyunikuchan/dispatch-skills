@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { mock } from 'node:test';
 import { memoryNodeFs } from '../../../helpers/memory-node-fs.ts';
 import path from 'node:path';
 import type { CliDeps } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { ToolResult } from '../../../../skills/dispatch/scripts/toolkit/output.ts';
 import type {
   DelegateRequest,
   ModeId,
@@ -11,6 +13,14 @@ import type {
   RunOutcome,
 } from '../../../../skills/dispatch/scripts/providers/types.ts';
 import { canonicalRepositoryRoot } from '../../../../skills/dispatch/scripts/lib/session.ts';
+import { nodeLinkFs } from '../../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
+import { isRecord } from '../../../../skills/dispatch/scripts/lib/config.ts';
+
+export function useMemoryAtomicWrite(): () => void {
+  // Route artifact updates through the active in-memory filesystem.
+  const write = mock.method(nodeLinkFs, 'writeAtomic', (file: string, text: string) => fs.writeFileSync(file, text));
+  return () => write.mock.restore();
+}
 
 export function sessionFixture(options: { memory?: boolean } = {}) {
   const root = options.memory
@@ -29,10 +39,10 @@ export function sessionFixture(options: { memory?: boolean } = {}) {
       repositoryRoot: canonicalRepositoryRoot(root),
     }),
   );
-  const lines: string[] = [];
-  const sleeps: number[] = [];
+  const lines: Array<string> = [];
+  const sleeps: Array<number> = [];
   const replies = new Map<string, RunOutcome>();
-  const launches: { provider: ProviderId; request: DelegateRequest; mode: ModeId }[] = [];
+  const launches: Array<{ provider: ProviderId; request: DelegateRequest; mode: ModeId }> = [];
   const deps: CliDeps = {
     run: async () => {
       throw new Error('Unit tests must not spawn processes');
@@ -40,7 +50,9 @@ export function sessionFixture(options: { memory?: boolean } = {}) {
     delegate: async (provider, request, mode) => {
       launches.push({ provider, request, mode });
       const outcome = replies.get(provider + ':' + request.model);
-      if (!outcome) throw new Error('Unscripted delegate ' + provider + ':' + request.model);
+      if (!outcome) {
+        throw new Error('Unscripted delegate ' + provider + ':' + request.model);
+      }
       return { outcome, invocations: [] };
     },
     modes: () => ['cli'],
@@ -76,13 +88,40 @@ export function sessionFixture(options: { memory?: boolean } = {}) {
     artifact,
     script,
     launches,
-    output: () => {
-      if (lines.length !== 1) throw new Error('Expected one output line');
-      return JSON.parse(lines[0]!) as { ok: boolean; summary: string; path: string | null; reason?: string };
+    output: (): Omit<ToolResult, 'exit'> => {
+      const [line] = lines;
+      if (lines.length !== 1 || line === undefined) {
+        throw new Error('Expected one output line');
+      }
+      const output: unknown = JSON.parse(line);
+      if (!isRecord(output)) {
+        throw new Error('Expected a toolkit response');
+      }
+      const { ok, summary, path, reason, hint } = output;
+      if (
+        typeof ok !== 'boolean' ||
+        typeof summary !== 'string' ||
+        (path !== null && typeof path !== 'string') ||
+        (reason !== undefined && typeof reason !== 'string') ||
+        (hint !== undefined && typeof hint !== 'string')
+      ) {
+        throw new Error('Invalid toolkit response');
+      }
+      return {
+        ...output,
+        ok,
+        summary,
+        path,
+        ...(reason !== undefined && { reason }),
+        ...(hint !== undefined && { hint }),
+      };
     },
     cleanup: () => {
-      if (restore) restore();
-      else fs.rmSync(root, { recursive: true, force: true });
+      if (restore) {
+        restore();
+      } else {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     },
   };
 }

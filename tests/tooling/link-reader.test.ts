@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 // NOTE: literal dynamic import keeps each leaf test independently failing while the module is absent; tsc still types it.
-const loadReadLink = () => import('../../.agents/skills/link-reader/scripts/read-link.ts');
+import { main, parseLink, INNERTUBE_CLIENT } from '../../.agents/skills/link-reader/scripts/read-link.ts';
 
 function makeDeps(
   overrides: Partial<{
@@ -14,9 +14,9 @@ function makeDeps(
     writeTemp: (name: string, text: string) => string;
   }> = {},
 ) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const tempCalls: { name: string; text: string }[] = [];
+  const out: Array<string> = [];
+  const err: Array<string> = [];
+  const tempCalls: Array<{ name: string; text: string }> = [];
   const deps = {
     fetch: overrides.fetch ?? (async () => new Response('{}', { status: 500 })),
     runYtDlp: overrides.runYtDlp ?? (async () => null),
@@ -36,7 +36,7 @@ function makeDeps(
   return { deps, out, err, tempCalls };
 }
 
-function playerResponse(overrides: Record<string, unknown> = {}) {
+function playerResponse(overrides: { captions?: unknown } = {}) {
   return {
     playabilityStatus: { status: 'OK' },
     videoDetails: {
@@ -56,14 +56,20 @@ function playerResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function requestUrl(input: Parameters<typeof globalThis.fetch>[0]): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  return 'href' in input ? input.href : input.url;
+}
+
 // SECTION: X posts
 
 test('X post renders author, text, counts, media URLs, quoted post, and same-author thread in order', async () => {
-  const { main } = await loadReadLink();
-  const requests: { url: string; userAgent: string | null }[] = [];
+  const requests: Array<{ url: string; userAgent: string | null }> = [];
   const { deps, out, err } = makeDeps({
     fetch: async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       const headers = new Headers(init?.headers);
       requests.push({ url, userAgent: headers.get('user-agent') });
       return new Response(
@@ -76,7 +82,7 @@ test('X post renders author, text, counts, media URLs, quoted post, and same-aut
             replies: 7,
             reposts: 56,
             likes: 1234,
-            views: 89000,
+            views: 89_000,
             media: {
               all: [{ url: 'https://pbs.twimg.com/media/example.jpg', type: 'photo' }],
             },
@@ -120,7 +126,6 @@ test('X post renders author, text, counts, media URLs, quoted post, and same-aut
 });
 
 test('X post omits Thread section when thread contains only the requested post', async () => {
-  const { main } = await loadReadLink();
   const { deps, out } = makeDeps({
     fetch: async () =>
       new Response(
@@ -148,7 +153,6 @@ test('X post omits Thread section when thread contains only the requested post',
 // SECTION: YouTube URLs and metadata
 
 test('YouTube URL parsing normalizes all accepted forms and rejects unsupported URLs', async () => {
-  const { parseLink } = await loadReadLink();
   const accepted = [
     'https://youtu.be/jP9yjEDlc4k?is=033FAjzIUfXzy9F6',
     'https://www.youtube.com/watch?v=jP9yjEDlc4k&t=12s',
@@ -182,13 +186,12 @@ test('YouTube URL parsing normalizes all accepted forms and rejects unsupported 
 });
 
 test('YouTube metadata renders title, channel, duration, view count, publish date, and description', async () => {
-  const { main, INNERTUBE_CLIENT } = await loadReadLink();
-  let sentClient: unknown = null;
+  let sentClient: unknown;
   const { deps, out, err } = makeDeps({
     fetch: async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
-        const body = JSON.parse(String(init?.body ?? '{}')) as { context?: { client?: unknown } };
+        const body: { context?: { client?: unknown } } = JSON.parse(String(init?.body ?? '{}'));
         sentClient = body.context?.client ?? null;
         return new Response(JSON.stringify(playerResponse()), { status: 200 });
       }
@@ -210,45 +213,43 @@ test('YouTube metadata renders title, channel, duration, view count, publish dat
   assert.match(markdown, /A short video description\./);
 });
 
+const runWithTracks = async (captionTracks: Array<{ baseUrl: string; languageCode: string; kind?: string }>) => {
+  let fetchedCaptionUrl = '';
+  const { deps, out, tempCalls } = makeDeps({
+    fetch: async (input) => {
+      const url = requestUrl(input);
+      if (url.includes('youtubei/v1/player')) {
+        return new Response(
+          JSON.stringify(
+            playerResponse({
+              captions: { playerCaptionsTracklistRenderer: { captionTracks } },
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      fetchedCaptionUrl = url;
+      return new Response(
+        JSON.stringify({
+          events: [
+            { tStartMs: 0, segs: [{ utf8: 'Hello   world.' }] },
+            { tStartMs: 5000, segs: [{ utf8: 'Second\nline.' }] },
+            { tStartMs: 35_000, segs: [{ utf8: 'Later paragraph.' }] },
+          ],
+        }),
+        { status: 200 },
+      );
+    },
+  });
+  const code = await main(['https://www.youtube.com/watch?v=jP9yjEDlc4k'], deps);
+  assert.equal(code, 0);
+  assert.equal(tempCalls.length, 0);
+  return { fetchedCaptionUrl, markdown: out.join('') };
+};
+
 // SECTION: Transcript track selection and formatting
 
 test('transcript track selection prefers English manual, then English asr, then first manual, then first track', async () => {
-  const { main } = await loadReadLink();
-
-  const runWithTracks = async (captionTracks: { baseUrl: string; languageCode: string; kind?: string }[]) => {
-    let fetchedCaptionUrl = '';
-    const { deps, out, tempCalls } = makeDeps({
-      fetch: async (input) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        if (url.includes('youtubei/v1/player')) {
-          return new Response(
-            JSON.stringify(
-              playerResponse({
-                captions: { playerCaptionsTracklistRenderer: { captionTracks } },
-              }),
-            ),
-            { status: 200 },
-          );
-        }
-        fetchedCaptionUrl = url;
-        return new Response(
-          JSON.stringify({
-            events: [
-              { tStartMs: 0, segs: [{ utf8: 'Hello   world.' }] },
-              { tStartMs: 5000, segs: [{ utf8: 'Second\nline.' }] },
-              { tStartMs: 35000, segs: [{ utf8: 'Later paragraph.' }] },
-            ],
-          }),
-          { status: 200 },
-        );
-      },
-    });
-    const code = await main(['https://www.youtube.com/watch?v=jP9yjEDlc4k'], deps);
-    assert.equal(code, 0);
-    assert.equal(tempCalls.length, 0);
-    return { fetchedCaptionUrl, markdown: out.join('') };
-  };
-
   // Prefers English manual over English asr and other manual
   const enManual = await runWithTracks([
     { baseUrl: 'https://captions.example/fr', languageCode: 'fr' },
@@ -280,7 +281,6 @@ test('transcript track selection prefers English manual, then English asr, then 
 // SECTION: Long transcript bounding
 
 test('long transcript over 60,000 bytes writes full Markdown via writeTemp and bounds stdout under 64 KB', async () => {
-  const { main } = await loadReadLink();
   const events = Array.from({ length: 800 }, (_, i) => ({
     tStartMs: i * 1000,
     segs: [
@@ -290,7 +290,7 @@ test('long transcript over 60,000 bytes writes full Markdown via writeTemp and b
 
   const { deps, out, tempCalls } = makeDeps({
     fetch: async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
         return new Response(
           JSON.stringify(
@@ -313,8 +313,8 @@ test('long transcript over 60,000 bytes writes full Markdown via writeTemp and b
   assert.equal(code, 0);
   assert.equal(tempCalls.length, 1);
   assert.equal(tempCalls[0]?.name, 'link-reader-jP9yjEDlc4k.md');
-  assert.ok(Buffer.byteLength(tempCalls[0]!.text, 'utf8') > 60_000);
-  assert.match(tempCalls[0]!.text, /Segment 799/);
+  assert.ok(Buffer.byteLength(tempCalls[0].text, 'utf8') > 60_000);
+  assert.match(tempCalls[0].text, /Segment 799/);
 
   const stdoutText = out.join('');
   assert.ok(Buffer.byteLength(stdoutText, 'utf8') < 65_536);
@@ -325,11 +325,10 @@ test('long transcript over 60,000 bytes writes full Markdown via writeTemp and b
 // SECTION: Failures and fallbacks
 
 test('failure: empty caption body with unavailable yt-dlp prints metadata and unavailable note with exit 0', async () => {
-  const { main } = await loadReadLink();
   let ytDlpCalled = false;
   const { deps, out } = makeDeps({
     fetch: async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
         return new Response(
           JSON.stringify(
@@ -361,20 +360,19 @@ test('failure: empty caption body with unavailable yt-dlp prints metadata and un
 });
 
 test('failure fallback: when yt-dlp returns a json3 file, its transcript is rendered with fallback language label', async () => {
-  const { main } = await loadReadLink();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-fixture-'));
   const json3Path = path.join(dir, 'jP9yjEDlc4k.en.json3');
   fs.writeFileSync(
     json3Path,
     JSON.stringify({
-      events: [{ tStartMs: 12000, segs: [{ utf8: 'Recovered via yt-dlp.' }] }],
+      events: [{ tStartMs: 12_000, segs: [{ utf8: 'Recovered via yt-dlp.' }] }],
     }),
     'utf8',
   );
 
   const { deps, out } = makeDeps({
     fetch: async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
         return new Response(
           JSON.stringify(
@@ -403,7 +401,6 @@ test('failure fallback: when yt-dlp returns a json3 file, its transcript is rend
 });
 
 test('failure fallback: when yt-dlp returns an .asr.json3 file, its transcript is labeled auto-generated', async () => {
-  const { main } = await loadReadLink();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-asr-fixture-'));
   const asrJson3Path = path.join(dir, 'jP9yjEDlc4k.en.asr.json3');
   fs.writeFileSync(
@@ -416,7 +413,7 @@ test('failure fallback: when yt-dlp returns an .asr.json3 file, its transcript i
 
   const { deps, out } = makeDeps({
     fetch: async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
         return new Response(JSON.stringify(playerResponse()), { status: 200 });
       }
@@ -433,11 +430,10 @@ test('failure fallback: when yt-dlp returns an .asr.json3 file, its transcript i
 });
 
 test('failure: caption body read rejection falls back cleanly and exits 0', async () => {
-  const { main } = await loadReadLink();
   let ytDlpCalled = false;
   const { deps, out } = makeDeps({
     fetch: async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       if (url.includes('youtubei/v1/player')) {
         return new Response(
           JSON.stringify(
@@ -452,13 +448,11 @@ test('failure: caption body read rejection falls back cleanly and exits 0', asyn
           { status: 200 },
         );
       }
-      return {
-        ok: true,
-        status: 200,
-        text: async () => {
+      return Object.assign(new Response('', { status: 200 }), {
+        text: async (): Promise<string> => {
           throw new Error('stream reset');
         },
-      } as unknown as Response;
+      });
     },
     runYtDlp: async () => {
       ytDlpCalled = true;
@@ -475,7 +469,6 @@ test('failure: caption body read rejection falls back cleanly and exits 0', asyn
 });
 
 test('failure: X 404 prints reason on stderr and exits 1', async () => {
-  const { main } = await loadReadLink();
   const { deps, out, err } = makeDeps({
     fetch: async () =>
       new Response(JSON.stringify({ code: 404, status: null, thread: null, message: 'NOT_FOUND' }), { status: 404 }),
@@ -488,7 +481,6 @@ test('failure: X 404 prints reason on stderr and exits 1', async () => {
 });
 
 test('failure: missing or unsupported URL prints usage on stderr and exits 2', async () => {
-  const { main } = await loadReadLink();
   const missing = makeDeps();
   assert.equal(await main([], missing.deps), 2);
   assert.match(missing.err.join(''), /Usage:/);

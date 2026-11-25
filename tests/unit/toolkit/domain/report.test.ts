@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import {
   REVIEW_TAGS_BY_KIND,
   collectFindings,
@@ -19,7 +18,7 @@ const finding = (overrides: Record<string, string> = {}) => ({
   requiredChange: 'bound the retry loop with a counter',
   ...overrides,
 });
-const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
+const report = (findings: Array<unknown>, status = 'FINDINGS') => JSON.stringify({ status, findings });
 
 const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
 
@@ -35,7 +34,7 @@ const parseDetail = (text: string) => {
 
 const MARK = 'unresolved-locus: ';
 const planLocus = '§ Work';
-const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
+const parsedLoci = (kind: 'code' | 'plan', findings: Array<unknown>) => {
   const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
   assert.ok(result.ok);
   return result.findings.map((item) => item.locus);
@@ -64,22 +63,20 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import type { CATEGORIES } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import {
-  CATEGORIES,
   COMPONENTS,
-  DIAGNOSTIC_LIMITS,
-  formatDuration,
   heuristics,
-  normalizeUsage,
   renderDiagnostics,
   retroObservations,
   sanitizeFacts,
-  type Finding,
-  type InvocationFacts,
-  type RunFacts,
-  type Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type {
+  Finding,
+  InvocationFacts,
+  RunFacts,
+} from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import type { JsonObject } from '../helpers/json.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
 
@@ -96,10 +93,7 @@ const invocation = (overrides: Partial<InvocationFacts> = {}): InvocationFacts =
   usage: { input: 1000, cacheRead: 2000, cacheWrite: 300, output: 40 },
   ...overrides,
 });
-const bare = (overrides: Partial<InvocationFacts> = {}): InvocationFacts => {
-  const { usage: _usage, ...rest } = invocation(overrides);
-  return rest;
-};
+
 const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
   version: '0.7.1',
   build: 'ab'.repeat(32),
@@ -123,7 +117,7 @@ const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
   reviews: [],
   ...overrides,
 });
-const observation = (overrides: Record<string, unknown> = {}) => ({
+const observation = (overrides: JsonObject = {}) => ({
   id: 'o1',
   component: 'scripts/toolkit/records.ts',
   category: 'instruction-clarity',
@@ -132,24 +126,22 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.',
   ...overrides,
 });
-const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
+const render = (runs: Array<RunFacts>) => renderDiagnostics(runs).text;
 
-const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
+const only = (findings: ReadonlyArray<Finding>, source: string) => findings.filter((f) => f.source === source);
 function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
   assert.ok(finding, 'finding expected');
   assert.equal(finding.category, category);
   assert.ok(COMPONENTS.has(finding.component), `dispatch component: ${finding.component}`);
-  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) assert.ok(field.trim().length > 0);
+  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) {
+    assert.ok(field.trim().length > 0);
+  }
   return finding;
 }
 
 // SECTION: Layout, durations, and token columns
 
 // SECTION: Heuristics, severity, and model attribution
-
-const rejections = (tool: string, action: string, cls: string, count = 2) =>
-  Array.from({ length: count }, () => ({ tool, action, cls }));
-const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
 const stageRows = (text: string) =>
   text
@@ -160,31 +152,15 @@ const stageRows = (text: string) =>
 
 // SECTION: Scope gate and redaction
 
-const LEAKS = [
-  'see /home/alice/repo/src/app.ts',
-  'at ~/work/app',
-  'path C:\\Users\\alice\\repo',
-  'path d:/work/repo',
-  'share \\\\server\\team\\x',
-  'docs at https://intranet.example/x',
-  'host www.example.org',
-  'host build.example.com',
-  'mail alice@example.com',
-  'session 123e4567-e89b-12d3-a456-426614174000',
-  `hash ${'a1'.repeat(20)}`,
-];
-const CLEAN =
-  'The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.';
-
 // SECTION: Finding origin
 
-const originReply = (...origins: (string | undefined)[]) =>
+const originReply = (...origins: Array<string | undefined>) =>
   report(
     origins.map((origin, index) =>
       finding({
         defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index,
         locus: 'src/file' + index + '.ts:L1',
-        ...(origin === undefined ? {} : { origin }),
+        ...(!(origin === undefined) && { origin }),
       }),
     ),
   );
@@ -194,18 +170,19 @@ const draftsOf = (text: string) => {
   return result.findings;
 };
 
+const parse = (confirmations?: unknown) =>
+  parseReport({
+    kind: 'code',
+    source: 'claude[0]',
+    expectedRequestIds: ['request-1'],
+    text: JSON.stringify({
+      status: 'CLEAN',
+      findings: [],
+      ...(!(confirmations === undefined) && { confirmations }),
+    }),
+  });
+
 test('rejected MUST reports require exact explicit requested confirmations', () => {
-  const parse = (confirmations?: unknown) =>
-    parseReport({
-      kind: 'code',
-      source: 'claude[0]',
-      expectedRequestIds: ['request-1'],
-      text: JSON.stringify({
-        status: 'CLEAN',
-        findings: [],
-        ...(confirmations === undefined ? {} : { confirmations }),
-      }),
-    });
   assert.equal(parse().ok, false);
   for (const confirmations of [
     [],
@@ -216,11 +193,14 @@ test('rejected MUST reports require exact explicit requested confirmations', () 
       { requestId: 'request-1', decision: 'agree', rationale: 'Evidence checked' },
       { requestId: 'request-1', decision: 'agree', rationale: 'Evidence checked' },
     ],
-  ])
+  ]) {
     assert.equal(parse(confirmations).ok, false);
+  }
   const result = parse([{ requestId: 'request-1', decision: 'agree', rationale: 'Evidence checked' }]);
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.confirmations?.[0]?.decision, 'agree');
+  if (result.ok) {
+    assert.equal(result.confirmations?.[0]?.decision, 'agree');
+  }
 });
 
 test('family tags are scoped by review kind and unknown tags fall back to uncategorized', () => {
@@ -278,13 +258,15 @@ test('derives severity from impact and trigger', () => {
   }
 });
 
+const columns = (row: string | undefined) =>
+  (row ?? '')
+    .split('|')
+    .slice(2, -1)
+    .map((cell) => cell.trim());
+
 test('the rubric table matches the derived severity', () => {
   const rows = fs.readFileSync(path.join(SKILL_ROOT, 'references/templates/review-severity.md'), 'utf8').split(/\r?\n/);
-  const columns = (row: string | undefined) =>
-    (row ?? '')
-      .split('|')
-      .slice(2, -1)
-      .map((cell) => cell.trim());
+
   const headers = columns(rows.find((row) => row.startsWith('| `impact` |')));
   assert.deepEqual([...headers].sort(), TRIGGERS.map((trigger) => '`trigger: ' + trigger + '`').sort());
   for (const impact of IMPACTS) {
@@ -351,11 +333,13 @@ test('delegates-one-report-parse: one path parses fenced or bare JSON into draft
   assert.ok(clean.ok && clean.findings.length === 0);
 });
 
+const fenced = (body: string) => `\`\`\`json\n${body}\n\`\`\``;
+
 test('the report must end the reply', () => {
   const clean = report([], 'CLEAN'),
     found = report([finding()]);
-  const fenced = (body: string) => `\`\`\`json\n${body}\n\`\`\``;
-  const accepted: [string, string, 'CLEAN' | 'FINDINGS'][] = [
+
+  const accepted: Array<[string, string, 'CLEAN' | 'FINDINGS']> = [
     ['closing fence after narration', `Reading.\r\n${fenced(found)}`, 'FINDINGS'],
     ['closing bare fence', `Done.\n\`\`\`\n${found}\n\`\`\``, 'FINDINGS'],
     ['line-start object after narration', `Reading {plan}.\n${found}`, 'FINDINGS'],
@@ -382,7 +366,7 @@ test('the report must end the reply', () => {
     assert.ok(result.ok, name);
     assert.equal(result.status, status, name);
   }
-  const rejected: [string, string][] = [
+  const rejected: Array<[string, string]> = [
     ['clean example then a cut-off report', `${clean}\nActual: {"status":"FINDINGS","findings":[`],
     ['clean example then relaxed JSON', `${clean}\nActual: {status:'FINDINGS',findings:[]}`],
     ['clean example then an inline report', `${fenced(clean)}\nActual: ${found}`],
@@ -413,7 +397,9 @@ ${clean}`,
     ['cut-off report after a malformed value', `{"status":"FINDINGS","findings":[\n{"severity": MUST,\n${clean}`],
     ['cut-off report ending at a finding', `{"status":"FINDINGS","findings":[\n${JSON.stringify(finding())}`],
   ];
-  for (const [name, text] of rejected) assert.equal(failure(text), 'uncovered-scope', name);
+  for (const [name, text] of rejected) {
+    assert.equal(failure(text), 'uncovered-scope', name);
+  }
 });
 
 test('a narrated report with many findings parses', () => {
@@ -441,7 +427,7 @@ test('malformed reports fail with a bounded classified failure', () => {
   {
     const started = Date.now();
     assert.equal(
-      parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(50000) + 'x\n```y```' }).ok,
+      parseReport({ kind: 'code', source: 'codex[0]', text: '```' + ' '.repeat(50_000) + 'x\n```y```' }).ok,
       false,
     );
     const text = `${'{"a":\n'.repeat(2000)}{"status":1}`;
@@ -476,23 +462,28 @@ test('malformed reports fail with a bounded classified failure', () => {
       text: JSON.stringify({ status: 'BLOCKED', reason: '  Session artifact denied by the guard  ' }),
     });
     assert.equal(valid.ok, false);
-    if (!valid.ok) assert.deepEqual(valid.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
+    if (!valid.ok) {
+      assert.deepEqual(valid.failure, { kind: 'blocked', detail: 'Session artifact denied by the guard' });
+    }
 
     for (const text of [
       JSON.stringify({ status: 'BLOCKED' }),
       JSON.stringify({ status: 'BLOCKED', reason: '   ' }),
       JSON.stringify({ status: 'BLOCKED', reason: 42 }),
       JSON.stringify({ status: 'BLOCKED', findings: [] }),
-    ])
+    ]) {
       assert.equal(failure(text), 'uncovered-scope', text);
+    }
   }
 
   // unknown tags fail invalid reports without masking other failures
   {
-    for (const tag of ['', '   ', '\n\t'])
+    for (const tag of ['', '   ', '\n\t']) {
       assert.equal(failure(report([finding({ tag })])), 'uncovered-scope', JSON.stringify(tag));
-    for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }])
+    }
+    for (const tag of [42, null, true, ['robustness'], { name: 'robustness' }]) {
       assert.equal(failure(report([{ ...finding(), tag }])), 'uncovered-scope', JSON.stringify(tag));
+    }
     const { tag: _tag, ...missing } = finding();
     assert.equal(failure(report([missing])), 'uncovered-scope');
     const unknown = (overrides: Record<string, string> = {}) => finding({ tag: 'robustness', ...overrides });
@@ -527,8 +518,9 @@ test('loose locus marks only the loose locus and never matches by location', () 
     assert.deepEqual(parsedLoci('plan', [finding({ locus: ' a\n\t<!-- b -->\u001b[31m c ' })]), [
       MARK + 'a &lt;!-- b --&gt; c',
     ]);
-    for (const locus of ['', '   ', 42, null, ['§ Work']])
+    for (const locus of ['', '   ', 42, null, ['§ Work']]) {
       assert.deepEqual(parsedLoci('plan', [{ ...finding(), locus }]), [MARK + '(none)'], JSON.stringify(locus));
+    }
   }
 
   // loose locus keeps findings: clipping stays within 120 bytes, splits no character and merges no findings
@@ -743,7 +735,7 @@ test('heuristic H1 reports repeated failures with model attribution, fallback re
         attempt: 1,
         ...overrides,
       });
-    const quotaFinding = (invocations: InvocationFacts[]) =>
+    const quotaFinding = (invocations: Array<InvocationFacts>) =>
       assertShape(
         only(heuristics(facts({ invocations })), 'H1').find((item) => item.evidence.startsWith('`quota`')),
         'correctness',
@@ -924,7 +916,7 @@ test('heuristic H1 reports repeated failures with model attribution, fallback re
   }
   // merged from: diagnostics fix text for capacity and no-report
   {
-    const h1 = (rows: InvocationFacts[]) =>
+    const h1 = (rows: Array<InvocationFacts>) =>
       assertShape(only(heuristics(facts({ invocations: rows })), 'H1')[0], 'correctness');
     const repeated = (row: Partial<InvocationFacts>) => [
       invocation({ ...row, slot: 'codex[0]' }),
@@ -937,8 +929,9 @@ test('heuristic H1 reports repeated failures with model attribution, fallback re
     assert.match(capacity.proposedFix, /provider capacity and retry delay/i);
     assert.match(noReport.evidence, /`no-report`/);
     assert.match(noReport.proposedFix, /required report JSON/i);
-    for (const finding of [capacity, noReport])
+    for (const finding of [capacity, noReport]) {
       assert.notEqual(finding.proposedFix, unclassified.proposedFix, 'own fix text');
+    }
     assert.notEqual(capacity.proposedFix, noReport.proposedFix);
   }
 });
@@ -972,18 +965,29 @@ test('diagnostics report: heuristic H4 fires above threshold and stays silent at
   }
 });
 
+const acceptedRounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) =>
+  Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
+
+const cappedRounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) =>
+  Array.from({ length: count }, (_, i) => ({
+    phase: 'review',
+    round: i + 1,
+    accepted: 1,
+    rejected: 0,
+    cap: 3,
+    ...(i === count - 1 && last),
+  }));
+
 test('diagnostics amendment convergence: cap screening, reraises, escalations and wording', () => {
   // merged from: diagnostics amendment convergence: evaluates caps, reraises, and escalations
   {
-    const rounds = (count: number, extra: Partial<RunFacts['reviews'][number]> = {}) =>
-      Array.from({ length: count }, (_, i) => ({ phase: 'review', round: i + 1, accepted: 1, rejected: 0, ...extra }));
     assert.deepEqual(
-      only(heuristics(facts({ reviews: rounds(3, { cap: 3 }) })), 'H2'),
+      only(heuristics(facts({ reviews: acceptedRounds(3, { cap: 3 }) })), 'H2'),
       [],
       'three rounds within cap 3 is normal convergence',
     );
     assert.deepEqual(
-      only(heuristics(facts({ reviews: rounds(4, { cap: 3 }) })), 'H2'),
+      only(heuristics(facts({ reviews: acceptedRounds(4, { cap: 3 }) })), 'H2'),
       [],
       'plain continuation beyond cap 3 is designed',
     );
@@ -1024,7 +1028,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
       );
     }
     assert.match(
-      assertShape(only(heuristics(facts({ reviews: rounds(3) })), 'H2')[0], 'review-convergence').evidence,
+      assertShape(only(heuristics(facts({ reviews: acceptedRounds(3) })), 'H2')[0], 'review-convergence').evidence,
       /code review: 3 rounds\./,
       'an absent cap uses the fallback threshold',
     );
@@ -1067,15 +1071,6 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
   }
   // merged from: H2 wording separates designed continuation, cap arrival, and deadlock
   {
-    const rounds = (count: number, last: Partial<RunFacts['reviews'][number]> = {}) =>
-      Array.from({ length: count }, (_, i) => ({
-        phase: 'review',
-        round: i + 1,
-        accepted: 1,
-        rejected: 0,
-        cap: 3,
-        ...(i === count - 1 ? last : {}),
-      }));
     const h2 = (reviews: RunFacts['reviews']) =>
       assertShape(only(heuristics(facts({ reviews })), 'H2')[0], 'review-convergence');
 
@@ -1085,7 +1080,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
       accepted: 1,
       rejected: 0,
       cap: 3,
-      ...(round === 3 ? { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } } : {}),
+      ...(round === 3 && { escalation: { kind: 'deadlock' as const, ids: ['R3-F001'] } }),
     }));
     const findingCap = assertShape(only(heuristics(facts({ reviews: capEnded })), 'H2')[0], 'review-convergence');
     assert.match(findingCap.evidence, /cap reached/);
@@ -1098,7 +1093,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
       accepted: 1,
       rejected: 0,
       cap: 3,
-      ...(round === 3 ? { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } } : {}),
+      ...(round === 3 && { reraised: ['R1-F001'], escalation: { kind: 'deadlock' as const, ids: ['R1-F001'] } }),
     }));
     const findingDeadlock = assertShape(
       only(heuristics(facts({ reviews: deadlocked })), 'H2')[0],
@@ -1107,7 +1102,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
     assert.match(findingDeadlock.evidence, /deadlock escalation \(R1-F001\)/);
     assert.doesNotMatch(findingDeadlock.evidence, /cap reached/);
 
-    const continued = h2(rounds(4, { reraised: ['R1-F001'] }));
+    const continued = h2(cappedRounds(4, { reraised: ['R1-F001'] }));
     assert.match(continued.evidence, /continued past the cap \(3\)/);
     assert.doesNotMatch(continued.evidence, /cap reached/);
     assert.doesNotMatch(continued.proposedFix, /raise the (round )?cap/i);
@@ -1117,7 +1112,7 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
       'Reject re-raised findings that cite no new code or requirement evidence by citing the earlier ruling.',
     );
 
-    const deadlockPast = h2(rounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
+    const deadlockPast = h2(cappedRounds(4, { escalation: { kind: 'deadlock', ids: ['R1-F001'] } }));
     assert.match(deadlockPast.evidence, /continued past the cap \(3\)/);
     assert.match(deadlockPast.evidence, /deadlock escalation \(R1-F001\)/);
     assert.doesNotMatch(deadlockPast.evidence, /cap reached/);
@@ -1126,10 +1121,12 @@ test('diagnostics amendment convergence: cap screening, reraises, escalations an
   // merged from: heuristic precision screens the review cap as a bounded integer
   {
     const capOf = (cap: unknown) =>
-      sanitizeFacts(facts({ reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap } as never] }))
-        .reviews[0]?.cap;
+      sanitizeFacts({ ...facts(), reviews: [{ phase: 'review', round: 1, accepted: 0, rejected: 0, cap }] }).reviews[0]
+        ?.cap;
     assert.equal(capOf(3), 3);
-    for (const bad of [-1, 2.5, 1_000_001, '3', null]) assert.equal(capOf(bad), undefined, String(bad));
+    for (const bad of [-1, 2.5, 1_000_001, '3', null]) {
+      assert.equal(capOf(bad), undefined, String(bad));
+    }
   }
 });
 

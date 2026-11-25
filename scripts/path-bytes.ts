@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { stripGeneratedMarkers } from '../skills/dispatch/scripts/toolkit/contracts.ts';
 
 // SECTION: Types
@@ -12,7 +12,7 @@ export type LinkEntry = { class: LinkClass; when?: string };
 /** A tool call on the normal path; `kind` names the record kind of a `ledger append`. Count 0 lists a conditional anchor. */
 export type Call = { action: string; kind?: string; count: number };
 /** Targets are `references/...` paths relative to skills/dispatch, with an optional `#anchor`. */
-export type PathManifest = { guide: string; links: Record<string, LinkEntry>; calls: Call[] };
+export type PathManifest = { guide: string; links: Record<string, LinkEntry>; calls: Array<Call> };
 export type Figures = { distinct: number; workload: number; editableDistinct: number; editableWorkload: number };
 export type Model = 'before' | 'preload' | 'after';
 export type Read = (rel: string) => string;
@@ -229,7 +229,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
 };
 
 /** Every relative link in SKILL.md; true marks a read that the path makes on every normal run. */
-export const SKILL_LINKS: Record<string, Record<PathName, boolean>> = {
+export const SKILL_LINKS = {
   'references/decision-frame.md': {
     ask: false,
     design: true,
@@ -394,17 +394,17 @@ export const SKILL_LINKS: Record<string, Record<PathName, boolean>> = {
     review: false,
     verify: false,
   },
-};
+} satisfies Record<string, Record<PathName, boolean>>;
 
 /** Figures at BASELINE_COMMIT; reproduce with --check-baseline. */
 export const BASELINE_COMMIT = '88685174';
 export const BASELINE: Record<PathName, Figures> = {
-  ask: { distinct: 30354, workload: 30354, editableDistinct: 29591, editableWorkload: 29591 },
-  design: { distinct: 89006, workload: 89006, editableDistinct: 76238, editableWorkload: 76238 },
-  review: { distinct: 59293, workload: 59293, editableDistinct: 41415, editableWorkload: 41415 },
-  verify: { distinct: 33124, workload: 33124, editableDistinct: 29556, editableWorkload: 29556 },
-  plan: { distinct: 85118, workload: 85118, editableDistinct: 68781, editableWorkload: 68781 },
-  implement: { distinct: 100102, workload: 100102, editableDistinct: 85248, editableWorkload: 85248 },
+  ask: { distinct: 30_354, workload: 30_354, editableDistinct: 29_591, editableWorkload: 29_591 },
+  design: { distinct: 89_006, workload: 89_006, editableDistinct: 76_238, editableWorkload: 76_238 },
+  review: { distinct: 59_293, workload: 59_293, editableDistinct: 41_415, editableWorkload: 41_415 },
+  verify: { distinct: 33_124, workload: 33_124, editableDistinct: 29_556, editableWorkload: 29_556 },
+  plan: { distinct: 85_118, workload: 85_118, editableDistinct: 68_781, editableWorkload: 68_781 },
+  implement: { distinct: 100_102, workload: 100_102, editableDistinct: 85_248, editableWorkload: 85_248 },
 };
 
 // SECTION: Sections and bytes
@@ -412,30 +412,34 @@ export const BASELINE: Record<PathName, Figures> = {
 export function slug(heading: string): string {
   return heading
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '');
 }
 
 /** The heading line through the line before the next heading of the same or a higher level; null when absent. */
 export function sectionOf(text: string, anchor: string, headingLevel?: number): string | null {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const lines = text.replaceAll('\r\n', '\n').split('\n');
   let fence = false;
   let start = -1;
   let level = 0;
-  for (let index = 0; index < lines.length; index++) {
-    if (/^ {0,3}(```|~~~)/.test(lines[index]!)) {
+  for (const [index, line] of lines.entries()) {
+    if (/^ {0,3}(```|~~~)/.test(line)) {
       fence = !fence;
       continue;
     }
-    if (fence) continue;
-    const match = /^(#{1,6})\s+(.*?)\s*$/.exec(lines[index]!);
-    if (!match) continue;
+    if (fence) {
+      continue;
+    }
+    const [, hashes, heading] = /^(#{1,6})\s+(.*?)\s*$/.exec(line) ?? [];
+    if (hashes === undefined || heading === undefined) {
+      continue;
+    }
     if (start < 0) {
-      if (slug(match[2]!) === anchor && (headingLevel === undefined || match[1]!.length === headingLevel)) {
+      if (slug(heading) === anchor && (headingLevel === undefined || hashes.length === headingLevel)) {
         start = index;
-        level = match[1]!.length;
+        level = hashes.length;
       }
-    } else if (match[1]!.length <= level) {
+    } else if (hashes.length <= level) {
       return lines.slice(start, index).join('\n').trimEnd();
     }
   }
@@ -444,8 +448,12 @@ export function sectionOf(text: string, anchor: string, headingLevel?: number): 
 
 /** Resolves a Markdown destination in the skill root, retaining its authored fragment. */
 export function normalizeSkillLink(source: string, target: string): string | null {
-  if (target.startsWith('<') && target.endsWith('>')) target = target.slice(1, -1);
-  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) return null;
+  if (target.startsWith('<') && target.endsWith('>')) {
+    target = target.slice(1, -1);
+  }
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(target)) {
+    return null;
+  }
   const fragment = target.indexOf('#');
   const file = fragment < 0 ? target : target.slice(0, fragment);
   const resolved =
@@ -454,22 +462,25 @@ export function normalizeSkillLink(source: string, target: string): string | nul
 }
 
 /** Compares authored relative destinations with the editorial declarations and verifies their targets. */
-export function validatePathLinks(read: Read): string[] {
-  const errors: string[] = [];
+export function validatePathLinks(read: Read): Array<string> {
+  const errors: Array<string> = [];
   const contents = new Map<string, string | null>();
   const readOnce = (file: string): string | null => {
     if (!contents.has(file)) {
       try {
         contents.set(file, read(file));
       } catch (error) {
-        if (!['ENOENT', 'ENOTDIR', 'EISDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR' && code !== 'EISDIR') {
+          throw error;
+        }
         contents.set(file, null);
       }
     }
-    return contents.get(file)!;
+    return contents.get(file) ?? null;
   };
-  const sources: [string, string[]][] = [
-    ...Object.values(MANIFEST).map(({ guide, links }): [string, string[]] => [guide, Object.keys(links)]),
+  const sources: Array<[string, Array<string>]> = [
+    ...Object.values(MANIFEST).map(({ guide, links }): [string, Array<string>] => [guide, Object.keys(links)]),
     ['SKILL.md', Object.keys(SKILL_LINKS)],
   ];
   for (const [source, declarations] of sources) {
@@ -481,51 +492,73 @@ export function validatePathLinks(read: Read): string[] {
     const declared = new Set(declarations);
     const found = new Set<string>();
     for (const [, target] of text.matchAll(/\]\([ \t]*(<[^>\r\n]+>|[^)\s]+)(?:[ \t]+[^)\r\n]*)?\)/g)) {
-      const normalized = normalizeSkillLink(source, target!);
-      if (normalized !== null) found.add(normalized);
+      const normalized = target === undefined ? null : normalizeSkillLink(source, target);
+      if (normalized !== null) {
+        found.add(normalized);
+      }
     }
-    for (const target of found) if (!declared.has(target)) errors.push(`${source}: undeclared link ${target}`);
-    for (const target of declared) if (!found.has(target)) errors.push(`${source}: stale declaration ${target}`);
+    for (const target of found) {
+      if (!declared.has(target)) {
+        errors.push(`${source}: undeclared link ${target}`);
+      }
+    }
+    for (const target of declared) {
+      if (!found.has(target)) {
+        errors.push(`${source}: stale declaration ${target}`);
+      }
+    }
     for (const target of new Set([...found, ...declared])) {
-      const [file, anchor] = target.split(/#(.*)/s) as [string, string | undefined];
+      const [file = '', anchor] = target.split(/#(.*)/s);
       if (file === '..' || file.startsWith('../') || file.includes('\\') || path.posix.isAbsolute(file)) {
         errors.push(`${source}: link outside the skill ${target}`);
         continue;
       }
       const body = readOnce(file);
-      if (body === null) errors.push(`${source}: missing link file ${target}`);
-      else if (anchor !== undefined && sectionOf(body, anchor) === null)
+      if (body === null) {
+        errors.push(`${source}: missing link file ${target}`);
+      } else if (anchor !== undefined && sectionOf(body, anchor) === null) {
         errors.push(`${source}: invalid link anchor ${target}`);
+      }
     }
   }
   return errors;
 }
 
 // NOTE: CRLF is normalized so Windows checkouts and Git blobs give the same figures.
-const bytes = (text: string) => Buffer.byteLength(text.replace(/\r\n/g, '\n'), 'utf8');
+const bytes = (text: string) => Buffer.byteLength(text.replaceAll('\r\n', '\n'), 'utf8');
 const isFrozen = (file: string) => /(^|\/)(quality-bar|spec-stage)\.md$/.test(file);
 
 type ReadItem = { file: string; anchor?: string };
 
-function pathReads(spec: PathManifest, name: string): ReadItem[] {
-  const items: ReadItem[] = [{ file: 'SKILL.md' }, { file: spec.guide }];
+const isPathName = (name: string): name is PathName => Object.hasOwn(MANIFEST, name);
+
+function pathReads(spec: PathManifest, name: string): Array<ReadItem> {
+  const items: Array<ReadItem> = [{ file: 'SKILL.md' }, { file: spec.guide }];
   for (const [target, entry] of Object.entries(spec.links)) {
-    if (entry.class !== 'unconditional') continue;
-    const [file, anchor] = target.split('#') as [string, string | undefined];
+    if (entry.class !== 'unconditional') {
+      continue;
+    }
+    const [file = '', anchor] = target.split('#');
     // A toolkit anchor reaches the orchestrator through the call sequence, never as a separate read.
-    if (file !== TOOLKIT) items.push(anchor ? { file, anchor } : { file });
+    if (file !== TOOLKIT) {
+      items.push(anchor ? { file, anchor } : { file });
+    }
   }
   // A section that SKILL.md mandates has no call heading, so it is a direct read even in toolkit.md.
   for (const [target, paths] of Object.entries(SKILL_LINKS)) {
-    if (!paths[name as PathName]) continue;
-    const [file, anchor] = target.split('#') as [string, string | undefined];
+    if (!isPathName(name) || !paths[name]) {
+      continue;
+    }
+    const [file = '', anchor] = target.split('#');
     items.push(anchor ? { file, anchor } : { file });
   }
-  const whole = new Set(items.filter((item) => !item.anchor).map((item) => item.file));
+  const whole = new Set(items.flatMap(({ file, anchor }) => (anchor ? [] : [file])));
   const seen = new Set<string>();
   return items.filter((item) => {
     const key = `${item.file}#${item.anchor ?? ''}`;
-    if (seen.has(key) || (item.anchor && whole.has(item.file))) return false;
+    if (seen.has(key) || (item.anchor && whole.has(item.file))) {
+      return false;
+    }
     seen.add(key);
     return true;
   });
@@ -533,64 +566,88 @@ function pathReads(spec: PathManifest, name: string): ReadItem[] {
 
 // SECTION: Measure
 
-export function measure<K extends string = PathName>(
+export function measure(read: Read, model: Model): Record<PathName, Figures>;
+export function measure<K extends string>(
   read: Read,
   model: Model,
-  manifest = MANIFEST as Record<string, PathManifest> as Record<K, PathManifest>,
-  archive = false,
-): Record<K, Figures> {
+  manifest: Record<K, PathManifest>,
+  archive?: boolean,
+): Record<K, Figures>;
+export function measure(read: Read, model: Model, manifest: Record<string, PathManifest> = MANIFEST, archive = false) {
   const toolkit = read(TOOLKIT);
   const help = stripGeneratedMarkers(toolkit);
   const section = (heading: string) => {
     let text = sectionOf(help, slug(heading));
     if (text === null && archive && heading === 'brief fix-review-lite') {
       // The pinned baseline predates the rename.
-      const candidates: string[] = [];
+      const candidates: Array<string> = [];
       let fence = false;
       for (const line of help.split(/\r?\n/)) {
         if (/^ {0,3}(```|~~~)/.test(line)) {
           fence = !fence;
           continue;
         }
-        if (fence) continue;
-        const match = /^###\s+(.*?)\s*$/.exec(line);
-        if (!match) continue;
-        const anchor = slug(match[1]!);
-        if (anchor.startsWith('brief-fix-')) candidates.push(anchor);
+        if (fence) {
+          continue;
+        }
+        const headingText = /^###\s+(.*?)\s*$/.exec(line)?.[1];
+        if (headingText === undefined) {
+          continue;
+        }
+        const anchor = slug(headingText);
+        if (anchor.startsWith('brief-fix-')) {
+          candidates.push(anchor);
+        }
       }
-      if (candidates.length !== 1)
+      const [candidate] = candidates;
+      if (candidates.length !== 1 || candidate === undefined) {
         throw new Error(`toolkit.md has ${candidates.length} archived repair brief sections; expected one`);
-      text = sectionOf(help, candidates[0]!, 3);
+      }
+      text = sectionOf(help, candidate, 3);
     }
-    if (text === null) throw new Error(`toolkit.md has no section "${heading}"`);
+    if (text === null) {
+      throw new Error(`toolkit.md has no section "${heading}"`);
+    }
     return bytes(text);
   };
-  const result = {} as Record<K, Figures>;
-  for (const [name, spec] of Object.entries<PathManifest>(manifest)) {
+  const result: Record<string, Figures> = {};
+  for (const [name, spec] of Object.entries(manifest)) {
     const figures: Figures = { distinct: 0, workload: 0, editableDistinct: 0, editableWorkload: 0 };
     const add = (size: number, count: number, frozen: boolean) => {
       figures.workload += size * count;
-      if (!frozen) figures.editableWorkload += size * count;
+      if (!frozen) {
+        figures.editableWorkload += size * count;
+      }
     };
     const addDistinct = (size: number, frozen: boolean) => {
       figures.distinct += size;
-      if (!frozen) figures.editableDistinct += size;
+      if (!frozen) {
+        figures.editableDistinct += size;
+      }
     };
     for (const item of pathReads(spec, name)) {
       const text = read(item.file);
       const body = item.anchor ? sectionOf(text, item.anchor) : text;
-      if (body === null) throw new Error(`${item.file} has no section "${item.anchor}"`);
+      if (body === null) {
+        throw new Error(`${item.file} has no section "${item.anchor}"`);
+      }
       add(bytes(body), 1, isFrozen(item.file));
       addDistinct(bytes(body), isFrozen(item.file));
     }
     const headings = new Set<string>();
     for (const entry of spec.calls) {
-      if (entry.count <= 0) continue;
+      if (entry.count <= 0) {
+        continue;
+      }
       headings.add(entry.action);
-      if (entry.kind) headings.add(entry.kind);
+      if (entry.kind) {
+        headings.add(entry.kind);
+      }
       if (model === 'before') {
         add(section(entry.action), entry.count, false);
-        if (entry.kind) add(section(entry.kind), entry.count, false);
+        if (entry.kind) {
+          add(section(entry.kind), entry.count, false);
+        }
       }
     }
     for (const heading of model === 'preload'
@@ -599,16 +656,18 @@ export function measure<K extends string = PathName>(
         ? ['call table']
         : headings) {
       addDistinct(section(heading), false);
-      if (model !== 'before') add(section(heading), 1, false);
+      if (model !== 'before') {
+        add(section(heading), 1, false);
+      }
     }
-    result[name as K] = figures;
+    result[name] = figures;
   }
   return result;
 }
 
 // SECTION: Comparison and report
 
-const LABELS: [keyof Figures, string][] = [
+const LABELS: Array<[keyof Figures, string]> = [
   ['distinct', 'distinct'],
   ['workload', 'workload'],
   ['editableDistinct', 'editable distinct'],
@@ -619,31 +678,38 @@ const LABELS: [keyof Figures, string][] = [
 const GATED = new Set<keyof Figures>(['workload', 'editableWorkload']);
 
 export function checkGrowth(
-  result: Record<PathName, Figures>,
+  result: Partial<Record<PathName, Figures>>,
   baseline: Record<PathName, Figures> = BASELINE,
-): string[] {
-  const errors: string[] = [];
-  for (const [name, figures] of Object.entries(result) as [PathName, Figures][]) {
+): Array<string> {
+  const errors: Array<string> = [];
+  for (const [name, figures] of Object.entries(result)) {
+    if (!isPathName(name)) {
+      continue;
+    }
     for (const [key, label] of LABELS) {
-      if (GATED.has(key) && figures[key] > baseline[name]![key])
-        errors.push(`${name} ${label} grew to ${figures[key]} bytes above baseline ${baseline[name]![key]}`);
+      if (GATED.has(key) && figures[key] > baseline[name][key]) {
+        errors.push(`${name} ${label} grew to ${figures[key]} bytes above baseline ${baseline[name][key]}`);
+      }
     }
   }
   return errors;
 }
 
 export function formatReport(
-  result: Record<PathName, Figures>,
+  result: Partial<Record<PathName, Figures>>,
   baseline: Record<PathName, Figures> = BASELINE,
 ): string {
-  const lines: string[] = [];
-  for (const [name, figures] of Object.entries(result) as [PathName, Figures][]) {
+  const lines: Array<string> = [];
+  for (const [name, figures] of Object.entries(result)) {
+    if (!isPathName(name)) {
+      continue;
+    }
     for (const [key, label] of LABELS) {
-      const base = baseline[name]![key];
+      const base = baseline[name][key];
       const reduction = base ? ((base - figures[key]) / base) * 100 : 0;
       lines.push(`${name} ${label}: ${figures[key]} bytes (baseline ${base}, ${reduction.toFixed(1)}%)`);
     }
-    const base = baseline[name]!.workload;
+    const base = baseline[name].workload;
     const met = base > 0 && (base - figures.workload) / base >= 0.25;
     lines.push(`${name} workload 25% target: ${met ? 'met' : 'not met'} (reported only)`);
   }
@@ -652,10 +718,14 @@ export function formatReport(
 
 /** Measures the checkout or a Git revision and checks the selected baseline. */
 export function main(
-  args: string[] = process.argv.slice(2),
-  git: (args: string[]) => string = (args) =>
+  args: Array<string> = process.argv.slice(2),
+  git: (args: Array<string>) => string = (args) =>
     execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
   baseline: Record<PathName, Figures> = BASELINE,
+  output: { stdout: (text: string) => void; stderr: (text: string) => void } = {
+    stdout: (text) => process.stdout.write(text),
+    stderr: (text) => process.stderr.write(text),
+  },
 ): number {
   if (
     !(
@@ -664,50 +734,65 @@ export function main(
       (args.length === 2 && args[0] === '--at' && args[1])
     )
   ) {
-    process.stderr.write('Usage: path-bytes [--at <commit> | --check-baseline]\n');
+    output.stderr('Usage: path-bytes [--at <commit> | --check-baseline]\n');
     return 2;
   }
   const archive = args[0] === '--check-baseline';
   const commit = archive ? BASELINE_COMMIT : args[1];
-  const skillDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../skills/dispatch');
+  const skillDir = path.join(import.meta.dirname, '../skills/dispatch');
   let objectId: string | undefined;
   if (commit) {
     try {
       objectId = git(['rev-parse', '--verify', `${commit}^{commit}`]).trim();
     } catch (error) {
-      const e = error as { stderr?: Buffer | string; message?: string };
-      process.stderr.write(String(e.stderr || e.message) + '\n');
+      const stderr = error && typeof error === 'object' && 'stderr' in error ? error.stderr : undefined;
+      const message = error instanceof Error ? error.message : String(error);
+      output.stderr(String(stderr || message) + '\n');
       return 2;
     }
   }
   const read: Read = commit
     ? (rel) => git(['show', `${objectId}:skills/dispatch/${rel}`])
     : (rel) => fs.readFileSync(path.join(skillDir, rel), 'utf8');
-  const result = {} as Record<PathName, Figures>;
+  const result: Partial<Record<PathName, Figures>> = {};
   let missing = false;
-  for (const [name, spec] of Object.entries(MANIFEST) as [PathName, PathManifest][]) {
+  for (const name of Object.keys(MANIFEST).filter(isPathName)) {
     try {
-      result[name] = measure(read, archive ? 'preload' : 'after', { [name]: spec }, archive)[name]!;
+      const figures = measure(read, archive ? 'preload' : 'after', { [name]: MANIFEST[name] }, archive)[name];
+      if (!figures) {
+        throw new Error(`No figures recorded for ${name}`);
+      }
+      result[name] = figures;
     } catch (error) {
-      if (!commit) throw error;
+      if (!commit) {
+        throw error;
+      }
       missing = true;
-      process.stdout.write(`${name}: missing ${(error as Error).message}\n`);
+      output.stdout(`${name}: missing ${error instanceof Error ? error.message : String(error)}\n`);
     }
   }
-  process.stdout.write(formatReport(result, baseline));
+  output.stdout(formatReport(result, baseline));
   if (archive) {
     const unequal =
       missing ||
-      Object.entries(result).some(([name, figures]) =>
-        LABELS.some(([key]) => figures[key] !== baseline[name as PathName][key]),
+      Object.entries(result).some(
+        ([name, figures]) => isPathName(name) && LABELS.some(([key]) => figures[key] !== baseline[name][key]),
       );
-    if (unequal) process.stderr.write('Baseline differs from commit measure\n');
+    if (unequal) {
+      output.stderr('Baseline differs from commit measure\n');
+    }
     return unequal ? 1 : 0;
   }
-  if (commit) return 0;
+  if (commit) {
+    return 0;
+  }
   const errors = checkGrowth(result, baseline);
-  for (const error of errors) process.stderr.write(`${error}\n`);
+  for (const error of errors) {
+    output.stderr(`${error}\n`);
+  }
   return errors.length ? 1 : 0;
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) process.exitCode = main();
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  process.exitCode = main();
+}

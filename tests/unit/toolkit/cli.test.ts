@@ -1,28 +1,19 @@
-import { nativeOpencodeIntrospection } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
+import { generationLaunchedNative } from '../../../skills/dispatch/scripts/toolkit/review-checkout.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
-import type { DelegateRequest, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
-import { main, nodeDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import type { HandlerContext, HandlerResult } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
-import { sessionFixture } from './helpers/session.ts';
+import { sessionFixture, useMemoryAtomicWrite } from './helpers/session.ts';
+import { jsonObject, narrow, optional, readJson, shape, text } from './helpers/json.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { reviewFixFromCommit, reviewFixIdentity } from '../../../skills/dispatch/scripts/toolkit/review-fix.ts';
 import { checks as checkPlan, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
-
-function useMemoryAtomicWrite(): () => void {
-  const writeAtomic = nodeLinkFs.writeAtomic;
-  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
-  return () => {
-    nodeLinkFs.writeAtomic = writeAtomic;
-  };
-}
 
 describe('toolkit CLI contract', () => {
   test('test cleanup trailer: clips a multiline reason and recovers the interrupted commit', async () => {
@@ -113,7 +104,9 @@ describe('toolkit CLI contract', () => {
         if (args[0] === 'rev-parse') {
           stdout = args[1] === 'HEAD' ? head : args[1] === 'HEAD^' ? from : tree;
         } else if (args[0] === 'diff') {
-          if (head === from || args.includes(from)) stdout = 'tests/step.ts\0';
+          if (head === from || args.includes(from)) {
+            stdout = 'tests/step.ts\0';
+          }
         } else if (args[0] === 'commit') {
           message = args.filter((_, index) => args[index - 1] === '-m').join('\n\n');
           head = to;
@@ -187,9 +180,15 @@ describe('toolkit CLI contract', () => {
       let message = '';
       f.deps.run = async (argv) => {
         const args = argv.slice(1);
-        if (args.join(' ') === 'rev-parse HEAD') return { exit: 0, stdout: head, stderr: '' };
-        if (args[0] === 'diff' || args[0] === 'ls-files') return { exit: 0, stdout: '', stderr: '' };
-        if (args[0] === 'log') return { exit: 0, stdout: message, stderr: '' };
+        if (args.join(' ') === 'rev-parse HEAD') {
+          return { exit: 0, stdout: head, stderr: '' };
+        }
+        if (args[0] === 'diff' || args[0] === 'ls-files') {
+          return { exit: 0, stdout: '', stderr: '' };
+        }
+        if (args[0] === 'log') {
+          return { exit: 0, stdout: message, stderr: '' };
+        }
         throw Error('Unexpected Git call: ' + JSON.stringify(argv));
       };
       for (const trailers of [
@@ -258,9 +257,15 @@ describe('toolkit CLI contract', () => {
         message = '';
       f.deps.run = async (argv) => {
         const args = argv.slice(1);
-        if (args.join(' ') === 'rev-parse HEAD') return { exit: 0, stdout: head, stderr: '' };
-        if (args[0] === 'diff') return { exit: 0, stdout: 'src/a.ts\0', stderr: '' };
-        if (args[0] === 'ls-files' || args[0] === 'add') return { exit: 0, stdout: '', stderr: '' };
+        if (args.join(' ') === 'rev-parse HEAD') {
+          return { exit: 0, stdout: head, stderr: '' };
+        }
+        if (args[0] === 'diff') {
+          return { exit: 0, stdout: 'src/a.ts\0', stderr: '' };
+        }
+        if (args[0] === 'ls-files' || args[0] === 'add') {
+          return { exit: 0, stdout: '', stderr: '' };
+        }
         if (args[0] === 'commit') {
           message = args.filter((_, index) => args[index - 1] === '-m').join('\n\n');
           head = 'c'.repeat(40);
@@ -339,7 +344,9 @@ describe('toolkit CLI contract', () => {
           await main(['lint', 'run', '--session', f.session], {
             ...f.deps,
             handler: async () => {
-              if (fail) throw new Error('broken handler');
+              if (fail) {
+                throw new Error('broken handler');
+              }
               return { ok: true, summary: 'done', value: { answer: 42 }, exit: 0 };
             },
           }),
@@ -473,7 +480,7 @@ test('host-sensitive actions refuse missing or unknown host without manifest cha
       'cleanup.json',
       JSON.stringify({ base: 'a'.repeat(40), integrationPath: 'integration' }),
     );
-    const cases: string[][] = [
+    const cases: Array<Array<string>> = [
       ['doctor', 'run'],
       ['review', 'run', q, '--kind', 'plan'],
       ['ask', 'run', q],
@@ -528,7 +535,7 @@ test('host flag replaces recorded host and reroutes voices', async () => {
       manifestFile,
       JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'claude' }),
     );
-    let seen: { manifestHost: unknown; orchestrator: unknown } | null = null;
+    let seen: { manifestHost: string | undefined; orchestrator: { platform: string } | null | undefined } | null = null;
     const deps = {
       ...f.deps,
       handler: async (context: HandlerContext): Promise<HandlerResult> => {
@@ -539,8 +546,9 @@ test('host flag replaces recorded host and reroutes voices', async () => {
     f.lines.length = 0;
     assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'opencode'], deps), 0);
     assert.equal(readManifest(f.session).host, 'opencode');
-    assert.deepEqual((seen as unknown as { manifestHost: unknown }).manifestHost, 'opencode');
-    assert.equal((seen as unknown as { orchestrator: { platform: string } }).orchestrator.platform, 'opencode');
+    const captured = narrow(seen, shape({ manifestHost: optional(text), orchestrator: shape({ platform: text }) }));
+    assert.deepEqual(captured.manifestHost, 'opencode');
+    assert.equal(captured.orchestrator.platform, 'opencode');
     f.lines.length = 0;
     assert.equal(await main(['doctor', 'run', '--session', f.session, '--host', 'github-copilot'], deps), 0);
     assert.equal(readManifest(f.session).host, 'copilot');
@@ -550,7 +558,6 @@ test('host flag replaces recorded host and reroutes voices', async () => {
 });
 
 test('an unreadable fanout record still counts as a native launch', async () => {
-  const { generationLaunchedNative } = await import('../../../skills/dispatch/scripts/toolkit/review-checkout.ts');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'launch-'));
   try {
     const dir = path.join(root, 'round-1');
@@ -581,7 +588,7 @@ test('cli ledger append formats array summary and refreshes findings for new and
       f.lines.length = 0;
       const exit = await main(['ledger', 'append', file, '--session', f.session], f.deps);
       const output = f.output();
-      const value = exit === 0 ? (JSON.parse(fs.readFileSync(output.path!, 'utf8')) as Record<string, unknown>) : null;
+      const value = exit === 0 ? readJson(output.path!, jsonObject) : null;
       return { exit, output, value };
     };
 
@@ -744,7 +751,7 @@ test('the retired brief action returns unknown action', async () => {
     assert.equal(exit, 1);
     assert.equal(f.output().reason, 'usage');
     assert.equal(f.output().summary, 'Unknown tool or action');
-    assert.equal((f.output() as { help?: string }).help, 'call table');
+    assert.equal(narrow(f.output(), shape({ help: optional(text) })).help, 'call table');
     assert.equal(dispatched, false);
   } finally {
     f.cleanup();
@@ -753,8 +760,8 @@ test('the retired brief action returns unknown action', async () => {
 
 test('refusal names the section for a resolved action and the call table otherwise', async () => {
   const f = sessionFixture({ memory: true });
-  const help = () => (f.output() as { help?: string }).help;
-  const run = async (args: string[], mutate: (deps: typeof f.deps) => void = () => {}) => {
+  const help = () => narrow(f.output(), shape({ help: optional(text) })).help;
+  const run = async (args: Array<string>, mutate: (deps: typeof f.deps) => void = () => {}) => {
     f.lines.length = 0;
     const deps = { ...f.deps };
     mutate(deps);
@@ -879,10 +886,10 @@ test('rejects --probe outside doctor run and surfaces probe-failed on doctor run
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
         'write-subagents': { codex: { low: { model: 'writer' } } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
       }),
     );
-    const calls: string[] = [];
+    const calls: Array<string> = [];
     const deps = {
       ...f.deps,
       skillRoot,
@@ -958,7 +965,7 @@ test('accepts optional correlation on review runs only', async () => {
     const ref = '01234567-89ab-4def-8123-0123456789ab';
     assert.equal(await main(['status', 'show', '--resume-ref', ref, '--session', f.session], f.deps), 1);
     assert.match(f.output().summary, /--resume-ref is only for review run/);
-    const seen: unknown[] = [];
+    const seen: Array<unknown> = [];
     const deps = {
       ...f.deps,
       handler: async (ctx: HandlerContext) => {

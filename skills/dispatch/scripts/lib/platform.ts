@@ -18,9 +18,9 @@ export type PlatformEnv = {
   argvLimit: number;
   home: string;
   /** PATH directories, in order. */
-  path: readonly string[];
+  path: ReadonlyArray<string>;
   /** Windows executable extensions (lowercase, with dot); empty elsewhere. */
-  pathExt: readonly string[];
+  pathExt: ReadonlyArray<string>;
   /** XDG_DATA_HOME / XDG_CACHE_HOME / XDG_STATE_HOME when set. */
   xdg?: { data?: string; cache?: string; state?: string };
 };
@@ -39,7 +39,7 @@ type PlatformInput = {
 const toOs = (platform: string): OsId => (platform === 'win32' ? 'win32' : platform === 'darwin' ? 'darwin' : 'linux');
 
 // NOTE: Windows caps a whole command line at 32767 chars; POSIX ARG_MAX is shared with the environment block.
-const argvLimitFor = (osId: OsId): number => (osId === 'win32' ? 24000 : 100000);
+const argvLimitFor = (osId: OsId): number => (osId === 'win32' ? 24_000 : 100_000);
 
 export function platformFacts(input: PlatformInput): PlatformEnv {
   const osId = toOs(input.platform);
@@ -65,9 +65,10 @@ export function platformFacts(input: PlatformInput): PlatformEnv {
   };
 }
 
+const processEnv: EnvGet = (name) => process.env[name];
+
 /** Real process facts; bubblewrap is present when `bwrap` sits on PATH. */
 export function currentPlatform(): PlatformEnv {
-  const env: EnvGet = (name) => process.env[name];
   const dirs = (process.env['PATH'] ?? '').split(path.delimiter).filter(Boolean);
   const bubblewrap = process.platform === 'linux' && dirs.some((dir) => fs.existsSync(path.join(dir, 'bwrap')));
   return platformFacts({
@@ -75,7 +76,7 @@ export function currentPlatform(): PlatformEnv {
     arch: process.arch,
     release: os.release(),
     home: os.homedir(),
-    env,
+    env: processEnv,
     bubblewrap,
   });
 }
@@ -83,7 +84,7 @@ export function currentPlatform(): PlatformEnv {
 // SECTION: Orchestrator
 
 // The host platform comes only from the session record; env supplies the model.
-const MODEL_ENV: Readonly<Record<ProviderKey, readonly string[]>> = {
+const MODEL_ENV: Readonly<Record<ProviderKey, ReadonlyArray<string>>> = {
   agy: ['ANTIGRAVITY_MODEL', 'GEMINI_MODEL'],
   claude: ['CLAUDE_MODEL', 'ANTHROPIC_MODEL'],
   copilot: ['COPILOT_MODEL', 'GITHUB_COPILOT_MODEL'],
@@ -98,31 +99,39 @@ export const opencodeModelValue = (model: string, effort?: string | null): strin
   effort ? `${model}#${effort}` : model;
 
 /** Host-specific launch instruction for a configured model list and effort. */
-export function launchLine(provider: string, models: readonly string[], effort: string | null): string {
+export function launchLine(provider: string, models: ReadonlyArray<string>, effort: string | null): string {
   const effortText = effort ? `effort ${effort}` : 'no effort set';
-  if (!models.length) return `launch: no model configured, ${effortText}`;
-  const [first, ...rest] = models,
-    lower = provider.toLowerCase(),
+  const [first, ...rest] = models;
+  if (first === undefined) {
+    return `launch: no model configured, ${effortText}`;
+  }
+  const lower = provider.toLowerCase(),
     canonical = lower === 'antigravity' ? 'agy' : lower;
-  if (canonical === 'opencode')
-    return `launch: \`subagent\` with \`model: "${opencodeModelValue(first!, effort)}"\` (user-configured; set it despite the tool's default guidance)${rest.map((m) => `, else "${opencodeModelValue(m, effort)}"`).join('')}`;
-  if (canonical === 'agy')
-    return `launch: closest \`Model\` (\`inherit\`, \`flash_lite\`, \`flash\`, \`pro\`) to ${first!}, ${effortText}${rest.map((m) => `, else closest to ${m}`).join('')}`;
-  return `launch: model ${first!}, ${effortText}${rest.map((m) => `, else ${m}`).join('')}`;
+  if (canonical === 'opencode') {
+    return `launch: \`subagent\` with \`model: "${opencodeModelValue(first, effort)}"\` (user-configured; set it despite the tool's default guidance)${rest.map((m) => `, else "${opencodeModelValue(m, effort)}"`).join('')}`;
+  }
+  if (canonical === 'agy') {
+    return `launch: closest \`Model\` (\`inherit\`, \`flash_lite\`, \`flash\`, \`pro\`) to ${first}, ${effortText}${rest.map((m) => `, else closest to ${m}`).join('')}`;
+  }
+  return `launch: model ${first}, ${effortText}${rest.map((m) => `, else ${m}`).join('')}`;
 }
 
 /** First-model summary form of `launchLine`, with a fallback count when more models exist. */
-export const summaryLaunch = (provider: string, models: readonly string[], effort: string | null): string =>
+export const summaryLaunch = (provider: string, models: ReadonlyArray<string>, effort: string | null): string =>
   models.length <= 1
     ? launchLine(provider, models, effort)
     : `${launchLine(provider, models.slice(0, 1), effort)} (+${models.length - 1} fallbacks in result)`;
 
+const isProviderKey = (host: string): host is ProviderKey => Object.hasOwn(MODEL_ENV, host);
+
 /** The orchestrator for a recorded host, or null when the value is not a ProviderKey. */
 export function orchestratorFor(host: unknown, env: EnvGet): Orchestrator | null {
-  if (typeof host !== 'string' || !Object.hasOwn(MODEL_ENV, host)) return null;
+  if (typeof host !== 'string' || !isProviderKey(host)) {
+    return null;
+  }
   return {
-    platform: host as ProviderKey,
-    model: MODEL_ENV[host as ProviderKey].map((name) => env(name)).find((value) => Boolean(value)) ?? null,
+    platform: host,
+    model: MODEL_ENV[host].map((name) => env(name)).find(Boolean) ?? null,
   };
 }
 
@@ -132,11 +141,12 @@ export function claudeHostSandboxed(env: EnvGet): boolean {
 }
 
 /** XDG base-dir overrides that are set; omitted entirely when none are. */
-function xdgOverrides(env: EnvGet): { xdg?: { data?: string; cache?: string; state?: string } } {
+function xdgOverrides(env: EnvGet): Pick<PlatformEnv, 'xdg'> {
   const xdg = Object.fromEntries(
-    (['data', 'cache', 'state'] as const)
-      .map((key) => [key, env(`XDG_${key.toUpperCase()}_HOME`)] as const)
-      .filter(([, value]) => Boolean(value)),
+    (['data', 'cache', 'state'] as const).flatMap((key) => {
+      const value = env(`XDG_${key.toUpperCase()}_HOME`);
+      return value ? [[key, value] as const] : [];
+    }),
   );
   return Object.keys(xdg).length ? { xdg } : {};
 }

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, appendRecords, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { fixture, report } from '../../helpers/review-fixture.ts';
+import { fixture } from '../../helpers/review-fixture.ts';
+import { jsonObject, narrow, readJson, text as textCheck } from './helpers/json.ts';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type GitResult = { exit: number; stdout: string; stderr: string };
@@ -29,14 +30,18 @@ const put = (f: Fixture, rel: string, text = 'export const value = 1;\n') => {
 // Scripts only the Git reads fix-review-lite makes: the repository listing and the round diff.
 const gitStub = (
   f: Fixture,
-  listing: string[],
-  diff: (argv: string[]) => GitResult = () => ({ exit: 1, stdout: DIFF, stderr: '' }),
+  listing: Array<string>,
+  diff: (argv: Array<string>) => GitResult = () => ({ exit: 1, stdout: DIFF, stderr: '' }),
 ) => {
-  const calls: string[][] = [];
+  const calls: Array<Array<string>> = [];
   f.deps.run = async (argv) => {
     calls.push(argv);
-    if (argv[1] === 'ls-files') return { exit: 0, stdout: listing.map((file) => file + '\0').join(''), stderr: '' };
-    if (argv[1] === 'diff') return diff(argv);
+    if (argv[1] === 'ls-files') {
+      return { exit: 0, stdout: listing.map((file) => file + '\0').join(''), stderr: '' };
+    }
+    if (argv[1] === 'diff') {
+      return diff(argv);
+    }
     throw new Error('Unexpected Git argv ' + JSON.stringify(argv));
   };
   return calls;
@@ -51,7 +56,7 @@ const brief = async (f: Fixture, artifact = f.plan) => {
   );
   const exit = await main(['brief', 'fix-review-lite', artifact, '--session', f.session, '--host', 'claude'], f.deps);
   const output = f.output();
-  const value = output.path ? (JSON.parse(fs.readFileSync(output.path, 'utf8')) as Record<string, any>) : null;
+  const value = output.path ? readJson(output.path, jsonObject) : null;
   return {
     exit,
     output,
@@ -108,9 +113,10 @@ test('fix-review-lite brief: states the repository root, relative paths, readabl
     assert.equal(exit, 0);
     assert.ok(text.includes(fs.realpathSync(f.root)), 'repository root is named');
     assert.match(text, /relative paths? resolve against/i);
-    assert.ok(text.includes(value!['diffPath']), 'diff path is readable');
+    const diffPath = narrow(value?.['diffPath'], textCheck);
+    assert.ok(text.includes(diffPath), 'diff path is readable');
     assert.ok(!text.includes('round-1.input.md'), 'round input is not listed');
-    assert.equal(fs.readFileSync(value!['diffPath'], 'utf8'), DIFF);
+    assert.equal(fs.readFileSync(diffPath, 'utf8'), DIFF);
     assert.ok(text.includes(f.plan) || text.includes(path.basename(f.plan)), 'artifact is readable');
     assert.match(text, /## Reading bound/);
     assert.match(text, /never read a withheld path, even as a search hit/);
@@ -176,15 +182,15 @@ test('fix-review-lite brief: launch values come from the utility entry of the ho
       path.join(f.deps.skillRoot, 'config.jsonc'),
       JSON.stringify({
         'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { claude: { model: 'haiku', effort: 'medium', 'context-limit': 150000 } },
+        'utility-subagents': { claude: { model: 'haiku', effort: 'medium', 'context-limit': 150_000 } },
       }),
     );
     const { exit, value } = await brief(f);
     assert.equal(exit, 0);
     assert.deepEqual(value!['model'], ['haiku']);
     assert.equal(value!['effort'], 'medium');
-    assert.equal(value!['contextLimit'], 150000);
-    assert.match(value!['launchAs'], /haiku/);
+    assert.equal(value!['contextLimit'], 150_000);
+    assert.match(narrow(value?.['launchAs'], textCheck), /haiku/);
   } finally {
     f.cleanup();
   }
@@ -470,7 +476,9 @@ test('fix-review-lite withholding: sensitive, outside, session and unlisted cita
   try {
     await reviewed(f);
     const sensitive = ['.env', 'deploy/service-account.json', '.ssh/config', 'src/secrets.ts', 'Config/API_TOKEN.txt'];
-    for (const file of sensitive) put(f, file);
+    for (const file of sensitive) {
+      put(f, file);
+    }
     put(f, 'skills/writer.ts');
     put(f, 'ignored/y.ts');
     const sessionRel = path.relative(f.root, f.session).split(path.sep).join('/');
@@ -504,7 +512,9 @@ test('fix-review-lite withholding: sensitive, outside, session and unlisted cita
     gitStub(f, listing, () => ({ exit: 1, stdout: diff, stderr: '' }));
     const { exit, value, text } = await brief(f);
     assert.equal(exit, 0);
-    for (const file of sensitive) assert.ok(text.includes('`' + file + '`: sensitive'), file);
+    for (const file of sensitive) {
+      assert.ok(text.includes('`' + file + '`: sensitive'), file);
+    }
     assert.ok(text.includes('`../x.md`: outside repository'));
     assert.ok(text.includes('`.scratch/dispatch-skills/20261022T0000Z-other/a.md`: session'));
     assert.ok(text.includes('`' + sessionRel + '/.state/briefs/x.md`: session'));
@@ -609,7 +619,9 @@ test(`fix-review-lite citation resolution resolves, lists, withholds and unresol
     const f = await fixture();
     try {
       await reviewed(f);
-      for (const file of files) put(f, file);
+      for (const file of files) {
+        put(f, file);
+      }
       gitStub(f, deleted ? [...files, deleted] : files, () => ({
         exit: 1,
         stderr: '',
@@ -918,7 +930,7 @@ test('note skeleton: the summary keeps the absolute path and the filled note app
     assert.equal(exit, 0);
     const [head, json] = output.summary.split('; skeleton ');
     assert.match(head!, /1 accepted, 0 citations, 1 unresolved, 0 withheld/);
-    assert.ok(head!.includes(value!['briefPath']));
+    assert.ok(head!.includes(narrow(value?.['briefPath'], textCheck)));
     assert.ok(json, 'summary must include a note skeleton');
     const skeleton = JSON.parse(json);
     assert.deepEqual(skeleton, {
@@ -963,7 +975,7 @@ for (const [label, basename, model, keepLaunch, sessionBytes] of [
       fs.mkdirSync(round, { recursive: true });
       const originalRound = path.join(f.directory, 'round-1');
       fs.copyFileSync(path.join(originalRound, 'findings.json'), path.join(round, 'findings.json'));
-      const metadata = f.read(1, 'round.json');
+      const metadata = narrow(f.read(1, 'round.json'), jsonObject);
       fs.writeFileSync(path.join(round, 'round.json'), JSON.stringify({ ...metadata, artifactPath: artifact }));
       await appendRecords(
         session,
@@ -985,7 +997,7 @@ for (const [label, basename, model, keepLaunch, sessionBytes] of [
         path.join(f.deps.skillRoot, 'config.jsonc'),
         JSON.stringify({
           'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-          'utility-subagents': { claude: { model, effort: 'medium', 'context-limit': 150000 } },
+          'utility-subagents': { claude: { model, effort: 'medium', 'context-limit': 150_000 } },
         }),
       );
       const { exit, output, value } = await brief(target, artifact);
@@ -997,9 +1009,10 @@ for (const [label, basename, model, keepLaunch, sessionBytes] of [
       assert.equal(JSON.parse(json).key, `fix-review-lite:${review}:1:1`);
       const rel = /session-relative (\S+) \(\d+ bytes\)$/.exec(head!)?.[1];
       assert.ok(rel);
-      assert.equal(path.resolve(session, rel), value!['briefPath']);
-      assert.ok(fs.existsSync(value!['briefPath']));
-      assert.equal(head!.includes(value!['launchAs']), keepLaunch);
+      const briefPath = narrow(value?.['briefPath'], textCheck);
+      assert.equal(path.resolve(session, rel), briefPath);
+      assert.ok(fs.existsSync(briefPath));
+      assert.equal(head!.includes(narrow(value?.['launchAs'], textCheck)), keepLaunch);
       if (keepLaunch && basename.length === 250) {
         assert.match(head!, /^fix-review-lite brief .*…: launch: model /);
       }

@@ -5,6 +5,8 @@ import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger, gate } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { flag, listOf, narrow, numeric, optional, readJson, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 const PLAN = [
   '# Change a file',
@@ -44,17 +46,26 @@ async function fixture(t: { after: (fn: () => void) => void }) {
   t.after(f.cleanup);
   const file = f.artifact(PLAN_NAME, PLAN);
   f.artifact('s.spec.md', SPEC);
-  const add = (record: object) => appendRecord(f.session, record, f.deps);
+  const add = (record: JsonObject) => appendRecord(f.session, record, f.deps);
   await add({ kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 's.spec.md', plan: PLAN_NAME } });
   const spec = artifactHash('spec', SPEC);
   await add({ kind: 'confirm', by: 'user', key: 'confirm', quote: 'I confirm the spec', data: { spec } });
   const edits = () => foldLedger(f.session).records.filter((record) => record.kind === 'edit');
-  const run = async (fields: object, artifact = file, action = ['lint', 'run', artifact]) => {
+  const run = async (fields: JsonObject, artifact = file, action = ['lint', 'run', artifact]) => {
     f.lines.length = 0;
     const fieldsFile = f.artifact('edit.json', JSON.stringify(fields));
     const exit = await main([...action, '--edit', fieldsFile, '--session', f.session], f.deps);
     const output = f.output();
-    const value = output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : undefined;
+    const value = output.path
+      ? readJson(
+          output.path,
+          shape({
+            hash: optional(text),
+            errors: optional(listOf(shape({ code: text }))),
+            edit: optional(shape({ seq: numeric, deduped: flag, before: text, after: text })),
+          }),
+        )
+      : undefined;
     return { ...output, exit, value };
   };
   const write = (title: string, name = PLAN_NAME) => {
@@ -76,6 +87,7 @@ test('lint edits record the explicit baseline and derive the next edit', async (
     const after = write('First change');
     const first = await run({ ...FIELDS, before });
     assert.equal(first.exit, 0, first.summary);
+    assert.ok(first.value);
     assert.equal(first.value.hash, after);
     const [stored] = edits();
     assert.equal(edits().length, 1);
@@ -88,6 +100,7 @@ test('lint edits record the explicit baseline and derive the next edit', async (
     const next = write('Second change');
     const second = await run(FIELDS);
     assert.equal(second.exit, 0, second.summary);
+    assert.ok(second.value);
     assert.equal(edits().length, 2);
     assert.equal(edits()[1]!.key, 'lint-edit:plan:2');
     assert.deepEqual(second.value.edit, { seq: edits()[1]!.seq, deduped: false, before: after, after: next });
@@ -129,9 +142,11 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     const after = write('Changed plan');
     const first = await run({ ...FIELDS, before });
     assert.equal(first.exit, 0, first.summary);
+    assert.ok(first.value?.edit);
     for (const fields of [FIELDS, { ...FIELDS, before }]) {
       const retry = await run(fields);
       assert.equal(retry.exit, 0, retry.summary);
+      assert.ok(retry.value);
       assert.deepEqual(retry.value.edit, { ...first.value.edit, deduped: true });
       assert.match(retry.summary, new RegExp(`; edit seq ${first.value.edit.seq} deduped`));
     }
@@ -166,6 +181,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
 
     const explicit = await run({ ...FIELDS, before: baseline }, file);
     assert.equal(explicit.exit, 0, explicit.summary);
+    assert.ok(explicit.value);
     assert.deepEqual(explicit.value.edit, { seq: edits()[1]!.seq, deduped: false, before: baseline, after });
     assert.equal(edits()[1]!.key, 'lint-edit:plan:2');
 
@@ -179,6 +195,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     const current = write('Rebound plan edited again', name);
     const derived = await run(FIELDS, file);
     assert.equal(derived.exit, 0, derived.summary);
+    assert.ok(derived.value);
     assert.deepEqual(derived.value.edit, { seq: edits()[2]!.seq, deduped: false, before: after, after: current });
     assert.equal(edits()[2]!.key, 'lint-edit:plan:3');
     assert.deepEqual(approvalGate(current), { allowed: true });
@@ -191,6 +208,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     const after = write('First plan edited');
     const first = await run({ ...FIELDS, before });
     assert.equal(first.exit, 0, first.summary);
+    assert.ok(first.value);
 
     const otherName = 'other.plan.md';
     const otherFile = f.artifact(otherName, PLAN);
@@ -198,6 +216,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     const otherAfter = write('Other plan edited', otherName);
     const other = await run({ ...FIELDS, before }, otherFile);
     assert.equal(other.exit, 0, other.summary);
+    assert.ok(other.value);
     assert.equal(other.value.hash, otherAfter);
 
     await add({
@@ -209,6 +228,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     await approve(after);
     const retry = await run({ ...FIELDS, before });
     assert.equal(retry.exit, 0, retry.summary);
+    assert.ok(retry.value);
     assert.deepEqual(retry.value.edit, { ...first.value.edit, deduped: true });
     assert.equal(edits().length, 2);
     assert.deepEqual(approvalGate(after), { allowed: true });
@@ -216,6 +236,7 @@ test('retry and rebound edits preserve seq, baseline and approval', async (t) =>
     const current = write('First plan edited again');
     const derived = await run(FIELDS);
     assert.equal(derived.exit, 0, derived.summary);
+    assert.ok(derived.value);
     assert.deepEqual(derived.value.edit, { seq: edits()[2]!.seq, deduped: false, before: after, after: current });
     assert.equal(edits()[2]!.key, 'lint-edit:plan:3');
     assert.deepEqual(approvalGate(current), { allowed: true });
@@ -234,7 +255,7 @@ test('lint edit refusals leave the ledger without edits', async (t) => {
   const errors = await run(fields, bad);
   assert.equal(errors.exit, 4);
   assert.equal(errors.reason, 'lint-errors');
-  assert.ok(errors.value.errors.length);
+  assert.ok(narrow(errors.value, shape({ errors: listOf(shape({ code: text })) })).errors.length);
   f.artifact(PLAN_NAME, PLAN);
   const design = f.artifact('d.design.md', '# Design\n## Increment Dependency Graph\n');
   assert.match((await run(fields, design)).summary, /bound/);
@@ -290,7 +311,11 @@ test('lint run --edit refuses broken-citation and succeeds when repaired', async
   const refused = await run({ ...FIELDS, before }, broken);
   assert.equal(refused.exit, 4);
   assert.equal(refused.reason, 'lint-errors');
-  assert.ok(refused.value.errors.some((d: { code: string }) => d.code === 'broken-citation'));
+  assert.ok(
+    narrow(refused.value, shape({ errors: listOf(shape({ code: text })) })).errors.some(
+      (d) => d.code === 'broken-citation',
+    ),
+  );
   assert.deepEqual(edits(), []);
 
   fs.mkdirSync(f.root + '/src', { recursive: true });
@@ -302,5 +327,5 @@ test('lint run --edit refuses broken-citation and succeeds when repaired', async
   const accepted = await run({ ...FIELDS, before }, repaired);
   assert.equal(accepted.exit, 0, accepted.summary);
   assert.equal(edits().length, 1);
-  assert.equal(accepted.value.edit.deduped, false);
+  assert.equal(accepted.value?.edit?.deduped, false);
 });

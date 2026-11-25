@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { isTestSource, OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
+import { isTestSource, OVERLAY_ROOT, scanOverlay } from './scan.ts';
+import type { FileTable } from './scan.ts';
 
 /** Justified exceptions as `<overlay path>: <reason>`; raising it is an explicit, reviewed edit. */
-export const ALLOW_TIMING: readonly string[] = [
+export const ALLOW_TIMING: ReadonlyArray<string> = [
   'tests/helpers/e2e.ts: E2E-only real CLI deadlines and detached-worker polling.',
   'tests/helpers/stub-provider.ts: E2E-only provider delay keeps a real worker live for sender-kill recovery.',
   'tests/unit/toolkit/domain/report.test.ts: adversarial parser bounds need a measured elapsed time.',
@@ -14,11 +15,13 @@ export const ALLOW_TIMING: readonly string[] = [
 // NOTE: tokens are assembled so this guard's own source never matches them.
 const TOKENS = ['set' + 'Timeout', 'set' + 'Interval', 'sle' + 'ep(', 'Date' + '.now', 'performance' + '.now'];
 
-export function checkTiming(files: FileTable, allow: readonly string[] = ALLOW_TIMING): string[] {
+export function checkTiming(files: FileTable, allow: ReadonlyArray<string> = ALLOW_TIMING): Array<string> {
   const allowed = new Set(allow.map((entry) => entry.split(':')[0]));
-  const errors: string[] = [];
+  const errors: Array<string> = [];
   for (const { path: file, text } of files) {
-    if (!isTestSource(file) || file.startsWith('tests/e2e/') || allowed.has(file)) continue;
+    if (!isTestSource(file) || file.startsWith('tests/e2e/') || allowed.has(file)) {
+      continue;
+    }
     for (const token of TOKENS) {
       if (text.includes(token)) {
         errors.push(

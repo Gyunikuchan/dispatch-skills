@@ -58,7 +58,7 @@ export async function main(options = {}) {
   const gaps = [];
   const file = (name) => path.join(workDir, name);
   // Resume keeps any capture already written; only missing evidence is produced.
-  if (!fs.existsSync(file('git-status.txt'))) fs.writeFileSync(file('git-status.txt'), auditGitStatus(root) ?? '', 'utf8');
+  if (!fs.existsSync(file('git-status.txt'))) {fs.writeFileSync(file('git-status.txt'), auditGitStatus(root) ?? '', 'utf8');}
   if (!fs.existsSync(file('content-snapshot.json'))) {
     const snapshot = contentSnapshot(root, { exclude: [rel(workDir), rel(reportPath)] });
     fs.writeFileSync(file('content-snapshot.json'), `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
@@ -80,7 +80,7 @@ export async function main(options = {}) {
   }
 
   const fingerprints = Object.fromEntries(
-    EVIDENCE.filter((n) => fs.existsSync(file(n))).map((n) => [n, `sha256:${createHash('sha256').update(fs.readFileSync(file(n))).digest('hex')}`]),
+    EVIDENCE.flatMap((n) => (fs.existsSync(file(n)) ? [[n, `sha256:${createHash('sha256').update(fs.readFileSync(file(n))).digest('hex')}`]] : [])),
   );
   updateRun(workDir, (m) => { m.baseline = { status: 'complete', fingerprints, tests, gaps }; });
 
@@ -95,7 +95,7 @@ export async function main(options = {}) {
 
 function gitHead(root) {
   const res = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
-  if (res.status !== 0) throw new Error('Cannot read the current revision (git rev-parse HEAD failed).');
+  if (res.status !== 0) {throw new Error('Cannot read the current revision (git rev-parse HEAD failed).');}
   return res.stdout.trim();
 }
 
@@ -150,9 +150,7 @@ async function buildMetrics(root) {
   }
 
   const broken = docs.flatMap((file) => brokenLinks(file).map((b) => `- ${rel(file)}:${b.line} → \`${b.target}\` (${b.reason})`));
-  out.push('', '## Broken relative links', '', ...(broken.length ? broken : ['- none']));
-
-  out.push('', '## Scripts', '', '| Script | LOC | SECTION dividers |', '|---|---|---|');
+  out.push('', '## Broken relative links', '', ...(broken.length ? broken : ['- none']), '', '## Scripts', '', '| Script | LOC | SECTION dividers |', '|---|---|---|');
   for (const file of scripts) {
     const text = fs.readFileSync(file, 'utf8');
     out.push(`| ${rel(file)} | ${loc(text)} | ${(text.match(/\/\/ SECTION:/g) ?? []).length} |`);
@@ -167,7 +165,7 @@ async function buildMetrics(root) {
   const { checkIntegrity } = await import(pathToFileURL(path.join(root, 'skills/dispatch/scripts/lib/integrity.ts')).href);
   const hashLines = fs.readdirSync(path.join(root, 'skills')).map((dir) => {
     const skillDir = path.join(root, 'skills', dir);
-    if (!fs.existsSync(path.join(skillDir, 'skill-hashes.json'))) return `Hashes skills/${dir}: no manifest`;
+    if (!fs.existsSync(path.join(skillDir, 'skill-hashes.json'))) {return `Hashes skills/${dir}: no manifest`;}
     const result = checkIntegrity(skillDir);
     return `Hashes skills/${dir}: ${result.status === 'ok' ? 'in sync' : result.status === 'drift' ? `DRIFT in ${result.violations.join(', ')}` : result.warning}`;
   });
@@ -186,7 +184,9 @@ export function authoredSkillDirs(root) {
   let vendored = new Set();
   try {
     vendored = new Set(Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'skills-lock.json'), 'utf8')).skills ?? {}));
-  } catch {}
+  } catch {
+    // A missing or malformed lock file vendors nothing.
+  }
   return fs
     .readdirSync(base, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !vendored.has(e.name))
@@ -203,9 +203,9 @@ function authoredDocs(root) {
 }
 
 function walk(dir) {
-  if (!fs.existsSync(dir)) return [];
+  if (!fs.existsSync(dir)) {return [];}
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    if (SKIP_DIRS.has(e.name)) return [];
+    if (SKIP_DIRS.has(e.name)) {return [];}
     const full = path.join(dir, e.name);
     return e.isDirectory() ? walk(full) : [full];
   });
@@ -225,10 +225,10 @@ export function brokenLinks(file) {
       inFence = !inFence;
       return;
     }
-    if (inFence) return;
+    if (inFence) {return;}
 
     for (const [, target] of line.matchAll(/\]\(([^)\s]+)\)/g)) {
-      if (/^[a-z]+:/i.test(target)) continue; // http(s):, mailto:, etc.
+      if (/^[a-z]+:/i.test(target)) {continue;} // http(s):, mailto:, etc.
       const [targetPath, anchor] = target.split('#');
 
       if (!targetPath) {
@@ -257,7 +257,7 @@ export function brokenLinks(file) {
 export function headingSlugs(file) {
   const slugs = new Set();
   for (const [, heading] of fs.readFileSync(file, 'utf8').matchAll(/^#{1,6}\s+(.+)$/gm)) {
-    slugs.add(heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-'));
+    slugs.add(heading.trim().toLowerCase().replaceAll(/[^\p{L}\p{N}\s_-]/gu, '').replaceAll(/\s/g, '-'));
   }
   return slugs;
 }
@@ -276,8 +276,10 @@ export function loc(text) {
 
 // Guarded so helpers can be imported without running a full baseline.
 if (isMainModule(import.meta.url)) {
-  main().catch((err) => {
-    process.stderr.write(`[baseline] ${err.stack || err.message}\n`);
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`[baseline] ${error.stack || error.message}\n`);
     process.exit(1);
-  });
+  }
 }

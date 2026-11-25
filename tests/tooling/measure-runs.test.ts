@@ -5,14 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import {
-  measureRuns,
-  parsePairs,
-  renderComparison,
-  runMeasureRuns,
-  type Comparison,
-  type SideResult,
-} from '../../scripts/measure-runs.ts';
+import { measureRuns, parsePairs, renderComparison, runMeasureRuns } from '../../scripts/measure-runs.ts';
+import type { Comparison, SideResult } from '../../scripts/measure-runs.ts';
 import { readManifest } from '../../skills/dispatch/scripts/lib/session.ts';
 import { orchestratorFor } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { resolvePricing } from '../../skills/dispatch/scripts/lib/pricing.ts';
@@ -22,6 +16,8 @@ import type { CliDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool } from '../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
 import { sessionFacts, writeDiagnostics } from '../../skills/dispatch/scripts/toolkit/diagnostics.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { delegateRequest } from '../helpers/delegate-request.ts';
+import { errorCode } from '../helpers/guards.ts';
 
 const CREATED = '2020-01-01T00:00:00.000Z';
 const E0 = Date.parse(CREATED);
@@ -36,6 +32,30 @@ const PRICING = {
 type Fixture = { root: string; claudeConfig: string; env: NodeJS.ProcessEnv; cleanup: () => void };
 type SideSpec = { session: string; host: string; nativeId?: string; reportComplete?: string };
 type MeasureOptions = { baseDir?: string; pricing?: string };
+
+const unusedPort = (): never => {
+  throw new Error('unused CliDeps port');
+};
+
+// Unused ports reject loudly, so a measurement that starts to need one fails its test.
+function cliDeps(ports: Partial<CliDeps>): CliDeps {
+  return {
+    delegate: unusedPort,
+    modes: unusedPort,
+    orchestrator: null,
+    liveness: {},
+    run: unusedPort,
+    stdout: unusedPort,
+    env: {},
+    clock: unusedPort,
+    sleep: unusedPort,
+    pid: 0,
+    host: '',
+    isAlive: unusedPort,
+    skillRoot: '',
+    ...ports,
+  };
+}
 
 function fixture(): Fixture {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'measure-runs-')));
@@ -81,7 +101,9 @@ function writeRound(session: string, round: number, completed: boolean): void {
   const roundDir = path.join(session, '.state', 'reviews', REVIEW, `round-${round}`);
   writeJson(path.join(roundDir, 'round.json'), { round, generation: 1, cap: 4, roster: [] });
   fs.mkdirSync(path.join(roundDir, 'gen-1'), { recursive: true });
-  if (completed) writeJson(path.join(roundDir, 'findings.json'), { review: REVIEW, round, cap: 4, findings: [] });
+  if (completed) {
+    writeJson(path.join(roundDir, 'findings.json'), { review: REVIEW, round, cap: 4, findings: [] });
+  }
 }
 
 function writeCapture(
@@ -89,7 +111,7 @@ function writeCapture(
   name: string,
   capture: { start: number; end?: number },
   phase: string | undefined,
-  invocations: unknown[] = [],
+  invocations: Array<unknown> = [],
 ): void {
   writeJson(path.join(session, '.state', 'diagnostics', `${name}.json`), {
     capture: { state: capture.end === undefined ? 'opened' : 'completed', ...capture },
@@ -119,15 +141,17 @@ const reviewRun = (subject: string) => ({
 
 // Two completed plan rounds and one unfinished round; `base` is the path string the recorded subjects hash.
 function writeRoundFixture(session: string, base: string = session): void {
-  for (const round of [1, 2, 3]) writeRound(session, round, round !== 3);
+  for (const round of [1, 2, 3]) {
+    writeRound(session, round, round !== 3);
+  }
   writeCapture(session, 'review-1', { start: E0 + 1000, end: E0 + 4000 }, 'review-run-plan', [
     reviewRun(subjectFor(base, 1)),
   ]);
   writeCapture(session, 'ledger', { start: E0 + 2000, end: E0 + 2100 }, 'ledger-append');
-  writeCapture(session, 'review-2', { start: E0 + 10000, end: E0 + 12000 }, 'review-run-plan', [
+  writeCapture(session, 'review-2', { start: E0 + 10_000, end: E0 + 12_000 }, 'review-run-plan', [
     reviewRun(subjectFor(base, 2)),
   ]);
-  writeCapture(session, 'review-3', { start: E0 + 20000, end: E0 + 21000 }, 'review-run-plan', [
+  writeCapture(session, 'review-3', { start: E0 + 20_000, end: E0 + 21_000 }, 'review-run-plan', [
     reviewRun(subjectFor(base, 3)),
   ]);
 }
@@ -146,11 +170,17 @@ const denialLine = (at: number, source: string) =>
     permissionDecision: { decision: 'reject', source },
   });
 
-function writeClaudeTranscript(fx: Fixture, hostId: string, lines: string[], subagentLines: string[] = []): void {
+function writeClaudeTranscript(
+  fx: Fixture,
+  hostId: string,
+  lines: Array<string>,
+  subagentLines: Array<string> = [],
+): void {
   const projectDir = path.join(fx.claudeConfig, 'projects', 'project-a');
   writeText(path.join(projectDir, `${hostId}.jsonl`), `${lines.join('\n')}\n`);
-  if (subagentLines.length)
+  if (subagentLines.length) {
     writeText(path.join(projectDir, hostId, 'subagents', 'agent-1.jsonl'), `${subagentLines.join('\n')}\n`);
+  }
 }
 
 function optionsFor(fx: Fixture, options: MeasureOptions) {
@@ -162,7 +192,7 @@ function optionsFor(fx: Fixture, options: MeasureOptions) {
   };
 }
 
-function measureSides(fx: Fixture, sides: SideSpec[], options: MeasureOptions = {}): Comparison {
+function measureSides(fx: Fixture, sides: Array<SideSpec>, options: MeasureOptions = {}): Comparison {
   const pairs = parsePairs({
     pairs: [{ name: 'plan', sides: sides.map((side, index) => ({ label: `side-${index}`, ...side })) }],
   });
@@ -173,13 +203,16 @@ function measureOne(fx: Fixture, side: SideSpec, options: MeasureOptions = {}): 
   return measureSides(fx, [side], options).pairs[0]!.sides[0]!;
 }
 
-function snapshot(dir: string): Record<string, string> {
+function snapshot(dir: string) {
   const files: Record<string, string> = {};
   const walk = (current: string) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else files[path.relative(dir, full)] = fs.readFileSync(full, 'utf8');
+      if (entry.isDirectory()) {
+        walk(full);
+      } else {
+        files[path.relative(dir, full)] = fs.readFileSync(full, 'utf8');
+      }
     }
   };
   walk(dir);
@@ -197,13 +230,15 @@ function aliasOf(fx: Fixture, session: string): string | null {
   try {
     fs.symlinkSync(session, link, 'dir');
   } catch (error) {
-    if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) return null;
+    if (['EPERM', 'EACCES'].includes(errorCode(error) ?? '')) {
+      return null;
+    }
     throw error;
   }
   return link;
 }
 
-function io(fx: Fixture, stdout: string[], stderr: string[]) {
+function io(fx: Fixture, stdout: Array<string>, stderr: Array<string>) {
   return {
     cwd: fx.root,
     home: fx.root,
@@ -225,7 +260,7 @@ test('round turns: measures rounds and per-round calls, host tokens and host tur
     const key = reviewKey(session);
     assert.equal(side.session, session);
     assert.equal(side.nativeId, 'host-1');
-    assert.deepEqual(side.window, { startMs: E0, endMs: E0 + 21000, pathForm: 'canonical' });
+    assert.deepEqual(side.window, { startMs: E0, endMs: E0 + 21_000, pathForm: 'canonical' });
     assert.deepEqual(side.rounds, { total: 2, byReview: { [key]: 2 } });
     assert.deepEqual(side.perRound, [
       { review: key, round: 1, calls: 2, hostTokens: 150, hostTurns: 1 },
@@ -262,7 +297,7 @@ test('a pre-session denial counts only in the headline and free text never count
       fx,
       'host-1',
       [
-        denialLine(E0 - 60000, 'config'),
+        denialLine(E0 - 60_000, 'config'),
         denialLine(E0 + 5000, 'config'),
         denialLine(E0 + 6000, 'hook'),
         denialLine(E0 + 7000, 'mystery'),
@@ -329,8 +364,11 @@ test('alias path forms: measures through an alias and records canonical or as-gi
       const side = measureOne(fx, { session: alias, host: 'claude' });
       assert.equal(side.window.pathForm, form, form);
       assert.equal(side.perRound[0]?.calls, 2, form);
-      if (form === 'canonical') assert.equal(side.session, session);
-      else assert.equal(side.perRound[0]?.review, reviewKey(alias));
+      if (form === 'canonical') {
+        assert.equal(side.session, session);
+      } else {
+        assert.equal(side.perRound[0]?.review, reviewKey(alias));
+      }
     } finally {
       fx.cleanup();
     }
@@ -469,27 +507,33 @@ test('Matched comparisons disclose cost scope and basis', async () => {
     const skillRoot = path.join(fx.root, 'skill');
     writeJson(path.join(skillRoot, 'config.jsonc'), { diagnostics: true });
     let now = E0;
-    const observer = observeTool(qualified, 'review', 'run', 'plan', {
-      skillRoot,
-      clock: () => now,
-      delegate: async () => ({
-        outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null },
-        invocations: [
-          {
-            provider: 'opencode',
-            model: 'route/m',
-            effort: null,
-            mode: 'cli',
-            launched: true,
-            outcome: 'ok',
-            usage: parsed.usage!,
-          },
-        ],
+    const observer = observeTool(
+      qualified,
+      'review',
+      'run',
+      'plan',
+      cliDeps({
+        skillRoot,
+        clock: () => now,
+        delegate: async () => ({
+          outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null },
+          invocations: [
+            {
+              provider: 'opencode',
+              model: 'route/m',
+              effort: null,
+              mode: 'cli',
+              launched: true,
+              outcome: 'ok',
+              usage: parsed.usage!,
+            },
+          ],
+        }),
       }),
-    } as Pick<CliDeps, 'skillRoot' | 'clock' | 'delegate'> as CliDeps)!;
+    )!;
     await observer.deps.delegate(
       'opencode',
-      { logPath: path.join(qualified, 'logs', 'opencode[0].log') } as Parameters<CliDeps['delegate']>[1],
+      delegateRequest({ logPath: path.join(qualified, 'logs', 'opencode[0].log') }),
       'cli',
     );
     now += 10;
@@ -527,7 +571,8 @@ test('Matched comparisons disclose cost scope and basis', async () => {
       { pricing: JSON.stringify(table) },
     );
     const pair = comparison.pairs[0]!;
-    const [left, right] = pair.sides as [SideResult, SideResult];
+    const left = pair.sides[0]!;
+    const right = pair.sides[1]!;
     const report = fs.readFileSync(
       writeDiagnostics(
         qualified,
@@ -553,7 +598,9 @@ test('Matched comparisons disclose cost scope and basis', async () => {
     assert.ok(pair.comparisonLimits.includes('usage coverage differs'));
     const markdown = renderComparison(comparison);
     assert.match(markdown, /\| Cost \(USD\) \| ~\$0\.10 \(partial\) \| ~\$0\.05–\$0\.07 \(partial\) \|/);
-    for (const limit of pair.comparisonLimits) assert.ok(markdown.includes(limit));
+    for (const limit of pair.comparisonLimits) {
+      assert.ok(markdown.includes(limit));
+    }
     assert.match(markdown, /host usage unavailable.*delegate stdout fallback/);
     assert.match(markdown, /2020-01-01.*1 qualified.*2021-01-01.*2 generic/);
     assert.doesNotMatch(markdown, /Comparable priced subtotal/);
@@ -619,8 +666,8 @@ test('a missing pricing file fails the run naming the file', () => {
       pricing: 'missing/pricing.json',
       pairs: [{ name: 'plan', sides: [{ label: 'historical', session, host: 'claude' }] }],
     });
-    const stdout: string[] = [],
-      stderr: string[] = [];
+    const stdout: Array<string> = [],
+      stderr: Array<string> = [];
     assert.equal(
       runMeasureRuns([path.join(fx.root, 'pairs.json'), '--out', path.join(fx.root, 'out')], io(fx, stdout, stderr)),
       1,
@@ -633,14 +680,14 @@ test('a missing pricing file fails the run naming the file', () => {
 });
 
 // Runs the CLI for one side; pricing.json and pairs.json sit in the fixture root, which is the working directory.
-function runSingleSide(fx: Fixture, session: string, out: string): { code: number; stderr: string } {
+function runSingleSide(fx: Fixture, session: string, out: string) {
   writeJson(path.join(fx.root, 'pricing.json'), PRICING);
   writeJson(path.join(fx.root, 'pairs.json'), {
     pricing: 'pricing.json',
     pairs: [{ name: 'plan', sides: [{ label: 'historical', session, host: 'claude' }] }],
   });
-  const stdout: string[] = [],
-    stderr: string[] = [];
+  const stdout: Array<string> = [],
+    stderr: Array<string> = [];
   const code = runMeasureRuns([path.join(fx.root, 'pairs.json'), '--out', out], io(fx, stdout, stderr));
   return { code, stderr: stderr.join('') };
 }
@@ -753,7 +800,7 @@ function linkOrSkip(t: { skip(message?: string): void }, target: string, link: s
     fs.symlinkSync(target, link, 'file');
     return true;
   } catch (error) {
-    if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+    if (['EPERM', 'EACCES'].includes(errorCode(error) ?? '')) {
       t.skip('no symlink permission on this host');
       return false;
     }
@@ -772,7 +819,9 @@ for (const name of ['comparison.json', 'comparison.md']) {
       writeText(target, 'original');
       const out = path.join(fx.root, 'out');
       fs.mkdirSync(out);
-      if (!linkOrSkip(t, target, path.join(out, name))) return;
+      if (!linkOrSkip(t, target, path.join(out, name))) {
+        return;
+      }
       const result = runSingleSide(fx, session, out);
       assert.equal(result.code, 1);
       assert.match(result.stderr, /symbolic link/);
@@ -814,12 +863,12 @@ test('comparison and report reject the same malformed host model attribution', (
     writeCapture(session, 'work', { start: E0, end }, 'review-run-plan');
     writeClaudeTranscript(fx, 'host-1', [usageLine('host', E0 + 1000, 100, 5, 'https://route/m')]);
     const side = measureOne(fx, { session, host: 'claude' });
-    const deps = {
+    const deps = cliDeps({
       orchestrator: orchestratorFor('claude', () => undefined),
       clock: () => end,
       env: { ...fx.env, CLAUDE_CODE_SESSION_ID: 'host-1' },
       hostUsageFs: nodeHostUsageFs,
-    } as Pick<CliDeps, 'orchestrator' | 'clock' | 'env' | 'hostUsageFs'> as CliDeps;
+    });
     const run = sessionFacts(session, foldLedger(session), 'measured', { manifest: readManifest(session), deps });
     const report = fs.readFileSync(writeDiagnostics(session, run, resolvePricing(PRICING, undefined)), 'utf8');
     assert.match(report, /Estimated cost .*— .*priced 0 · unpriced 1/);
@@ -855,15 +904,15 @@ test('writes comparison.json and comparison.md with pair tables, per-round rows 
       ],
       confounds: ['one run per side'],
     });
-    const stdout: string[] = [],
-      stderr: string[] = [];
+    const stdout: Array<string> = [],
+      stderr: Array<string> = [];
     const out = path.join(fx.root, 'out');
     assert.equal(
       runMeasureRuns([path.join(fx.root, 'pairs.json'), '--out', out], io(fx, stdout, stderr)),
       0,
       stderr.join(''),
     );
-    const comparison = JSON.parse(fs.readFileSync(path.join(out, 'comparison.json'), 'utf8')) as Comparison;
+    const comparison: Comparison = JSON.parse(fs.readFileSync(path.join(out, 'comparison.json'), 'utf8'));
     assert.deepEqual(comparison.pricing, { path: 'pricing.json', asOf: PRICING.asOf });
     assert.deepEqual(comparison.confounds, ['one run per side']);
     assert.deepEqual(
@@ -965,29 +1014,34 @@ test('Efficiency measures keep their denominators and evidence', () => {
   }
 });
 
+const status = (criterion: string, state: string) => ({ criterion, state, evidence: 'private evidence' });
+
+const reportResultName = (n: number) =>
+  `.state/results/report-complete-00000000-0000-4000-8000-${String(n).padStart(12, '0')}.json`;
+
 test('completed reports project only criterion states and disclose mismatches', () => {
   const fx = fixture();
   try {
     const session = makeSession(fx);
     const base = { session, host: 'claude' };
-    const name = (n: number) =>
-      `.state/results/report-complete-00000000-0000-4000-8000-${String(n).padStart(12, '0')}.json`;
     const source = 'a'.repeat(40);
-    const status = (criterion: string, state: string) => ({ criterion, state, evidence: 'private evidence' });
-    const body = (statuses: unknown[]) => ({ delivered: { source }, statuses });
+    const body = (statuses: Array<unknown>) => ({ delivered: { source }, statuses });
     writeJson(
-      path.join(session, name(1)),
+      path.join(session, reportResultName(1)),
       body([status('SC2', 'manual'), status('contract', 'verified'), status('SC1', 'verified')]),
     );
-    writeJson(path.join(session, name(2)), body([status('SC1', 'verified'), status('SC3', 'manual')]));
-    writeJson(path.join(session, name(3)), body([status('SC1', 'verified'), status('SC2', 'waived')]));
-    writeJson(path.join(session, name(4)), body([status('SC1', 'verified'), status('SC1', 'missing')]));
-    writeJson(path.join(session, name(5)), { delivered: null, statuses: [status('SC1', 'verified')] });
-    writeText(path.join(session, name(6)), '{[');
-    writeText(path.join(session, name(7)), JSON.stringify(body([status('SC1', 'verified')])) + ' '.repeat(1024 * 1024));
-    fs.mkdirSync(path.join(session, name(8)));
-    writeJson(path.join(session, name(9)), body([status('SC1', 'pending')]));
-    const withEvidence = (n: number) => ({ ...base, reportComplete: name(n) });
+    writeJson(path.join(session, reportResultName(2)), body([status('SC1', 'verified'), status('SC3', 'manual')]));
+    writeJson(path.join(session, reportResultName(3)), body([status('SC1', 'verified'), status('SC2', 'waived')]));
+    writeJson(path.join(session, reportResultName(4)), body([status('SC1', 'verified'), status('SC1', 'missing')]));
+    writeJson(path.join(session, reportResultName(5)), { delivered: null, statuses: [status('SC1', 'verified')] });
+    writeText(path.join(session, reportResultName(6)), '{[');
+    writeText(
+      path.join(session, reportResultName(7)),
+      JSON.stringify(body([status('SC1', 'verified')])) + ' '.repeat(1024 * 1024),
+    );
+    fs.mkdirSync(path.join(session, reportResultName(8)));
+    writeJson(path.join(session, reportResultName(9)), body([status('SC1', 'pending')]));
+    const withEvidence = (n: number) => ({ ...base, reportComplete: reportResultName(n) });
     const pairWith = (n: number) => measureSides(fx, [withEvidence(1), withEvidence(n)]);
     const matching = pairWith(1);
     assert.deepEqual(matching.pairs[0]!.sides[0]!.efficiency.verification, {
@@ -1013,10 +1067,13 @@ test('completed reports project only criterion states and disclose mismatches', 
     for (const number of [4, 5, 6, 7, 8, 9, 10]) {
       assert.equal(measureOne(fx, withEvidence(number)).efficiency.verification, null);
     }
-    assert.equal(measureOne(fx, { ...base, reportComplete: `../${name(1)}` }).efficiency.verification, null);
+    assert.equal(
+      measureOne(fx, { ...base, reportComplete: `../${reportResultName(1)}` }).efficiency.verification,
+      null,
+    );
 
     const outside = path.join(fx.root, 'outside-results');
-    writeJson(path.join(outside, path.basename(name(1))), body([status('SC1', 'verified')]));
+    writeJson(path.join(outside, path.basename(reportResultName(1))), body([status('SC1', 'verified')]));
     const escaped = makeSession(fx, { name: '20200101T0001Z-results-link' });
     fs.mkdirSync(path.join(escaped, '.state'));
     fs.symlinkSync(outside, path.join(escaped, '.state', 'results'), 'junction');

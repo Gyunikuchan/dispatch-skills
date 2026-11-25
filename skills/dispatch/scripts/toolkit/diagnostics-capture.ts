@@ -1,3 +1,4 @@
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,11 +10,13 @@ import { hostSessionId } from '../lib/usage/index.ts';
 import type { HostStage } from '../lib/usage/rows.ts';
 import type { Invocation } from '../providers/types.ts';
 import type { CliDeps, HandlerResult } from './cli.ts';
-import { normalizeUsage, sanitizeFacts, type RunFacts } from './domain/diagnostics.ts';
+import { normalizeUsage, sanitizeFacts } from './domain/diagnostics.ts';
+import type { RunFacts } from './domain/diagnostics.ts';
 import { recoveryRef } from './domain/diagnostics-gates.ts';
 import { containedSessionPath } from './ledger.ts';
 import { ToolError } from './output.ts';
 import { recoveryTargetHash } from './review-state.ts';
+import { present } from './narrow.ts';
 
 const CAPTURE_DIRECTORY = '.state/diagnostics';
 export const CAPTURE_FAILURE_SUFFIX = '.failure.json';
@@ -27,9 +30,13 @@ export function hostThreadId(
   env: Record<string, string | undefined>,
   sessionPath: string,
 ): string | undefined {
-  if (!platform) return undefined;
+  if (!platform) {
+    return undefined;
+  }
   const id = hostSessionId(platform, (name) => env[name]);
-  if (!id) return undefined;
+  if (!id) {
+    return undefined;
+  }
   return crypto
     .createHmac('sha256', path.resolve(sessionPath))
     .update(JSON.stringify([platform, id]))
@@ -45,23 +52,36 @@ export function diagnosticsEnabled(skillRoot: string): boolean {
       candidateSeen = true;
       return contents;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if (nodeErrorCode(error) === 'ENOENT') {
+        return null;
+      }
       candidateSeen = true;
       throw error;
     }
   };
   try {
     const value = loadConfig(skillRoot, read).config['diagnostics'];
-    if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
+    if (value !== undefined && typeof value !== 'boolean') {
+      throw new Error('diagnostics must be a boolean');
+    }
     return value === true;
   } catch (error) {
-    if (!candidateSeen) return false;
+    if (!candidateSeen) {
+      return false;
+    }
     throw new ToolError(2, 'config-invalid', error instanceof Error ? error.message : String(error));
   }
 }
 
+export interface DiagnosticInstructions {
+  instructions?: string;
+}
+
+// Runner metadata is trusted past this check; `collect` contains any malformed row.
+const isInvocationRow = (value: unknown): value is Invocation => Boolean(value) && typeof value === 'object';
+
 /** Optional diagnostics stay outside workflow decisions and semantic result files. */
-export function diagnosticInstructions(skillRoot: string): { instructions?: string } {
+export function diagnosticInstructions(skillRoot: string): DiagnosticInstructions {
   try {
     return diagnosticsEnabled(skillRoot)
       ? {
@@ -83,7 +103,9 @@ export function observeTool(
   deps: CliDeps,
 ): { deps: CliDeps; finish: (outcome: HandlerResult) => string | undefined } | undefined {
   try {
-    if (!diagnosticsEnabled(deps.skillRoot)) return undefined;
+    if (!diagnosticsEnabled(deps.skillRoot)) {
+      return undefined;
+    }
     const started = deps.clock();
     const phase = tool + '-' + action + (tool === 'review' ? '-' + (kind ?? 'code') : '');
     const name: HostStage =
@@ -99,8 +121,8 @@ export function observeTool(
     const hostThread = hostThreadId(deps.orchestrator?.platform ?? null, deps.env, session);
     const facts: RunFacts = {
       os: process.platform,
-      ...(deps.orchestrator ? { host: deps.orchestrator.platform } : {}),
-      ...(hostThread ? { hostThread } : {}),
+      ...(deps.orchestrator && { host: deps.orchestrator.platform }),
+      ...(hostThread && { hostThread }),
       phases: [],
       invocations: [],
       reviews: [],
@@ -111,7 +133,9 @@ export function observeTool(
     facts.capture = { state: 'opened', start: started };
     try {
       const version = readVersion(deps.skillRoot);
-      if (version) facts.version = version;
+      if (version) {
+        facts.version = version;
+      }
       facts.build = crypto
         .createHash('sha256')
         .update(
@@ -121,7 +145,9 @@ export function observeTool(
         )
         .digest('hex');
       facts.config = loadConfig(deps.skillRoot).config;
-    } catch {}
+    } catch {
+      // Version and build identity are optional capture facts.
+    }
     let pendingPersistence = false;
     const persist = () => {
       const temp = file + '.tmp';
@@ -132,27 +158,33 @@ export function observeTool(
         pendingPersistence = false;
       } catch {
         pendingPersistence = true;
-        facts.capture!.storageFailed = Math.min(1000000, (facts.capture!.storageFailed ?? 0) + 1);
+        const capture = present(facts.capture, 'capture state');
+        capture.storageFailed = Math.min(1_000_000, (capture.storageFailed ?? 0) + 1);
         // Preserve the previous capture when an optional update fails.
         const marker = file + CAPTURE_FAILURE_SUFFIX,
           markerTemp = marker + '.tmp';
         try {
           fs.writeFileSync(
             markerTemp,
-            JSON.stringify({ kind: 'storage-failure', count: facts.capture!.storageFailed }) + '\n',
+            JSON.stringify({ kind: 'storage-failure', count: capture.storageFailed }) + '\n',
             { mode: 0o600 },
           );
           fs.renameSync(markerTemp, marker);
         } catch {
+          // The failure marker is itself best-effort; `pendingPersistence` still records the loss.
         } finally {
           try {
             fs.rmSync(markerTemp, { force: true });
-          } catch {}
+          } catch {
+            // A leftover temp file is harmless.
+          }
         }
       } finally {
         try {
           fs.rmSync(temp, { force: true });
-        } catch {}
+        } catch {
+          // A leftover temp file is harmless.
+        }
       }
     };
     const attempts = new Map<string, number>();
@@ -162,14 +194,19 @@ export function observeTool(
       launched = new Set<string>();
     const collect = (rows: unknown, request: Parameters<CliDeps['delegate']>[1]) => {
       try {
-        if (!Array.isArray(rows)) return;
+        if (!Array.isArray(rows)) {
+          return;
+        }
         const slot = /^([A-Za-z0-9_-]+\[\d+\])\.log$/.exec(path.basename(request.logPath))?.[1];
         const directory = path.dirname(path.dirname(request.logPath));
         const subject = diagnosticSubject(directory);
         const key = subject + slot;
         let added = false;
-        for (const i of rows as Invocation[]) {
-          if (!i || typeof i !== 'object' || seen.has(i)) continue;
+        const entries: ReadonlyArray<unknown> = rows;
+        for (const i of entries) {
+          if (!isInvocationRow(i) || seen.has(i)) {
+            continue;
+          }
           const attempt = (attempts.get(key) ?? 0) + 1;
           attempts.set(key, attempt);
           const usage =
@@ -191,7 +228,7 @@ export function observeTool(
                           .update(JSON.stringify([i.provider, role, actor]))
                           .digest('hex')
                           .slice(0, 16)}`;
-                  return { ...response, stage: name, ...(agent ? { agent } : {}) };
+                  return { ...response, stage: name, ...(agent && { agent }) };
                 })
               : undefined;
           facts.invocations.push({
@@ -204,31 +241,35 @@ export function observeTool(
             surface: 'cli',
             launched: i.launched,
             outcome: i.outcome,
-            ...(i.configuredEffort ? { configuredEffort: i.configuredEffort } : {}),
-            ...(responses?.length ? { responses } : {}),
-            ...(slot ? { slot } : {}),
-            ...(request.targetSlot ? { targetSlot: request.targetSlot } : {}),
-            ...(i.effort ? { effort: i.effort } : {}),
-            ...(i.durationMs === undefined ? {} : { durationMs: i.durationMs }),
-            ...(i.startMs === undefined ? {} : { startMs: i.startMs }),
-            ...(i.endMs === undefined ? {} : { endMs: i.endMs }),
-            ...(usage ? { usage } : {}),
-            ...(usageSource ? { usageSource } : {}),
-            ...(i.coverage ? { coverage: i.coverage } : {}),
-            ...(i.usage?.actualModels ? { reportedModels: i.usage.actualModels } : {}),
-            ...(i.usage?.models && Object.keys(i.usage.models).length && !usage?.models
-              ? { reportedModelAmbiguous: true as const }
-              : {}),
-            ...(i.lifecycleSteps ? { lifecycleSteps: i.lifecycleSteps } : {}),
-            ...(i.nudge === true ? { nudge: true as const } : {}),
-            ...(i.wrapUp === true ? { wrapUp: true as const } : {}),
+            ...(i.configuredEffort && { configuredEffort: i.configuredEffort }),
+            ...(responses?.length && { responses }),
+            ...(slot && { slot }),
+            ...(request.targetSlot && { targetSlot: request.targetSlot }),
+            ...(i.effort && { effort: i.effort }),
+            ...(!(i.durationMs === undefined) && { durationMs: i.durationMs }),
+            ...(!(i.startMs === undefined) && { startMs: i.startMs }),
+            ...(!(i.endMs === undefined) && { endMs: i.endMs }),
+            ...(usage && { usage }),
+            ...(usageSource && { usageSource }),
+            ...(i.coverage && { coverage: i.coverage }),
+            ...(i.usage?.actualModels && { reportedModels: i.usage.actualModels }),
+            ...(i.usage?.models &&
+              Object.keys(i.usage.models).length &&
+              !usage?.models && { reportedModelAmbiguous: true as const }),
+            ...(i.lifecycleSteps && { lifecycleSteps: i.lifecycleSteps }),
+            ...(i.nudge === true && { nudge: true as const }),
+            ...(i.wrapUp === true && { wrapUp: true as const }),
           });
           const logical = request.targetSlot ?? slot;
-          if (i.launched && logical && recoverySubject === directory) launched.add(logical);
+          if (i.launched && logical && recoverySubject === directory) {
+            launched.add(logical);
+          }
           seen.add(i);
           added = true;
         }
-        if (added || pendingPersistence) persist();
+        if (added || pendingPersistence) {
+          persist();
+        }
       } catch {
         /* Malformed optional runner metadata cannot change its outcome. */
       }
@@ -238,13 +279,19 @@ export function observeTool(
       deps: {
         ...deps,
         recovery(candidate, actual, subject) {
-          if (!recoveryRef(candidate)) return undefined;
+          if (!recoveryRef(candidate)) {
+            return undefined;
+          }
           try {
             const relative = capturePointer(candidate);
             const stat = fs.lstatSync(path.join(session, relative));
-            if (!stat.isFile() || stat.size > 128 * 1024) return undefined;
-            const saved = JSON.parse(fs.readFileSync(containedSessionPath(session, relative), 'utf8')) as RunFacts;
-            if (!saved) return undefined;
+            if (!stat.isFile() || stat.size > 128 * 1024) {
+              return undefined;
+            }
+            const saved: unknown = JSON.parse(fs.readFileSync(containedSessionPath(session, relative), 'utf8'));
+            if (!saved) {
+              return undefined;
+            }
             const capture = sanitizeFacts(saved),
               selection = capture.recoverySelection;
             if (
@@ -256,8 +303,9 @@ export function observeTool(
               selection.round !== actual.round ||
               selection.generation !== actual.generation ||
               selection.targetHash !== recoveryTargetHash(actual.target)
-            )
+            ) {
               return undefined;
+            }
             recoverySubject = subject;
             const execution: NonNullable<RunFacts['recoveryExecution']> = { ref: candidate };
             facts.recoveryExecution = execution;
@@ -277,29 +325,32 @@ export function observeTool(
               ((event.kind === 'slot' && event.state === 'done') ||
                 (event.kind === 'native' && event.state === 'completed')) &&
               event.replay
-            )
+            ) {
               reused.add(event.targetSlot ?? event.slot);
+            }
             const subject = diagnosticSubject(event.subject);
             const base = {
               phase,
               subject,
               slot: event.slot,
               attempt: event.attempt,
-              ...(event.targetSlot ? { targetSlot: event.targetSlot } : {}),
+              ...(event.targetSlot && { targetSlot: event.targetSlot }),
               provider: event.provider ?? 'unavailable',
               model: event.model ?? 'unavailable',
               launched: false,
             };
             if (event.kind === 'validation' && event.surface === 'cli') {
               const row = facts.invocations.findLast((i) => i.subject === subject && i.slot === event.slot);
-              if (row) row.validationOutcome = event.outcome;
+              if (row) {
+                row.validationOutcome = event.outcome;
+              }
             } else if (event.kind === 'native') {
               const prior = facts.invocations.find(
                 (i) => i.surface === 'native' && i.subject === subject && i.slot === event.slot,
               );
               const row = {
                 ...base,
-                ...(event.effort ? { effort: event.effort } : {}),
+                ...(event.effort && { effort: event.effort }),
                 surface: 'native' as const,
                 outcome: event.state === 'completed' ? 'ok' : 'native-' + event.state,
                 nativeState: event.state,
@@ -307,7 +358,9 @@ export function observeTool(
               if (prior) {
                 delete prior.effort;
                 Object.assign(prior, row);
-              } else facts.invocations.push(row);
+              } else {
+                facts.invocations.push(row);
+              }
             } else if (event.kind === 'routing' || event.kind === 'slot') {
               let row = facts.invocations.findLast(
                 (i) => i.surface === 'cli' && i.subject === subject && i.slot === event.slot,
@@ -317,13 +370,20 @@ export function observeTool(
                 facts.invocations.push(row);
               }
               if (row) {
-                if (event.kind === 'routing') row.routingOutcome = event.state;
-                else row.slotState = event.state;
-                if (event.targetSlot) row.targetSlot = event.targetSlot;
+                if (event.kind === 'routing') {
+                  row.routingOutcome = event.state;
+                } else {
+                  row.slotState = event.state;
+                }
+                if (event.targetSlot) {
+                  row.targetSlot = event.targetSlot;
+                }
               }
             }
             persist();
-          } catch {}
+          } catch {
+            // Diagnostic events never change a workflow outcome.
+          }
         },
         async delegate(provider, request, mode) {
           try {
@@ -332,12 +392,14 @@ export function observeTool(
               {
                 ...request,
                 collectUsage: true,
-                ...(provider === 'opencode' ? { collectLifecycle: true } : {}),
+                ...(provider === 'opencode' && { collectLifecycle: true }),
                 onInvocation(row) {
                   collect([row], request);
                   try {
                     request.onInvocation?.(row);
-                  } catch {}
+                  } catch {
+                    // An observer failure must not change the delegate outcome.
+                  }
                 },
               },
               mode,
@@ -346,8 +408,13 @@ export function observeTool(
             return result;
           } catch (error) {
             try {
-              collect((error as { invocations?: unknown })?.invocations, request);
-            } catch {}
+              collect(
+                typeof error === 'object' && error !== null && 'invocations' in error ? error.invocations : undefined,
+                request,
+              );
+            } catch {
+              // Capture failure must not mask the delegate error rethrown below.
+            }
             throw error;
           }
         },
@@ -362,31 +429,38 @@ export function observeTool(
               wallMs: Math.max(0, deps.clock() - started),
             },
           ];
-          facts.capture = { ...facts.capture!, state: 'completed', end: deps.clock() };
+          facts.capture = { ...present(facts.capture, 'capture state'), state: 'completed', end: deps.clock() };
           if (tool === 'status' && action === 'show' && outcome.ok && outcome.recoverySelection) {
             const selection = sanitizeFacts({
               ...facts,
               recoverySelection: outcome.recoverySelection,
             }).recoverySelection;
-            if (selection) facts.recoverySelection = selection;
+            if (selection) {
+              facts.recoverySelection = selection;
+            }
           }
           const execution = facts.recoveryExecution;
           if (execution) {
             // A second fan-out wave can replay slots launched earlier in this call.
             const saved = [...reused].filter((slot) => !launched.has(slot)).length;
-            if (saved) execution.reused = saved;
-            if (launched.size) execution.launched = launched.size;
+            if (saved) {
+              execution.reused = saved;
+            }
+            if (launched.size) {
+              execution.launched = launched.size;
+            }
           }
-          if (
-            !outcome.ok &&
-            ['invalid-input', 'invalid-record', 'approval-stale', 'key-conflict', 'user-only'].includes(
-              outcome.reason ?? '',
-            )
-          )
-            facts.rejectedTools = [{ tool, action, cls: outcome.reason! }];
+          const rejection = outcome.ok ? '' : (outcome.reason ?? '');
+          if (['invalid-input', 'invalid-record', 'approval-stale', 'key-conflict', 'user-only'].includes(rejection)) {
+            facts.rejectedTools = [{ tool, action, cls: rejection }];
+          }
           persist();
-          if (!pendingPersistence && facts.recoverySelection) return ref;
-        } catch {}
+          if (!pendingPersistence && facts.recoverySelection) {
+            return ref;
+          }
+        } catch {
+          // A capture that cannot be finished offers no resume reference.
+        }
       },
     };
   } catch {

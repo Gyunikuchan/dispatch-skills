@@ -12,13 +12,13 @@ import {
 } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-// The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
-const probe = await import(
-  new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
-);
+import { loadProbe } from '../helpers/audit-probe.ts';
+import { text } from './helpers/json.ts';
+
+const probe = await loadProbe();
 
 // Local controlled child scripts stand in for provider CLIs; installed CLIs are never launched.
-const HUNG = "process.stdout.write('partial\\n'); setInterval(() => {}, 1000);";
+const HUNG = String.raw`process.stdout.write('partial\n'); setInterval(() => {}, 1000);`;
 const FLOOD = "process.stdout.write('y'.repeat(200000)); setInterval(() => {}, 1000);";
 
 function workspace(childSource: string) {
@@ -70,11 +70,15 @@ const target = {
 };
 const killQuietly = (handle: string | null) => {
   try {
-    if (handle) process.kill(Number(handle), 'SIGKILL');
+    if (handle) {
+      process.kill(Number(handle), 'SIGKILL');
+    }
   } catch {
     /* already gone */
   }
 };
+
+const doctor = () => [{ provider: 'claude', mode: 'cli', path: process.execPath, status: 'path' }];
 
 // SECTION: Probe lifecycle
 
@@ -85,22 +89,22 @@ test('audit probe terminates a hung provider at the deadline and keeps its captu
   assert.equal(record.lifecycle, 'timeout');
   assert.equal(record.liveness, 'exited');
   assert.equal(record.exitConfirmed, true);
-  assert.match(fs.readFileSync(path.join(w.stageDir, record.capture), 'utf8'), /partial/);
+  assert.match(fs.readFileSync(path.join(w.stageDir, text(record.capture)), 'utf8'), /partial/);
 
   const wFlood = workspace(FLOOD);
   wFlood.limits.probeDeadlineSeconds = 30;
   const floodRecord = await probe.runTarget(target, ctxFor(wFlood));
   killQuietly(floodRecord.handle);
   assert.equal(floodRecord.cause, 'output-cap');
-  assert.ok(fs.statSync(path.join(wFlood.stageDir, floodRecord.capture)).size <= 16_384);
+  assert.ok(fs.statSync(path.join(wFlood.stageDir, text(floodRecord.capture))).size <= 16_384);
 });
 
 test('audit probe reports an unconfirmed exit and preserves the fixture when the child survives termination', async () => {
   const w = workspace(HUNG);
   // Ignores every termination request so the child outlives the grace period.
   const deaf = {
-    start: (launch: { argv: readonly string[] }, io: { logPath: string; capBytes: number }) =>
-      io.logPath.endsWith('.kill') ? { pid: -1, done: new Promise(() => {}) } : nodeProcess.start(launch as never, io),
+    start: (...[launch, io]: Parameters<typeof nodeProcess.start>) =>
+      io.logPath.endsWith('.kill') ? { pid: -1, done: new Promise(() => {}) } : nodeProcess.start(launch, io),
     signal: () => {},
   };
   const record = await probe.runTarget(target, {
@@ -111,7 +115,7 @@ test('audit probe reports an unconfirmed exit and preserves the fixture when the
     assert.equal(record.liveness, 'unknown');
     assert.equal(record.exitConfirmed, false);
     assert.ok(record.handle);
-    assert.deepEqual(probe.cleanupFixture(w.fixture, [record]), {
+    assert.deepEqual(probe.cleanupFixture(w.fixture, [record], fs), {
       status: 'blocked',
       reason: { code: 'exit-unconfirmed' },
     });
@@ -138,7 +142,6 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
     config: { ...settings, limits: { ...settings.limits, ...w.limits, probeDeadlineSeconds: 30 } },
   });
   const controller = new AbortController();
-  const doctor = () => [{ provider: 'claude', mode: 'cli', path: process.execPath, status: 'path' }];
   const run = probe.main({
     root: repo,
     argv: ['node', 'probe', '--run', '2026-10-07-0000', '--only', 'claude'],
@@ -158,7 +161,9 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
   const result = await run;
   const out = path.join(repo, '.scratch/audits/2026-10-07-0000-work/dispatch');
   const live = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8')).live;
-  for (const record of live) killQuietly(record.handle);
+  for (const record of live) {
+    killQuietly(record.handle);
+  }
   assert.equal(result.interrupted, true);
   assert.equal(live[0].lifecycle, 'interrupted');
   assert.match(fs.readFileSync(path.join(out, live[0].capture), 'utf8'), /partial/);
@@ -178,7 +183,7 @@ test('audit probe CLI exits cleanly even while a handle keeps the event loop ali
     const script = fileURLToPath(
       new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url),
     );
-    const runCli = (args: readonly string[]) =>
+    const runCli = (args: ReadonlyArray<string>) =>
       spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], {
         cwd: repo,
         encoding: 'utf8',

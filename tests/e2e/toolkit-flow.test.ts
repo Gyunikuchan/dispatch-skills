@@ -6,8 +6,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { toolkitRepo, planSource, captureIntegrationReview } from './helpers/toolkit-repo.ts';
+import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { arrayOf, defined, isBoolean, isNumber, isString, narrow, nullable, objectWith } from './helpers/json.ts';
+
+const isPath = objectWith({ path: isString });
+const isStatus = objectWith({
+  criteria: arrayOf(isString),
+  writers: arrayOf(objectWith({ state: isString, path: isString })),
+  integration: objectWith({
+    undelivered: isBoolean,
+    pendingConflict: nullable(objectWith({ task: isString, paths: arrayOf(isString) })),
+    head: nullable(isString),
+    branch: nullable(isString),
+    state: isString,
+    closed: isBoolean,
+  }),
+});
 
 describe('toolkit status sections', () => {
   test('reports the pending conflict and missing writer worktree', async () => {
@@ -15,9 +30,9 @@ describe('toolkit status sections', () => {
     try {
       await f.level();
       const made = await f.run(['worktree', 'create', 'T1']);
-      const writer = path.resolve(f.session, made.value.path);
+      const writer = path.resolve(f.session, narrow(made.value, isPath).path);
       fs.rmSync(writer, { recursive: true, force: true });
-      assert.equal((await f.run(['status', 'show'])).value.writers[0].state, 'missing-worktree');
+      assert.equal(narrow((await f.run(['status', 'show'])).value, isStatus).writers[0]!.state, 'missing-worktree');
       assert.equal((await f.run(['worktree', 'create', 'T1'])).exit, 0);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'writer\n');
       await f.run(['worktree', 'submit', 'T1']);
@@ -27,8 +42,9 @@ describe('toolkit status sections', () => {
       assert.equal(picked.output.reason, 'conflict');
       const status = await f.run(['status', 'show']);
       assert.equal(status.exit, 0);
-      assert.equal(status.value.integration.pendingConflict.task, 'T1');
-      assert.deepEqual(status.value.integration.pendingConflict.paths, ['src/file.ts']);
+      const conflict = narrow(status.value, isStatus).integration.pendingConflict!;
+      assert.equal(conflict.task, 'T1');
+      assert.deepEqual(conflict.paths, ['src/file.ts']);
     } finally {
       f.cleanup();
     }
@@ -40,21 +56,21 @@ describe('toolkit status sections', () => {
         const r = await f.run(['status', 'show']);
         assert.equal(r.exit, 0);
         assert.equal(fs.existsSync(path.join(f.session, '.state/lock')), false);
-        return r.value;
+        return narrow(r.value, isStatus);
       };
       await f.level();
       await f.run(['worktree', 'create', 'T1']);
       let s = await status();
-      assert.equal(s.writers[0].state, 'no-progress');
+      assert.equal(s.writers[0]!.state, 'no-progress');
       assert.deepEqual(s.criteria, ['SC1', 'contract']);
-      const writer = path.resolve(f.session, s.writers[0].path);
+      const writer = path.resolve(f.session, s.writers[0]!.path);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'changed\n');
-      assert.equal((await status()).writers[0].state, 'ready-to-submit');
+      assert.equal((await status()).writers[0]!.state, 'ready-to-submit');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
-      assert.equal((await status()).writers[0].state, 'candidate-unintegrated');
+      assert.equal((await status()).writers[0]!.state, 'candidate-unintegrated');
       await f.run(['worktree', 'integrate', 'T1']);
       s = await status();
-      assert.equal(s.writers[0].state, 'integrated');
+      assert.equal(s.writers[0]!.state, 'integrated');
       assert.equal(s.integration.undelivered, true);
       assert.equal(s.integration.pendingConflict, null);
       assert.equal(s.integration.head, f.git(['rev-parse', 'HEAD'], f.integration));
@@ -118,10 +134,10 @@ describe('toolkit session flow', () => {
       await f.level('low');
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      const worktree = path.resolve(f.session, made.value.path);
+      const worktree = path.resolve(f.session, narrow(made.value, isPath).path);
       const rendered = await f.run(['brief', 'render', 'T1']);
       assert.equal(rendered.exit, 0);
-      const brief = fs.readFileSync(rendered.value.path, 'utf8');
+      const brief = fs.readFileSync(narrow(rendered.value, isPath).path, 'utf8');
       const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
       for (const [kind, label] of [
         ['spec', 'Read the governing spec whole'],
@@ -179,11 +195,13 @@ describe('toolkit session flow', () => {
       ]);
       assert.equal(edit.exit, 0, JSON.stringify(edit));
       assert.equal(brief.exit, 0, JSON.stringify(brief));
-      assert.equal(brief.value.path, path.join(f.session, '.state/briefs/T1-1.md'));
-      const rendered = fs.readFileSync(brief.value.path, 'utf8');
+      const briefPath = narrow(brief.value, isPath).path;
+      assert.equal(briefPath, path.join(f.session, '.state/briefs/T1-1.md'));
+      const rendered = fs.readFileSync(briefPath, 'utf8');
       assert.match(rendered, /Clarified/);
       assert.ok(rendered.includes(after.plan!));
-      const recorded = foldLedger(f.session).records.find((record) => record.seq === edit.value.seq)!;
+      const editSeq = narrow(edit.value, objectWith({ seq: isNumber })).seq;
+      const recorded = foldLedger(f.session).records.find((record) => record.seq === editSeq)!;
       assert.equal(recorded.key, 'clarify');
       assert.equal(recorded.data['before'], after.plan);
       assert.equal(recorded.data['after'], after.plan);
@@ -217,19 +235,27 @@ describe('toolkit session flow', () => {
     try {
       await f.level();
       const created = await f.run(['worktree', 'create', 'T1']);
-      fs.writeFileSync(path.resolve(f.session, created.value.path, 'src/file.ts'), 'writer\n');
+      fs.writeFileSync(path.resolve(f.session, narrow(created.value, isPath).path, 'src/file.ts'), 'writer\n');
       const signal = path.join(f.integration, 'ignored');
       fs.mkdirSync(signal);
+      const started = path.join(signal, 'started');
+      const watcher = fs.watch(signal, { signal: AbortSignal.timeout(15_000) });
+      const ready = new Promise<void>((resolve, reject) => {
+        watcher.on('change', () => {
+          if (fs.existsSync(started)) {
+            resolve();
+          }
+        });
+        watcher.once('error', reject);
+        watcher.once('close', () => reject(new Error('Verification command did not signal readiness')));
+      });
       const verify = f.concurrent(['check', 'run']);
       try {
-        const deadline = Date.now() + 15000;
-        while (!fs.existsSync(path.join(signal, 'started'))) {
-          assert.ok(Date.now() < deadline);
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+        await ready;
         const submit = await f.concurrent(['worktree', 'submit', 'T1']);
         assert.equal(submit.exit, 0);
       } finally {
+        watcher.close();
         fs.writeFileSync(path.join(signal, 'release'), '');
         const checked = await verify;
         assert.equal(checked.output.ok, true, JSON.stringify(checked.output));
@@ -256,22 +282,26 @@ describe('toolkit session flow', () => {
       for (const args of [
         ['worktree', 'create', 'T1'],
         ['brief', 'render', 'T1'],
-      ])
+      ]) {
         assert.equal((await f.run(args)).exit, 0);
-      const brief = (await f.run(['brief', 'render', 'T1'])).value;
+      }
+      const brief = narrow((await f.run(['brief', 'render', 'T1'])).value, isPath);
       assert.ok(fs.existsSync(brief.path));
-      const writer = JSON.parse(fs.readFileSync((await f.run(['status', 'show'])).output.path, 'utf8')).writers[0].path;
+      const writer = JSON.parse(
+        fs.readFileSync(defined((await f.run(['status', 'show'])).output.path, 'status path'), 'utf8'),
+      ).writers[0].path;
       fs.writeFileSync(path.resolve(f.session, writer, 'src/file.ts'), 'delivered\n');
       for (const args of [
         ['worktree', 'submit', 'T1'],
         ['worktree', 'integrate', 'T1'],
         ['check', 'run'],
-      ])
+      ]) {
         assert.equal((await f.run(args)).output.ok, true);
+      }
       fs.writeFileSync(path.join(f.integration, 'src/file.ts'), 'fixed\n');
       assert.equal((await f.run(['worktree', 'commit', '--reason', 'fix'])).exit, 0);
       await f.run(['check', 'run']);
-      assert.deepEqual((await f.run(['status', 'show'])).value.criteria, []);
+      assert.deepEqual(narrow((await f.run(['status', 'show'])).value, isStatus).criteria, []);
       const callerHead = f.git(['rev-parse', 'HEAD']);
       assert.equal((await f.run(['worktree', 'deliver'])).exit, 0);
       assert.equal(f.git(['rev-parse', 'HEAD']), callerHead);
@@ -325,16 +355,14 @@ function commandFrom(brief: string): string {
   return match[1]!;
 }
 
-function commandData(command: string): { data: { command: string; cwd: string; logDir: string; criterion: string } } {
+function commandData(command: string) {
   const match = /([A-Za-z0-9_-]+)$/.exec(command);
   assert.ok(match, 'capture command ends with one base64url payload');
   return {
-    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as {
-      command: string;
-      cwd: string;
-      logDir: string;
-      criterion: string;
-    },
+    data: narrow(
+      JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')),
+      objectWith({ command: isString, cwd: isString, logDir: isString, criterion: isString }),
+    ),
   };
 }
 
@@ -365,7 +393,7 @@ test('captured RED command preserves raw output and status and its report clears
 
     const rendered = await f.run(['brief', 'render', 'T1']);
     assert.equal(rendered.exit, 0);
-    const brief = fs.readFileSync(rendered.value.path, 'utf8');
+    const brief = fs.readFileSync(narrow(rendered.value, isPath).path, 'utf8');
     const command = commandFrom(brief);
     const { data } = commandData(command);
     const quotedPath = process.platform === 'win32' ? '"tests/with space.test.ts"' : "'tests/with space.test.ts'";
@@ -395,7 +423,7 @@ test('captured RED command preserves raw output and status and its report clears
       { name: 'stdout at', stdout: at, stderr: 0 },
       { name: 'both above', stdout: above, stderr: above },
     ];
-    const boundaryFailures: string[] = [];
+    const boundaryFailures: Array<string> = [];
     for (const boundary of boundaries) {
       const childCommand = `node -e "const fs=require('node:fs');fs.writeSync(1,Buffer.alloc(${boundary.stdout},165));fs.writeSync(2,Buffer.alloc(${boundary.stderr},90));process.exit(7)"`;
       const input = Buffer.from(JSON.stringify({ ...data, command: childCommand }), 'utf8').toString('base64url');
@@ -408,23 +436,31 @@ test('captured RED command preserves raw output and status and its report clears
       });
       const expectedStdout = Buffer.alloc(boundary.stdout, 165);
       const expectedStderr = Buffer.alloc(boundary.stderr, 90);
-      if (invoked.error) boundaryFailures.push(`${boundary.name}: wrapper error ${invoked.error.message}`);
-      if (invoked.status !== 7) boundaryFailures.push(`${boundary.name}: wrapper status ${invoked.status}, expected 7`);
-      if (!invoked.stdout?.equals(expectedStdout))
+      if (invoked.error) {
+        boundaryFailures.push(`${boundary.name}: wrapper error ${invoked.error.message}`);
+      }
+      if (invoked.status !== 7) {
+        boundaryFailures.push(`${boundary.name}: wrapper status ${invoked.status}, expected 7`);
+      }
+      if (!invoked.stdout?.equals(expectedStdout)) {
         boundaryFailures.push(`${boundary.name}: replayed stdout bytes differ`);
-      if (!invoked.stderr?.equals(expectedStderr))
+      }
+      if (!invoked.stderr?.equals(expectedStderr)) {
         boundaryFailures.push(`${boundary.name}: replayed stderr bytes differ`);
-      if (!fs.readFileSync(path.join(logDir, 'SC1.stdout')).equals(expectedStdout))
+      }
+      if (!fs.readFileSync(path.join(logDir, 'SC1.stdout')).equals(expectedStdout)) {
         boundaryFailures.push(`${boundary.name}: captured stdout bytes differ`);
-      if (!fs.readFileSync(path.join(logDir, 'SC1.stderr')).equals(expectedStderr))
+      }
+      if (!fs.readFileSync(path.join(logDir, 'SC1.stderr')).equals(expectedStderr)) {
         boundaryFailures.push(`${boundary.name}: captured stderr bytes differ`);
-      const exit = JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')) as {
-        status: number | null;
-        signal: string | null;
-        error: string | null;
-      };
-      if (exit.status !== 7 || exit.signal !== null || exit.error !== null)
+      }
+      const exit = narrow(
+        JSON.parse(fs.readFileSync(path.join(logDir, 'SC1.exit'), 'utf8')),
+        objectWith({ status: nullable(isNumber), signal: nullable(isString), error: nullable(isString) }),
+      );
+      if (exit.status !== 7 || exit.signal !== null || exit.error !== null) {
         boundaryFailures.push(`${boundary.name}: exit metadata ${JSON.stringify(exit)}`);
+      }
     }
     assert.deepEqual(boundaryFailures, [], boundaryFailures.join('\n'));
 
@@ -485,7 +521,7 @@ test('RED capture from a shell-unsafe session path writes logs without substitut
     manifest.folderName = path.basename(session);
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     fs.mkdirSync(path.join(session, '.state/worktrees/T1-1'), { recursive: true });
-    const lines: string[] = [];
+    const lines: Array<string> = [];
     const exit = await main(['brief', 'render', 'T1', '--session', session, '--host', 'opencode'], {
       ...f.deps,
       stdout: (line) => lines.push(line),

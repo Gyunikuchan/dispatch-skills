@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import type { LedgerRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
 import {
   isStale,
   launches,
@@ -9,7 +10,7 @@ import {
   writerStates,
 } from '../../../skills/dispatch/scripts/toolkit/writers.ts';
 
-const row = (seq: number, kind: string, data: Record<string, any>): LedgerRecord => ({
+const row = (seq: number, kind: string, data: JsonObject): LedgerRecord => ({
   seq,
   kind,
   data,
@@ -23,7 +24,9 @@ const launch = row(2, 'writer', {
   path: '.state/worktrees/T1-1',
   base: { commit: 'base', taskSection: 'section', seq: 1 },
 });
-const fold = (...records: LedgerRecord[]): Fold => ({ records, lastSeq: records.at(-1)?.seq ?? 0, torn: null });
+const fold = (...records: Array<LedgerRecord>): Fold => ({ records, lastSeq: records.at(-1)?.seq ?? 0, torn: null });
+
+const observe = () => ({ exists: true, dirty: false, head: 'base' });
 
 describe('writer records', () => {
   it('detects task edits after the launch boundary only', () => {
@@ -34,12 +37,11 @@ describe('writer records', () => {
       [3, [], false],
       [1, ['T1'], false],
     ] as const) {
-      assert.equal(isStale(fold(row(seq, 'edit', { affects }), launch), launch, 'section'), expected);
+      assert.equal(isStale(fold(row(seq, 'edit', { affects: [...affects] }), launch), launch, 'section'), expected);
     }
   });
 
   it('derives every writer state and retains superseded launches', () => {
-    const observe = () => ({ exists: true, dirty: false, head: 'base' });
     const state = (f: Fold, o = observe) => writerStates(f, ['T1'], o).at(-1)!.state;
     assert.equal(state(fold()), 'unlaunched');
     assert.equal(state(fold(launch)), 'no-progress');

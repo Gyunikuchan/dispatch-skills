@@ -1,5 +1,6 @@
 // Real `LinkFs` over node:fs.
 
+import { nodeErrorCode } from './fs-ext.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,8 +33,10 @@ export function renameRetrying(
       rename(from, to);
       return;
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (platform !== 'win32' || !code || !TRANSIENT_RENAME.has(code) || attempt >= 14) throw error;
+      const code = nodeErrorCode(error);
+      if (platform !== 'win32' || !code || !TRANSIENT_RENAME.has(code) || attempt >= 14) {
+        throw error;
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(5 * 2 ** attempt, 640));
     }
   }

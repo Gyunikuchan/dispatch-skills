@@ -3,13 +3,17 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
+import { isBoolean, isString, narrow, objectWith, text } from './helpers/json.ts';
 import { appendRecord, foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+const isMessage = objectWith({ message: isString });
 const records = (r: Awaited<ReturnType<typeof toolkitRepo>>) =>
   foldLedger(r.session).records.filter((x) => x.kind === 'writer');
 const launchPath = (r: Awaited<ReturnType<typeof toolkitRepo>>) =>
-  path.resolve(r.session, records(r).findLast((x) => x.data['phase'] === 'launched')!.data['path']);
+  path.resolve(r.session, text(records(r).findLast((x) => x.data['phase'] === 'launched')?.data['path']));
 const crash = (point: string) => (p: string) => {
-  if (p === point) throw new Error('crash');
+  if (p === point) {
+    throw new Error('crash');
+  }
 };
 const twoTaskPlan = (prerequisite: string) =>
   planSource
@@ -48,7 +52,7 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree', 'create', 'T1', '--relaunch'])).exit, 0);
     assert.equal(launchPath(r), cwd);
     assert.equal(records(r).length, 2);
-    assert.equal(records(r)[1]!.data['base'].commit, base);
+    assert.equal(narrow(records(r)[1]?.data['base'], objectWith({ commit: isString })).commit, base);
     assert.equal(fs.readFileSync(path.join(cwd, 'src/file.ts'), 'utf8'), 'changed\n');
     fs.writeFileSync(path.join(cwd, 'extra'), 'untracked');
     assert.equal((await r.run(['worktree', 'abandon', 'T1', '--reason', 'stop'])).exit, 0);
@@ -71,7 +75,7 @@ describe('toolkit writer worktrees', () => {
     fs.rmSync(cwd, { recursive: true, force: true });
     const restored = await r.run(['worktree', 'create', 'T2']);
     assert.equal(restored.exit, 0, JSON.stringify(restored));
-    assert.equal(restored.value.restored, true);
+    assert.equal(narrow(restored.value, objectWith({ restored: isBoolean })).restored, true);
     assert.equal(fs.existsSync(cwd), true);
     // A fresh launch under a new prerequisite is refused without a trace;
     // satisfying the prerequisite admits it.
@@ -81,7 +85,7 @@ describe('toolkit writer worktrees', () => {
     const refused = await r.run(['worktree', 'create', 'T2']);
     assert.equal(refused.exit, 4, JSON.stringify(refused));
     assert.equal(refused.output.reason, 'prerequisite-pending', JSON.stringify(refused));
-    assert.match(refused.value.message, /\bT1\b/);
+    assert.match(narrow(refused.value, isMessage).message, /\bT1\b/);
     assert.equal(foldLedger(r.session).lastSeq, before);
     assert.equal(fs.existsSync(path.join(r.session, '.state/worktrees/T2-2')), false);
     assert.equal((await r.run(['worktree', 'create', 'T1'])).exit, 0);
@@ -105,7 +109,7 @@ describe('toolkit writer worktrees', () => {
     const refused = await r.run(['worktree', 'create', 'T2']);
     assert.equal(refused.exit, 4, JSON.stringify(refused));
     assert.equal(refused.output.reason, 'stale-worktree', JSON.stringify(refused));
-    assert.match(refused.value.message, /untracked or ignored/);
+    assert.match(narrow(refused.value, isMessage).message, /untracked or ignored/);
     assert.equal(fs.existsSync(stale), true);
     r.git(['worktree', 'remove', stale]);
     assert.equal((await r.run(['worktree', 'create', 'T2'])).exit, 0);
@@ -118,7 +122,7 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree', 'abandon', 'T1', '--reason', 'stop'])).exit, 0);
     const interrupted = await r.run(['worktree', 'create', 'T1'], crash('create:after-add'));
     assert.equal(interrupted.exit, 2, JSON.stringify(interrupted));
-    assert.equal(interrupted.value.message, 'crash', JSON.stringify(interrupted));
+    assert.equal(narrow(interrupted.value, isMessage).message, 'crash', JSON.stringify(interrupted));
     const predicted = path.join(r.session, '.state/worktrees/T1-2');
     const head = r.git(['rev-parse', 'HEAD'], predicted);
     await appendRecord(
@@ -130,7 +134,7 @@ describe('toolkit writer worktrees', () => {
     assert.equal((await r.run(['worktree', 'create', 'T1'])).exit, 0);
     assert.equal(launchPath(r), predicted);
     assert.equal(records(r).filter((x) => x.data['path'] === '.state/worktrees/T1-2').length, 1);
-    assert.equal(records(r).at(-1)!.data['base'].commit, head);
+    assert.equal(narrow(records(r).at(-1)?.data['base'], objectWith({ commit: isString })).commit, head);
   });
   it('submits modifications additions deletions and untracked files within ownership', async (t) => {
     const source = planSource.replace(
@@ -157,7 +161,7 @@ describe('toolkit writer worktrees', () => {
     fs.writeFileSync(path.join(cwd, 'src/untracked.ts'), 'new');
     const interrupted = await r.run(['worktree', 'submit', 'T1'], crash('submit:after-commit'));
     assert.equal(interrupted.exit, 2, JSON.stringify(interrupted));
-    assert.equal(interrupted.value.message, 'crash', JSON.stringify(interrupted));
+    assert.equal(narrow(interrupted.value, isMessage).message, 'crash', JSON.stringify(interrupted));
     const committed = r.git(['rev-parse', 'HEAD'], cwd);
     assert.equal((await r.run(['worktree', 'submit', 'T1'])).exit, 0);
     assert.equal(r.git(['rev-parse', 'HEAD'], cwd), committed);
@@ -195,7 +199,7 @@ describe('toolkit writer worktrees', () => {
       }
     });
     assert.equal(interrupted.exit, 2, JSON.stringify(interrupted));
-    assert.equal(interrupted.value.message, 'crash', JSON.stringify(interrupted));
+    assert.equal(narrow(interrupted.value, isMessage).message, 'crash', JSON.stringify(interrupted));
     const committed = r.git(['rev-parse', 'HEAD'], cwd);
     const relaunched = await r.run(['worktree', 'create', 'T1', '--relaunch']);
     assert.equal(relaunched.output.reason, 'submit-pending', JSON.stringify(relaunched));
@@ -217,7 +221,7 @@ describe('toolkit writer worktrees', () => {
     fs.writeFileSync(path.join(cwd, 'src/file.ts'), 'submitted');
     const interrupted = await r.run(['worktree', 'submit', 'T1'], crash('submit:after-commit'));
     assert.equal(interrupted.exit, 2, JSON.stringify(interrupted));
-    assert.equal(interrupted.value.message, 'crash', JSON.stringify(interrupted));
+    assert.equal(narrow(interrupted.value, isMessage).message, 'crash', JSON.stringify(interrupted));
     fs.writeFileSync(path.join(cwd, 'outside'), 'outside');
     r.git(['add', 'outside'], cwd);
     r.git(['commit', '--amend', '--no-edit'], cwd);

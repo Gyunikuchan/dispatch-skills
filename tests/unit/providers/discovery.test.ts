@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  createDiscovery,
-  expandCandidate,
-  type DiscoveryFs,
-} from '../../../skills/dispatch/scripts/providers/discovery.ts';
+import { createDiscovery, expandCandidate } from '../../../skills/dispatch/scripts/providers/discovery.ts';
+import type { DiscoveryFs } from '../../../skills/dispatch/scripts/providers/discovery.ts';
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
 
@@ -14,15 +11,15 @@ const env: PlatformEnv = {
   arch: 'x64',
   wsl: false,
   bubblewrap: false,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: ['/usr/bin', '/opt/bin'],
   pathExt: [],
 };
 
 /** Fake fs table: path → 'exec' | 'file'; directories derive from the paths. */
-function table(entries: Record<string, 'exec' | 'file'>): DiscoveryFs & { probes: string[] } {
-  const probes: string[] = [];
+function table(entries: Record<string, 'exec' | 'file'>): DiscoveryFs & { probes: Array<string> } {
+  const probes: Array<string> = [];
   return {
     probes,
     list: (dir) => [
@@ -84,17 +81,17 @@ test('Windows bare binary candidates use PATHEXT', () => {
   const win: PlatformEnv = {
     ...env,
     os: 'win32',
-    path: ['C:\\bin'],
+    path: [String.raw`C:\bin`],
     pathExt: ['.exe', '.cmd'],
-    home: 'C:\\Users\\test',
+    home: String.raw`C:\Users\test`,
   };
-  const candidate = 'C:\\Users\\test\\AppData\\Local\\Programs\\Codex\\resources\\bin\\codex.exe';
+  const candidate = String.raw`C:\Users\test\AppData\Local\Programs\Codex\resources\bin\codex.exe`;
   const probes = table({
     'C:\\bin\\codex.cmd': 'exec',
     [candidate]: 'exec',
   });
   const discovery = createDiscovery(SPECS, win, probes);
-  assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'path', path: 'C:\\bin\\codex.cmd' });
+  assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'path', path: String.raw`C:\bin\codex.cmd` });
   assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
 
   const upperWin: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };

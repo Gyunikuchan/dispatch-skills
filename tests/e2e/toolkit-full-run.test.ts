@@ -6,6 +6,21 @@ import { fixture, CLEAN } from '../helpers/e2e.ts';
 import { contextMapSource, planSource } from './helpers/toolkit-repo.ts';
 import { artifactHash } from '../../skills/dispatch/scripts/toolkit/artifacts.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import type { JsonObject } from '../../skills/dispatch/scripts/lib/config.ts';
+import { isRecord } from '../../skills/dispatch/scripts/lib/config.ts';
+import { arrayOf, isBoolean, isString, maybe, narrow, nullable, objectWith, text } from './helpers/json.ts';
+
+// The fields this run reads from toolkit result files.
+const replyShape = objectWith({
+  path: maybe(isString),
+  source: maybe(isString),
+  from: maybe(isString),
+  ref: maybe(isString),
+  delivered: maybe((value): value is boolean | JsonObject => isBoolean(value) || isRecord(value)),
+  skipped: maybe(isBoolean),
+  findings: maybe(arrayOf(isRecord)),
+});
+const readReply = (file: string) => narrow(JSON.parse(fs.readFileSync(file, 'utf8')), replyShape);
 
 test('uncommitted delivery through public entry preserves standalone review', async () => {
   const f = fixture({ responses: [CLEAN, CLEAN, CLEAN] });
@@ -32,7 +47,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
     fs.writeFileSync(path.join(f.repo, 'work.plan.context.md'), contextMapSource);
     f.git('add', 'work.plan.md', 'work.plan.context.md');
     f.git('commit', '-qm', 'plan');
-    const run = async (args: string[], expected = 0) => {
+    const run = async (args: Array<string>, expected = 0) => {
       const result = await f.launch(args).done;
       assert.equal(result.exit, expected, result.stderr + result.stdout);
       const lines = result.stdout.trim().split(/\r?\n/);
@@ -41,24 +56,31 @@ test('uncommitted delivery through public entry preserves standalone review', as
       assert.ok(output && typeof output === 'object' && !Array.isArray(output));
       assert.equal(typeof output.summary, 'string');
       assert.ok(Buffer.byteLength(output.summary, 'utf8') <= 1024);
-      for (const key of ['v', 'run', 'reply', 'await', 'at']) assert.equal(Object.hasOwn(output, key), false, key);
-      return output;
+      for (const key of ['v', 'run', 'reply', 'await', 'at']) {
+        assert.equal(Object.hasOwn(output, key), false, key);
+      }
+      return narrow(
+        output,
+        objectWith({ summary: isString, path: maybe(nullable(isString)), reason: maybe(isString) }),
+      );
     };
-    const session = (
-      await run([
-        'session',
-        'init',
-        '--objective',
-        'Toolkit delivery',
-        '--session-id',
-        'toolkit-full-run',
-        '--host',
-        'claude',
-      ])
-    ).path;
-    const tool = async (args: string[]) => {
+    const session = text(
+      (
+        await run([
+          'session',
+          'init',
+          '--objective',
+          'Toolkit delivery',
+          '--session-id',
+          'toolkit-full-run',
+          '--host',
+          'claude',
+        ])
+      ).path,
+    );
+    const tool = async (args: Array<string>) => {
       const output = await run([...args, '--session', session]);
-      return JSON.parse(fs.readFileSync(output.path, 'utf8'));
+      return readReply(text(output.path));
     };
     for (const [kind, data] of [
       ['bind', { spec: 'governing.spec.md', plan: 'work.plan.md' }],
@@ -81,10 +103,10 @@ test('uncommitted delivery through public entry preserves standalone review', as
     );
     await tool(['ledger', 'append', confirmFile]);
     await tool(['lint', 'run', 'work.plan.md']);
-    const review = async (args: string[]) => {
+    const review = async (args: Array<string>) => {
       const result = await tool(['review', 'run', ...args, '--host', 'codex']);
       assert.equal(result.skipped, undefined);
-      return JSON.parse(fs.readFileSync(result.path, 'utf8'));
+      return readReply(text(result.path));
     };
     const reviewed = await review(['work.plan.md', '--kind', 'plan']);
     assert.equal(reviewed.skipped, undefined);
@@ -92,8 +114,8 @@ test('uncommitted delivery through public entry preserves standalone review', as
     assert.equal(f.launches().length, 1, 'plan review launches the stub');
     const writer = await tool(['worktree', 'create', 'T1']);
     const brief = await tool(['brief', 'render', 'T1', '--host', 'codex']);
-    assert.ok(fs.readFileSync(brief.path, 'utf8').includes('src/a.ts'));
-    fs.writeFileSync(path.resolve(session, writer.path, 'src/a.ts'), 'export const value = 2;\n');
+    assert.ok(fs.readFileSync(text(brief.path), 'utf8').includes('src/a.ts'));
+    fs.writeFileSync(path.resolve(session, text(writer.path), 'src/a.ts'), 'export const value = 2;\n');
     await tool(['worktree', 'submit', 'T1']);
     await tool(['worktree', 'integrate', 'T1']);
     const beforeReviewVerify = foldLedger(session).records.length;
@@ -105,7 +127,7 @@ test('uncommitted delivery through public entry preserves standalone review', as
     await tool(['check', 'run']);
     const toolEvidence = foldLedger(session).records.filter((record) => record.kind === 'evidence');
     assert.deepEqual(
-      toolEvidence.map((record) => record.data['criterion']),
+      toolEvidence.map((record) => text(record.data['criterion'])),
       ['SC1', 'contract'],
     );
     assert.deepEqual((await review(['integration', '--kind', 'code'])).findings, []);
@@ -148,16 +170,16 @@ test('uncommitted delivery through public entry preserves standalone review', as
     );
     await tool(['ledger', 'append', manualFile]);
     const report = await tool(['report', 'complete']);
-    const walkthrough = fs.readFileSync(path.resolve(session, report.path), 'utf8');
+    const walkthrough = fs.readFileSync(path.resolve(session, text(report.path)), 'utf8');
     assert.match(walkthrough, /Verified[\s\S]*SC1/);
     assert.match(walkthrough, /Manual[\s\S]*SC2/);
     await tool(['worktree', 'cleanup']);
-    assert.equal(fs.existsSync(path.resolve(session, writer.path)), false);
+    assert.equal(fs.existsSync(path.resolve(session, text(writer.path))), false);
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
     const retried = await tool(['worktree', 'deliver']);
     assert.equal(retried.delivered, false);
     assert.equal(retried.source, delivered.source);
-    assert.equal(f.git('rev-parse', delivered.ref).trim(), delivered.source);
+    assert.equal(f.git('rev-parse', text(delivered.ref)).trim(), delivered.source);
     assert.deepEqual(
       (await review([delivered.from + '..' + delivered.ref, '--kind', 'code', '--spec', 'governing.spec.md'])).findings,
       [],

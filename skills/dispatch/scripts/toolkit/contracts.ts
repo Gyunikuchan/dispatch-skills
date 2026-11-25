@@ -9,14 +9,18 @@ export type ActionContract = {
 
 export type SessionAction = (typeof SESSION_ACTIONS)[number];
 
-export const CALL_TABLE_INTRO: readonly string[] = [
+export const CALL_TABLE_INTRO: ReadonlyArray<string> = [
   'A subagent assigned a map may run `lint run` on that map only, without `--edit`. The host runs other tools. Native fields: `model`, `effort`, `launchAs`. Initialize first. Paths: artifact from repo root, record/question from cwd.',
   'Stdout is `{ok, summary, path, reason?}` (advisory `hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.',
   '`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` returns raw text, exit 0, without a session. Unknown/empty headings return `usage` and valid headings. Unreadable help returns `fault` (2). Refusals may include `help` (next heading), except `native-pending`.',
   'In the table, `\\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array. `--cleanup` needs stdin. `help <kind>` lists fields.',
 ];
 
-export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
+export interface ActionContracts {
+  readonly [action: string]: ActionContract;
+}
+
+export const ACTION_CONTRACTS: ActionContracts = {
   'ask run': {
     arguments:
       "ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]",
@@ -69,10 +73,10 @@ export const ACTION_CONTRACTS: Readonly<Record<string, ActionContract>> = {
 };
 
 // The action grammar governs both generated help and CLI flag registration.
-function actionFlags(contracts: Readonly<Record<string, ActionContract>>): ReadonlyMap<string, readonly string[]> {
-  const result = new Map<string, string[]>();
+function actionFlags(contracts: Readonly<Record<string, ActionContract>>): ReadonlyMap<string, ReadonlyArray<string>> {
+  const result = new Map<string, Array<string>>();
   for (const [action, contract] of Object.entries(contracts)) {
-    const flags = new Set(Array.from(contract.arguments.matchAll(/--([a-z][a-z-]*)\b/g), (match) => match[1]!));
+    const flags = new Set(Array.from(contract.arguments.matchAll(/--([a-z][a-z-]*)\b/g), (match) => String(match[1])));
     for (const flag of flags) {
       const actions = result.get(flag) ?? [];
       actions.push(action);
@@ -92,13 +96,13 @@ export const SESSION_CONTRACTS: Readonly<Record<SessionAction, ActionContract>> 
   },
 };
 
-const escapePipes = (text: string) => text.replaceAll('|', '\\|');
-const formatFields = (required: readonly string[], optional: readonly string[]) =>
+const escapePipes = (text: string) => text.replaceAll('|', String.raw`\|`);
+const formatFields = (required: ReadonlyArray<string>, optional: ReadonlyArray<string>) =>
   [...required, ...optional.map((field) => `${field}?`)].join(', ');
 
 /** Renders the bounded `### call table` help section from canonical action, record, and session contracts. */
 export function renderCallTable(): string {
-  const rows: string[] = [
+  const rows: Array<string> = [
     '| Type | Heading | Arguments |',
     '| --- | --- | --- |',
     ...Object.entries(ACTION_CONTRACTS).map(
@@ -125,5 +129,5 @@ const HELP_MARKER = new RegExp(`^${GENERATED_MARKER.source}(?:\\r?\\n|$)|${GENER
 
 /** Removes generated delimiters from help while preserving surrounding bytes. */
 export function stripGeneratedMarkers(markdown: string): string {
-  return markdown.replace(HELP_MARKER, '');
+  return markdown.replaceAll(HELP_MARKER, '');
 }

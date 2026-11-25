@@ -9,7 +9,8 @@ import {
   foldRows,
 } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts';
 import { BANDS } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
-import { tokenTotal, type UsageRow } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
+import { tokenTotal } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
+import type { UsageRow } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 
 const row = (over: Partial<UsageRow> = {}): UsageRow => ({
   model: 'claude-sonnet-4-5',
@@ -36,8 +37,8 @@ test('band fold: prompt-size edges take lower band and split fields stay out of 
   assert.equal(bandOf({ input: 272_001, output: 1 }), 'gt272k');
 
   const folded = foldRows([
-    row({ input: 90_000, output: 10, cacheWrite: 10_000, cacheWrite5m: 6_000, cacheWrite1h: 4_000, reasoning: 3 }),
-    row({ input: 150_000, output: 20, cacheRead: 10_000, cacheWrite: 5_000, cacheWrite5m: 5_000, reasoning: 7 }),
+    row({ input: 90_000, output: 10, cacheWrite: 10_000, cacheWrite5m: 6000, cacheWrite1h: 4000, reasoning: 3 }),
+    row({ input: 150_000, output: 20, cacheRead: 10_000, cacheWrite: 5000, cacheWrite5m: 5000, reasoning: 7 }),
   ]);
 
   assert.equal(folded.reasoningInOutput, true);
@@ -47,7 +48,7 @@ test('band fold: prompt-size edges take lower band and split fields stay out of 
     cacheRead: 10_000,
     cacheWrite: 15_000,
     cacheWrite5m: 11_000,
-    cacheWrite1h: 4_000,
+    cacheWrite1h: 4000,
     reasoning: 10,
   });
   assert.equal(tokenTotal(folded.total), 240_000 + 30 + 10_000 + 15_000);
@@ -55,12 +56,12 @@ test('band fold: prompt-size edges take lower band and split fields stay out of 
   const entry = folded.models['claude-sonnet-4-5#high'];
   assert.ok(entry);
   assert.deepEqual(entry.bands, {
-    le100k: { input: 90_000, output: 10, cacheWrite: 10_000, cacheWrite5m: 6_000, cacheWrite1h: 4_000, reasoning: 3 },
-    le200k: { input: 150_000, output: 20, cacheRead: 10_000, cacheWrite: 5_000, cacheWrite5m: 5_000, reasoning: 7 },
+    le100k: { input: 90_000, output: 10, cacheWrite: 10_000, cacheWrite5m: 6000, cacheWrite1h: 4000, reasoning: 3 },
+    le200k: { input: 150_000, output: 20, cacheRead: 10_000, cacheWrite: 5000, cacheWrite5m: 5000, reasoning: 7 },
   });
-  assert.equal(entry.input, (entry.bands!.le100k?.input ?? 0) + (entry.bands!.le200k?.input ?? 0));
+  assert.equal(entry.input, (entry.bands.le100k?.input ?? 0) + (entry.bands.le200k?.input ?? 0));
   assert.equal(entry.cacheWrite5m, 11_000);
-  assert.equal(entry.cacheWrite1h, 4_000);
+  assert.equal(entry.cacheWrite1h, 4000);
 
   const mixed = foldRows([row({ reasoningInOutput: true }), row({ reasoningInOutput: false })]);
   assert.equal(mixed.reasoningInOutput, undefined);
@@ -91,5 +92,5 @@ test('key bound: keeps 32 largest keys and merges overflow and existing other in
   assert.equal('m03#high' in bounded, true);
   assert.equal('m04#high' in bounded, true);
   assert.deepEqual(bounded['other'], { input: 25, output: 1 });
-  assert.equal('bands' in bounded['other']!, false);
+  assert.equal('bands' in bounded['other'], false);
 });

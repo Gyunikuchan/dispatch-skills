@@ -3,20 +3,20 @@ import type { ParsedPlan } from './domain/types.ts';
 export function redGaps(input: {
   plan: ParsedPlan;
   task: string;
-  changed: readonly string[];
+  changed: ReadonlyArray<string>;
   report?: string | undefined;
   redExits?: ReadonlyMap<string, number | null>;
-}): { criterion: string; line: number; testsTouched: boolean }[] {
+}): Array<{ criterion: string; line: number; testsTouched: boolean }> {
   const task = input.plan.tasks.find((task) => task.id === input.task);
   const lines = (input.report ?? '').split(/\r?\n/);
-  const start = lines.findIndex((line) => line === '## Observed RED failures');
+  const start = lines.indexOf('## Observed RED failures');
   const section =
     start < 0
       ? ''
-      : lines
+      : (lines
           .slice(start + 1)
           .join('\n')
-          .split(/^#{1,2} /m)[0]!;
+          .split(/^#{1,2} /m)[0] ?? '');
   return input.plan.criteria
     .filter((c) => task?.criteria.includes(c.id) && c.evidence === 'red' && c.red && !c.redException)
     .filter((c) => {

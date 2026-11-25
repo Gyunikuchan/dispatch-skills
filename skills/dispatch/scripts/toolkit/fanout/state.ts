@@ -1,3 +1,4 @@
+import { nodeErrorCode } from '../../lib/fs-ext.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,13 +10,15 @@ import type { RunOutcome } from '../../providers/types.ts';
 import type { CliDeps } from '../cli.ts';
 import type { DiagnosticEvent } from '../domain/diagnostics.ts';
 import type { RosterSlot } from '../domain/types.ts';
+import { isRecord } from '../../lib/config.ts';
+import { parseJson } from '../../lib/integrity.ts';
 
 export type FailureClass = Extract<RunOutcome, { status: 'fail' }>['cls'];
 export type BlockedAttempt = { provider: string; model: string | null; reason: string; reasonHash: string };
 export type Validation =
   | { ok: true; text?: string }
   | { ok: false; cls: FailureClass; reason: string; blocked?: { reason: string; reasonHash: string } };
-export type SlotOutcome = { slot: string; blocked?: BlockedAttempt[] } & (
+export type SlotOutcome = { slot: string; blocked?: Array<BlockedAttempt> } & (
   | {
       state: 'done';
       text: string;
@@ -28,7 +31,7 @@ export type SlotOutcome = { slot: string; blocked?: BlockedAttempt[] } & (
       provider: string;
       attempt: string;
       cwd: string;
-      model?: string | readonly string[];
+      model?: string | ReadonlyArray<string>;
       effort?: string;
       launchAs?: string;
       error?: string;
@@ -39,29 +42,45 @@ export type SlotOutcome = { slot: string; blocked?: BlockedAttempt[] } & (
 );
 export type NativeFailure = { attempt: string; reason: string; reasonHash: string };
 
-const nativeModels = (model: string | readonly string[] | undefined): string[] =>
+const nativeModels = (model: string | ReadonlyArray<string> | undefined): Array<string> =>
   model === undefined ? [] : typeof model === 'string' ? [model] : [...model];
 export const nativeLaunchAs = (
   provider: string,
-  model: string | readonly string[] | undefined,
+  model: string | ReadonlyArray<string> | undefined,
   effort: string | undefined,
 ): string => launchLine(provider, nativeModels(model), effort ?? null);
 /** Distinct first-model summary launch lines for pending native descriptors. */
-export const nativeSummaryItems = (outcomes: readonly Extract<SlotOutcome, { state: 'native' }>[]): string[] => [
+export const nativeSummaryItems = (
+  outcomes: ReadonlyArray<Extract<SlotOutcome, { state: 'native' }>>,
+): Array<string> => [
   ...new Set(
     outcomes.map((outcome) => summaryLaunch(outcome.provider, nativeModels(outcome.model), outcome.effort ?? null)),
   ),
 ];
 export function normalizeNative(outcome: SlotOutcome): SlotOutcome {
-  if (outcome.state !== 'native') return outcome;
+  if (outcome.state !== 'native') {
+    return outcome;
+  }
   const { subagentModels: _legacy, ...rest } = outcome as Extract<SlotOutcome, { state: 'native' }> & {
     subagentModels?: unknown;
   };
   return { ...rest, launchAs: rest.launchAs ?? nativeLaunchAs(rest.provider, rest.model, rest.effort) };
 }
+// Only fan-out writes slot and state files; these guards prove the tag and the table, not every field.
+const isSavedOutcome = (value: unknown): value is SlotOutcome => isRecord(value) && typeof value['state'] === 'string';
+const isFanoutState = (value: unknown): value is FanoutState => isRecord(value);
+
+export function parseSavedOutcome(text: string) {
+  const parsed: unknown = parseJson(text);
+  if (!isSavedOutcome(parsed)) {
+    throw new TypeError('Saved slot outcome has no state');
+  }
+  return parsed;
+}
+
 export type FanOutInput = {
   dir: string;
-  slots: readonly RosterSlot[] | Roster;
+  slots: ReadonlyArray<RosterSlot> | Roster;
   prompt: string | ((slot: RosterSlot) => string);
   validate: (text: string, logicalSlot: string) => Validation;
   cwd?: string;
@@ -69,8 +88,8 @@ export type FanOutInput = {
   sessionRoot?: string;
   quota?: ReturnType<typeof quotaSnapshot>;
   onFailed?: (slot: string, outcome: Extract<SlotOutcome, { state: 'failed' }>) => void;
-  nativeFirstProviders?: readonly string[];
-  nativeFailures?: readonly NativeFailure[];
+  nativeFirstProviders?: ReadonlyArray<string>;
+  nativeFailures?: ReadonlyArray<NativeFailure>;
   onIgnoredReport?: (attempt: string) => void;
 };
 
@@ -81,25 +100,33 @@ export function cliWaveState(dir: string): 'pending' | 'done' | undefined {
   try {
     raw = fs.readFileSync(path.join(dir, 'fanout.json'), 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return undefined;
+    }
     throw error;
   }
-  let data: FanoutState;
+  let data: unknown;
   try {
-    data = JSON.parse(raw) as FanoutState;
+    data = parseJson(raw);
   } catch {
     return undefined;
   }
-  if (!data.nativeFirst) return undefined;
+  if (!isFanoutState(data) || !data.nativeFirst) {
+    return undefined;
+  }
   return data.cliWaveDone ? 'done' : 'pending';
 }
 
 export function sessionOf(directory: string): string {
   let current = path.resolve(directory);
   for (;;) {
-    if (fs.existsSync(path.join(current, 'manifest.json'))) return current;
+    if (fs.existsSync(path.join(current, 'manifest.json'))) {
+      return current;
+    }
     const parent = path.dirname(current);
-    if (parent === current) throw new Error('Fan-out directory has no session manifest ancestor');
+    if (parent === current) {
+      throw new Error('Fan-out directory has no session manifest ancestor');
+    }
     current = parent;
   }
 }
@@ -115,19 +142,23 @@ export function atomic(file: string, value: unknown): void {
 }
 
 /** One entry per logical blocked attempt: repeated modes keep the same alias once, distinct reasons stay apart. */
-export function mergeBlocked(...lists: readonly (readonly BlockedAttempt[] | undefined)[]): BlockedAttempt[] {
-  const out: BlockedAttempt[] = [];
-  for (const list of lists)
+export function mergeBlocked(
+  ...lists: ReadonlyArray<ReadonlyArray<BlockedAttempt> | undefined>
+): Array<BlockedAttempt> {
+  const out: Array<BlockedAttempt> = [];
+  for (const list of lists) {
     for (const entry of list ?? []) {
       if (
         out.some(
           (item) =>
             item.provider === entry.provider && item.model === entry.model && item.reasonHash === entry.reasonHash,
         )
-      )
+      ) {
         continue;
+      }
       out.push(entry);
     }
+  }
   return out;
 }
 
@@ -139,22 +170,28 @@ export function persistDeferredMarker(
   file: string,
   nativeSaved: Extract<SlotOutcome, { state: 'native' }>,
   nativeError: string,
-  extraBlocked?: BlockedAttempt[],
+  extraBlocked?: Array<BlockedAttempt>,
 ): void {
   const merged = mergeBlocked(nativeSaved.blocked, extraBlocked);
   atomic(file, {
     ...nativeSaved,
     cliFallback: true as const,
     nativeError,
-    ...(merged.length ? { blocked: merged } : {}),
+    ...(merged.length && { blocked: merged }),
   });
 }
 
 export function readState(dir: string): FanoutState {
   try {
-    return JSON.parse(fs.readFileSync(path.join(dir, 'fanout.json'), 'utf8')) as FanoutState;
+    const parsed: unknown = parseJson(fs.readFileSync(path.join(dir, 'fanout.json'), 'utf8'));
+    if (!isFanoutState(parsed)) {
+      throw new TypeError('Fan-out state is not an object');
+    }
+    return parsed;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return {};
+    }
     throw error;
   }
 }
@@ -164,56 +201,63 @@ export function writeState(dir: string, state: FanoutState): void {
 }
 // Saved voices whose logical slot left the recomputed roster reconcile as
 // targets; settled failures stay dropped.
-export function savedOrphanTargets(dir: string): RosterSlot[] {
-  let files: string[] = [];
+export function savedOrphanTargets(dir: string): Array<RosterSlot> {
+  let files: Array<string>;
   try {
     files = fs.readdirSync(path.join(dir, 'slots'));
   } catch {
     return [];
   }
-  const out: RosterSlot[] = [];
+  const out: Array<RosterSlot> = [];
   for (const file of files) {
     const name = /^([A-Za-z0-9_-]+\[\d+\])\.json$/.exec(file)?.[1];
-    if (name === undefined) continue;
+    if (name === undefined) {
+      continue;
+    }
     let saved: {
       state?: string;
       provider?: unknown;
-      model?: string | readonly string[];
+      model?: string | ReadonlyArray<string>;
       effort?: string;
       responder?: { provider?: unknown };
     };
     try {
-      saved = normalizeNative(
-        JSON.parse(fs.readFileSync(path.join(dir, 'slots', file), 'utf8')) as SlotOutcome,
-      ) as typeof saved;
+      saved = normalizeNative(parseSavedOutcome(fs.readFileSync(path.join(dir, 'slots', file), 'utf8')));
     } catch {
       continue;
     }
     const provider = typeof saved.provider === 'string' ? saved.provider : saved.responder?.provider;
-    if ((saved.state !== 'native' && saved.state !== 'done') || typeof provider !== 'string') continue;
+    if ((saved.state !== 'native' && saved.state !== 'done') || typeof provider !== 'string') {
+      continue;
+    }
     out.push({
       slot: name,
       provider,
       index: Number(name.slice(name.lastIndexOf('[') + 1, -1)),
       native: false,
       reserve: false,
-      ...(saved.model === undefined ? {} : { model: saved.model }),
-      ...(saved.effort === undefined ? {} : { effort: saved.effort }),
+      ...(!(saved.model === undefined) && { model: saved.model }),
+      ...(!(saved.effort === undefined) && { effort: saved.effort }),
     });
   }
   return out;
 }
 
+// Distributes over the event union so each kind keeps its own detail fields.
+type EventDetail<T> = T extends unknown ? Omit<T, 'subject' | 'slot' | 'provider' | 'model' | 'attempt'> : never;
 export type Emit = (
-  slot: { slot: string; provider: string; model?: string | readonly string[] | undefined; effort?: string },
-  event: Omit<DiagnosticEvent, 'subject' | 'slot' | 'provider' | 'model' | 'attempt'> & Record<string, unknown>,
+  slot: { slot: string; provider: string; model?: string | ReadonlyArray<string> | undefined; effort?: string },
+  event: EventDetail<DiagnosticEvent>,
 ) => void;
 
+const name = (slot: string) => {
+  if (!/^[A-Za-z0-9_-]+\[\d+\]$/.test(slot)) {
+    throw new Error('Invalid roster slot ' + slot);
+  }
+  return slot;
+};
+
 export function slotFiles(dir: string, onFailed: FanOutInput['onFailed'], emit: Emit, hook: CliDeps['hook']) {
-  const name = (slot: string) => {
-    if (!/^[A-Za-z0-9_-]+\[\d+\]$/.test(slot)) throw new Error('Invalid roster slot ' + slot);
-    return slot;
-  };
   const fileOfLogical = (logical: string) => path.join(dir, 'slots', name(logical) + '.json');
   const basePathOf = (logical: string) => path.join(dir, 'prompts', name(logical) + '.md');
   const nativePathOf = (logical: string) => path.join(dir, 'prompts', name(logical) + '.native.md');
@@ -222,11 +266,35 @@ export function slotFiles(dir: string, onFailed: FanOutInput['onFailed'], emit: 
 
   const readSaved = (logical: string): SlotOutcome | undefined => {
     try {
-      return normalizeNative(JSON.parse(fs.readFileSync(fileOfLogical(logical), 'utf8')) as SlotOutcome);
+      return normalizeNative(parseSavedOutcome(fs.readFileSync(fileOfLogical(logical), 'utf8')));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      if (nodeErrorCode(error) === 'ENOENT') {
+        return undefined;
+      }
       throw error;
     }
+  };
+
+  const hasNativeHistory = (logical: string): boolean => {
+    try {
+      if (fs.existsSync(nativePathOf(logical))) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    try {
+      const prior = readSaved(logical);
+      if (prior?.state === 'native') {
+        return true;
+      }
+      if (prior?.state === 'failed' && (prior as { cliOnly?: true }).cliOnly !== true) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    return false;
   };
 
   const saveLogical = async (target: RosterSlot, outcome: SlotOutcome) => {
@@ -235,35 +303,24 @@ export function slotFiles(dir: string, onFailed: FanOutInput['onFailed'], emit: 
     // fails closed to no-retake. Any native history bars the marker: the prompt
     // file, a still-pending native attempt, or a prior failed save without the
     // marker (which itself saw native history).
-    const hasNativeHistory = (logical: string): boolean => {
-      try {
-        if (fs.existsSync(nativePathOf(logical))) return true;
-      } catch {
-        return true;
-      }
-      try {
-        const prior = readSaved(logical);
-        if (prior?.state === 'native') return true;
-        if (prior?.state === 'failed' && (prior as { cliOnly?: true }).cliOnly !== true) return true;
-      } catch {
-        return true;
-      }
-      return false;
-    };
     let toSave = outcome;
     if (outcome.state === 'failed' && !target.native && !hasNativeHistory(target.slot)) {
       toSave = { ...outcome, cliOnly: true as const };
     }
-    if (toSave.state === 'failed') onFailed?.(toSave.slot, toSave as Extract<SlotOutcome, { state: 'failed' }>);
+    if (toSave.state === 'failed') {
+      onFailed?.(toSave.slot, toSave);
+    }
     atomic(fileOfLogical(target.slot), toSave);
-    emit(target, { kind: 'slot', state: toSave.state, ...(toSave.state === 'failed' ? { cls: toSave.cls } : {}) });
+    emit(target, { kind: 'slot', state: toSave.state, ...(toSave.state === 'failed' && { cls: toSave.cls }) });
     await hook?.('fanout:after-slot');
     return toSave;
   };
   return { name, fileOfLogical, basePathOf, nativePathOf, replyPathFor, oldReplyPathOf, readSaved, saveLogical };
 }
 
-export function throwRejected(results: readonly PromiseSettledResult<unknown>[]): void {
+export function throwRejected(results: ReadonlyArray<PromiseSettledResult<unknown>>): void {
   const rejected = results.find((result) => result.status === 'rejected');
-  if (rejected?.status === 'rejected') throw rejected.reason;
+  if (rejected?.status === 'rejected') {
+    throw rejected.reason;
+  }
 }

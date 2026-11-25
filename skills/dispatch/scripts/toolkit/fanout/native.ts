@@ -13,42 +13,46 @@ import {
 } from '../domain/blocker.ts';
 import type { CliDeps } from '../cli.ts';
 import type { RosterSlot } from '../domain/types.ts';
-import {
-  atomic,
-  mergeBlocked,
-  nativeLaunchAs,
-  type BlockedAttempt,
-  type Emit,
-  type FailureClass,
-  type FanOutInput,
-  type NativeFailure,
-  type SlotOutcome,
-  type Validation,
-  type slotFiles,
+import { atomic, mergeBlocked, nativeLaunchAs } from './state.ts';
+import type {
+  BlockedAttempt,
+  Emit,
+  FailureClass,
+  FanOutInput,
+  NativeFailure,
+  SlotOutcome,
+  Validation,
+  slotFiles,
 } from './state.ts';
 import type { cliVoice } from './voice.ts';
 
 const newNativeReply = (cwd: string, replyPath: string) =>
   `\n\n## Native reply\n\nWork in \`${cwd}\` for reads and Git commands.\n\nWrite the reply that the instructions above require, in their exact format, to \`${replyPath}\`; do not return it inline. Then reply only \`wrote ${replyPath}\`, or \`${BLOCKED_MARKER} <reason>\` when you cannot write it.\n`;
 
-export function firstModelOf(slot: { model?: string | readonly string[] | undefined }): string | null {
-  if (slot.model === undefined) return null;
-  if (typeof slot.model === 'string') return slot.model;
+export function firstModelOf(slot: { model?: string | ReadonlyArray<string> | undefined }): string | null {
+  if (slot.model === undefined) {
+    return null;
+  }
+  if (typeof slot.model === 'string') {
+    return slot.model;
+  }
   return slot.model[0] ?? null;
 }
 
-export function isNativeFirstSlot(slot: RosterSlot, providers: readonly string[] | undefined): boolean {
+export function isNativeFirstSlot(slot: RosterSlot, providers: ReadonlyArray<string> | undefined): boolean {
   return !slot.native && !slot.reserve && isNativeFirstProvider(slot.provider, providers);
 }
 
-export function isNativeFirstProvider(provider: string, providers: readonly string[] | undefined): boolean {
-  if (!providers?.length) return false;
+export function isNativeFirstProvider(provider: string, providers: ReadonlyArray<string> | undefined): boolean {
+  if (!providers?.length) {
+    return false;
+  }
   const normalized = normalizeProvider(provider);
   return providers.some((candidate) => normalizeProvider(candidate) === normalized);
 }
 
 function makeNonce(): string {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 6);
+  return crypto.randomUUID().replaceAll('-', '').slice(0, 6);
 }
 
 export function blockedEntry(provider: string, model: string | null, raw: string): BlockedAttempt {
@@ -57,18 +61,22 @@ export function blockedEntry(provider: string, model: string | null, raw: string
 
 // Display form of a failure reason: reported BLOCKED evidence wins, the
 // protocol marker recovers its raw text, anything else keeps its wording.
-function blockedDisplayOf(reason: string, evidence?: BlockedAttempt[]): string {
-  if (evidence?.[0]?.reason) return evidence[0].reason;
+function blockedDisplayOf(reason: string, evidence?: Array<BlockedAttempt>): string {
+  if (evidence?.[0]?.reason) {
+    return evidence[0].reason;
+  }
   const raw = isBlockedReply(reason) ? parseBlockedReply(reason).raw : reason.trim();
   return failureReasonDisplay(raw);
 }
 
 // Blocked evidence for a reported attempt, attributed to the voice that ran it.
 export function reportEvidence(
-  native: { provider: string; model?: string | readonly string[] },
+  native: { provider: string; model?: string | ReadonlyArray<string> },
   report: NativeFailure,
-): BlockedAttempt[] | undefined {
-  if (!isBlockedReply(report.reason)) return undefined;
+): Array<BlockedAttempt> | undefined {
+  if (!isBlockedReply(report.reason)) {
+    return undefined;
+  }
   return [
     {
       provider: native.provider,
@@ -82,19 +90,47 @@ export function reportEvidence(
 // Native events name the voice that launched: a reserve attempt reports the reserve's provider and model under the logical slot.
 export const attemptOf = (
   logical: RosterSlot,
-  voice: { provider: string; model?: string | readonly string[]; effort?: string },
+  voice: { provider: string; model?: string | ReadonlyArray<string>; effort?: string },
 ) => ({
   slot: logical.slot,
   provider: voice.provider,
   model: voice.model,
-  ...(voice.effort !== undefined ? { effort: voice.effort } : {}),
+  ...(voice.effort !== undefined && { effort: voice.effort }),
 });
+const invalidateReply = (replyPath: string): void => {
+  if (!fs.existsSync(replyPath)) {
+    return;
+  }
+  let suffix = 1;
+  while (fs.existsSync(`${replyPath}.invalid-${suffix}`)) {
+    suffix++;
+  }
+  const target = `${replyPath}.invalid-${suffix}`;
+  try {
+    fs.renameSync(replyPath, target);
+    return;
+  } catch (error) {
+    // A sharing violation or permission error leaves the rejected reply in
+    // place while an unconfirmed native handle may still change it: never
+    // treat quarantine as done. Preserve the evidence under the quarantine
+    // name, then surface when the original cannot be removed.
+    fs.copyFileSync(replyPath, target);
+    try {
+      fs.rmSync(replyPath);
+    } catch {
+      throw new Error(
+        `Cannot quarantine rejected reply ${replyPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+};
+
 export function nativeVoice(
   input: Pick<FanOutInput, 'sessionRoot' | 'prompt'>,
   ports: {
-    all: readonly RosterSlot[];
+    all: ReadonlyArray<RosterSlot>;
     firstReserve: RosterSlot | undefined;
-    nativeFirstProviders: readonly string[];
+    nativeFirstProviders: ReadonlyArray<string>;
     host: () => CliDeps['orchestrator'];
     cwd: string;
     files: Omit<ReturnType<typeof slotFiles>, 'name'>;
@@ -124,7 +160,7 @@ export function nativeVoice(
 
   const buildNativePrompt = (baseText: string, replyPath: string): string => {
     const scope = sessionScope(input.sessionRoot, nodeRunnerFs);
-    const guarded = formatSafetyPrompt(baseText, { ...scope, ...(cwd ? { workspaceRoot: cwd } : {}) });
+    const guarded = formatSafetyPrompt(baseText, { ...scope, ...(cwd && { workspaceRoot: cwd }) });
     return (
       `${guarded}\n\n[REPLY FILE EXCEPTION]: You may write only to \`${replyPath}\`; all other project file writes stay denied.\n` +
       newNativeReply(cwd, replyPath)
@@ -145,15 +181,17 @@ export function nativeVoice(
     provider: physical.provider,
     attempt,
     cwd,
-    ...(physical.model !== undefined ? { model: physical.model } : {}),
-    ...(physical.effort !== undefined ? { effort: physical.effort } : {}),
+    ...(physical.model !== undefined && { model: physical.model }),
+    ...(physical.effort !== undefined && { effort: physical.effort }),
     launchAs: nativeLaunchAs(physical.provider, physical.model, physical.effort),
   });
 
   const appendNativeReply = (baseFile: string, baseText: string, replyPath: string): void => {
     try {
       const current = fs.readFileSync(baseFile, 'utf8');
-      if (!current.includes('## Native reply')) fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
+      if (!current.includes('## Native reply')) {
+        fs.appendFileSync(baseFile, newNativeReply(cwd, replyPath));
+      }
     } catch {
       fs.writeFileSync(baseFile, baseText + newNativeReply(cwd, replyPath), { mode: 0o600 });
     }
@@ -170,7 +208,9 @@ export function nativeVoice(
     const baseFile = basePathOf(slot.slot);
     try {
       fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
-    } catch {}
+    } catch {
+      // appendNativeReply below rewrites the base file when it is unreadable.
+    }
     const replyPath = oldReplyPathOf(slot.slot);
     const nonce = makeNonce();
     const attempt = `${slot.slot}#${nonce}`;
@@ -186,7 +226,9 @@ export function nativeVoice(
     const baseText = baseTextOf(logical);
     const baseFile = basePathOf(logical.slot);
     try {
-      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+      if (!fs.existsSync(baseFile)) {
+        fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+      }
     } catch {
       fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
     }
@@ -200,28 +242,6 @@ export function nativeVoice(
     return descriptor(logical, physical, nativeFile, replyPath, attempt);
   };
 
-  const invalidateReply = (replyPath: string): void => {
-    if (!fs.existsSync(replyPath)) return;
-    let suffix = 1;
-    while (fs.existsSync(`${replyPath}.invalid-${suffix}`)) suffix++;
-    const target = `${replyPath}.invalid-${suffix}`;
-    try {
-      fs.renameSync(replyPath, target);
-      return;
-    } catch (error) {
-      // A sharing violation or permission error leaves the rejected reply in
-      // place while an unconfirmed native handle may still change it: never
-      // treat quarantine as done. Preserve the evidence under the quarantine
-      // name, then surface when the original cannot be removed.
-      fs.copyFileSync(replyPath, target);
-      try {
-        fs.rmSync(replyPath);
-      } catch {
-        throw new Error(`Cannot quarantine rejected reply ${replyPath}: ${(error as Error).message}`);
-      }
-    }
-  };
-
   // An invalid native reply is quarantined and the attempt stays pending with the checked reason and evidence.
   const markInvalid = (
     slot: RosterSlot,
@@ -232,7 +252,7 @@ export function nativeVoice(
     const blocked = checked.blocked
       ? mergeBlocked(native.blocked, [{ provider: native.provider, model: firstModelOf(native), ...checked.blocked }])
       : native.blocked;
-    const pending: SlotOutcome = { ...native, error: checked.reason, ...(blocked?.length ? { blocked } : {}) };
+    const pending: SlotOutcome = { ...native, error: checked.reason, ...(blocked?.length && { blocked }) };
     atomic(fileOfLogical(slot.slot), pending);
     return pending;
   };
@@ -249,7 +269,7 @@ export function nativeVoice(
     logical: RosterSlot,
     nativeSaved: Extract<SlotOutcome, { state: 'native' }>,
     nativeError: string,
-    extraBlocked?: BlockedAttempt[],
+    extraBlocked?: Array<BlockedAttempt>,
   ): Promise<SlotOutcome> => {
     const merged = mergeBlocked(nativeSaved.blocked, extraBlocked);
     // Fail closed on the recorded error: the exact external marker, or an
@@ -260,7 +280,7 @@ export function nativeVoice(
       ...nativeSaved,
       cliFallback: true as const,
       nativeError,
-      ...(merged.length ? { blocked: merged } : {}),
+      ...(merged.length && { blocked: merged }),
     };
     atomic(fileOfLogical(logical.slot), withFallback);
     emit(attemptOf(logical, nativeSaved), { kind: 'native', state: 'failed' });
@@ -271,27 +291,37 @@ export function nativeVoice(
       state: 'failed',
       cls: blockedFailure ? 'blocked' : 'refusal',
       reason: (blockedFailure ? 'blocked: ' : 'refusal: ') + display,
-      ...(merged.length ? { blocked: merged } : {}),
+      ...(merged.length && { blocked: merged }),
     });
     if (physical !== undefined && isCurrentHost(physical.provider)) {
       const failed = failedForHost();
       const isReserveSubstitute = physical.slot !== logical.slot;
       if (!isReserveSubstitute && reserveAllowed(logical.slot, failed.cls)) {
         const launched = await takeReserveWithFreshPrompt(logical, failed);
-        if (launched) return launched.state === 'native' ? launched : saveLogical(logical, launched);
+        if (launched) {
+          return launched.state === 'native' ? launched : saveLogical(logical, launched);
+        }
       }
       return saveLogical(logical, failed);
     }
-    if (physical === undefined || physical.native) return saveLogical(logical, failedForHost());
+    if (physical === undefined || physical.native) {
+      return saveLogical(logical, failedForHost());
+    }
     const baseFile = basePathOf(logical.slot);
-    if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseTextOf(logical), { mode: 0o600 });
+    if (!fs.existsSync(baseFile)) {
+      fs.writeFileSync(baseFile, baseTextOf(logical), { mode: 0o600 });
+    }
     let cliOutcome = await voiceCLI(physical, logical.slot, baseFile);
-    if (merged.length) cliOutcome = { ...cliOutcome, blocked: mergeBlocked(merged, cliOutcome.blocked) } as SlotOutcome;
+    if (merged.length) {
+      cliOutcome = { ...cliOutcome, blocked: mergeBlocked(merged, cliOutcome.blocked) };
+    }
     if (cliOutcome.state === 'failed') {
       const isReserveSubstitute = physical.slot !== logical.slot;
       if (!isReserveSubstitute && reserveAllowed(logical.slot, cliOutcome.cls)) {
         const launched = await takeReserve(logical, cliOutcome, baseFile);
-        if (launched) return launched.state === 'native' ? launched : saveLogical(logical, launched);
+        if (launched) {
+          return launched.state === 'native' ? launched : saveLogical(logical, launched);
+        }
       }
     }
     return saveLogical(logical, { ...cliOutcome, slot: logical.slot });
@@ -299,7 +329,9 @@ export function nativeVoice(
 
   const isCurrentHost = (provider: string): boolean => {
     const host = orchestrator()?.platform;
-    if (!host) return false;
+    if (!host) {
+      return false;
+    }
     return normalizeProvider(provider) === normalizeProvider(host);
   };
 
@@ -309,23 +341,35 @@ export function nativeVoice(
   // pending native substitute for the reserve, or a fallback still running
   // under the owner, keeps holding it, so substitutes stay single-use.
   const reserveConsumedBy = (ownerSaved: SlotOutcome | undefined): boolean => {
-    if (ownerSaved === undefined || firstReserve === undefined) return false;
+    if (ownerSaved === undefined || firstReserve === undefined) {
+      return false;
+    }
     if (ownerSaved.state === 'done') {
       const responder = ownerSaved.responder;
-      if (responder?.slot === firstReserve.slot) return true;
-      if (responder?.native === true && responder?.provider === firstReserve.provider) return true;
+      if (responder?.slot === firstReserve.slot) {
+        return true;
+      }
+      if (responder?.native === true && responder?.provider === firstReserve.provider) {
+        return true;
+      }
       return false;
     }
     if (ownerSaved.state === 'native') {
-      if (ownerSaved.attempt.split('#')[0] === firstReserve.slot) return true;
-      if (ownerSaved.cliFallback === true) return true;
+      if (ownerSaved.attempt.split('#')[0] === firstReserve.slot) {
+        return true;
+      }
+      if (ownerSaved.cliFallback === true) {
+        return true;
+      }
     }
     return false;
   };
 
   const reserveAvailableFor = (logical: string): boolean => {
     const reserveOwner = ownerOfReserve();
-    if (!firstReserve) return false;
+    if (!firstReserve) {
+      return false;
+    }
     if (reserveOwner !== undefined && reserveOwner !== logical) {
       // A recorded owner that no longer holds the reserve releases it for
       // another eligible target: a failed CLI-only retake (the plan
@@ -334,7 +378,7 @@ export function nativeVoice(
       // (a native prompt on disk under a cliOnly failure), or a substitute
       // (CLI or native) that already ran stays with its owner, so reserve
       // substitutes stay single-use.
-      let released = false;
+      let released: boolean;
       try {
         const ownerSaved = readSaved(reserveOwner);
         released =
@@ -345,23 +389,33 @@ export function nativeVoice(
       } catch {
         released = false;
       }
-      if (!released) return false;
+      if (!released) {
+        return false;
+      }
     }
     if (reserveOwner === logical) {
       const saved = readSaved(logical);
-      if (saved === undefined) return true;
-      if (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback) return true;
+      if (saved === undefined) {
+        return true;
+      }
+      if (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback) {
+        return true;
+      }
       // A saved failed outcome with a durable cliOnly marker may retake, which
       // also resumes an interrupted native reservation for its owner. A lost
       // marker fails closed to no-retake.
-      if (saved.state === 'failed' && (saved as { cliOnly?: true }).cliOnly === true) return true;
+      if (saved.state === 'failed' && (saved as { cliOnly?: true }).cliOnly === true) {
+        return true;
+      }
       return false;
     }
     return true;
   };
 
   const reserveAllowed = (logical: string, cls: FailureClass): boolean => {
-    if (failureDisposition(cls) === 'terminal-run') return false;
+    if (failureDisposition(cls) === 'terminal-run') {
+      return false;
+    }
     return reserveAvailableFor(logical);
   };
 
@@ -369,7 +423,9 @@ export function nativeVoice(
   // reserve keeps the failed outcome, so routing matches that gate instead
   // of advertising a reserve that can never launch.
   const reserveLaunchable = (logical: string, cls: FailureClass): boolean => {
-    if (!reserveAllowed(logical, cls) || firstReserve === undefined) return false;
+    if (!reserveAllowed(logical, cls) || firstReserve === undefined) {
+      return false;
+    }
     return !(firstReserve.native && !isCurrentHost(firstReserve.provider));
   };
 
@@ -382,7 +438,9 @@ export function nativeVoice(
     const baseText = baseTextOf(logical);
     const baseFile = basePathOf(logical.slot);
     try {
-      if (!fs.existsSync(baseFile)) fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+      if (!fs.existsSync(baseFile)) {
+        fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
+      }
     } catch {
       fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
     }
@@ -404,10 +462,7 @@ export function nativeVoice(
   // BEFORE substitution (missing physical fails closed on saved evidence,
   // no CLI under the wrong voice) and the exact BLOCKED report marker in
   // every report and replay path.
-  const routeForNative = (saved: {
-    attempt: string;
-    provider: string;
-  }): { physical: RosterSlot | undefined; routeOk: boolean; first: boolean } => {
+  const routeForNative = (saved: { attempt: string; provider: string }) => {
     const physicalSlot = saved.attempt.split('#')[0] ?? '';
     const physical = all.find((entry) => entry.slot === physicalSlot);
     const first = isNativeFirstProvider(physical?.provider ?? saved.provider, nativeFirstProviders);
@@ -423,10 +478,14 @@ export function nativeVoice(
     failed: SlotOutcome,
     promptPath: string,
   ): Promise<SlotOutcome | undefined> => {
-    if (!firstReserve) return undefined;
+    if (!firstReserve) {
+      return undefined;
+    }
     const first = isNativeFirstProvider(firstReserve.provider, nativeFirstProviders);
     if (firstReserve.native) {
-      if (!isCurrentHost(firstReserve.provider)) return undefined;
+      if (!isCurrentHost(firstReserve.provider)) {
+        return undefined;
+      }
       claimReserve(logical.slot);
       return createNativeOnlyReserve(logical, firstReserve, failed);
     }
@@ -444,10 +503,10 @@ export function nativeVoice(
       kind: 'slot',
       state: substitute.state,
       targetSlot: logical.slot,
-      ...(substitute.state === 'failed' ? { cls: substitute.cls } : {}),
+      ...(substitute.state === 'failed' && { cls: substitute.cls }),
     });
     const blocked = mergeBlocked(failed.blocked, substitute.blocked);
-    return { ...substitute, slot: logical.slot, ...(blocked.length ? { blocked } : {}) } as SlotOutcome;
+    return { ...substitute, slot: logical.slot, ...(blocked.length && { blocked }) };
   };
   const takeReserveWithFreshPrompt = (slot: RosterSlot, failed: SlotOutcome): Promise<SlotOutcome | undefined> => {
     const baseFile = basePathOf(slot.slot);
@@ -474,11 +533,13 @@ export function nativeVoice(
       state: 'failed',
       cls,
       reason: cls + ': ' + sanitized,
-      ...(blocked?.length ? { blocked } : {}),
+      ...(blocked?.length && { blocked }),
     };
     if (canSubstitute && reserveAllowed(slot.slot, failed.cls)) {
       const launched = await takeReserveWithFreshPrompt(slot, failed);
-      if (launched) return launched.state === 'native' ? launched : saveLogical(slot, launched);
+      if (launched) {
+        return launched.state === 'native' ? launched : saveLogical(slot, launched);
+      }
     }
     return saveLogical(slot, failed);
   };
@@ -500,9 +561,9 @@ export function nativeVoice(
         provider: native.provider,
         model: firstModelOf(native),
         native: true,
-        ...(native.effort !== undefined ? { effort: native.effort } : {}),
+        ...(native.effort !== undefined && { effort: native.effort }),
       },
-      ...(native.blocked?.length ? { blocked: native.blocked } : {}),
+      ...(native.blocked?.length && { blocked: native.blocked }),
     };
     atomic(fileOfLogical(slot.slot), done);
     return done;
@@ -526,7 +587,9 @@ export function nativeVoice(
       reason: 'blocked: ' + entry.reason,
       blocked,
     };
-    if (native.attempt.split('#')[0] !== slot.slot || !reserveAllowed(slot.slot, failed.cls)) return { failed };
+    if (native.attempt.split('#')[0] !== slot.slot || !reserveAllowed(slot.slot, failed.cls)) {
+      return { failed };
+    }
     return { failed, reserve: takeReserveWithFreshPrompt(slot, failed) };
   };
 

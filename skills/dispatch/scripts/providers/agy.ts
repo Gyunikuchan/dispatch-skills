@@ -2,6 +2,8 @@
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
 import path from 'node:path';
+import { isRecord } from '../lib/config.ts';
+import type { JsonObject } from '../lib/integrity.ts';
 import { AGY_ENVELOPE_USAGE, agyUsage, normalizeAgyModelEffort } from '../lib/usage/agy.ts';
 import { sessionUsageReader } from './session-usage.ts';
 import { classifyFailure, failOutcome } from './response.ts';
@@ -24,22 +26,26 @@ function usageAppDataDir(context: ProviderUsageContext | undefined): string | un
 
 const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
 
-const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
+const join = (env: PlatformEnv, ...parts: Array<string>): string => parts.join(env.os === 'win32' ? '\\' : '/');
 const dirname = (file: string): string => file.replace(/[/\\][^/\\]*$/, '') || file;
 
 function parseEnvelope(stdout: string): { conversationId: string | null; text: string | null } | null {
   const start = stdout.indexOf('{');
-  if (start === -1) return null;
+  if (start === -1) {
+    return null;
+  }
   let value: unknown;
   try {
     value = JSON.parse(stdout.slice(start));
   } catch {
     return null;
   }
-  if (typeof value !== 'object' || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const nested = record['conversation'] as { id?: unknown } | undefined;
-  const id = record['conversationId'] ?? record['conversation_id'] ?? nested?.id;
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const record: JsonObject = isRecord(value) ? value : {};
+  const nested = record['conversation'];
+  const id = record['conversationId'] ?? record['conversation_id'] ?? (isRecord(nested) ? nested['id'] : undefined);
   const text = record['response'] ?? record['result'] ?? record['text'] ?? record['output'];
   return { conversationId: typeof id === 'string' && id ? id : null, text: typeof text === 'string' ? text : null };
 }
@@ -93,9 +99,9 @@ export const agy: ProviderSpec = {
   usage(raw, context) {
     const appDataDir = usageAppDataDir(context);
     return agyUsage(raw, {
-      ...(appDataDir ? { appDataDir } : {}),
-      ...(context?.readSqliteGenMetadata ? { readSqliteGenMetadata: context.readSqliteGenMetadata } : {}),
-      ...(context?.transcripts?.budget ? { budget: context.transcripts.budget } : {}),
+      ...(appDataDir && { appDataDir }),
+      ...(context?.readSqliteGenMetadata && { readSqliteGenMetadata: context.readSqliteGenMetadata }),
+      ...(context?.transcripts?.budget && { budget: context.transcripts.budget }),
     });
   },
   sessionUsage: sessionUsageReader(
@@ -112,10 +118,18 @@ export const agy: ProviderSpec = {
   argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));
     const argv = [req.binary, '--print', req.prompt, '--output-format', 'json', `--print-timeout=${seconds}s`];
-    if (req.briefFile) argv.push('--add-dir', dirname(req.briefFile));
-    if (req.model) argv.push('--model', req.model);
-    if (req.effort) argv.push('--effort', req.effort);
-    if (req.resume) argv.push('--conversation', req.resume);
+    if (req.briefFile) {
+      argv.push('--add-dir', dirname(req.briefFile));
+    }
+    if (req.model) {
+      argv.push('--model', req.model);
+    }
+    if (req.effort) {
+      argv.push('--effort', req.effort);
+    }
+    if (req.resume) {
+      argv.push('--conversation', req.resume);
+    }
     argv.push('--mode', 'plan', '--dangerously-skip-permissions');
     return { argv, stdin: null, env: { JETSKI_APP_DATA_DIR: AGY_MODE_PROFILES[mode] }, cwd: req.cwd };
   },

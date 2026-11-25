@@ -1,4 +1,10 @@
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import { cleanupBinding, latestCleanup, criterionStatuses, eligibility } from './evidence.ts';
+import type { CriterionStatus } from './evidence.ts';
+import { isRecord } from '../lib/config.ts';
+import type { JsonObject } from '../lib/config.ts';
+import { isLevel, present, textValue } from './narrow.ts';
+import type { ParsedPlan } from './domain/types.ts';
 import {
   containedSessionPath,
   currentHashes,
@@ -8,8 +14,8 @@ import {
   hasCleanupCheckpoint,
   latest,
   levelGate,
-  type Fold,
 } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CliDeps, HandlerContext } from './cli.ts';
@@ -18,7 +24,8 @@ import { checks } from './plan-view.ts';
 import { writerStates } from './writers.ts';
 import { integrationEnded, integrationRecord } from './integration-state.ts';
 import { gitOk, headTree, testedTree } from './git.ts';
-import { admission, type ReviewBudget } from './findings.ts';
+import { admission } from './findings.ts';
+import type { ReviewBudget } from './findings.ts';
 import { contentReports, closingNotesFor, rerunNotesFor, rerunCoverSeq, coversReport } from './findings.ts';
 import type { FindingsValue } from './findings.ts';
 import { applicableReviewIds } from './confirmations.ts';
@@ -36,18 +43,38 @@ import {
   reviewPointer,
   sameReviewCapture,
   reviewRulingSnapshot,
-  type RecoverySelection,
-  type Round,
   reviewRoundEntries,
   reviewRoundNumber,
 } from './review-state.ts';
+import type { RecoverySelection, Round } from './review-state.ts';
 import { reviewIdentity } from './review-identity.ts';
-import { parsePinsFlag, type SlotOutcome } from './fanout.ts';
+import { parsePinsFlag } from './fanout.ts';
+import type { SlotOutcome } from './fanout.ts';
 import type { FanoutState } from './fanout/state.ts';
-import { LEVELS } from './types.ts';
 import { ToolError } from './output.ts';
 import { loadRejections } from './confirmations.ts';
 import { effectiveSeverity } from './domain/severity.ts';
+
+type RoundMeta = { startSeq: number; roster: Array<string>; scope?: string; coverage?: unknown };
+type Unavailable = { state: string; reason: string };
+type IntegrationView = {
+  source: unknown;
+  to: null;
+  path: unknown;
+  branch: unknown;
+  head: string | null;
+  state: string;
+  pendingConflict: unknown;
+  undelivered: boolean;
+  closed: boolean;
+};
+type StatusSections = {
+  writers: ReturnType<typeof writerStates> | Unavailable;
+  integration: IntegrationView | null;
+  criteria: Array<string> | Unavailable;
+  criterionStatuses: Array<CriterionStatus>;
+};
+type CleanupView = { from: unknown; trees: unknown; removed: unknown; deleted: unknown; merged: unknown };
 
 export async function statusReport(
   session: string,
@@ -55,26 +82,30 @@ export async function statusReport(
   deps: CliDeps,
   fold: Fold = foldLedger(session),
 ) {
-  const level = latest(fold, 'level')?.data['level'] ?? 'medium';
+  const level = textValue(latest(fold, 'level')?.data['level'] ?? 'medium');
   const bound = latest(fold, 'bind')?.data ?? {};
   const current = currentHashes(repositoryRoot, bound);
-  const escalations = new Map<string, Record<string, unknown>>();
+  const escalations = new Map<string, JsonObject>();
   for (const record of fold.records) {
-    if (record.kind === 'escalation') escalations.set(record.data['id'], record.data);
+    if (record.kind === 'escalation') {
+      escalations.set(textValue(record.data['id']), record.data);
+    }
   }
   // Advisory and recomputed from the latest ledger by the launch admission policy; it opens and grants nothing.
   const root = reviewRoot(session),
     reviews: Record<string, ReviewBudget> = {};
-  const openRepositoryChanges: {
+  const openRepositoryChanges: Array<{
     review: string;
     round: number;
     reportSeq: number;
     repositoryChanges?: unknown;
     repositoryCheck?: unknown;
     rerunPending?: true;
-  }[] = [];
+  }> = [];
   for (const entry of fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : []) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory()) {
+      continue;
+    }
     const review = entry.name;
     const { budget, rounds } = admission(
       session,
@@ -83,30 +114,31 @@ export async function statusReport(
       0,
       applicableReviewIds(readManifest(session), fold).get(review),
     );
-    if (rounds) reviews[review] = budget;
+    if (rounds) {
+      reviews[review] = budget;
+    }
     const reviewDir = path.join(root, review);
-    let roundDirs: string[] = [];
+    let roundDirs: Array<string>;
     try {
       roundDirs = fs.readdirSync(reviewDir);
     } catch {
       continue;
     }
-    const readRoundMeta = (
-      round: number,
-    ): { startSeq: number; roster: string[]; scope?: string; coverage?: 'open' | 'full' } | undefined => {
+    const readRoundMeta = (round: number): RoundMeta | undefined => {
       try {
-        const meta = JSON.parse(fs.readFileSync(reviewRoundFile(reviewRoundDirectory(reviewDir, round)), 'utf8')) as {
-          startSeq?: number;
-          roster?: { slot: string; reserve?: boolean }[];
-          scope?: string;
-          coverage?: 'open' | 'full';
-        };
-        if (typeof meta.startSeq !== 'number' || !Array.isArray(meta.roster)) return undefined;
+        const meta: unknown = JSON.parse(
+          fs.readFileSync(reviewRoundFile(reviewRoundDirectory(reviewDir, round)), 'utf8'),
+        );
+        if (!isRecord(meta) || typeof meta['startSeq'] !== 'number' || !Array.isArray(meta['roster'])) {
+          return undefined;
+        }
         return {
-          startSeq: meta.startSeq,
-          roster: meta.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
-          ...(typeof meta.scope === 'string' ? { scope: meta.scope } : {}),
-          ...(meta.coverage !== undefined ? { coverage: meta.coverage } : {}),
+          startSeq: meta['startSeq'],
+          roster: meta['roster'].flatMap((slot) =>
+            isRecord(slot) && !slot['reserve'] ? [textValue(slot['slot'])] : [],
+          ),
+          ...(typeof meta['scope'] === 'string' && { scope: meta['scope'] }),
+          ...(meta['coverage'] !== undefined && { coverage: meta['coverage'] }),
         };
       } catch {
         return undefined;
@@ -114,18 +146,25 @@ export async function statusReport(
     };
     for (const roundName of roundDirs) {
       const round = reviewRoundNumber(roundName);
-      if (round === undefined) continue;
+      if (round === undefined) {
+        continue;
+      }
       // Every content report carries its own identity; covered reports drop
       // out before the merge, so one map accumulates every unacknowledged
       // attempt and generation together with the finalized findings report.
       const contents = contentReports(session, review, round);
-      if (!contents.length) continue;
+      if (!contents.length) {
+        continue;
+      }
       const covered = (seq: number): boolean =>
         closingNotesFor(fold, review, round).some((note) => coversReport(note, seq));
       const satisfiedFor = (seq: number): boolean => {
-        if (!rerunNotesFor(fold, review, round).some((note) => rerunCoverSeq(session, review, round, note) === seq))
+        if (!rerunNotesFor(fold, review, round).some((note) => rerunCoverSeq(session, review, round, note) === seq)) {
           return false;
-        if (!fs.existsSync(reviewFindingsFile(reviewRoundDirectory(reviewDir, round + 1)))) return false;
+        }
+        if (!fs.existsSync(reviewFindingsFile(reviewRoundDirectory(reviewDir, round + 1)))) {
+          return false;
+        }
         const opened = readRoundMeta(round + 1);
         const required = readRoundMeta(round)?.roster;
         const wholeTarget = opened?.scope?.startsWith('Full review') === true || opened?.coverage !== undefined;
@@ -142,20 +181,34 @@ export async function statusReport(
           required.every((target) => opened.roster.includes(target))
         );
       };
-      let uncovered = contents.filter((report) => !covered(report.seq) && !satisfiedFor(report.seq));
-      if (!uncovered.length) continue;
+      const uncovered = contents.filter((report) => !covered(report.seq) && !satisfiedFor(report.seq));
+      if (!uncovered.length) {
+        continue;
+      }
       const pathsByCwd = new Map<string, Set<string>>();
       for (const report of uncovered) {
-        if (!Array.isArray(report.repositoryChanges)) continue;
-        for (const change of report.repositoryChanges as { cwd?: unknown; paths?: unknown }[]) {
-          if (typeof change?.cwd !== 'string' || !Array.isArray(change?.paths)) continue;
+        if (!Array.isArray(report.repositoryChanges)) {
+          continue;
+        }
+        for (const change of report.repositoryChanges as Array<{ cwd?: unknown; paths?: unknown }>) {
+          if (typeof change?.cwd !== 'string' || !Array.isArray(change?.paths)) {
+            continue;
+          }
           const paths = pathsByCwd.get(change.cwd) ?? new Set<string>();
-          for (const file of change.paths) if (typeof file === 'string') paths.add(file);
+          for (const file of change.paths) {
+            if (typeof file === 'string') {
+              paths.add(file);
+            }
+          }
           pathsByCwd.set(change.cwd, paths);
         }
       }
       let check: unknown;
-      for (const report of uncovered) if (report.repositoryCheck) check = report.repositoryCheck;
+      for (const report of uncovered) {
+        if (report.repositoryCheck) {
+          check = report.repositoryCheck;
+        }
+      }
       const reportSeq = Math.max(...uncovered.map((report) => report.seq));
       // A rerun decision binds only its covered report, and only while round
       // r+1 is unfinalized: past that window the report stays open for a
@@ -169,10 +222,10 @@ export async function statusReport(
         review,
         round,
         reportSeq,
-        ...(pathsByCwd.size
-          ? { repositoryChanges: [...pathsByCwd].map(([cwd, paths]) => ({ cwd, paths: [...paths].sort() })) }
-          : {}),
-        ...(check ? { repositoryCheck: check } : {}),
+        ...(pathsByCwd.size && {
+          repositoryChanges: [...pathsByCwd].map(([cwd, paths]) => ({ cwd, paths: [...paths].sort() })),
+        }),
+        ...(Boolean(check) && { repositoryCheck: check }),
         ...rerunPending,
       });
     }
@@ -180,18 +233,22 @@ export async function statusReport(
   openRepositoryChanges.sort((left, right) =>
     left.review < right.review ? -1 : left.review > right.review ? 1 : left.round - right.round,
   );
-  let sections: object = {};
+  let sections: StatusSections | undefined;
   const opened = integrationRecord(fold);
   if (opened || fold.records.some((record) => record.kind === 'writer')) {
-    let plan: import('./domain/types.ts').ParsedPlan | undefined;
+    let plan: ParsedPlan | undefined;
     let reason = 'No bound plan';
     if (bound['plan']) {
       try {
-        const parsed = parsePlan(fs.readFileSync(path.resolve(repositoryRoot, bound['plan']), 'utf8'));
-        if (parsed.ok) plan = parsed.plan;
-        else reason = JSON.stringify(parsed.defects);
+        const planPath = path.resolve(repositoryRoot, textValue(bound['plan']));
+        const parsed = parsePlan(fs.readFileSync(planPath, 'utf8'));
+        if (parsed.ok) {
+          plan = parsed.plan;
+        } else {
+          reason = JSON.stringify(parsed.defects);
+        }
       } catch (error) {
-        reason = 'Bound plan unreadable: ' + (error as Error).message;
+        reason = 'Bound plan unreadable: ' + (error instanceof Error ? error.message : String(error));
       }
     }
     const unavailable = { state: 'unavailable', reason };
@@ -199,8 +256,10 @@ export async function statusReport(
     for (const record of (plan ? fold.records : []).filter(
       (record) => record.kind === 'writer' && record.data['phase'] === 'launched',
     )) {
-      const relative = record.data['path'] as string;
-      if (observations.has(relative)) continue;
+      const relative = textValue(record.data['path']);
+      if (observations.has(relative)) {
+        continue;
+      }
       const cwd = path.resolve(session, relative);
       const exists = fs.existsSync(cwd);
       observations.set(relative, {
@@ -213,23 +272,25 @@ export async function statusReport(
       ? writerStates(
           fold,
           plan.tasks.map((task) => task.id),
-          (relative) => observations.get(relative)!,
+          (relative) => present(observations.get(relative), 'the observed writer worktree'),
         )
       : unavailable;
-    let integration: object | null = null;
-    let evidenceStatuses: import('./evidence.ts').CriterionStatus[] = [];
-    let criteria: string[] | typeof unavailable = plan ? checks(plan).map((check) => check.criterion) : unavailable;
+    let integration: IntegrationView | null = null;
+    let evidenceStatuses: Array<CriterionStatus> = [];
+    let criteria: Array<string> | typeof unavailable = plan
+      ? checks(plan).map((check) => check.criterion)
+      : unavailable;
     if (opened) {
-      const cwd = path.resolve(session, opened.data['path']);
+      const cwd = path.resolve(session, textValue(opened.data['path']));
       const exists = fs.existsSync(cwd);
       const head = exists ? await gitOk(deps, cwd, ['rev-parse', 'HEAD']) : null;
       const started = fold.records.findLast(
         (record) => record.kind === 'integrate' && record.data['phase'] === 'started',
       );
-      const pending = started && !integrationEnded(fold, started.data['task'], started.seq);
+      const pending = started && !integrationEnded(fold, textValue(started.data['task']), started.seq);
       const conflict = pending
         ? (fold.records.findLast(
-            (record) => record.kind === 'integrate' && record.data['phase'] === 'conflict' && record.seq > started!.seq,
+            (record) => record.kind === 'integrate' && record.data['phase'] === 'conflict' && record.seq > started.seq,
           )?.data ?? null)
         : null;
       const delivered = fold.records.findLast(
@@ -264,7 +325,11 @@ export async function statusReport(
               (check) =>
                 evidenceStatuses.find(
                   (row) => row.criterion === check.criterion && cleanup?.removed.includes(check.criterion),
-                ) ?? kept.find((row) => row.criterion === check.criterion)!,
+                ) ??
+                present(
+                  kept.find((row) => row.criterion === check.criterion),
+                  'the criterion eligibility',
+                ),
             )
             .filter((row) => row.state !== 'verified')
             .map((row) => row.criterion);
@@ -285,8 +350,8 @@ export async function statusReport(
     reviews,
     recordCount: fold.records.length,
     tornTail: fold.torn !== null,
-    ...(openRepositoryChanges.length ? { openRepositoryChanges } : {}),
-    testCleanup: (() => {
+    ...(openRepositoryChanges.length && { openRepositoryChanges }),
+    testCleanup: ((): CleanupView | null => {
       const row = latestCleanup(fold);
       return row
         ? {
@@ -328,20 +393,81 @@ function existingRecoveryPath(
   try {
     fs.lstatSync(path.join(session, relative));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return undefined;
+    }
     throw error;
   }
   const file = containedSessionPath(session, relative);
   const info = fs.statSync(file);
-  if (Buffer.byteLength(JSON.stringify(relative)) > 512 || !(kind === 'directory' ? info.isDirectory() : info.isFile()))
+  if (
+    Buffer.byteLength(JSON.stringify(relative)) > 512 ||
+    !(kind === 'directory' ? info.isDirectory() : info.isFile())
+  ) {
     throw new Error('Invalid recovery pointer');
+  }
   return file;
 }
 
-function readOptional<T>(session: string, relative: string): T | undefined {
+// A saved file that fails its guard is unreadable state, which the caller's catch reports.
+function readOptional<T>(session: string, relative: string, guard: (value: unknown) => value is T): T | undefined {
   const file = existingRecoveryPath(session, relative);
-  return file ? (JSON.parse(fs.readFileSync(file, 'utf8')) as T) : undefined;
+  if (!file) {
+    return undefined;
+  }
+  const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!guard(value)) {
+    throw new Error('Invalid recovery state');
+  }
+  return value;
 }
+
+// SECTION: Recovery state guards
+const isRoundRecord = (value: unknown): value is Round => isRecord(value) && isRecord(value['spec']);
+
+const isSavedRound = (value: unknown): value is Round => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const { generation, cap, startSeq, spec, target, roster } = value;
+  return (
+    typeof generation === 'number' &&
+    Number.isSafeInteger(generation) &&
+    generation >= 1 &&
+    isLevel(value['level']) &&
+    typeof cap === 'number' &&
+    Number.isSafeInteger(cap) &&
+    cap >= 0 &&
+    typeof startSeq === 'number' &&
+    Number.isSafeInteger(startSeq) &&
+    startSeq >= 0 &&
+    typeof value['scope'] === 'string' &&
+    isRecord(spec) &&
+    typeof spec['hash'] === 'string' &&
+    typeof spec['path'] === 'string' &&
+    isRecord(target) &&
+    gitObjectId(target['base']) &&
+    gitObjectId(target['head']) &&
+    Array.isArray(roster) &&
+    roster.length > 0 &&
+    roster.every(
+      (slot) => isRecord(slot) && typeof slot['slot'] === 'string' && /^[A-Za-z0-9_-]+\[\d+\]$/.test(slot['slot']),
+    )
+  );
+};
+
+const isFindingsValue = (value: unknown): value is FindingsValue =>
+  isRecord(value) &&
+  Array.isArray(value['findings']) &&
+  Array.isArray(value['failed']) &&
+  value['findings'].every((finding) => isRecord(finding) && typeof finding['id'] === 'string');
+
+const isSlotOutcome = (value: unknown): value is SlotOutcome =>
+  isRecord(value) &&
+  typeof value['slot'] === 'string' &&
+  (value['state'] === 'native' || value['state'] === 'done' || value['state'] === 'failed');
+
+const isFanoutState = (value: unknown): value is FanoutState => isRecord(value);
 
 export async function resumeStatus(
   ctx: HandlerContext,
@@ -355,27 +481,40 @@ export async function resumeStatus(
     fields: Pick<ResumeView, 'round' | 'evidence'> = {},
     recoverySelection?: RecoverySelection,
   ) => ({
-    value: { next, reason, ...fields, ...(cleanup ? { cleanup } : {}) },
-    ...(recoverySelection ? { recoverySelection } : {}),
-    ...(postFold ? { postFold } : {}),
+    value: { next, reason, ...fields, ...(cleanup && { cleanup }) },
+    ...(recoverySelection && { recoverySelection }),
+    ...(postFold && { postFold }),
   });
   try {
     // A missing ledger cannot support recovery, even though an empty fold is useful to other callers.
     containedSessionPath(session, 'ledger.jsonl');
     const fold = (postFold = foldLedger(session));
-    if (fold.torn) return result('inspect', 'state-unreadable');
+    if (fold.torn) {
+      return result('inspect', 'state-unreadable');
+    }
     const opened = integrationRecord(fold);
-    if (!opened) return result('inspect', 'outside-review');
+    if (!opened) {
+      return result('inspect', 'outside-review');
+    }
     cleanup = 'unbound';
     const delivered = fold.records.some(
-      (row) => row.seq > opened.seq && row.kind === 'integrate' && ['closed', 'delivered'].includes(row.data['phase']),
+      (row) =>
+        row.seq > opened.seq &&
+        row.kind === 'integrate' &&
+        (row.data['phase'] === 'closed' || row.data['phase'] === 'delivered'),
     );
-    if (delivered) return result('inspect', 'outside-review');
-    const cwd = containedSessionPath(session, opened.data['path']);
+    if (delivered) {
+      return result('inspect', 'outside-review');
+    }
+    const cwd = containedSessionPath(session, textValue(opened.data['path']));
     const head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
     const base: unknown = opened.data['base'];
-    if (!gitObjectId(head) || !gitObjectId(base)) return result('inspect', 'state-unreadable');
-    if (await hasCleanupCheckpoint(session, fold, deps, cwd, head)) cleanup = 'checkpoint';
+    if (!gitObjectId(head) || !gitObjectId(base)) {
+      return result('inspect', 'state-unreadable');
+    }
+    if (await hasCleanupCheckpoint(session, fold, deps, cwd, head)) {
+      cleanup = 'checkpoint';
+    }
 
     const reviewDir = reviewDirectory(session, REVIEW);
     const directory = existingRecoveryPath(session, reviewPointer(session, reviewDir), 'directory');
@@ -389,44 +528,17 @@ export async function resumeStatus(
     }
     const roundDir = reviewRoundDirectory(reviewDir, last);
     const round = reviewPointer(session, reviewRoundFile(roundDir));
-    const saved = readOptional<Round>(session, round);
-    if (
-      !saved ||
-      !Number.isSafeInteger(last) ||
-      saved.round !== last ||
-      !Number.isSafeInteger(saved.generation) ||
-      saved.generation < 1 ||
-      !LEVELS.includes(saved.level) ||
-      !Number.isSafeInteger(saved.cap) ||
-      saved.cap < 0 ||
-      !Number.isSafeInteger(saved.startSeq) ||
-      saved.startSeq < 0 ||
-      typeof saved.scope !== 'string' ||
-      !saved.spec ||
-      typeof saved.spec.hash !== 'string' ||
-      typeof saved.spec.path !== 'string' ||
-      typeof saved.target !== 'object' ||
-      !saved.target ||
-      !gitObjectId(saved.target.base) ||
-      !gitObjectId(saved.target.head) ||
-      !Array.isArray(saved.roster) ||
-      !saved.roster.length ||
-      saved.roster.some((slot) => !slot || typeof slot.slot !== 'string' || !/^[A-Za-z0-9_-]+\[\d+\]$/.test(slot.slot))
-    )
+    const saved = readOptional(session, round, isSavedRound);
+    if (!saved || !Number.isSafeInteger(last) || saved.round !== last) {
       return result('inspect', 'state-unreadable');
+    }
     const legacy = !Object.hasOwn(saved, 'pins');
-    if (!legacy && saved.pins !== null && typeof saved.pins !== 'string') return result('inspect', 'state-unreadable');
+    if (!legacy && saved.pins !== null && typeof saved.pins !== 'string') {
+      return result('inspect', 'state-unreadable');
+    }
     parsePinsFlag(saved.pins);
     const evidence = reviewPointer(session, reviewFindingsFile(roundDir));
-    const findings = readOptional<FindingsValue>(session, evidence);
-    if (
-      findings !== undefined &&
-      (!findings ||
-        !Array.isArray(findings.findings) ||
-        !Array.isArray(findings.failed) ||
-        findings.findings.some((finding) => typeof finding?.id !== 'string'))
-    )
-      return result('inspect', 'state-unreadable');
+    const findings = readOptional(session, evidence, isFindingsValue);
 
     const bind = latest(fold, 'bind');
     const current = currentHashes(manifest.repositoryRoot, bind);
@@ -436,28 +548,35 @@ export async function resumeStatus(
       !current.spec ||
       !gate(fold, current).allowed ||
       !levelGate(fold, saved.level).allowed
-    )
+    ) {
       return result('inspect', 'gate-blocked');
+    }
     const applies = applicableReviewIds(manifest, fold).get(REVIEW);
     const { budget } = admission(session, fold, REVIEW, saved.cap, applies);
-    if (budget.coverage?.state === 'unreadable') return result('inspect', 'state-unreadable');
+    if (budget.coverage?.state === 'unreadable') {
+      return result('inspect', 'state-unreadable');
+    }
     const rejections = loadRejections(session, fold, [REVIEW]);
-    if (rejections.some((state) => state.state === 'escalated') || budget.state === 'escalation-open')
+    if (rejections.some((state) => state.state === 'escalated') || budget.state === 'escalation-open') {
       return result('inspect', 'gate-blocked');
+    }
     const target = { base, head };
     const capture = await captureReviewTarget(ctx, 'code', 'integration', 'integration', false, false);
-    if (JSON.stringify(capture.target) !== JSON.stringify(target)) return result('inspect', 'state-unreadable');
+    if (JSON.stringify(capture.target) !== JSON.stringify(target)) {
+      return result('inspect', 'state-unreadable');
+    }
     const prior = numbers
       .filter((n) => n < last)
       .flatMap((n) => {
         const priorRoundDir = reviewRoundDirectory(reviewDir, n);
         const pointer = reviewPointer(session, reviewFindingsFile(priorRoundDir));
-        const value = readOptional<FindingsValue>(session, pointer);
-        const metadata = value && readOptional<Round>(session, reviewPointer(session, reviewRoundFile(priorRoundDir)));
+        const value = readOptional(session, pointer, isFindingsValue);
+        const metadata =
+          value && readOptional(session, reviewPointer(session, reviewRoundFile(priorRoundDir)), isRoundRecord);
         return value && metadata ? [{ value, metadata, pointer }] : [];
       });
     const rulingRows = fold.records.filter(
-      (row) => row.kind === 'ruling' && row.data['subject'].startsWith('review:' + REVIEW + ':'),
+      (row) => row.kind === 'ruling' && textValue(row.data['subject']).startsWith('review:' + REVIEW + ':'),
     );
     const moved =
       !sameReviewCapture(saved, capture) ||
@@ -484,12 +603,17 @@ export async function resumeStatus(
       if (slotsDir) {
         const names = fs.readdirSync(slotsDir).sort();
         for (const name of names) {
-          if (!/^[A-Za-z0-9_-]+\[\d+\]\.json$/.test(name)) continue;
+          if (!/^[A-Za-z0-9_-]+\[\d+\]\.json$/.test(name)) {
+            continue;
+          }
           const pointer = slots + '/' + name;
-          const slot = readOptional<SlotOutcome>(session, pointer);
-          if (!slot || slot.slot !== name.slice(0, -5) || !['native', 'done', 'failed'].includes(slot.state))
+          const slot = readOptional(session, pointer, isSlotOutcome);
+          if (!slot || slot.slot !== name.slice(0, -5)) {
             return result('inspect', 'state-unreadable');
-          if (slot.state !== 'native' || slot.cliFallback) continue;
+          }
+          if (slot.state !== 'native' || slot.cliFallback) {
+            continue;
+          }
           const reply =
             typeof slot.replyPath === 'string' && path.isAbsolute(slot.replyPath)
               ? path.relative(session, slot.replyPath).split(path.sep).join('/')
@@ -506,11 +630,12 @@ export async function resumeStatus(
             physical.provider !== slot.provider ||
             (physical !== logical &&
               (physical !== saved.roster.find((entry) => entry.reserve) ||
-                readOptional<FanoutState>(session, generation + '/fanout.json')?.reserveUsedBy !== slot.slot)) ||
+                readOptional(session, generation + '/fanout.json', isFanoutState)?.reserveUsedBy !== slot.slot)) ||
             path.posix.dirname(reply) !== parent ||
             ![slot.slot + '.' + attempt[2] + '.md', slot.slot + '.md'].includes(path.posix.basename(reply))
-          )
+          ) {
             return result('inspect', 'state-unreadable');
+          }
           containedSessionPath(session, parent);
           existingRecoveryPath(session, reply);
           return result('inspect', 'native-pending', { round, evidence: pointer }, legacy ? undefined : selection());
@@ -518,8 +643,9 @@ export async function resumeStatus(
       }
     }
 
-    if ((!findings || moved) && legacy && budget.state === 'allowed')
+    if ((!findings || moved) && legacy && budget.state === 'allowed') {
       return result('inspect', 'arguments-unavailable', { round });
+    }
     const published = findings ? [...prior, { value: findings, metadata: saved, pointer: evidence }] : prior;
     const pending = published.findLast(
       ({ value, metadata }) =>
@@ -528,7 +654,9 @@ export async function resumeStatus(
         value.findings.some((finding) => {
           const history = rulingRows.filter((row) => row.data['subject'] === 'review:' + REVIEW + ':' + finding.id);
           const ruling = history.at(-1);
-          if (!ruling?.data['rationale']?.trim()) return true;
+          if (!ruling || !textValue(ruling.data['rationale'] ?? '').trim()) {
+            return true;
+          }
           return (
             metadata.round === last &&
             !moved &&
@@ -537,19 +665,27 @@ export async function resumeStatus(
           );
         }),
     );
-    if (pending) return result('adjudicate', 'findings-pending', { evidence: pending.pointer });
+    if (pending) {
+      return result('adjudicate', 'findings-pending', { evidence: pending.pointer });
+    }
 
     if (findings) {
       try {
         await reviewIdentity(ctx, fold, cwd, head, base);
         return result('continue', 'review-settled');
       } catch (error) {
-        if (!(error instanceof ToolError && error.reason === 'review-required')) throw error;
+        if (!(error instanceof ToolError && error.reason === 'review-required')) {
+          throw error;
+        }
       }
     }
 
-    if (budget.state !== 'allowed') return result('inspect', 'gate-blocked');
-    if (legacy) return result('inspect', 'arguments-unavailable', { round });
+    if (budget.state !== 'allowed') {
+      return result('inspect', 'gate-blocked');
+    }
+    if (legacy) {
+      return result('inspect', 'arguments-unavailable', { round });
+    }
     return result(
       'review',
       moved ? 'target-moved' : incomplete ? 'round-pending' : 'review-required',
@@ -557,8 +693,9 @@ export async function resumeStatus(
       selection(),
     );
   } catch (error) {
-    if (error instanceof ToolError && ['nothing-to-review', 'review-confirmation-required'].includes(error.reason))
+    if (error instanceof ToolError && ['nothing-to-review', 'review-confirmation-required'].includes(error.reason)) {
       return result('inspect', 'gate-blocked');
+    }
     return result('inspect', 'state-unreadable');
   }
 }

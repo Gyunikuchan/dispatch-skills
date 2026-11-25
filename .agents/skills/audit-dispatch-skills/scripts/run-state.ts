@@ -6,7 +6,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 // ============================================================================
 // SECTION: Types
@@ -35,7 +34,7 @@ export type ScopeRecord = {
   handle: string | null;
   budgets: Record<string, number>;
   resultPath: string | null;
-  gaps: string[];
+  gaps: Array<string>;
 };
 export type ProbeRecord = {
   lifecycle: ProbeLifecycle;
@@ -64,9 +63,10 @@ export type BaselineRecord = {
   status: 'pending' | 'complete';
   fingerprints: Record<string, string>;
   tests: { status: number | null; signal: string | null; error: string | null; totals: string; capture: string } | null;
-  gaps: string[];
+  gaps: Array<string>;
 };
 export type Relocation = { phase: 'staging' | 'failed' | 'published'; destination: string };
+export type Authority = { authoritative: string; uncertain: Array<string>; removeSource: boolean };
 export type RunManifest = {
   version: 1;
   runId: string;
@@ -85,7 +85,7 @@ export type RunManifest = {
 // SECTION: Configuration
 // ============================================================================
 
-export const DEFAULT_CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'config.json');
+export const DEFAULT_CONFIG_PATH = path.join(import.meta.dirname, '..', 'config.json');
 const LIMIT_KEYS = [
   'scopes',
   'scenariosPerVerb',
@@ -117,21 +117,40 @@ const PROBE_STATES = new Set<string>(['pending', 'running', 'complete', 'skipped
 const MANIFEST = 'manifest.json';
 
 export function loadAuditConfig(file: string = DEFAULT_CONFIG_PATH): AuditConfig {
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-  for (const key of Object.keys(raw))
-    if (key !== 'version' && key !== 'limits') throw new Error(`Audit config: unknown key ${key}`);
-  if (raw['version'] !== 1) throw new Error(`Audit config: unsupported version ${String(raw['version'])} (expected 1)`);
-  const limits = raw['limits'];
-  if (!limits || typeof limits !== 'object') throw new Error('Audit config: limits must be an object');
-  const entries = limits as Record<string, unknown>;
-  for (const key of Object.keys(entries)) if (!isLimit(key)) throw new Error(`Audit config: unknown limit ${key}`);
-  for (const key of LIMIT_KEYS) {
-    const value = entries[key];
-    if (value === undefined) throw new Error(`Audit config: missing limit ${key}`);
-    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0)
-      throw new Error(`Audit config: ${key} must be a positive safe integer`);
+  const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const document = new Map<string, unknown>(typeof raw === 'object' && raw !== null ? Object.entries(raw) : []);
+  for (const key of document.keys()) {
+    if (key !== 'version' && key !== 'limits') {
+      throw new Error(`Audit config: unknown key ${key}`);
+    }
   }
-  return { version: 1, limits: { ...(entries as Record<LimitName, number>) } };
+  if (document.get('version') !== 1) {
+    throw new Error(`Audit config: unsupported version ${String(document.get('version'))} (expected 1)`);
+  }
+  const limits = document.get('limits');
+  assertLimits(limits);
+  return { version: 1, limits: { ...limits } };
+}
+
+function assertLimits(limits: unknown): asserts limits is Record<LimitName, number> {
+  if (!limits || typeof limits !== 'object') {
+    throw new Error('Audit config: limits must be an object');
+  }
+  const entries = new Map<string, unknown>(Object.entries(limits));
+  for (const key of entries.keys()) {
+    if (!isLimit(key)) {
+      throw new Error(`Audit config: unknown limit ${key}`);
+    }
+  }
+  for (const key of LIMIT_KEYS) {
+    const value = entries.get(key);
+    if (value === undefined) {
+      throw new Error(`Audit config: missing limit ${key}`);
+    }
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`Audit config: ${key} must be a positive safe integer`);
+    }
+  }
 }
 
 // ============================================================================
@@ -147,10 +166,13 @@ export function reserveRun(
   try {
     // Non-recursive mkdir is the exclusive reservation: a second run with the same id fails here.
     io.mkdirSync(workDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  } catch (error) {
+    if (errorCode(error) !== 'EEXIST') {
+      throw error;
+    }
     throw new Error(
       `Run ${options.runId} is already reserved at ${workDir}; pass a new --run id, or --resume to continue it.`,
+      { cause: error },
     );
   }
   const manifest: RunManifest = {
@@ -180,9 +202,8 @@ export function readRun(workDir: string, options: { revision?: string } = {}, io
     }
     throw new Error(`No audit run reserved at ${workDir}.`);
   }
-  const manifest = JSON.parse(String(io.readFileSync(file, 'utf8'))) as RunManifest;
-  if (manifest.version !== 1)
-    throw new Error(`Unsupported run manifest version ${String(manifest.version)} in ${file}`);
+  const manifest: unknown = JSON.parse(String(io.readFileSync(file, 'utf8')));
+  assertManifest(manifest, file);
   if (options.revision !== undefined && options.revision !== manifest.revision) {
     throw new Error(
       `stale run: manifest revision ${manifest.revision} differs from current ${options.revision}; start a fresh run.`,
@@ -214,7 +235,9 @@ export function consumeBudget(
   limit: string,
   io: RunIo = fs,
 ): { allowed: boolean; used: number; limit: number } {
-  if (!isLimit(limit)) throw new Error(`unknown limit ${limit}`);
+  if (!isLimit(limit)) {
+    throw new Error(`unknown limit ${limit}`);
+  }
   let result = { allowed: false, used: 0, limit: 0 };
   // The check runs inside the locked update, so two consumers cannot both take the last unit.
   updateRun(
@@ -223,7 +246,9 @@ export function consumeBudget(
       const max = m.settings.limits[limit];
       const used = m.budgets[owner]?.[limit] ?? 0;
       result = used >= max ? { allowed: false, used, limit: max } : { allowed: true, used: used + 1, limit: max };
-      if (result.allowed) m.budgets[owner] = { ...m.budgets[owner], [limit]: used + 1 };
+      if (result.allowed) {
+        m.budgets[owner] = { ...m.budgets[owner], [limit]: used + 1 };
+      }
     },
     io,
   );
@@ -235,7 +260,7 @@ export function resolveAuthority(
   source: string,
   relocation: Relocation | null,
   exists: (p: string) => boolean = fs.existsSync,
-): { authoritative: string; uncertain: string[]; removeSource: boolean } {
+): Authority {
   if (relocation?.phase === 'published' && exists(relocation.destination)) {
     return { authoritative: relocation.destination, uncertain: [], removeSource: exists(source) };
   }
@@ -249,16 +274,31 @@ export function resolveAuthority(
 // ============================================================================
 
 function isLimit(key: string): key is LimitName {
-  return (LIMIT_KEYS as readonly string[]).includes(key);
+  return (LIMIT_KEYS as ReadonlyArray<string>).includes(key);
 }
 
+// The audit scripts are the only manifest writers, so a read checks the schema version alone.
+function assertManifest(value: unknown, file: string): asserts value is RunManifest {
+  const version = typeof value === 'object' && value !== null && 'version' in value ? value.version : undefined;
+  if (version !== 1) {
+    throw new Error(`Unsupported run manifest version ${String(version)} in ${file}`);
+  }
+}
+
+const errorCode = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+
 function validate(before: RunManifest, next: RunManifest): void {
-  for (const [id, scope] of Object.entries(next.scopes))
-    if (!SCOPE_STATES.has(scope.lifecycle))
+  for (const [id, scope] of Object.entries(next.scopes)) {
+    if (!SCOPE_STATES.has(scope.lifecycle)) {
       throw new Error(`scope ${id}: invalid lifecycle ${String(scope.lifecycle)}`);
-  for (const [id, probe] of Object.entries(next.probes))
-    if (!PROBE_STATES.has(probe.lifecycle))
+    }
+  }
+  for (const [id, probe] of Object.entries(next.probes)) {
+    if (!PROBE_STATES.has(probe.lifecycle)) {
       throw new Error(`probe ${id}: invalid lifecycle ${String(probe.lifecycle)}`);
+    }
+  }
   if (before.baseline.status === 'complete' && JSON.stringify(before.baseline) !== JSON.stringify(next.baseline)) {
     throw new Error('A completed baseline is immutable; start a fresh run to re-baseline.');
   }
@@ -281,18 +321,24 @@ function withLock<T>(workDir: string, io: RunIo, options: LockOptions, body: () 
         flag: 'wx',
       });
       break;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    } catch (error) {
+      if (errorCode(error) !== 'EEXIST') {
+        throw error;
+      }
       const age = lockAge(file, io, clock);
-      if (age === Number.POSITIVE_INFINITY) continue;
+      if (age === Number.POSITIVE_INFINITY) {
+        continue;
+      }
       if (age > staleMs) {
         io.rmSync(file, { force: true });
         continue;
       }
-      if (attempt >= retries)
+      if (attempt >= retries) {
         throw new Error(
           `run manifest is locked by another writer (${file}); retry, or remove the lock if no audit process is running.`,
+          { cause: error },
         );
+      }
       sleep(retryMs);
     }
   }
@@ -307,13 +353,16 @@ function lockAge(file: string, io: RunIo, clock: Clock): number {
   let text: string;
   try {
     text = String(io.readFileSync(file, 'utf8'));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return Number.POSITIVE_INFINITY; // released meanwhile
-    throw err;
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') {
+      return Number.POSITIVE_INFINITY;
+    } // released meanwhile
+    throw error;
   }
   // NOTE: an unparsable lock may be mid-create by a live writer, so it counts as fresh; the retry bound still ends the wait.
   try {
-    const at = (JSON.parse(text) as { at?: unknown }).at;
+    const lock: unknown = JSON.parse(text);
+    const at = typeof lock === 'object' && lock !== null && 'at' in lock ? lock.at : undefined;
     return typeof at === 'number' ? clock.now().getTime() - at : 0;
   } catch {
     return 0;
@@ -326,8 +375,8 @@ function writeAtomic(workDir: string, manifest: RunManifest, io: RunIo): void {
   try {
     io.writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
     io.renameSync(temp, path.join(workDir, MANIFEST));
-  } catch (err) {
+  } catch (error) {
     io.rmSync(temp, { force: true });
-    throw err;
+    throw error;
   }
 }

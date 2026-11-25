@@ -6,11 +6,11 @@ import {
   consumerSearchText,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/fix-review-lite.ts';
 
-const added = (...lines: string[]) =>
+const added = (...lines: Array<string>) =>
   ['--- a/work.plan.md', '+++ b/work.plan.md', '@@ -1 +1,9 @@', ...lines.map((line) => '+' + line)].join('\n');
 
 test('fix-review-lite citation grammar resolves spans, continuations and added lines', () => {
-  const cases: [string, string, ReturnType<typeof addedCitations>][] = [
+  const cases: Array<[string, string, ReturnType<typeof addedCitations>]> = [
     ['single line', '`skills/a.ts:12`', [{ path: 'skills/a.ts', start: 12, end: 12 }]],
     ['line range', '`skills/a.ts:12-30`', [{ path: 'skills/a.ts', start: 12, end: 30 }]],
     ['L-prefixed line', '`skills/a.ts:L12`', [{ path: 'skills/a.ts', start: 12, end: 12 }]],

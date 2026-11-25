@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { parseCommand, SESSION_ACTIONS, UsageError } from './lib/cli.ts';
 import { reprobeQuota } from './lib/quota-store.ts';
 import {
-  AmbiguousSessionIdentity,
+  AmbiguousSessionIdentityError,
   findRepoRoot,
   initSession,
   platformSessionId,
@@ -15,7 +15,8 @@ import {
 import { H } from './policy/quota.ts';
 import { normalizeProvider } from './policy/roster.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
-import { main as toolkitMain, nodeDeps, type CliDeps } from './toolkit/cli.ts';
+import { main as toolkitMain, nodeDeps } from './toolkit/cli.ts';
+import type { CliDeps } from './toolkit/cli.ts';
 import { renderCallTable, stripGeneratedMarkers } from './toolkit/contracts.ts';
 import { capSummary } from './toolkit/output.ts';
 import { diagnosticInstructions } from './toolkit/diagnostics-capture.ts';
@@ -34,7 +35,7 @@ function printHelp(heading: string, deps: EntryDeps): number {
     deps.stdout(renderCallTable());
     return 0;
   }
-  let lines: string[];
+  let lines: Array<string>;
   try {
     lines = stripGeneratedMarkers(fs.readFileSync(path.join(deps.skillRoot, 'references', 'toolkit.md'), 'utf8')).split(
       /\r?\n/,
@@ -45,7 +46,7 @@ function printHelp(heading: string, deps: EntryDeps): number {
   const start = key
     ? lines.findIndex((line) => line.toLowerCase() === '## ' + key || line.toLowerCase() === '### ' + key)
     : -1;
-  if (start < 0)
+  if (start < 0) {
     return fail(
       'Unknown or empty heading; valid headings: ' +
         lines
@@ -55,17 +56,37 @@ function printHelp(heading: string, deps: EntryDeps): number {
       'usage',
       1,
     );
-  const stop = lines[start]!.startsWith('## ') ? /^#{1,2} / : /^#{1,3} /;
-  let end = start;
-  while (++end < lines.length && !stop.test(lines[end]!)) {}
-  deps.stdout(lines.slice(start, end).join('\n').trimEnd() + '\n');
+  }
+  const stop = lines[start]?.startsWith('## ') ? /^#{1,2} / : /^#{1,3} /;
+  const end = lines.findIndex((line, index) => index > start && stop.test(line));
+  deps.stdout(
+    lines
+      .slice(start, end < 0 ? lines.length : end)
+      .join('\n')
+      .trimEnd() + '\n',
+  );
   return 0;
 }
 
 type EntryDeps = CliDeps & { cwd?: () => string };
 
+type SessionReply =
+  | { v: 1; action: 'quota-reprobe'; key: ReturnType<typeof reprobeQuota>['key']; appliesTo: 'future-waves' }
+  | {
+      ok: boolean;
+      summary: string;
+      path: string | null;
+      reused?: boolean;
+      instructions?: string;
+      reason?: string;
+      help?: string;
+      candidates?: Array<string>;
+      candidateCount?: number;
+      omitted?: number;
+    };
+
 export async function main(
-  argv: readonly string[] = process.argv.slice(2),
+  argv: ReadonlyArray<string> = process.argv.slice(2),
   deps: EntryDeps = nodeDeps(),
 ): Promise<number> {
   if (argv[0] === 'help') {
@@ -75,28 +96,43 @@ export async function main(
       .filter((arg, index, rest) => !arg.startsWith('--') && !rest[index - 1]?.startsWith('--'));
     return printHelp(words.join(' ').trim(), deps);
   }
-  if (argv[0] !== 'session') return toolkitMain([...argv], deps);
-  const print = (value: Record<string, unknown>) => deps.stdout(JSON.stringify(value) + '\n');
+  if (argv[0] !== 'session') {
+    return toolkitMain([...argv], deps);
+  }
+  const print = (value: SessionReply) => deps.stdout(JSON.stringify(value) + '\n');
   try {
     const command = parseCommand(argv);
-    if (!(SESSION_ACTIONS as readonly string[]).includes(command.action ?? ''))
+    if (!(SESSION_ACTIONS as ReadonlyArray<string>).includes(command.action ?? '')) {
       throw new UsageError(
         'session requires ' + SESSION_ACTIONS.slice(0, -1).join(', ') + ', or ' + SESSION_ACTIONS.at(-1),
       );
-    const flag = (name: string) => command.flags[name] as string | undefined;
-    const repo = findRepoRoot((deps.cwd ?? process.cwd)());
-    if (!repo) throw new UsageError('session requires a Git repository');
+    }
+    const flag = (name: string) => command.flags[name];
+    const required = (name: string): string => {
+      const value = flag(name);
+      if (value === undefined) {
+        throw new UsageError(`--${name} is required`);
+      }
+      return value;
+    };
+    const repo = findRepoRoot(deps.cwd ? deps.cwd() : process.cwd());
+    if (!repo) {
+      throw new UsageError('session requires a Git repository');
+    }
     if (command.action === 'quota-reprobe') {
-      const provider = flag('provider')!,
-        mode = flag('mode')!;
-      if (!isProviderId(provider)) throw new UsageError('Unknown --provider');
-      if (!SPECS[provider].modes.some((entry) => entry.id === mode))
+      const provider = required('provider'),
+        mode = required('mode');
+      if (!isProviderId(provider)) {
+        throw new UsageError('Unknown --provider');
+      }
+      if (!SPECS[provider].modes.some((entry) => entry.id === mode)) {
         throw new UsageError('Unknown --mode for provider');
+      }
       const key = { provider, model: flag('model') ?? null, mode };
       let result;
       try {
         result = reprobeQuota(
-          { sessionDir: path.resolve(flag('session-dir')!), repositoryRoot: repo, bucketWidth: H },
+          { sessionDir: path.resolve(required('session-dir')), repositoryRoot: repo, bucketWidth: H },
           key,
         );
       } catch (error) {
@@ -114,17 +150,19 @@ export async function main(
       print({ v: 1, action: 'quota-reprobe', key: result.key, appliesTo: 'future-waves' });
       return 0;
     }
-    const host = normalizeProvider(flag('host')!);
-    if (!isProviderId(host)) throw new UsageError(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
+    const host = normalizeProvider(required('host'));
+    if (!isProviderId(host)) {
+      throw new UsageError(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
+    }
     const session =
       command.action === 'init'
         ? initSession({
             repositoryRoot: repo,
             sessionId: flag('session-id') ?? platformSessionId((name) => deps.env[name]) ?? crypto.randomUUID(),
-            sessionTitle: flag('objective')!,
+            sessionTitle: required('objective'),
             now: new Date(deps.clock()),
           })
-        : { path: reactivateSession(path.resolve(flag('session-dir')!), repo), reused: true };
+        : { path: reactivateSession(path.resolve(required('session-dir')), repo), reused: true };
     recordHost(session.path, host);
     const diagnostics = diagnosticInstructions(deps.skillRoot).instructions;
     print({
@@ -136,10 +174,12 @@ export async function main(
     });
     return 0;
   } catch (error) {
-    if (error instanceof AmbiguousSessionIdentity) {
-      const candidates: string[] = [];
+    if (error instanceof AmbiguousSessionIdentityError) {
+      const candidates: Array<string> = [];
       for (const candidate of error.candidates.slice(0, 5)) {
-        if (Buffer.byteLength(JSON.stringify([...candidates, candidate])) > 1024) break;
+        if (Buffer.byteLength(JSON.stringify([...candidates, candidate])) > 1024) {
+          break;
+        }
         candidates.push(candidate);
       }
       const candidateCount = error.candidates.length;
@@ -161,7 +201,7 @@ export async function main(
       summary: capSummary(error instanceof Error ? error.message : String(error)),
       path: null,
       reason: usage ? 'usage' : 'fault',
-      help: (SESSION_ACTIONS as readonly string[]).includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table',
+      help: (SESSION_ACTIONS as ReadonlyArray<string>).includes(argv[1] ?? '') ? 'session ' + argv[1] : 'call table',
     });
     return usage ? 1 : 2;
   }
@@ -176,4 +216,6 @@ export function isEntry(
 }
 
 // NOTE: Node resolves symlinks for import.meta.url but not argv[1]; compare real paths so symlinked skill installs run.
-if (isEntry(process.argv[1])) process.exitCode = await main();
+if (isEntry(process.argv[1])) {
+  process.exitCode = await main();
+}

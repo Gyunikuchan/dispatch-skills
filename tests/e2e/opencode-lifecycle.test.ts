@@ -1,3 +1,4 @@
+import { nodeProbeSpawn, probeProviders } from '../../skills/dispatch/scripts/providers/probe.ts';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -6,13 +7,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import { nodeErrorCode } from '../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
 import { nativeOpencodeIntrospection } from '../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import { opencode } from '../../skills/dispatch/scripts/providers/opencode.ts';
 import { nodeDeps } from '../../skills/dispatch/scripts/toolkit/cli.ts';
-import { runDelegate, type RunnerFs, type RunnerPorts } from '../../skills/dispatch/scripts/providers/runner.ts';
+import { runDelegate } from '../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerFs, RunnerPorts } from '../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, LifecycleStep } from '../../skills/dispatch/scripts/providers/types.ts';
+import { arrayOf, isString, narrow } from './helpers/json.ts';
 
 type Scenario =
   | 'inspect'
@@ -26,7 +30,10 @@ type Scenario =
   | 'closed-stdio-success'
   | 'closed-stdio-failure';
 
-const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const pause = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 function makeFixture(scenario: Scenario) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-lifecycle-'));
@@ -34,6 +41,8 @@ function makeFixture(scenario: Scenario) {
   fs.mkdirSync(worktree);
   const argsPath = path.join(root, 'args.json');
   const childPidPath = path.join(root, 'child.pid');
+  // Windows releases a killed descendant's cwd handle after reporting its exit, so an escaped one starts outside the fixture.
+  const escapedCwd = JSON.stringify(path.dirname(process.execPath));
   const source = `
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -64,7 +73,7 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));
   setInterval(() => {}, 1000);
 } else if (${JSON.stringify(scenario)} === 'closed-stdio-success' || ${JSON.stringify(scenario)} === 'closed-stdio-failure') {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: process.platform === 'win32', windowsHide: true });
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: ${escapedCwd}, stdio: 'ignore', detached: process.platform === 'win32', windowsHide: true });
   fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));
   process.stdout.write(args.includes('debug') ? '[]' : reply('private run complete'));
   process.exit(${JSON.stringify(scenario)} === 'closed-stdio-failure' ? 7 : 0);
@@ -78,7 +87,7 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   else process.stdout.write('started\\n');
   setInterval(() => {}, 1000);
 } else if (${JSON.stringify(scenario)} === 'exit-with-descendant') {
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit', detached: process.platform === 'win32' });
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: ${escapedCwd}, stdio: 'inherit', detached: process.platform === 'win32' });
   fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));
   process.stdout.write(reply('private CLI exits while its server child stays open\\n'));
   process.exit(0);
@@ -116,14 +125,18 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   };
   let descendantStopped = false;
   const stopDescendant = async () => {
-    if (descendantStopped) return;
+    if (descendantStopped) {
+      return;
+    }
     if (fs.existsSync(childPidPath)) {
       const pid = Number(fs.readFileSync(childPidPath, 'utf8'));
       assert.ok(Number.isSafeInteger(pid) && pid > 0, 'fixture wrote an invalid descendant PID');
       try {
         process.kill(pid, 'SIGKILL');
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        if (nodeErrorCode(error) !== 'ESRCH') {
+          throw error;
+        }
       }
       await assertOwnedProcessExited(pid);
     }
@@ -131,12 +144,7 @@ if (args.includes('debug') && ${JSON.stringify(scenario)} === 'hang') {
   };
   const cleanup = async () => {
     await stopDescendant();
-    try {
-      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    } catch (error) {
-      if (process.platform !== 'win32' || (error as NodeJS.ErrnoException).code !== 'EPERM')
-        throw error; /* accepted detached-child limit retains the path */
-    }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
   return { root, worktree, argsPath, childPidPath, binary, request, stopDescendant, cleanup };
 }
@@ -203,18 +211,14 @@ async function withServiceSentinel<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-async function assertOwnedProcessExited(pid: number): Promise<void> {
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
-      throw error;
-    }
-    await pause(20);
+// A detached descendant is not our child, so no exit event exists: only its PID shows the exit.
+async function assertOwnedProcessExited(pid: number, deadline = Date.now() + 2000): Promise<void> {
+  assert.ok(Date.now() < deadline, `owned OpenCode descendant ${pid} remained alive after teardown`);
+  if (!ownedProcessAlive(pid)) {
+    return;
   }
-  assert.fail(`owned OpenCode descendant ${pid} remained alive after teardown`);
+  await pause(20);
+  await assertOwnedProcessExited(pid, deadline);
 }
 
 function ownedProcessAlive(pid: number): boolean {
@@ -222,7 +226,9 @@ function ownedProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if (nodeErrorCode(error) === 'ESRCH') {
+      return false;
+    }
     throw error;
   }
 }
@@ -298,14 +304,18 @@ test('OpenCode private runs settle success, failure, timeout, and output cap', a
         const startedAt = Date.now();
         const ports = runnerPorts(fixture.binary, fixture.request.promptPath);
         const result = await runDelegate(opencode, fixture.request, 'cli', ports);
-        const args = JSON.parse(fs.readFileSync(fixture.argsPath, 'utf8')) as string[];
+        const args = narrow(JSON.parse(fs.readFileSync(fixture.argsPath, 'utf8')), arrayOf(isString));
         assert.ok(args.includes('--standalone'), `${scenario} run did not request a private server`);
         assert.ok(
           args.includes('--format') && args[args.indexOf('--format') + 1] === 'json',
           `${scenario} run did not request JSON output`,
         );
-        if (scenario === 'success') assert.equal(result.outcome.status, 'ok');
-        if (scenario === 'failure') assert.equal(result.outcome.status, 'fail');
+        if (scenario === 'success') {
+          assert.equal(result.outcome.status, 'ok');
+        }
+        if (scenario === 'failure') {
+          assert.equal(result.outcome.status, 'fail');
+        }
         if (scenario === 'timeout') {
           assert.equal(result.outcome.status, 'fail');
           assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
@@ -331,7 +341,9 @@ test('OpenCode private runs settle success, failure, timeout, and output cap', a
               /retain the worktree and verify process exit/,
             );
             removable = false;
-          } else await assertOwnedProcessExited(childPid);
+          } else {
+            await assertOwnedProcessExited(childPid);
+          }
           // Fixture teardown happens only after lifecycle evidence has been checked.
         }
         if (scenario === 'timeout' || scenario === 'cap') {
@@ -357,7 +369,7 @@ test('OpenCode private runs settle success, failure, timeout, and output cap', a
 
 test('OpenCode closed-stdio descendants expose the accepted Windows limit and settle the POSIX group', async () => {
   await withServiceSentinel(async () => {
-    for (const family of ['run', 'config'] as const)
+    for (const family of ['run', 'config'] as const) {
       for (const scenario of ['closed-stdio-success', 'closed-stdio-failure'] as const) {
         const fixture = makeFixture(scenario);
         try {
@@ -370,14 +382,17 @@ test('OpenCode closed-stdio descendants expose the accepted Windows limit and se
               runnerPorts(fixture.binary, fixture.request.promptPath),
             );
             lifecycleFailure = !!result.result?.lifecycleError;
-            if (process.platform === 'win32')
+            if (process.platform === 'win32') {
               assert.equal(result.outcome.status, scenario === 'closed-stdio-success' ? 'ok' : 'fail');
+            }
           } else {
             try {
               await nativeOpencodeIntrospection(fixture.binary, fixture.request, process.env, 2500)(family);
             } catch (error) {
               lifecycleFailure = /opencode-lifecycle-timeout/.test(String(error));
-              if (!lifecycleFailure) assert.equal(scenario, 'closed-stdio-failure');
+              if (!lifecycleFailure) {
+                assert.equal(scenario, 'closed-stdio-failure');
+              }
             }
           }
           const pid = Number(fs.readFileSync(fixture.childPidPath, 'utf8'));
@@ -396,6 +411,7 @@ test('OpenCode closed-stdio descendants expose the accepted Windows limit and se
           await fixture.cleanup();
         }
       }
+    }
   });
 });
 
@@ -403,7 +419,7 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
   await withServiceSentinel(async () => {
     const hanging = makeFixture('hang');
     try {
-      const steps: LifecycleStep[] = [];
+      const steps: Array<LifecycleStep> = [];
       const startedAt = Date.now();
       await assert.rejects(
         nativeOpencodeIntrospection(hanging.binary, hanging.request, process.env, 400, steps)('config'),
@@ -433,7 +449,7 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
       for (const collect of [true, false]) {
         const result = await deps.delegate(
           'opencode',
-          { ...unsupported.request, ...(collect ? { collectLifecycle: true } : {}) },
+          { ...unsupported.request, ...(collect && { collectLifecycle: true }) },
           'cli',
         );
         assert.deepEqual(
@@ -451,17 +467,18 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
       try {
         const run = await runDelegate(
           opencode,
-          { ...fixture.request, ...(collect ? { collectLifecycle: true } : {}) },
+          { ...fixture.request, ...(collect && { collectLifecycle: true }) },
           'cli',
           runnerPorts(fixture.binary, fixture.request.promptPath),
         );
         const steps = run.invocations.flatMap((i) => i.lifecycleSteps ?? []);
-        if (!collect) assert.deepEqual(steps, [], 'disabled collection leaves no lifecycle steps');
-        else {
+        if (!collect) {
+          assert.deepEqual(steps, [], 'disabled collection leaves no lifecycle steps');
+        } else {
           const by = new Map(steps.map((s) => [s.step, s]));
           assert.equal(by.size, steps.length, 'one record per step');
           assert.ok(by.has('response') && by.has('teardown'));
-          for (const s of steps)
+          for (const s of steps) {
             assert.ok(
               Number.isSafeInteger(s.elapsedMs) &&
                 s.elapsedMs >= 0 &&
@@ -469,14 +486,18 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
                 s.budgetMs <= fixture.request.timeoutMs + 2000,
               `${s.step} stays within its real bound`,
             );
+          }
           // The accepted Windows limit reports an unconfirmed tree; POSIX group settlement confirms it.
           assert.equal(by.get('teardown')!.outcome, run.result?.lifecycleError ? 'unconfirmed' : 'ok');
-          if (process.platform === 'win32') assert.equal(by.get('teardown')!.outcome, 'unconfirmed');
+          if (process.platform === 'win32') {
+            assert.equal(by.get('teardown')!.outcome, 'unconfirmed');
+          }
           assert.doesNotMatch(JSON.stringify(steps), /fixture|lifecycle-|\|\//);
         }
         const childPid = Number(fs.readFileSync(fixture.childPidPath, 'utf8'));
-        if (process.platform !== 'win32') await assertOwnedProcessExited(childPid);
-        else {
+        if (process.platform !== 'win32') {
+          await assertOwnedProcessExited(childPid);
+        } else {
           assert.equal(ownedProcessAlive(childPid), true);
           continue;
         }
@@ -491,15 +512,17 @@ test('OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty', a
 test('stdout lines reach the line hook through a real process', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'stdout-lines-'));
   try {
-    const lines: string[] = [];
+    const lines: Array<string> = [];
     const launch = {
       argv: [
         process.execPath,
         '-e',
-        "process.stdout.write('one\\r'); setTimeout(() => { process.stdout.write('\\ntwo\\nlast'); }, 20)",
+        String.raw`process.stdout.write('one\r'); setTimeout(() => { process.stdout.write('\ntwo\nlast'); }, 20)`,
       ],
       stdin: null,
-      env: process.env as Record<string, string>,
+      env: Object.fromEntries(
+        Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
       cwd: root,
     };
     const result = await nodeProcess.start(launch, {
@@ -514,7 +537,6 @@ test('stdout lines reach the line hook through a real process', async () => {
   }
 });
 test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leaves no files', async () => {
-  const { nodeProbeSpawn, probeProviders } = await import('../../skills/dispatch/scripts/providers/probe.ts');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-'));
   const probeCwd = path.join(root, 'probe-cwd');
   const pidFile = path.join(root, 'descendant.pid');
@@ -529,7 +551,7 @@ test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leav
     const capped = await nodeProbeSpawn(process.execPath, output, { cwd: probeCwd, timeoutMs: 2500 });
     assert.deepEqual(
       [capped.exit, Buffer.byteLength(capped.stdout), Buffer.byteLength(capped.stderr)],
-      [0, 65536, 65536],
+      [0, 65_536, 65_536],
     );
     const { probes } = await probeProviders([{ provider: 'codex', sandboxRequired: false }], {
       cwd: probeCwd,
@@ -545,7 +567,7 @@ test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leav
         agents: `const array = JSON.stringify([{ name: 'explore', description: 'x'.repeat(100000) }]);
           process.stdout.write(${overflow} ? array.padEnd(1024 * 1024) + '!' : array);`,
       };
-      const debugBytes: [number, number][] = [];
+      const debugBytes: Array<[number, number]> = [];
       const { probes } = await probeProviders([{ provider: 'opencode', sandboxRequired: false }], {
         cwd: probeCwd,
         platform: { ...currentPlatform(), bubblewrap: false },
@@ -558,7 +580,9 @@ test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leav
             ['-e', source + "process.stderr.write('y'.repeat(200000));"],
             launch,
           );
-          if (debug) debugBytes.push([Buffer.byteLength(actual.stdout), Buffer.byteLength(actual.stderr)]);
+          if (debug) {
+            debugBytes.push([Buffer.byteLength(actual.stdout), Buffer.byteLength(actual.stderr)]);
+          }
           return actual;
         },
       });
@@ -569,7 +593,9 @@ test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leav
         [64 * 1024, 64 * 1024],
       );
       assert.ok(debugBytes.every(([stdout]) => stdout > 64 * 1024));
-      if (overflow) assert.equal(debugBytes[1]![0], 1024 * 1024);
+      if (overflow) {
+        assert.equal(debugBytes[1]![0], 1024 * 1024);
+      }
       assert.equal(JSON.stringify(probes).includes(secret), false);
     }
 
@@ -587,7 +613,9 @@ test('nodeProbeSpawn tears down a timed-out process tree, caps streams, and leav
   } finally {
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-      if (ownedProcessAlive(pid)) process.kill(pid, 'SIGKILL');
+      if (ownedProcessAlive(pid)) {
+        process.kill(pid, 'SIGKILL');
+      }
     }
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
@@ -597,7 +625,6 @@ test(
   'nodeProbeSpawn runs Windows batch shims with a spaced path and argument',
   { skip: process.platform !== 'win32' && 'Windows .cmd shim test' },
   async () => {
-    const { nodeProbeSpawn } = await import('../../skills/dispatch/scripts/providers/probe.ts');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch probe-'));
     try {
       const shim = path.join(root, 'probe tool.cmd');
@@ -616,7 +643,6 @@ test(
   'nodeProbeSpawn tears down a POSIX process group after its leader exits',
   { skip: process.platform === 'win32' && 'POSIX process-group test' },
   async () => {
-    const { nodeProbeSpawn } = await import('../../skills/dispatch/scripts/providers/probe.ts');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-'));
     const pidFile = path.join(root, 'descendant.pid');
     try {
@@ -631,7 +657,9 @@ test(
     } finally {
       if (fs.existsSync(pidFile)) {
         const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-        if (ownedProcessAlive(pid)) process.kill(pid, 'SIGKILL');
+        if (ownedProcessAlive(pid)) {
+          process.kill(pid, 'SIGKILL');
+        }
       }
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }

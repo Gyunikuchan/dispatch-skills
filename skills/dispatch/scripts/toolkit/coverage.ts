@@ -1,3 +1,4 @@
+import { present } from './narrow.ts';
 import {
   readStoredJson,
   reviewDirectory,
@@ -17,11 +18,11 @@ import { coverageDecision } from './records.ts';
 
 export type CoverageDecision = 'none' | 'rerun' | 'majority' | 'user';
 export type CoverageState = {
-  targets: string[]; // saved non-reserve logical slots across applicable rounds
-  completed: string[]; // closed targets whose latest event in applicable rounds is a whole-target completion
-  open: string[]; // failed targets with no later whole-target completion and no override
-  overridden: { slot: string; quote: string; seq: number }[];
-  coverageRounds: number[]; // round numbers that carry a `coverage` field
+  targets: Array<string>; // saved non-reserve logical slots across applicable rounds
+  completed: Array<string>; // closed targets whose latest event in applicable rounds is a whole-target completion
+  open: Array<string>; // failed targets with no later whole-target completion and no override
+  overridden: Array<{ slot: string; quote: string; seq: number }>;
+  coverageRounds: Array<number>; // round numbers that carry a `coverage` field
   freeUsed: boolean; // a round before the current incomplete round has `coverageUse: 'free'`
   unusedGrant: boolean; // grant records outnumber such rounds with `coverageUse: 'grant'`
   incomplete: number | null; // latest applicable round when it has no findings.json and not every slot failed
@@ -34,11 +35,11 @@ type Metadata = ConfirmationRound['metadata'] & {
   coverageUse?: 'free' | 'grant';
 };
 type Attempt = { slot: string; seq: number; wholeTarget: boolean };
-type Tracked = { complete: boolean; failures: { seq: number; whole: boolean }[]; last: number };
-const numbered = (names: string[], pattern: RegExp) =>
+type Tracked = { complete: boolean; failures: Array<{ seq: number; whole: boolean }>; last: number };
+const numbered = (names: Array<string>, pattern: RegExp) =>
   names
     .filter((name) => pattern.test(name))
-    .sort((a, b) => Number(a.replace(/\D/g, '')) - Number(b.replace(/\D/g, '')));
+    .sort((a, b) => Number(a.replaceAll(/\D/g, '')) - Number(b.replaceAll(/\D/g, '')));
 
 /**
  * Folds saved round files and user records into per-slot coverage. Failures come from every generation's attempts.json;
@@ -68,25 +69,31 @@ export function coverageState(
   const rounds = reviewRoundEntries(fs.existsSync(root) ? fs.readdirSync(root) : []).flatMap(({ name, number }) => {
     const dir = path.join(root, name),
       metadata = load<Metadata>(reviewRoundFile(dir));
-    if (!metadata) return []; // no round file: the round never started
+    if (!metadata) {
+      return [];
+    } // no round file: the round never started
     if (
       !metadata.spec?.path ||
       !metadata.target ||
       !Array.isArray(metadata.roster) ||
       !Number.isSafeInteger(metadata.generation)
-    )
+    ) {
       unreadable(reviewRoundFile(dir));
-    if (!applies(metadata)) return [];
+    }
+    if (!applies(metadata)) {
+      return [];
+    }
     const attempts = numbered(fs.readdirSync(dir), /^gen-\d+$/).flatMap((gen) => {
-      const list = load<Attempt[]>(path.join(dir, gen, 'attempts.json')) ?? [];
+      const list = load<Array<Attempt>>(path.join(dir, gen, 'attempts.json')) ?? [];
       if (
         !Array.isArray(list) ||
         list.some(
           (item) =>
             typeof item?.slot !== 'string' || !Number.isSafeInteger(item.seq) || typeof item.wholeTarget !== 'boolean',
         )
-      )
+      ) {
         unreadable(path.join(dir, gen, 'attempts.json'));
+      }
       return list.map((item) => ({ ...item, gen }));
     });
     const slots = metadata.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot);
@@ -94,12 +101,14 @@ export function coverageState(
       (slot) =>
         [slot, load<SlotOutcome>(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), slot))] as const,
     );
-    for (const [slot, outcome] of saved)
+    for (const [slot, outcome] of saved) {
       if (
         outcome?.state === 'failed' &&
         !attempts.some((item) => item.slot === slot && item.gen === 'gen-' + metadata.generation)
-      )
+      ) {
         unreadable(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), slot));
+      }
+    }
     return [
       {
         number,
@@ -115,18 +124,30 @@ export function coverageState(
   });
   const targets = [...new Set(rounds.flatMap((round) => round.slots))],
     tracked = new Map<string, Tracked>();
-  const slotOf = (slot: string) =>
-    tracked.get(slot) ?? tracked.set(slot, { complete: false, failures: [], last: -1 }).get(slot)!;
+  const slotOf = (slot: string): Tracked => {
+    const found = tracked.get(slot);
+    if (found) {
+      return found;
+    }
+    const created: Tracked = { complete: false, failures: [], last: -1 };
+    tracked.set(slot, created);
+    return created;
+  };
   for (const round of rounds) {
-    for (const item of round.attempts)
+    for (const item of round.attempts) {
       Object.assign(slotOf(item.slot), {
         complete: false,
         failures: [...slotOf(item.slot).failures, { seq: item.seq, whole: item.wholeTarget }],
         last: Math.max(slotOf(item.slot).last, item.seq),
       });
-    if (round.finalized && round.whole)
-      for (const [slot, outcome] of round.saved)
-        if (outcome?.state === 'done') Object.assign(slotOf(slot), { complete: true, failures: [] });
+    }
+    if (round.finalized && round.whole) {
+      for (const [slot, outcome] of round.saved) {
+        if (outcome?.state === 'done') {
+          Object.assign(slotOf(slot), { complete: true, failures: [] });
+        }
+      }
+    }
   }
   const decisions = fold.records
     .filter(
@@ -138,17 +159,22 @@ export function coverageState(
         String(row.data['id']).startsWith('coverage:' + review + ':'),
     )
     .map((row) => ({ row, decision: coverageDecision(row.data['summary']) }));
-  const open: string[] = [],
+  const open: Array<string> = [],
     overridden: CoverageState['overridden'] = [];
   for (const slot of targets) {
     const item = slotOf(slot);
-    if (!item.failures.length) continue;
+    if (!item.failures.length) {
+      continue;
+    }
     const cover = decisions.findLast(
       ({ row, decision }) =>
         row.seq > item.last && !!decision && 'accept' in decision && decision.accept.includes(slot),
     );
-    if (cover) overridden.push({ slot, quote: cover.row.quote!, seq: cover.row.seq });
-    else open.push(slot);
+    if (cover) {
+      overridden.push({ slot, quote: present(cover.row.quote, 'override quote'), seq: cover.row.seq });
+    } else {
+      open.push(slot);
+    }
   }
   const latest = rounds.at(-1),
     incomplete = latest && !latest.finalized && !latest.allFailed ? latest.number : null;

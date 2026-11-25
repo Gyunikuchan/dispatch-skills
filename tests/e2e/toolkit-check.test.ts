@@ -5,6 +5,28 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { arrayOf, isNumber, isString, narrow, objectWith, text } from './helpers/json.ts';
+
+const isStatuses = arrayOf(objectWith({ criterion: isString, state: isString }));
+const isCheckRun = objectWith({
+  executed: isNumber,
+  reused: isNumber,
+  checks: arrayOf(objectWith({ path: isString, logPath: isString })),
+});
+const shared = (target: string) =>
+  planSource
+    .replace('| SC1 |', '| SC1, SC2 |')
+    .replace('`node -e "process.exit(0)"`', `\`node -e "require('fs').appendFileSync('${target}','x')"\``)
+    .replace(
+      '\n## Verification Plan',
+      (m) =>
+        `- [SC2] File still works\n  - Changes: src/file.ts\n  - Check: \`node -e "require('fs').appendFileSync('${target}','x')"\`\n  - Evidence: check\n${m}`,
+    );
+const setMode = (dir: string, mode: 'pass' | 'fail') => fs.writeFileSync(path.join(dir, 'ignored'), mode);
+const indexFiles = (session: string) => {
+  const dir = path.join(session, '.state/evidence/commands/index');
+  return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+};
 
 describe('toolkit check', () => {
   test('records selected tree bound evidence and adopts the integration worktree on rerun', async () => {
@@ -21,7 +43,7 @@ describe('toolkit check', () => {
       assert.equal(first['tree'], f.git(['rev-parse', 'HEAD^{tree}'], f.integration));
       assert.equal(first['clean'], true);
       assert.equal(first['exit'], 0);
-      assert.match(first['commandDigest'], /^sha256:/);
+      assert.match(text(first['commandDigest']), /^sha256:/);
       await f.run(['check', 'run']);
       assert.equal(rows().length, 7);
       assert.equal(rows().filter((r) => r.data['phase'] === 'opened').length, 1);
@@ -73,24 +95,18 @@ describe('toolkit check', () => {
         const evidence = foldLedger(f.session).records.filter((r) => r.kind === 'evidence');
         assert.equal(evidence.length, 1);
         assert.equal(evidence[0]!.data['exit'], exit);
-        if (reason === 'mutated') assert.notEqual(evidence[0]!.data['before'], evidence[0]!.data['after']);
-        if (reason === 'checks-failed')
+        if (reason === 'mutated') {
+          assert.notEqual(evidence[0]!.data['before'], evidence[0]!.data['after']);
+        }
+        if (reason === 'checks-failed') {
           assert.equal(fs.existsSync(path.join(f.integration, 'src/should-not-run')), false);
+        }
       } finally {
         f.cleanup();
       }
     }
   });
   test('runs a command shared by criteria once per tree and records evidence for each', async () => {
-    const shared = (target: string) =>
-      planSource
-        .replace('| SC1 |', '| SC1, SC2 |')
-        .replace('`node -e "process.exit(0)"`', `\`node -e "require('fs').appendFileSync('${target}','x')"\``)
-        .replace(
-          '\n## Verification Plan',
-          (m) =>
-            `- [SC2] File still works\n  - Changes: src/file.ts\n  - Check: \`node -e "require('fs').appendFileSync('${target}','x')"\`\n  - Evidence: check\n${m}`,
-        );
     for (const [target, expected, reason] of [
       ['ignored', 'x', undefined],
       ['src/file.ts', 'initial\nxx', 'mutated'],
@@ -104,7 +120,7 @@ describe('toolkit check', () => {
         assert.deepEqual(
           foldLedger(f.session)
             .records.filter((x) => x.kind === 'evidence')
-            .map((x) => x.data['criterion']),
+            .map((x) => text(x.data['criterion'])),
           ['SC1', 'SC2'],
         );
       } finally {
@@ -116,10 +132,12 @@ describe('toolkit check', () => {
     const f = await toolkitRepo();
     try {
       const crash = await f.run(['check', 'run', '--criteria', 'SC1'], (point) => {
-        if (point === 'check:after-evidence') throw new Error('crash');
+        if (point === 'check:after-evidence') {
+          throw new Error('crash');
+        }
       });
       assert.equal(crash.exit, 2, JSON.stringify(crash));
-      assert.equal(crash.value.message, 'crash', JSON.stringify(crash));
+      assert.equal(narrow(crash.value, objectWith({ message: isString })).message, 'crash', JSON.stringify(crash));
       assert.equal(foldLedger(f.session).records.filter((r) => r.kind === 'evidence').length, 0, JSON.stringify(crash));
       assert.ok(
         fs.readdirSync(path.join(f.session, '.state/evidence')).some((p) => p.endsWith('.json')),
@@ -195,7 +213,7 @@ describe('toolkit check', () => {
       assert.equal(r.output.ok, true);
       const recorded = foldLedger(f.session)
         .records.filter((row) => row.kind === 'evidence')
-        .map((row) => row.data['criterion']);
+        .map((row) => text(row.data['criterion']));
       assert.deepEqual(recorded, ['SC1']);
 
       const both = await f.run(['check', 'run', '--task', 'T1', '--criteria', 'SC1']);
@@ -255,7 +273,7 @@ describe('toolkit check', () => {
       const r = await f2.run(['check', 'run']);
       assert.equal(r.exit, 0, JSON.stringify(r));
       assert.equal(r.output.ok, true);
-      assert.equal(r.value.executed, 1);
+      assert.equal(narrow(r.value, objectWith({ executed: isNumber })).executed, 1);
       assert.match(r.output.summary, /\(1 commands\)/);
     } finally {
       f2.cleanup();
@@ -291,7 +309,7 @@ describe('toolkit check', () => {
       const r = await f.run(['check', 'run']);
       assert.equal(r.exit, 0, JSON.stringify(r));
       assert.equal(r.output.ok, true);
-      assert.equal(r.value.executed, 0);
+      assert.equal(narrow(r.value, objectWith({ executed: isNumber })).executed, 0);
       assert.match(r.output.summary, /\(0 commands\)/);
     } finally {
       f.cleanup();
@@ -328,12 +346,13 @@ describe('toolkit check', () => {
       const deduped = await f.run(['check', 'run', '--criteria', 'SC1,SC2']);
       assert.equal(deduped.exit, 0, JSON.stringify(deduped));
       assert.equal(deduped.output.ok, true);
-      assert.equal(deduped.value.executed, 2);
-      assert.equal(deduped.value.reused, 0);
+      const dedupedVal = narrow(deduped.value, isCheckRun);
+      assert.equal(dedupedVal.executed, 2);
+      assert.equal(dedupedVal.reused, 0);
       assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), '12');
 
-      const sc1Ev = JSON.parse(fs.readFileSync(path.join(f.session, deduped.value.checks[0].path), 'utf8'));
-      const sc2Ev = JSON.parse(fs.readFileSync(path.join(f.session, deduped.value.checks[1].path), 'utf8'));
+      const sc1Ev = JSON.parse(fs.readFileSync(path.join(f.session, dedupedVal.checks[0]!.path), 'utf8'));
+      const sc2Ev = JSON.parse(fs.readFileSync(path.join(f.session, dedupedVal.checks[1]!.path), 'utf8'));
       assert.equal(sc1Ev.commands[0].mode, 'fresh');
       assert.equal(sc2Ev.commands[0].mode, 'dedup');
       assert.equal(sc2Ev.commands[0].execId, sc1Ev.commands[0].execId);
@@ -343,12 +362,13 @@ describe('toolkit check', () => {
       const fresh = await f.run(['check', 'run', '--criteria', 'SC1,SC2', '--fresh']);
       assert.equal(fresh.exit, 0, JSON.stringify(fresh));
       assert.equal(fresh.output.ok, true);
-      assert.equal(fresh.value.executed, 3);
-      assert.equal(fresh.value.reused, 0);
+      const freshVal = narrow(fresh.value, isCheckRun);
+      assert.equal(freshVal.executed, 3);
+      assert.equal(freshVal.reused, 0);
       assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), '12112');
 
-      const freshSc1 = JSON.parse(fs.readFileSync(path.join(f.session, fresh.value.checks[0].path), 'utf8'));
-      const freshSc2 = JSON.parse(fs.readFileSync(path.join(f.session, fresh.value.checks[1].path), 'utf8'));
+      const freshSc1 = JSON.parse(fs.readFileSync(path.join(f.session, freshVal.checks[0]!.path), 'utf8'));
+      const freshSc2 = JSON.parse(fs.readFileSync(path.join(f.session, freshVal.checks[1]!.path), 'utf8'));
       assert.equal(freshSc1.commands[0].mode, 'fresh');
       assert.equal(freshSc2.commands[0].mode, 'fresh');
       assert.notEqual(freshSc1.commands[0].execId, freshSc2.commands[0].execId);
@@ -371,11 +391,12 @@ describe('toolkit check', () => {
     try {
       const first = await f.run(['check', 'run']);
       assert.equal(first.exit, 0, JSON.stringify(first));
-      assert.equal(first.value.executed, 2);
-      assert.equal(first.value.reused, 0);
+      const firstVal = narrow(first.value, isCheckRun);
+      assert.equal(firstVal.executed, 2);
+      assert.equal(firstVal.reused, 0);
       assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), 'x');
 
-      const sc1FirstPath = path.join(f.session, first.value.checks[0].path);
+      const sc1FirstPath = path.join(f.session, firstVal.checks[0]!.path);
       const sc1First = JSON.parse(fs.readFileSync(sc1FirstPath, 'utf8'));
       const execId1 = sc1First.commands[0].execId;
       const cacheHex = sc1First.commands[0].cacheHex;
@@ -388,10 +409,11 @@ describe('toolkit check', () => {
 
       const secondNoFlag = await f.run(['check', 'run']);
       assert.equal(secondNoFlag.exit, 0, JSON.stringify(secondNoFlag));
-      assert.equal(secondNoFlag.value.executed, 2);
-      assert.equal(secondNoFlag.value.reused, 0);
+      const secondVal = narrow(secondNoFlag.value, isCheckRun);
+      assert.equal(secondVal.executed, 2);
+      assert.equal(secondVal.reused, 0);
       assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), 'xx');
-      const sc1Second = JSON.parse(fs.readFileSync(path.join(f.session, secondNoFlag.value.checks[0].path), 'utf8'));
+      const sc1Second = JSON.parse(fs.readFileSync(path.join(f.session, secondVal.checks[0]!.path), 'utf8'));
       const execId2 = sc1Second.commands[0].execId;
       assert.notEqual(execId2, execId1);
       assert.notEqual(sc1Second.runId, sc1First.runId);
@@ -400,17 +422,18 @@ describe('toolkit check', () => {
       const thirdReuse = await f.run(['check', 'run', '--reuse']);
       assert.equal(thirdReuse.exit, 0, JSON.stringify(thirdReuse));
       assert.equal(thirdReuse.output.ok, true);
-      assert.equal(thirdReuse.value.executed, 0);
-      assert.equal(thirdReuse.value.reused, 2);
+      const thirdVal = narrow(thirdReuse.value, isCheckRun);
+      assert.equal(thirdVal.executed, 0);
+      assert.equal(thirdVal.reused, 2);
       assert.match(thirdReuse.output.summary, /; reused 2\b/);
       assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), 'xx');
-      for (const item of thirdReuse.value.checks) {
+      for (const item of thirdVal.checks) {
         assert.ok(fs.existsSync(item.logPath), item.logPath);
       }
-      const sc1ReusedPath = path.join(f.session, thirdReuse.value.checks[0].path);
+      const sc1ReusedPath = path.join(f.session, thirdVal.checks[0]!.path);
       const sc1ReusedSnapshot = fs.readFileSync(sc1ReusedPath, 'utf8');
       const sc1Reused = JSON.parse(sc1ReusedSnapshot);
-      const sc2Dedup = JSON.parse(fs.readFileSync(path.join(f.session, thirdReuse.value.checks[1].path), 'utf8'));
+      const sc2Dedup = JSON.parse(fs.readFileSync(path.join(f.session, thirdVal.checks[1]!.path), 'utf8'));
       assert.equal(sc1Reused.commands[0].mode, 'reused');
       assert.equal(sc1Reused.commands[0].execId, execId2);
       assert.equal(sc1Reused.commands[0].cacheHex, cacheHex);
@@ -434,15 +457,20 @@ describe('toolkit check', () => {
       }
       const status = await f.run(['status', 'show']);
       assert.equal(status.exit, 0);
-      assert.deepEqual(status.value.criteria, []);
-      assert.ok(status.value.criterionStatuses.every((row: { state: string }) => row.state === 'verified'));
+      const statusVal = narrow(
+        status.value,
+        objectWith({ criteria: arrayOf(isString), criterionStatuses: isStatuses }),
+      );
+      assert.deepEqual(statusVal.criteria, []);
+      assert.ok(statusVal.criterionStatuses.every((row) => row.state === 'verified'));
 
       // A later fresh execution updates index/<cacheHex>.json without mutating earlier reused provenance.
       const fourthFresh = await f.run(['check', 'run']);
       assert.equal(fourthFresh.exit, 0, JSON.stringify(fourthFresh));
-      assert.equal(fourthFresh.value.executed, 2);
-      assert.equal(fourthFresh.value.reused, 0);
-      const sc1Fourth = JSON.parse(fs.readFileSync(path.join(f.session, fourthFresh.value.checks[0].path), 'utf8'));
+      const fourthVal = narrow(fourthFresh.value, isCheckRun);
+      assert.equal(fourthVal.executed, 2);
+      assert.equal(fourthVal.reused, 0);
+      const sc1Fourth = JSON.parse(fs.readFileSync(path.join(f.session, fourthVal.checks[0]!.path), 'utf8'));
       assert.notEqual(sc1Fourth.commands[0].execId, execId2);
       assert.equal(fs.readFileSync(sc1ReusedPath, 'utf8'), sc1ReusedSnapshot);
       assert.ok(fs.existsSync(path.join(f.session, '.state/evidence/commands', `${execId2}.json`)));
@@ -464,9 +492,10 @@ describe('toolkit check', () => {
       const sc1State = async () => {
         const status = await f.run(['status', 'show']);
         assert.equal(status.exit, 0);
-        return status.value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state;
+        return narrow(status.value, objectWith({ criterionStatuses: isStatuses })).criterionStatuses.find(
+          (row) => row.criterion === 'SC1',
+        )?.state;
       };
-      const setMode = (dir: string, mode: 'pass' | 'fail') => fs.writeFileSync(path.join(dir, 'ignored'), mode);
       assert.equal((await f.run(['check', 'run', '--criteria', 'contract'])).exit, 0);
 
       // pass -> fail -> pass on the exact same clean Git tree
@@ -474,9 +503,11 @@ describe('toolkit check', () => {
       const pass1 = await f.run(['check', 'run', '--criteria', 'SC1']);
       assert.equal(pass1.output.ok, true);
       assert.equal(await sc1State(), 'verified');
-      const pass1Ev = JSON.parse(fs.readFileSync(path.join(f.session, pass1.value.checks[0].path), 'utf8'));
-      const pass1ExecId = pass1Ev.commands[0].execId as string;
-      const pass1CacheHex = pass1Ev.commands[0].cacheHex as string;
+      const pass1Ev = JSON.parse(
+        fs.readFileSync(path.join(f.session, narrow(pass1.value, isCheckRun).checks[0]!.path), 'utf8'),
+      );
+      const pass1ExecId = text(pass1Ev.commands[0].execId);
+      const pass1CacheHex = text(pass1Ev.commands[0].cacheHex);
       const pass1ExecJson = path.join(f.session, '.state/evidence/commands', `${pass1ExecId}.json`);
       const pass1ExecLog = path.join(f.session, '.state/evidence/commands', `${pass1ExecId}.log`);
       const pass1Snapshot = fs.readFileSync(pass1ExecJson, 'utf8');
@@ -498,8 +529,9 @@ describe('toolkit check', () => {
       const reuseAfterFail = await f.run(['check', 'run', '--criteria', 'SC1', '--reuse']);
       assert.equal(reuseAfterFail.output.ok, false);
       assert.equal(reuseAfterFail.output.reason, 'checks-failed');
-      assert.equal(reuseAfterFail.value.executed, 1);
-      assert.equal(reuseAfterFail.value.reused, 0);
+      const reuseAfterFailVal = narrow(reuseAfterFail.value, isCheckRun);
+      assert.equal(reuseAfterFailVal.executed, 1);
+      assert.equal(reuseAfterFailVal.reused, 0);
       assert.equal(await sc1State(), 'missing');
 
       setMode(f.integration, 'pass');
@@ -512,7 +544,9 @@ describe('toolkit check', () => {
       const s2State = async () => {
         const status = await s2.run(['status', 'show']);
         assert.equal(status.exit, 0);
-        return status.value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state;
+        return narrow(status.value, objectWith({ criterionStatuses: isStatuses })).criterionStatuses.find(
+          (row) => row.criterion === 'SC1',
+        )?.state;
       };
       setMode(s2.integration, 'fail');
       assert.equal((await s2.run(['check', 'run', '--criteria', 'SC1'])).output.ok, false);
@@ -538,10 +572,12 @@ describe('toolkit check', () => {
       const seed = async () => {
         const r = await f.run(['check', 'run', '--criteria', 'SC1']);
         assert.equal(r.exit, 0);
-        const ev = JSON.parse(fs.readFileSync(path.join(f.session, r.value.checks[0].path), 'utf8'));
+        const ev = JSON.parse(
+          fs.readFileSync(path.join(f.session, narrow(r.value, isCheckRun).checks[0]!.path), 'utf8'),
+        );
         return {
-          execId: ev.commands[0].execId as string,
-          cacheHex: ev.commands[0].cacheHex as string,
+          execId: text(ev.commands[0].execId),
+          cacheHex: text(ev.commands[0].cacheHex),
         };
       };
       const verifyFallback = async (label: string) => {
@@ -549,8 +585,9 @@ describe('toolkit check', () => {
         const r = await f.run(['check', 'run', '--criteria', 'SC1', '--reuse']);
         assert.equal(r.exit, 0, label);
         assert.equal(r.output.ok, true, label);
-        assert.equal(r.value.executed, 1, label);
-        assert.equal(r.value.reused, 0, label);
+        const val = narrow(r.value, isCheckRun);
+        assert.equal(val.executed, 1, label);
+        assert.equal(val.reused, 0, label);
         assert.equal(fs.readFileSync(path.join(f.integration, 'ignored'), 'utf8'), before + 'r', label);
       };
 
@@ -608,11 +645,6 @@ describe('toolkit check', () => {
   });
 
   test('never caches or reuses dirty, mutating, restore-pair, or non-zero commands', async () => {
-    const indexFiles = (session: string) => {
-      const dir = path.join(session, '.state/evidence/commands/index');
-      return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
-    };
-
     // Dirty checkout
     const fDirty = await toolkitRepo();
     try {
@@ -621,14 +653,17 @@ describe('toolkit check', () => {
       const r = await fDirty.run(['check', 'run', '--criteria', 'SC1']);
       assert.equal(r.output.ok, false);
       assert.equal(r.output.reason, 'dirty');
-      const ev = JSON.parse(fs.readFileSync(path.join(fDirty.session, r.value.checks[0].path), 'utf8'));
+      const ev = JSON.parse(
+        fs.readFileSync(path.join(fDirty.session, narrow(r.value, isCheckRun).checks[0]!.path), 'utf8'),
+      );
       assert.equal(ev.commands[0].execId, null);
       assert.equal(ev.commands[0].cacheHex, null);
       assert.match(ev.commands[0].logPath, /^\.state\/evidence\/runs\//);
       fs.rmSync(path.join(fDirty.integration, 'dirty.txt'));
       const retry = await fDirty.run(['check', 'run', '--criteria', 'SC1', '--reuse']);
-      assert.equal(retry.value.executed, 1);
-      assert.equal(retry.value.reused, 0);
+      const retryVal = narrow(retry.value, isCheckRun);
+      assert.equal(retryVal.executed, 1);
+      assert.equal(retryVal.reused, 0);
     } finally {
       fDirty.cleanup();
     }
@@ -643,7 +678,9 @@ describe('toolkit check', () => {
       const r = await fMut.run(['check', 'run', '--criteria', 'SC1']);
       assert.equal(r.output.reason, 'mutated');
       assert.deepEqual(indexFiles(fMut.session), []);
-      const ev = JSON.parse(fs.readFileSync(path.join(fMut.session, r.value.checks[0].path), 'utf8'));
+      const ev = JSON.parse(
+        fs.readFileSync(path.join(fMut.session, narrow(r.value, isCheckRun).checks[0]!.path), 'utf8'),
+      );
       assert.equal(ev.commands[0].execId, null);
       assert.equal(ev.commands[0].cacheHex, null);
     } finally {
@@ -662,14 +699,16 @@ describe('toolkit check', () => {
     try {
       const first = await fRestore.run(['check', 'run', '--criteria', 'SC1']);
       assert.equal(first.exit, 0, JSON.stringify(first));
-      assert.equal(first.value.executed, 2);
+      const firstVal = narrow(first.value, isCheckRun);
+      assert.equal(firstVal.executed, 2);
       assert.deepEqual(indexFiles(fRestore.session), []);
-      const ev = JSON.parse(fs.readFileSync(path.join(fRestore.session, first.value.checks[0].path), 'utf8'));
+      const ev = JSON.parse(fs.readFileSync(path.join(fRestore.session, firstVal.checks[0]!.path), 'utf8'));
       assert.equal(ev.commands[0].execId, null);
       assert.equal(ev.commands[1].execId, null);
       const second = await fRestore.run(['check', 'run', '--criteria', 'SC1', '--reuse']);
-      assert.equal(second.value.executed, 2);
-      assert.equal(second.value.reused, 0);
+      const secondVal = narrow(second.value, isCheckRun);
+      assert.equal(secondVal.executed, 2);
+      assert.equal(secondVal.reused, 0);
     } finally {
       fRestore.cleanup();
     }
@@ -681,13 +720,16 @@ describe('toolkit check', () => {
       const first = await fFail.run(['check', 'run', '--criteria', 'SC1']);
       assert.equal(first.output.reason, 'checks-failed');
       assert.deepEqual(indexFiles(fFail.session), []);
-      const ev = JSON.parse(fs.readFileSync(path.join(fFail.session, first.value.checks[0].path), 'utf8'));
+      const ev = JSON.parse(
+        fs.readFileSync(path.join(fFail.session, narrow(first.value, isCheckRun).checks[0]!.path), 'utf8'),
+      );
       assert.equal(ev.commands[0].execId, null);
       assert.equal(ev.commands[0].cacheHex, null);
       assert.match(ev.commands[0].logPath, /^\.state\/evidence\/runs\//);
       const second = await fFail.run(['check', 'run', '--criteria', 'SC1', '--reuse']);
-      assert.equal(second.value.executed, 1);
-      assert.equal(second.value.reused, 0);
+      const secondVal = narrow(second.value, isCheckRun);
+      assert.equal(secondVal.executed, 1);
+      assert.equal(secondVal.reused, 0);
     } finally {
       fFail.cleanup();
     }

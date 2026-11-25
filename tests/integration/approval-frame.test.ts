@@ -36,7 +36,11 @@ test('plan or design approval frame fits one screen with machine fields collapse
     .replace('<tasks/increments>', 'I01, I02, I03, I04, I05, I06, I07')
     .replace('<commands>', 'npm test; npm run typecheck')
     .replace('<tuple>', 'spec, plan and design hashes with the user quote');
-  assert.doesNotMatch(filled.replace(/<\/?(?:details|summary)[^>]*>/g, ''), /<[^>]+>/, 'all placeholders are filled');
+  assert.doesNotMatch(
+    filled.replaceAll(/<\/?(?:details|summary)[^>]*>/g, ''),
+    /<[^>]+>/,
+    'all placeholders are filled',
+  );
 
   const plan = filled.replace('/design.md', '/plan.md').replace(/^Approve all increments\?\n/m, '');
   assert.ok(plan.slice(0, plan.indexOf('<details>')).split('\n').length <= 30);
@@ -58,8 +62,9 @@ test('plan or design approval frame fits one screen with machine fields collapse
     'Strategy: link governing artifacts and collapse machine detail',
     'Scope: the assigned walkthrough and approval-frame paths',
     'approve all increments?',
-  ])
+  ]) {
     assert.ok(visible.toLowerCase().includes(value.toLowerCase()), value);
+  }
   const machine = filled.slice(detailsAt);
   for (const value of [
     `sha256:${'a'.repeat(64)}`,
@@ -69,7 +74,7 @@ test('plan or design approval frame fits one screen with machine fields collapse
     'npm test; npm run typecheck',
     'toolkit.md#approval',
   ]) {
-    assert.ok(machine.includes(value), value);
+    assert.ok(machine.indexOf(value) !== -1, value);
   }
 });
 

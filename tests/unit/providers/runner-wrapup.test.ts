@@ -1,49 +1,33 @@
+import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
-import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
-import {
-  CONTINUE_PROMPT,
-  IDLE_TIMEOUT_MS,
-  buildAttachmentBlock,
-  findSensitiveMatch,
-  formatSafetyPrompt,
-  GUARDRAIL_HEADER,
-  runDelegate,
-  type RunnerFs,
-  type RunnerPorts,
-} from '../../../skills/dispatch/scripts/providers/runner.ts';
-import {
-  batchInvocation,
-  killArgv,
-  mustSpill,
-  sanitizeEnv,
-} from '../../../skills/dispatch/scripts/providers/process-policy.ts';
+import { CONTINUE_PROMPT, runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerFs, RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type {
   DelegateRequest,
   Launch,
   PlatformEnv,
   ProcessResult,
-  ProviderUsageContext,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
+import type { ProviderSpec } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = {
   os: 'linux',
   arch: 'x64',
   wsl: false,
   bubblewrap: true,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
 };
-const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24000 };
+
 const req: DelegateRequest = {
   promptPath: '/r/p.md',
   model: null,
@@ -91,10 +75,13 @@ function memFs(
   };
 }
 
+/** Placeholder until the fake process registers its real callback. */
+const noop = (): void => {};
+
 /** Manual clock: timers fire only when the test advances time. */
 function manualClock() {
   let now = 0;
-  const timers: { at: number; ms: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
   return {
     now: () => now,
     every: (ms: number, fn: () => void) => {
@@ -106,30 +93,37 @@ function manualClock() {
     },
     advance(ms: number) {
       now += ms;
-      for (const t of [...timers])
+      for (const t of timers.slice()) {
         while (t.live && t.at <= now) {
           t.at += t.ms;
           t.fn();
         }
+      }
     },
   };
 }
 
 function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.md': 'Review it' }) {
-  const launches: Launch[] = [];
-  const signals: string[] = [];
+  const launches: Array<Launch> = [];
+  const signals: Array<string> = [];
   const clock = manualClock();
-  let finish: (r: ProcessResult) => void = () => {};
-  let activity: () => void = () => {};
-  let line: (value: string, fragment?: boolean) => void = () => {};
+  let finish: (r: ProcessResult) => void = noop;
+  let activity: () => void = noop;
+  let line: (value: string, fragment?: boolean) => void = noop;
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
-        if (io.onActivity) activity = io.onActivity;
-        if (io.onLine) line = io.onLine;
-        if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
+        if (io.onActivity) {
+          activity = io.onActivity;
+        }
+        if (io.onLine) {
+          line = io.onLine;
+        }
+        if (launch.argv[0] === 'taskkill') {
+          return { pid: 99, done: Promise.resolve(ok()) };
+        }
         return {
           pid: 50,
           done: new Promise<ProcessResult>((resolve) => {
@@ -171,7 +165,10 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   };
 }
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+const flush = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 
 const makeNudgeSpec = (sessionId: string | null): any => ({
   ...claude,
@@ -190,21 +187,6 @@ const makeNudgeSpec = (sessionId: string | null): any => ({
   }),
 });
 
-const makeCapacitySpec = (retryAfterMs?: number): any => ({
-  ...makeNudgeSpec('sess1'),
-  parse: (out: ProcessResult) =>
-    out.stdout.includes('FINAL')
-      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
-      : {
-          status: 'fail' as const,
-          cls: 'capacity' as const,
-          detail: 'at capacity',
-          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-        },
-});
-
-const opencodeText = (text: string) => JSON.stringify({ type: 'text', sessionID: 'ses', part: { text } });
-
 function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<HostUsageFs> = {}): HostUsageFs {
   const find = (file: string): Buffer | undefined => {
     const norm = file.replaceAll('\\', '/');
@@ -220,7 +202,9 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
           const seg = rest.split('/')[0];
-          if (seg) names.add(seg);
+          if (seg) {
+            names.add(seg);
+          }
         }
       }
       return [...names];
@@ -231,21 +215,15 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
     },
     read: (file, maxBytes) => {
       const buf = find(file);
-      if (!buf) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      if (!buf) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
       return buf.subarray(0, maxBytes);
     },
     decompress: null,
     ...extra,
   };
 }
-
-const claudeEntry = (atMs: number, input: number, output: number, model = 'claude-haiku-5-5') =>
-  JSON.stringify({
-    type: 'assistant',
-    timestamp: new Date(atMs).toISOString(),
-    effort: 'low',
-    message: { id: `m_${atMs}`, model, usage: { input_tokens: input, output_tokens: output } },
-  });
 
 // T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
@@ -426,7 +404,7 @@ test('wrap-up stop: a fresh Antigravity launch never stops early', async () => {
 test('wrap-up stop: a stall-resumed Antigravity run is never stopped for wrap-up', async () => {
   const h = harness(posix);
   let calls = 0;
-  const spec: unknown = {
+  const spec: ProviderSpec = {
     ...agy,
     attemptSession: () => (calls++ === 0 ? 'conv-stall-1' : null),
     parse: (out: ProcessResult) =>
@@ -440,7 +418,7 @@ test('wrap-up stop: a stall-resumed Antigravity run is never stopped for wrap-up
       cwd: r.cwd,
     }),
   };
-  const run = runDelegate(spec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+  const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
   await flush();
   h.finish(ok({ exit: 1, stdout: 'empty one' }));
   await flush();
@@ -503,7 +481,7 @@ test('wrap-up stop: stall-resumed launch reuses resume id when partial log names
 test('wrap-up budget: wrap-up happens at most once per run', async () => {
   const h = harness(posix);
   const spec = makeNudgeSpec('sess1');
-  (spec as any).attemptSession = () => 'sess1';
+  spec.attemptSession = () => 'sess1';
   const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
   await flush();
   for (let t = 0; t < 1_500_000; t += 60_000) {
@@ -526,7 +504,7 @@ test('wrap-up budget: wrap-up happens at most once per run', async () => {
 
 test('wrap-up budget: wrap-up after three stall resumes records nudge and wrapUp without consuming stall budget', async () => {
   const h = harness(posix);
-  let resumes: string[] = [];
+  const resumes: Array<string> = [];
   const spec = makeNudgeSpec('sess1');
   const run = runDelegate(
     spec,
@@ -562,14 +540,14 @@ test('wrap-up budget: wrap-up after three stall resumes records nudge and wrapUp
   h.finish(ok({ stdout: 'FINAL' }));
   const done = await run;
   assert.equal(done.outcome.status, 'ok');
-  assert.equal((done.invocations[4] as any)?.nudge, true);
-  assert.equal((done.invocations[4] as any)?.wrapUp, true);
+  assert.equal(done.invocations[4]?.nudge, true);
+  assert.equal(done.invocations[4]?.wrapUp, true);
 });
 
 test('wrap-up fallback failures return timeout with the partial path', async () => {
   for (const reachesDeadline of [false, true]) {
     const h = harness(posix);
-    const spec: unknown = {
+    const spec: ProviderSpec = {
       ...claude,
       parse: (out: ProcessResult, r: { resume?: string | null }) =>
         r.resume
@@ -583,7 +561,7 @@ test('wrap-up fallback failures return timeout with the partial path', async () 
       }),
       attemptSession: () => 'sess1',
     };
-    const run = runDelegate(spec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
+    const run = runDelegate(spec, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
     await flush();
     h.clock.advance(1_500_000);
     await flush();
@@ -612,16 +590,18 @@ test('wrap-up fallback failures return timeout with the partial path', async () 
     );
   }
   const argvBoom = harness(posix);
-  const argvSpec: unknown = {
+  const argvSpec: ProviderSpec = {
     ...claude,
     parse: () => ({ status: 'fail' as const, cls: 'config' as const, detail: 'first config' }),
     argv: (r: { resume?: string | null; prompt: string; cwd: string }) => {
-      if (r.resume) throw new Error('argv boom');
+      if (r.resume) {
+        throw new Error('argv boom');
+      }
       return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd };
     },
     attemptSession: () => 'sess1',
   };
-  const argvRun = runDelegate(argvSpec as never, { ...req, timeoutMs: 1_800_000 }, 'cli', argvBoom.ports);
+  const argvRun = runDelegate(argvSpec, { ...req, timeoutMs: 1_800_000 }, 'cli', argvBoom.ports);
   await flush();
   argvBoom.clock.advance(1_500_000);
   await flush();
@@ -632,9 +612,8 @@ test('wrap-up fallback failures return timeout with the partial path', async () 
 });
 
 test('wrap-up stop: Copilot with streamed output stops and resumes with wrap-up', async () => {
-  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
   const h = harness(posix);
-  (h.ports as any).nonce = () => 'preset123';
+  h.ports.nonce = () => 'preset123';
   const run = runDelegate(copilot, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
   await flush();
   assert.ok((h.launches[0]?.argv ?? []).includes('--session-id'));
@@ -663,7 +642,6 @@ test('wrap-up stop: Copilot with streamed output stops and resumes with wrap-up'
 });
 
 test('wrap-up stop: Copilot without streamed output runs to the deadline kill', async () => {
-  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
   const h = harness(posix);
   const run = runDelegate(copilot, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
   await flush();
@@ -709,7 +687,9 @@ test('wrap-up stop: failed tree kill keeps the deadline kill and returns timeout
   const signal = h.ports.process.signal;
   h.ports.process.signal = (pid: number, sig: 'SIGTERM' | 'SIGKILL') => {
     calls++;
-    if (calls === 1) throw new Error('kill ESRCH');
+    if (calls === 1) {
+      throw new Error('kill ESRCH');
+    }
     signal(pid, sig);
   };
   const run = runDelegate(claude, { ...req, timeoutMs: 1_800_000 }, 'cli', h.ports);
@@ -769,7 +749,7 @@ test('wrap-up stop: sandbox-inactive result returns sandbox-unsupported with no 
 test('deadline notice: effort retry draws a fresh preset id and resumes send none', async () => {
   const h = harness(posix);
   let n = 0;
-  (h.ports as any).nonce = () => `preset-${++n}`;
+  h.ports.nonce = () => `preset-${++n}`;
   const spec: any = {
     ...claude,
     parse: (out: ProcessResult, launch: any) =>

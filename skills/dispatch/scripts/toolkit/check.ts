@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { appendRecord, withLedger, foldLedger, type Fold } from './ledger.ts';
+import { appendRecord, withLedger, foldLedger } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { stableValue } from './domain/stable-value.ts';
 import { checks, loadPlan, taskCriteria } from './plan-view.ts';
 import { cleanupBinding } from './evidence.ts';
@@ -10,6 +11,7 @@ import { ensureIntegration } from './integration.ts';
 import { headTree, testedTree } from './git.ts';
 import { ToolError } from './output.ts';
 import { nodeLinkFs } from '../lib/node-fs-ext.ts';
+import { isRecord } from '../lib/config.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -31,15 +33,13 @@ type CriterionCommandEntry = {
   logSha256: string;
 };
 
-function shellArgv(os: string, command: string): string[] {
+function shellArgv(os: string, command: string): Array<string> {
   return os === 'win32' ? ['cmd.exe', '/d', '/s', '/c', command] : ['sh', '-c', command];
 }
 
 const sha256Hex = (data: string | Uint8Array): string => crypto.createHash('sha256').update(data).digest('hex');
 const toRelPath = (base: string, target: string): string => path.relative(base, target).split(path.sep).join('/');
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const commandCacheKey = (command: string, tree: string): string =>
   sha256Hex(stableValue({ command, tree, clean: true }));
 
@@ -50,18 +50,23 @@ function tryReuseCommand(
   currentHeadTree: string,
   cacheHex: string,
 ): ResolvedCommand | null {
-  if (currentTestedTree !== currentHeadTree) return null;
+  if (currentTestedTree !== currentHeadTree) {
+    return null;
+  }
   try {
     const indexFile = path.join(session, '.state/evidence/commands/index', `${cacheHex}.json`);
-    const pointer = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
-    if (!isPlainObject(pointer) || !isNonEmptyString(pointer['execId']) || !UUID_RE.test(pointer['execId']))
+    const pointer: unknown = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+    if (!isRecord(pointer) || !isNonEmptyString(pointer['execId']) || !UUID_RE.test(pointer['execId'])) {
       return null;
+    }
     const execId = pointer['execId'];
     const execFile = path.join(session, '.state/evidence/commands', `${execId}.json`);
     const derivedLogPath = path.join(session, '.state/evidence/commands', `${execId}.log`);
     const expectedRelLogPath = `.state/evidence/commands/${execId}.log`;
-    const exec = JSON.parse(fs.readFileSync(execFile, 'utf8'));
-    if (!isPlainObject(exec)) return null;
+    const exec: unknown = JSON.parse(fs.readFileSync(execFile, 'utf8'));
+    if (!isRecord(exec)) {
+      return null;
+    }
     for (const field of [
       'execId',
       'cacheHex',
@@ -73,10 +78,13 @@ function tryReuseCommand(
       'logPath',
       'logSha256',
     ] as const) {
-      if (!isNonEmptyString(exec[field])) return null;
+      if (!isNonEmptyString(exec[field])) {
+        return null;
+      }
     }
-    if (typeof exec['clean'] !== 'boolean' || typeof exec['exit'] !== 'number' || !Number.isFinite(exec['exit']))
+    if (typeof exec['clean'] !== 'boolean' || typeof exec['exit'] !== 'number' || !Number.isFinite(exec['exit'])) {
       return null;
+    }
     if (
       exec['execId'] !== execId ||
       exec['cacheHex'] !== cacheHex ||
@@ -89,16 +97,19 @@ function tryReuseCommand(
       exec['clean'] !== true ||
       exec['exit'] !== 0 ||
       exec['logPath'] !== expectedRelLogPath
-    )
+    ) {
       return null;
+    }
     const logBuf = fs.readFileSync(derivedLogPath);
-    if ('sha256:' + sha256Hex(logBuf) !== exec['logSha256']) return null;
+    if ('sha256:' + sha256Hex(logBuf) !== exec['logSha256']) {
+      return null;
+    }
     return {
       execId,
       cacheHex,
-      tree: exec['tree'] as string,
+      tree: exec['tree'],
       logPath: expectedRelLogPath,
-      logSha256: exec['logSha256'] as string,
+      logSha256: exec['logSha256'],
       logText: logBuf.toString('utf8'),
     };
   } catch {
@@ -141,18 +152,35 @@ function recordCacheableCommand(
   return { execId, cacheHex, tree, logPath: relLogPath, logSha256, logText };
 }
 
+type CheckRecord = {
+  criterion: string;
+  commandDigest: string;
+  tree: string;
+  clean: boolean;
+  before: string;
+  after: string;
+  exit: number;
+  path: string;
+  logPath: string;
+};
+
 export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
   const { session, manifest, deps, values, args } = ctx;
-  if (args.length) throw new ToolError(1, 'invalid-input', 'check run takes only options');
-  if (values['task'] !== undefined && values['criteria'] !== undefined)
+  if (args.length) {
+    throw new ToolError(1, 'invalid-input', 'check run takes only options');
+  }
+  if (values['task'] !== undefined && values['criteria'] !== undefined) {
     throw new ToolError(1, 'invalid-input', 'check run accepts --criteria or --task, not both');
-  if (values['reuse'] && values['fresh'])
+  }
+  if (values['reuse'] && values['fresh']) {
     throw new ToolError(1, 'invalid-input', 'check run accepts --reuse or --fresh, not both');
+  }
   const allowReuse = values['reuse'] === true;
   const forceFresh = values['fresh'] === true;
   const taskId = typeof values['task'] === 'string' ? values['task'].trim() : '';
-  if (values['task'] !== undefined && !taskId)
+  if (values['task'] !== undefined && !taskId) {
     throw new ToolError(1, 'invalid-input', 'check run --task requires a task ID');
+  }
   const named =
     typeof values['criteria'] === 'string'
       ? values['criteria']
@@ -160,8 +188,9 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
           .map((id) => id.trim())
           .filter(Boolean)
       : null;
-  if (values['criteria'] !== undefined && !named?.length)
+  if (values['criteria'] !== undefined && !named?.length) {
     throw new ToolError(1, 'invalid-input', 'check run --criteria requires at least one criterion ID');
+  }
   const plan = loadPlan(session, manifest);
   const all = checks(plan);
   const removed = cleanupBinding(foldLedger(session))?.removed ?? [];
@@ -176,14 +205,15 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
           .map((c) => c.criterion)
           .filter((id) => !removed.includes(id)));
   const unknown = ids.filter((id) => !all.some((c) => c.criterion === id));
-  if (unknown.length)
+  if (unknown.length) {
     throw new ToolError(
       1,
       'invalid-input',
       'Unknown criterion: ' + unknown.join(', ') + '; valid: ' + all.map((c) => c.criterion).join(', '),
     );
+  }
   const gone = ids.filter((id) => removed.includes(id));
-  if (gone.length)
+  if (gone.length) {
     throw new ToolError(
       4,
       'test-cleanup-removed',
@@ -191,22 +221,26 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
         gone.join(', ') +
         '; their evidence stays bound to their recorded evidence tree',
     );
+  }
   const selected = all.filter((c) => ids.includes(c.criterion));
   const review = selected.filter((c) => c.evidenceClass === 'review').map((c) => c.criterion);
-  if (review.length)
+  if (review.length) {
     throw new ToolError(
       1,
       'invalid-input',
       'Review-only criteria need user evidence and cannot be checked by tool evidence: ' + review.join(', '),
     );
+  }
   const empty = selected.filter((c) => c.criterion !== 'contract' && !c.commands.length).map((c) => c.criterion);
-  if (empty.length) throw new ToolError(1, 'invalid-input', 'Criteria have no Check commands: ' + empty.join(', '));
+  if (empty.length) {
+    throw new ToolError(1, 'invalid-input', 'Criteria have no Check commands: ' + empty.join(', '));
+  }
 
   const integration = await withLedger(session, 'check run', deps, (tx) => ensureIntegration(tx, ctx));
   const directory = path.join(session, '.state/evidence');
   fs.mkdirSync(directory, { recursive: true });
   const runId = crypto.randomUUID();
-  const records: Record<string, unknown>[] = [];
+  const records: Array<CheckRecord> = [];
   const withinRun = new Map<string, ResolvedCommand>();
   let executed = 0;
   let reused = 0;
@@ -221,11 +255,10 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
     let cmdClean = clean;
     let exit = 0;
     let combinedLog = '';
-    const commandEntries: CriterionCommandEntry[] = [];
-    const safeCriterion = check.criterion.replace(/[^A-Za-z0-9._-]/g, '_');
+    const commandEntries: Array<CriterionCommandEntry> = [];
+    const safeCriterion = check.criterion.replaceAll(/[^A-Za-z0-9._-]/g, '_');
 
-    for (let idx = 0; idx < check.commands.length; idx++) {
-      const command = check.commands[idx]!;
+    for (const [idx, command] of check.commands.entries()) {
       const cacheHex = cmdClean ? commandCacheKey(command, cmdBefore) : null;
       const withinHit = !forceFresh && cacheHex !== null ? withinRun.get(cacheHex) : undefined;
       if (withinHit) {
@@ -247,9 +280,9 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
         allowReuse && !forceFresh && cacheHex !== null
           ? tryReuseCommand(session, command, cmdBefore, cmdHead, cacheHex)
           : null;
-      if (reuseHit) {
+      if (reuseHit && cacheHex !== null) {
         reused++;
-        withinRun.set(cacheHex!, reuseHit);
+        withinRun.set(cacheHex, reuseHit);
         cmdAfter = cmdBefore;
         combinedLog += reuseHit.logText;
         commandEntries.push({
@@ -298,7 +331,9 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
         });
       }
 
-      if (result.exit !== 0) break;
+      if (result.exit !== 0) {
+        break;
+      }
       if (idx + 1 < check.commands.length) {
         cmdHead = await headTree(deps, integration.path);
         cmdClean = cmdAfter === cmdHead;
@@ -336,17 +371,17 @@ export async function checkRun(ctx: HandlerContext): Promise<HandlerResult> {
     records.push({ ...evidence, logPath });
   }
 
-  const failed = records.filter((r) => r['exit'] !== 0).map((r) => r['criterion']);
-  const mutated = records.filter((r) => r['before'] !== r['after']).map((r) => r['criterion']);
-  const dirty = records.filter((r) => !r['clean']).map((r) => r['criterion']);
+  const failed = records.flatMap((r) => (r.exit !== 0 ? [r.criterion] : []));
+  const mutated = records.flatMap((r) => (r.before !== r.after ? [r.criterion] : []));
+  const dirty = records.flatMap((r) => (r.clean ? [] : [r.criterion]));
   const reason = failed.length ? 'checks-failed' : mutated.length ? 'mutated' : dirty.length ? 'dirty' : undefined;
   const reusedSuffix = reused > 0 ? `; reused ${reused}` : '';
   return {
     ok: !reason,
     exit: 0,
-    ...(reason ? { reason } : {}),
+    ...(reason && { reason }),
     summary: `${records.length} checks (${executed} commands); failed ${failed.join(',')}; mutated ${mutated.join(',')}; dirty ${dirty.join(',')}${reusedSuffix}`,
     value: { checks: records, executed, reused, failed, mutated, dirty },
-    ...(postFold ? { postFold } : {}),
+    ...(postFold && { postFold }),
   };
 }

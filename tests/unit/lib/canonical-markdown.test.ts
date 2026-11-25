@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { canonicalMarkdown } from '../../../skills/dispatch/scripts/lib/canonical-markdown.ts';
 
-const lines = (...rows: string[]): string => rows.join('\n');
+const lines = (...rows: Array<string>): string => rows.join('\n');
 
 const PLAN = lines(
   '# Plan',
@@ -82,7 +82,7 @@ const REWRITE = lines(
 const MEANING_CHANGES: Array<[label: string, before: string, after: string]> = [
   ['word', 'Use the plan.', 'Use the plans.'],
   ['intraword underscore', 'snake_case name', 'snake*case name'],
-  ['backslash escape', '\\*literal\\*', '*literal*'],
+  ['backslash escape', String.raw`\*literal\*`, '*literal*'],
   ['item order', lines('- a', '- b'), lines('- b', '- a')],
   ['paragraph split versus soft break', lines('one', 'two'), lines('one', '', 'two')],
   ['tight versus loose list', lines('- a', '- b'), lines('- a', '', '- b')],

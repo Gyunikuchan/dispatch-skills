@@ -4,6 +4,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { listOf, readJson, shape, text } from './helpers/json.ts';
 import { parseSpec } from '../../../skills/dispatch/scripts/toolkit/domain/spec.ts';
 import { parseDesign } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
 import { lintArtifact } from '../../../skills/dispatch/scripts/toolkit/lint.ts';
@@ -74,7 +75,15 @@ async function lint(name: string, source: string) {
   try {
     const exit = await main(['lint', 'run', f.artifact(name, source), '--session', f.session], f.deps);
     const output = f.output();
-    const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+    const result = readJson(
+      output.path!,
+      shape({
+        kind: text,
+        hash: text,
+        errors: listOf(shape({ code: text })),
+        warnings: listOf(shape({ code: text })),
+      }),
+    );
     return { exit, output, result };
   } finally {
     f.cleanup();

@@ -1,18 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
-import {
-  appendRecord,
-  currentHashes,
-  foldLedger,
-  gate,
-  latest,
-  queryLedger,
-} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 test('ledger bindings validate paths and gate stale approvals', async () => {
   const f = sessionFixture({ memory: true });
@@ -26,14 +18,14 @@ test('ledger bindings validate paths and gate stale approvals', async () => {
       const output = f.output();
       return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
     };
-    const add = (kind: string, data: object, extra: object = {}) =>
+    const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
       appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'k' + n++, ...extra }, f.deps);
-    const hash = 'sha256:' + 'a'.repeat(64),
-      git = 'a'.repeat(40);
+    const hash = 'sha256:' + 'a'.repeat(64);
     f.artifact('s.spec.md', 'spec');
     f.artifact('p.plan.md', 'plan');
-    for (const spec of ['../escape', 'C:/absolute', 'missing'])
+    for (const spec of ['../escape', 'C:/absolute', 'missing']) {
       await assert.rejects(add('bind', { spec, plan: 'p.plan.md' }), { reason: 'invalid-record' });
+    }
     const badBind = await call({
       kind: 'bind',
       key: 'bad-bind',

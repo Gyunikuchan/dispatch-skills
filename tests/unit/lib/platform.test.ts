@@ -19,8 +19,8 @@ test('platform facts: os, WSL, bubblewrap, argv limit, PATH and PATHEXT', () => 
     platform: 'win32',
     arch: 'x64',
     release: '10',
-    home: 'C:\\u',
-    env: envOf({ Path: 'C:\\a;C:\\b', PATHEXT: '.EXE;.CMD' }),
+    home: String.raw`C:\u`,
+    env: envOf({ Path: String.raw`C:\a;C:\b`, PATHEXT: '.EXE;.CMD' }),
     bubblewrap: true,
   });
   assert.deepEqual(win, {
@@ -28,9 +28,9 @@ test('platform facts: os, WSL, bubblewrap, argv limit, PATH and PATHEXT', () => 
     arch: 'x64',
     wsl: false,
     bubblewrap: false,
-    argvLimit: 24000,
-    home: 'C:\\u',
-    path: ['C:\\a', 'C:\\b'],
+    argvLimit: 24_000,
+    home: String.raw`C:\u`,
+    path: [String.raw`C:\a`, String.raw`C:\b`],
     pathExt: ['.exe', '.cmd'],
   });
   const wsl = platformFacts({
@@ -43,7 +43,7 @@ test('platform facts: os, WSL, bubblewrap, argv limit, PATH and PATHEXT', () => 
   });
   assert.deepEqual(
     [wsl.os, wsl.wsl, wsl.bubblewrap, wsl.argvLimit, wsl.path, wsl.pathExt],
-    ['linux', true, true, 100000, ['/a', '/b'], []],
+    ['linux', true, true, 100_000, ['/a', '/b'], []],
   );
   assert.equal(
     platformFacts({ platform: 'darwin', arch: 'arm64', release: '', home: '/h', env: envOf({}), bubblewrap: true })
@@ -64,8 +64,9 @@ test("orchestrator comes from the recorded host and that platform's model marker
   });
   assert.deepEqual(orchestratorFor('codex', envOf({})), { platform: 'codex', model: null });
   // A hand-edited manifest never yields a platform outside ProviderKey, including inherited object keys.
-  for (const host of ['unknown-x', 'github-copilot', '', 7, null, 'toString'])
+  for (const host of ['unknown-x', 'github-copilot', '', 7, null, 'toString']) {
     assert.equal(orchestratorFor(host, envOf({ CODEX_MODEL: 'x' })), null, String(host));
+  }
 });
 
 test('claudeHostSandboxed detects SANDBOX_RUNTIME or SANDBOX=1', () => {

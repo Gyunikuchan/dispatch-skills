@@ -87,7 +87,7 @@ export async function main(options = {}) {
     throw new Error(`--timeout ${opts.timeout} exceeds probeDeadlineSeconds=${limits.probeDeadlineSeconds}; raise it in the audit config.json and start a fresh run instead`);
   }
   const effective = opts.timeout === null ? limits : { ...limits, probeDeadlineSeconds: opts.timeout };
-  const ports = { ...cliPorts(), ...options.ports };
+  const ports = { ...cliPorts(), writeSummary: (text) => process.stdout.write(text), ...options.ports };
   const outDir = path.join(workDir, 'dispatch');
   fs.mkdirSync(outDir, { recursive: true });
   // Liveness marker: `summary.md` lands only at the end, so a running probe is distinguishable from a dead one.
@@ -102,15 +102,15 @@ export async function main(options = {}) {
   process.once('SIGTERM', onSignal);
   try {
     return await probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits: effective, ports, signal: controller.signal, home: options.home });
-  } catch (err) {
+  } catch (error) {
     // A crash after the liveness marker would otherwise read as "still running" forever.
-    fs.writeFileSync(path.join(outDir, 'failed.txt'), `${err.stack || err.message}\n`, 'utf8');
-    throw err;
+    fs.writeFileSync(path.join(outDir, 'failed.txt'), `${error.stack || error.message}\n`, 'utf8');
+    throw error;
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
     options.signal?.removeEventListener('abort', forward);
-    if (signalled) process.exitCode = 130;
+    if (signalled) {process.exitCode = 130;}
   }
 }
 
@@ -128,25 +128,25 @@ async function probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits, p
     try {
       ({ live, fixture, interrupted } = await launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home, readCommands }));
     } finally {
-      if (claim.owner) updateRun(workDir, (m) => {
-        if (m.probeOwner?.token !== claim.owner.token) return;
+      if (claim.owner) {updateRun(workDir, (m) => {
+        if (m.probeOwner?.token !== claim.owner.token) {return;}
         m.probeOwner.finishedAt = new Date(ports.clock.now()).toISOString();
         // A throw before the final persist leaves this owner's reservations running; release them so budgets and finalize see an outcome.
-        for (const target of claim.targets) releaseReservation(m.probes, target.id, claim.owner.startedAt);
-      });
+        for (const target of claim.targets) {releaseReservation(m.probes, target.id, claim.owner.startedAt);}
+      });}
     }
   }
 
   const summary = renderSummary({ rows, live, fixture, config, configError, opts, interrupted });
   fs.writeFileSync(path.join(outDir, 'summary.md'), summary, 'utf8');
   fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ rows, live, interrupted }, null, 2), 'utf8');
-  process.stdout.write(`${summary}\nWrote ${rel(outDir)}/summary.md\n`);
+  ports.writeSummary(`${summary}\nWrote ${rel(outDir)}/summary.md\n`);
   return { rows, live, interrupted };
 }
 
 async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home, readCommands }) {
   const { targets, previous } = claim;
-  let live = [];
+  let live;
   let interrupted = false;
   const fixture = createFixture(repoRoot, { home });
   // Staged outside the repo so delegate output never mixes with the audit's working files mid-run.
@@ -154,22 +154,24 @@ async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, 
   const latest = new Map();
   const persist = (id, record) => {
     latest.set(id, record);
-    if (manifest) updateRun(workDir, (m) => { m.probes[id] = toProbeRecord(record, rel, stageDir); });
+    if (manifest) {updateRun(workDir, (m) => { m.probes[id] = toProbeRecord(record, rel, stageDir); });}
   };
   const runs = Promise.allSettled(targets.map((target) => runTarget(target, {
     fixture, stageDir, limits, signal, readCommands, previous: previous[target.id] ?? null,
     // Once interrupted, the records below are final; late updates from still-settling targets are ignored.
-    state: { update: (id, record) => { if (!interrupted) persist(id, record); } },
+    state: { update: (id, record) => { if (!interrupted) {persist(id, record);} } },
     ports: { ...ports, prepare: ports.prepare ?? ports.prepareFor?.(ports.clock.now() + limits.probeDeadlineSeconds * 1000) },
   })));
-  const aborted = new Promise((resolve) => signal.addEventListener('abort', () => resolve('aborted'), { once: true }));
+  const aborted = new Promise((resolve) => {
+    signal.addEventListener('abort', () => resolve('aborted'), { once: true });
+  });
   const first = await Promise.race([runs, aborted]);
   if (first === 'aborted') {
     interrupted = true;
     live = interruptedRecords(targets, latest, previous);
   } else {
     const failed = first.find((s) => s.status === 'rejected');
-    if (failed) throw failed.reason;
+    if (failed) {throw failed.reason;}
     live = first.map((s) => s.value);
   }
   // Carried records describe earlier runs' children and fixtures, so they neither gate nor take this run's cleanup.
@@ -178,15 +180,15 @@ async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, 
   // A child with unconfirmed exit may still hold its capture open, so captures are copied and the stage kept.
   const move = !interrupted && cleanup.status === 'complete';
   let preserveError = null;
-  try { preserveCaptures(stageDir, outDir, { move }); } catch (err) { preserveError = err.message; }
+  try { preserveCaptures(stageDir, outDir, { move }); } catch (error) { preserveError = error.message; }
   for (const record of current) {
     record.cleanup = cleanup.status;
     record.cleanupReason = cleanup.reason;
     // The recorded capture points where the evidence is: the output dir once moved, else the kept stage.
-    if (record.capture) record.capturePath = toPosix(path.join(move && !preserveError ? outDir : stageDir, record.capture));
-    if (preserveError) record.gaps = [...(record.gaps ?? []), preserveError];
+    if (record.capture) {record.capturePath = toPosix(path.join(move && !preserveError ? outDir : stageDir, record.capture));}
+    if (preserveError) {record.gaps = [...(record.gaps ?? []), preserveError];}
   }
-  if (manifest) for (const record of live) persist(record.id, record);
+  if (manifest) {for (const record of live) {persist(record.id, record);}}
   return { live, fixture, interrupted };
 }
 
@@ -208,7 +210,7 @@ export function claimProbe(workDir, rows, selection, { clock, alive, host = os.h
     const owner = { token: crypto.randomUUID(), pid, host, startedAt, finishedAt: null };
     m.probeOwner = owner;
     for (const target of targets) {
-      if (target.skip || target.launchLimit === 0 || priorDisposition(previous[target.id]) !== 'launch') continue;
+      if (target.skip || target.launchLimit === 0 || priorDisposition(previous[target.id]) !== 'launch') {continue;}
       m.probes[target.id] = {
         lifecycle: 'running', host, handle: null, liveness: 'exited', startedAt, deadlineAt: null, attempts: 0, reserved: target.launchLimit,
         exitConfirmed: false, capturePath: null, fixturePath: null, outcome: null, cause: 'launch reserved', cleanup: 'pending', model: target.selection ?? null,
@@ -221,7 +223,7 @@ export function claimProbe(workDir, rows, selection, { clock, alive, host = os.h
 
 /** Signal 0 probes existence without delivering a signal; EPERM still means the process exists. */
 function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
 }
 
 // ============================================================================
@@ -244,7 +246,7 @@ function realDiscovery() {
 
 /** @returns {'NOT FOUND'|'REACHABLE'|'UNREACHABLE'} */
 export function statusOf(row) {
-  if (!row.bin) return 'NOT FOUND';
+  if (!row.bin) {return 'NOT FOUND';}
   return row.reachable ? 'REACHABLE' : 'UNREACHABLE';
 }
 
@@ -279,12 +281,12 @@ export function buildTargets(rows, { modes, config, configError = null, limits, 
     const launching = targets.filter((target) => priorDisposition(previous[target.id]) === 'launch');
     const count = Math.min(launching.length, remaining);
     launching.forEach((target, index) => {
-      if (!config) target.skip = `no usable dispatch config: ${configError ?? 'not loaded'}`;
-      else if (!selection) target.skip = `no model configured for ${provider} in read-delegates`;
-      else if (index < count) target.launchLimit = Math.floor(remaining / count) + (index < remaining % count ? 1 : 0);
-      else target.skip = used > 0
+      if (!config) {target.skip = `no usable dispatch config: ${configError ?? 'not loaded'}`;}
+      else if (!selection) {target.skip = `no model configured for ${provider} in read-delegates`;}
+      else if (index < count) {target.launchLimit = Math.floor(remaining / count) + (index < remaining % count ? 1 : 0);}
+      else {target.skip = used > 0
         ? `probeLaunchesPerProvider=${limit} already spent by ${used} recorded launch(es)`
-        : `--modes widening exceeds probeLaunchesPerProvider=${limit}`;
+        : `--modes widening exceeds probeLaunchesPerProvider=${limit}`;}
     });
     return targets;
   });
@@ -305,7 +307,7 @@ export function selectModel(config, provider) {
   };
   for (const map of config?.['read-delegates']?.[provider]?.targets ?? []) {
     const model = nearest(map, 'model');
-    if (!model) continue;
+    if (!model) {continue;}
     const effort = nearest(map, 'effort');
     const exact = map[PROBE_LEVEL] ?? {};
     const configured = { level: PROBE_LEVEL, model: first(exact.model) ?? null, effort: exact.effort ?? null };
@@ -322,9 +324,9 @@ const first = (value) => (Array.isArray(value) ? value[0] : value);
  * `blocked` for any launch (or running record) without one, whatever lifecycle it records.
  */
 export function priorDisposition(previous) {
-  if (!previous) return 'launch';
+  if (!previous) {return 'launch';}
   const launched = (previous.attempts ?? 0) > 0 || previous.lifecycle === 'running' || Boolean(previous.handle);
-  if (!launched) return previous.lifecycle === 'complete' ? 'reuse' : 'launch';
+  if (!launched) {return previous.lifecycle === 'complete' ? 'reuse' : 'launch';}
   return previous.exitConfirmed === true && previous.liveness === 'exited' ? 'reuse' : 'blocked';
 }
 
@@ -341,7 +343,7 @@ export function guardProcess(inner, { limit, clock, deadline, graceMs, signal, o
   const state = { launches: 0, refused: 0, handle: null, liveness: 'exited', exitConfirmed: true };
   const port = {
     start(launch, io) {
-      if (io.logPath.endsWith('.kill')) return inner.start(launch, io);
+      if (io.logPath.endsWith('.kill')) {return inner.start(launch, io);}
       if (signal?.aborted || state.launches >= limit) {
         state.refused++;
         throw new Error(`audit probe refused launch ${state.launches + 1}: probeLaunchesPerProvider=${limit}${signal?.aborted ? ' (interrupted)' : ''}`);
@@ -359,7 +361,7 @@ export function guardProcess(inner, { limit, clock, deadline, graceMs, signal, o
         });
         child.done.then((result) => {
           stop();
-          if (state.liveness === 'unknown') return;
+          if (state.liveness === 'unknown') {return;}
           Object.assign(state, { liveness: 'exited', exitConfirmed: true });
           resolve(result);
         });
@@ -413,13 +415,13 @@ export async function runTarget(target, ctx) {
     return { ...carried, lifecycle: previous.lifecycle, liveness: 'exited', exitConfirmed: true, outcome: previous.outcome ?? null, cause: previous.cause ?? null, cleanup: previous.cleanup ?? 'complete', gaps: ['reused recorded evidence; not relaunched'] };
   }
   const skip = (cause, gaps = []) => ({ ...base, lifecycle: 'skipped', cause, gaps, cleanup: 'complete' });
-  if (target.skip) return skip(target.skip);
+  if (target.skip) {return skip(target.skip);}
   const spec = ports.specs?.[target.provider];
-  if (!spec) return skip('no provider adapter can enforce local launch bounds');
+  if (!spec) {return skip('no provider adapter can enforce local launch bounds');}
   const bytes = fixtureBytes(fixture);
-  if (bytes > limits.probeFixtureBytes) return skip(`fixture-over-limit: fixture files and prompts total ${bytes} bytes, above probeFixtureBytes=${limits.probeFixtureBytes}`);
+  if (bytes > limits.probeFixtureBytes) {return skip(`fixture-over-limit: fixture files and prompts total ${bytes} bytes, above probeFixtureBytes=${limits.probeFixtureBytes}`);}
 
-  const stem = target.id.replace(/[^a-z0-9.-]+/gi, '_');
+  const stem = target.id.replaceAll(/[^a-z0-9.-]+/gi, '_');
   const cwd = path.join(fixture.dir, 'cwd');
   fs.mkdirSync(cwd, { recursive: true });
   let prepared = {};
@@ -447,9 +449,9 @@ export async function runTarget(target, ctx) {
       return stalled;
     }
     // Interrupted records are owned by the caller; a late settlement must not overwrite them.
-    if (verified.interrupted || signal?.aborted) return { ...preparing, lifecycle: 'interrupted', cause: 'interrupted during preparation' };
+    if (verified.interrupted || signal?.aborted) {return { ...preparing, lifecycle: 'interrupted', cause: 'interrupted during preparation' };}
     state?.update(target.id, { ...preparing, liveness: 'exited', cause: 'launch reserved' });
-    if (verified.gap) return skip(verified.cause, [verified.gap]);
+    if (verified.gap) {return skip(verified.cause, [verified.gap]);}
     prepared = verified.fields;
   }
   // Runner timeouts start from launch, so each request carries only the remaining shared budget.
@@ -481,14 +483,15 @@ export async function runTarget(target, ctx) {
     launches: guard.state.launches, attempts: run?.attempts ?? guard.state.launches, usage,
     gaps: [...(usage ? [] : ['usage unavailable']), ...(prepared.readOnlyBestEffort ? [`${target.provider} read-only agent ${prepared.agent} accepted best effort, not verified`] : [])],
   });
-  if (!fs.existsSync(path.join(stageDir, record.capture))) record.capture = null;
+  if (!fs.existsSync(path.join(stageDir, record.capture))) {record.capture = null;}
   Object.assign(record, classify(run, thrown, guard.state, events, fixture));
-  if (signal?.aborted && record.lifecycle !== 'complete') record.lifecycle = 'interrupted';
+  if (signal?.aborted && record.lifecycle !== 'complete') {record.lifecycle = 'interrupted';}
   state?.update(target.id, record);
   return record;
 }
 
 const STALLED = Symbol('preparation-stalled');
+const noop = () => {};
 
 /**
  * Resolves the provider's effective read-only agent through the injected introspection port before any launch.
@@ -497,19 +500,20 @@ const STALLED = Symbol('preparation-stalled');
 async function prepareRequest(target, req, ports, { deadline, settleBy }, signal) {
   const gap = `coverage gap: ${target.provider} read-only agent unverified; not launched`;
   const introspection = ports.introspect?.[target.provider];
-  if (!introspection || !ports.prepare) return { gap, cause: `preparation-unenforceable: no audit ${introspection ? 'launch preparation' : 'introspection'} port for ${target.provider}` };
-  if (signal?.aborted) return { interrupted: true };
+  if (!introspection || !ports.prepare) {return { gap, cause: `preparation-unenforceable: no audit ${introspection ? 'launch preparation' : 'introspection'} port for ${target.provider}` };}
+  if (signal?.aborted) {return { interrupted: true };}
   // Same timer port as the launch guard: introspection can await a child whose termination failed, so it gets deadline + grace.
-  let stop = () => {};
+  let stop = noop;
   const stalled = new Promise((resolve) => { stop = ports.clock.every(Math.max(1, settleBy - ports.clock.now()), () => { stop(); resolve(STALLED); }); });
   try {
     const resolving = resolveEffectiveOpencodeLaunch(req, introspection(target.binary, req, ports.env ?? {}, Math.max(1, deadline - ports.clock.now())));
     // NOTE: the shipped introspection port takes no AbortSignal, so an interrupt races it instead of cancelling it.
-    resolving.catch(() => {});
-    const aborted = new Promise((resolve) => signal?.addEventListener('abort', () => resolve(null), { once: true }));
+    const aborted = new Promise((resolve) => {
+      signal?.addEventListener('abort', () => resolve(null), { once: true });
+    });
     const resolved = await Promise.race([resolving, aborted, stalled]);
-    if (resolved === STALLED) return { timedOut: true };
-    if (resolved === null) return { interrupted: true };
+    if (resolved === STALLED) {return { timedOut: true };}
+    if (resolved === null) {return { interrupted: true };}
     const fields = { model: resolved.model, endpoint: resolved.endpoint, agent: resolved.agent, readOnlyVerified: resolved.readOnlyVerified, readOnlyBestEffort: resolved.readOnlyBestEffort };
     return { fields };
   } catch (error) {
@@ -521,7 +525,7 @@ async function prepareRequest(target, req, ports, { deadline, settleBy }, signal
 
 function classify(run, thrown, guard, events, fixture) {
   if (thrown) {
-    if (guard.refused > 0) return { lifecycle: 'failed', cause: 'retry-refused', outcome: events[0]?.outcome ?? null };
+    if (guard.refused > 0) {return { lifecycle: 'failed', cause: 'retry-refused', outcome: events[0]?.outcome ?? null };}
     return { lifecycle: 'failed', cause: 'launch-error', outcome: String(thrown.message ?? thrown) };
   }
   const outcome = run.outcome;
@@ -532,7 +536,7 @@ function classify(run, thrown, guard, events, fixture) {
   if (outcome.cls === 'timeout') {
     return { lifecycle: 'timeout', outcome: outcome.detail, cause: run.attempts === 0 && /preparation/i.test(outcome.detail) ? 'preparation-timeout' : 'deadline' };
   }
-  if (outcome.cls === 'buffer') return { lifecycle: 'failed', outcome: outcome.detail, cause: 'output-cap' };
+  if (outcome.cls === 'buffer') {return { lifecycle: 'failed', outcome: outcome.detail, cause: 'output-cap' };}
   // Auth, quota and missing binaries are coverage gaps: no login, install or fallback is attempted.
   return { lifecycle: 'failed', outcome: outcome.detail, cause: run.attempts === 0 ? `preparation:${outcome.cls}` : outcome.cls };
 }
@@ -550,11 +554,11 @@ export async function checkDenylist(spec, target, req, runnerPorts, nonce) {
   let detail = null;
   try {
     const run = await runDelegate(spec, req, target.mode, { ...runnerPorts, process: refusing });
-    if (run.outcome.status === 'fail') detail = `${run.outcome.cls}: ${run.outcome.detail}`;
+    if (run.outcome.status === 'fail') {detail = `${run.outcome.cls}: ${run.outcome.detail}`;}
   } catch (error) {
-    if (error.message !== DENYLIST_REFUSAL) detail = String(error.message ?? error);
+    if (error.message !== DENYLIST_REFUSAL) {detail = String(error.message ?? error);}
   }
-  if (fs.existsSync(req.briefPath)) payloads.push(fs.readFileSync(req.briefPath, 'utf8'));
+  if (fs.existsSync(req.briefPath)) {payloads.push(fs.readFileSync(req.briefPath, 'utf8'));}
   const payloadExcluded = payloads.every((payload) => !payload.includes(nonce));
   const reached = payloads.length > 0;
   return { launches: 0, payloadExcluded, behaviour: !reached ? 'aborted' : payloadExcluded ? 'excluded' : 'not excluded', detail };
@@ -563,7 +567,7 @@ export async function checkDenylist(spec, target, req, runnerPorts, nonce) {
 /** Marks a reservation this owner left `running`; a launched child without a confirmed exit stays blocked. */
 export function releaseReservation(probes, id, startedAt) {
   const record = probes[id];
-  if (record?.lifecycle !== 'running' || record.startedAt !== startedAt) return;
+  if (record?.lifecycle !== 'running' || record.startedAt !== startedAt) {return;}
   const launched = (record.attempts ?? 0) > 0 || Boolean(record.handle) || record.liveness !== 'exited';
   probes[id] = { ...record, lifecycle: 'interrupted', liveness: launched ? 'unknown' : 'exited', exitConfirmed: launched ? false : record.exitConfirmed, cause: [record.cause, 'probe exited before recording an outcome'].filter(Boolean).join('; ') };
 }
@@ -572,8 +576,8 @@ export function releaseReservation(probes, id, startedAt) {
 export function interruptedRecords(targets, latest, previous) {
   return targets.flatMap((target) => {
     const record = latest.get(target.id);
-    if (record?.carried) return [record];
-    if (!record && priorDisposition(previous[target.id]) !== 'launch') return [];
+    if (record?.carried) {return [record];}
+    if (!record && priorDisposition(previous[target.id]) !== 'launch') {return [];}
     return [interruptRecord(target, record)];
   });
 }
@@ -584,11 +588,12 @@ function interruptRecord(target, latest) {
   return { ...record, lifecycle: 'interrupted', liveness: launched ? 'unknown' : 'exited', exitConfirmed: !launched, cause: 'interrupted' };
 }
 
+const isoTimestamp = (ms) => (typeof ms === 'number' ? new Date(ms).toISOString() : typeof ms === 'string' ? ms : null);
+
 function toProbeRecord(record, rel, stageDir) {
-  const iso = (ms) => (typeof ms === 'number' ? new Date(ms).toISOString() : typeof ms === 'string' ? ms : null);
   return {
     lifecycle: record.lifecycle, host: os.hostname(), handle: record.handle, liveness: record.liveness === 'alive' ? 'alive' : record.liveness,
-    startedAt: iso(record.startedAt), deadlineAt: iso(record.deadlineAt), attempts: record.launches ?? 0, exitConfirmed: record.exitConfirmed,
+    startedAt: isoTimestamp(record.startedAt), deadlineAt: isoTimestamp(record.deadlineAt), attempts: record.launches ?? 0, exitConfirmed: record.exitConfirmed,
     capturePath: record.capturePath ?? (record.capture ? toPosix(path.join(stageDir, record.capture)) : null), fixturePath: record.fixturePath ?? null,
     outcome: record.outcome ?? null, cause: record.cause ?? null, cleanup: record.cleanup ?? 'pending', cleanupReason: record.cleanupReason ?? null, model: record.selection ?? null,
   };
@@ -599,9 +604,9 @@ function toProbeRecord(record, rel, stageDir) {
  * accounting, so it is refused before any write or launch. `--discover-only` launches nothing and ignores it.
  */
 export function loadManifest(workDir, { live }) {
-  try { return readRun(workDir); } catch (err) {
-    if (!live) return null;
-    throw new Error(`Live probe refused: ${err.message} Nothing was launched and existing captures are left in place.`);
+  try { return readRun(workDir); } catch (error) {
+    if (!live) {return null;}
+    throw new Error(`Live probe refused: ${error.message} Nothing was launched and existing captures are left in place.`, { cause: error });
   }
 }
 
@@ -611,8 +616,8 @@ export function loadManifest(workDir, { live }) {
 
 /** Removes the fixture only when every launched child has a confirmed exit. */
 export function cleanupFixture(fixture, records, fsPort = fs) {
-  if (!fixture) return { status: 'complete', reason: null };
-  if (records.some((record) => record.liveness !== 'exited')) return { status: 'blocked', reason: { code: 'exit-unconfirmed' } };
+  if (!fixture) {return { status: 'complete', reason: null };}
+  if (records.some((record) => record.liveness !== 'exited')) {return { status: 'blocked', reason: { code: 'exit-unconfirmed' } };}
   try {
     // NOTE: on Windows an exited child's descendants can hold the fixture cwd briefly (EBUSY/EPERM), so retry.
     fsPort.rmSync(fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
@@ -625,24 +630,26 @@ export function cleanupFixture(fixture, records, fsPort = fs) {
 
 /** Moves (or, while a child may hold a file, copies) staged captures into the run's output directory. */
 export function preserveCaptures(stageDir, outDir, { move }) {
-  if (!fs.existsSync(stageDir)) return;
+  if (!fs.existsSync(stageDir)) {return;}
   const failures = [];
   for (const name of fs.readdirSync(stageDir)) {
     try {
-      if (move) moveEntry(path.join(stageDir, name), path.join(outDir, name));
-      else fs.cpSync(path.join(stageDir, name), path.join(outDir, name), { recursive: true });
-    } catch (err) {
-      failures.push(`${name}: ${err.code ?? err.message}`);
+      if (move) {moveEntry(path.join(stageDir, name), path.join(outDir, name));}
+      else {fs.cpSync(path.join(stageDir, name), path.join(outDir, name), { recursive: true });}
+    } catch (error) {
+      failures.push(`${name}: ${error.code ?? error.message}`);
     }
   }
   // Keep the staging dir while any capture is unmoved, so a failed move never deletes evidence.
-  if (failures.length > 0) throw new Error(`Captures left in ${stageDir}: ${failures.join(', ')}`);
-  if (move) fs.rmSync(stageDir, { recursive: true, force: true });
+  if (failures.length > 0) {throw new Error(`Captures left in ${stageDir}: ${failures.join(', ')}`);}
+  if (move) {fs.rmSync(stageDir, { recursive: true, force: true });}
 }
 
 // ============================================================================
 // SECTION: Outside-Repo Fixture
 // ============================================================================
+
+const newNonce = () => crypto.randomBytes(6).toString('hex');
 
 /**
  * Home directory rather than OS temp: temp is inside dispatch's allowed attachment roots, so home
@@ -656,8 +663,7 @@ export function createFixture(repoRoot, { home = os.homedir() } = {}) {
     throw new Error(`Fixture dir ${dir} resolved inside the repository; move the repo or HOME.`);
   }
 
-  const nonce = () => crypto.randomBytes(6).toString('hex');
-  const nonces = { attached: nonce(), sibling: nonce(), denylisted: nonce() };
+  const nonces = { attached: newNonce(), sibling: newNonce(), denylisted: newNonce() };
   const attached = toPosix(path.join(dir, 'attached.md'));
   const sibling = toPosix(path.join(dir, 'sibling.md'));
   const denylisted = toPosix(path.join(dir, '.env'));
@@ -686,8 +692,10 @@ export function fixtureBytes(fixture) {
 // SECTION: Rendering
 // ============================================================================
 
+const checkMark = (ok) => (ok ? '✓' : '✗');
+const modelLabel = (model, effort) => `${model ?? 'none'}/${effort ?? 'provider default'}`;
+
 export function renderSummary({ rows, live, fixture, config, configError = null, opts, interrupted = false }) {
-  const mark = (ok) => (ok ? '✓' : '✗');
   const lines = ['# Dispatch Platform Probe', '', `Host: ${process.platform} · node ${process.version}`, ''];
   const configured = resolveTargets(config, PROBE_LEVEL);
 
@@ -698,36 +706,33 @@ export function renderSummary({ rows, live, fixture, config, configError = null,
   }
 
   const missing = rows.filter((r) => statusOf(r) !== 'REACHABLE');
-  lines.push('', '## Not found / unreachable', '');
-  lines.push(...(missing.length ? missing.map((r) => `- ${r.provider}/${r.mode}: ${statusOf(r)}${r.detail ? ` — ${cell(r.detail)}` : ''}`) : ['- none']));
+  lines.push('', '## Not found / unreachable', '', ...(missing.length ? missing.map((r) => `- ${r.provider}/${r.mode}: ${statusOf(r)}${r.detail ? ` — ${cell(r.detail)}` : ''}`) : ['- none']));
 
-  if (configError) lines.push('', `Dispatch config unusable: ${cell(configError)}`);
+  if (configError) {lines.push('', `Dispatch config unusable: ${cell(configError)}`);}
 
-  if (opts.discoverOnly) return `${lines.join('\n')}\n`;
+  if (opts.discoverOnly) {return `${lines.join('\n')}\n`;}
 
-  lines.push('', `## Live probe (${opts.modes ? 'per binary' : 'per provider'}, ${PROBE_LEVEL} level${interrupted ? ', INTERRUPTED' : ''})`, '');
-  lines.push(`Outside-repo fixture: \`${fixture.dir}\``, '');
-  lines.push('| Target | Modes covered | Lifecycle | Launches | -f outside repo | Delegate file read | Denylist | Liveness | Cleanup | Cleanup reason | Cause |', '|---|---|---|---|---|---|---|---|---|---|---|');
+  lines.push('', `## Live probe (${opts.modes ? 'per binary' : 'per provider'}, ${PROBE_LEVEL} level${interrupted ? ', INTERRUPTED' : ''})`, '', `Outside-repo fixture: \`${fixture.dir}\``, '',
+    '| Target | Modes covered | Lifecycle | Launches | -f outside repo | Delegate file read | Denylist | Liveness | Cleanup | Cleanup reason | Cause |', '|---|---|---|---|---|---|---|---|---|---|---|');
   for (const r of live) {
     const checks = r.checks ?? {};
     const reason = r.cleanupReason;
     const cleanupNote = reason?.code === 'filesystem-error' ? `${reason.code}: ${reason.errorCode}` : reason?.code ?? '—';
-    lines.push(`| ${r.id} | ${(r.aliases ?? []).join(', ')} | ${r.lifecycle} | ${r.launches ?? 0} | ${mark(checks.attached)} | ${mark(checks.sibling)} | ${r.denylist?.behaviour ?? '—'} | ${r.liveness} | ${r.cleanup ?? '—'} | ${cell(cleanupNote)} | ${cell(r.cause ?? '—')} |`);
+    lines.push(`| ${r.id} | ${(r.aliases ?? []).join(', ')} | ${r.lifecycle} | ${r.launches ?? 0} | ${checkMark(checks.attached)} | ${checkMark(checks.sibling)} | ${r.denylist?.behaviour ?? '—'} | ${r.liveness} | ${r.cleanup ?? '—'} | ${cell(cleanupNote)} | ${cell(r.cause ?? '—')} |`);
   }
   lines.push('', 'Gaps:', ...live.map((r) => `- ${r.id}: ${[...(r.gaps ?? []), r.generationLimit ? `generation limit ${r.generationLimit.requested} not applied (${r.generationLimit.reason})` : null, modelNote(r.selection)].filter(Boolean).join('; ') || 'none'} · capture: ${r.capturePath ?? r.capture ?? 'none'}`));
   return `${lines.join('\n')}\n`;
 }
 
 function modelNote(selection) {
-  if (!selection) return null;
+  if (!selection) {return null;}
   const { configured, applied } = selection;
-  const label = (model, effort) => `${model ?? 'none'}/${effort ?? 'provider default'}`;
-  return `model ${label(applied.model, applied.effort)} applied${selection.fallback ? ` (closest to configured ${configured.level}: ${label(configured.model, configured.effort)})` : ''}`;
+  return `model ${modelLabel(applied.model, applied.effort)} applied${selection.fallback ? ` (closest to configured ${configured.level}: ${modelLabel(configured.model, configured.effort)})` : ''}`;
 }
 
 /** @returns {string} Markdown-safe table cell. */
 export function cell(text) {
-  return String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').slice(0, TABLE_CELL_CHARACTERS);
+  return String(text).replaceAll(/\r?\n/g, ' ').replaceAll('|', String.raw`\|`).slice(0, TABLE_CELL_CHARACTERS);
 }
 
 // ============================================================================
@@ -738,15 +743,15 @@ export function parseArgs(argv) {
   const opts = { modes: false, only: null, timeout: null, discoverOnly: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--run') i++; // consumed by resolveRunDirs
-    else if (arg === '--modes') opts.modes = true;
+    if (arg === '--run') {i++;} // consumed by resolveRunDirs
+    else if (arg === '--modes') {opts.modes = true;}
     else if (arg === '--only') {
       // A bare `--only` used to crash on `undefined.split`; a typo'd provider silently probed nothing.
       const value = argv[++i];
-      if (value === undefined) throw new Error('--only requires a comma-separated provider list');
+      if (value === undefined) {throw new Error('--only requires a comma-separated provider list');}
       const keys = value.split(',').map((s) => s.trim()).filter(Boolean);
       const unknown = keys.filter((k) => !PROVIDERS.includes(k));
-      if (keys.length === 0) throw new Error('--only requires at least one provider');
+      if (keys.length === 0) {throw new Error('--only requires at least one provider');}
       if (unknown.length > 0) {
         throw new Error(`--only: unknown provider(s) ${unknown.join(', ')}. Valid: ${PROVIDERS.join(', ')}`);
       }
@@ -759,8 +764,8 @@ export function parseArgs(argv) {
         throw new Error(`--timeout requires a positive number of seconds, got "${value}"`);
       }
       opts.timeout = parsed;
-    } else if (arg === '--discover-only') opts.discoverOnly = true;
-    else throw new Error(`Unknown argument: ${arg}`);
+    } else if (arg === '--discover-only') {opts.discoverOnly = true;}
+    else {throw new Error(`Unknown argument: ${arg}`);}
   }
   return opts;
 }
@@ -773,8 +778,8 @@ export function loadConfig(repoRoot, read) {
   const skillRoot = path.join(repoRoot, 'skills', 'dispatch');
   try {
     return { config: loadNativeConfig(skillRoot, read).config, readCommands: loadReadCommands(skillRoot, read), error: null };
-  } catch (err) {
-    return { config: null, readCommands: [], error: String(err?.message ?? err) };
+  } catch (error) {
+    return { config: null, readCommands: [], error: String(error?.message ?? error) };
   }
 }
 
@@ -785,8 +790,11 @@ export function loadConfig(repoRoot, read) {
 // Guarded so helpers can be imported without probing real CLIs.
 if (isMainModule(import.meta.url)) {
   // Exit explicitly: a stalled introspection child or its pipes would otherwise keep the CLI alive past deadline plus grace.
-  main().then(() => process.exit(process.exitCode ?? 0), (err) => {
-    process.stderr.write(`[probe] ${err.stack || err.message}\n`);
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`[probe] ${error.stack || error.message}\n`);
     process.exit(1);
-  });
+  }
+  process.exit(process.exitCode ?? 0);
 }

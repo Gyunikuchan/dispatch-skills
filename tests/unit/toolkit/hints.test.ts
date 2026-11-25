@@ -1,3 +1,6 @@
+import { checks, taskSection, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import { generateSkillHashes } from '../../../skills/dispatch/scripts/lib/integrity.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/integrity.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,24 +8,15 @@ import { performance } from 'node:perf_hooks';
 import { describe, test } from 'node:test';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import {
-  appendRecord,
-  currentHashes,
-  foldLedger,
-  type Fold,
-  type Hashes,
-} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, currentHashes, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import type { Fold, Hashes } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import type { LedgerRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
-import {
-  HINT_MAX_BYTES,
-  isHintExcludedAction,
-  stepHint,
-  type StepHintInput,
-} from '../../../skills/dispatch/scripts/toolkit/hints.ts';
+import { HINT_MAX_BYTES, isHintExcludedAction, stepHint } from '../../../skills/dispatch/scripts/toolkit/hints.ts';
+import type { StepHintInput } from '../../../skills/dispatch/scripts/toolkit/hints.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 const SPEC_SOURCE = '# Spec\n## Requirements\n### REQ-1 — Behavior\n- Acceptance: works\n';
-const DESIGN_SOURCE = '# Design\n## Architecture & Boundaries\n- Module.\n';
+
 const PLAN_SOURCE = [
   '# Plan',
   '',
@@ -57,23 +51,17 @@ const PLAN_SOURCE = [
   '',
 ].join('\n');
 
-const rec = (
-  seq: number,
-  kind: string,
-  data: Record<string, any>,
-  by = 'orchestrator',
-  quote?: string,
-): LedgerRecord => ({
+const rec = (seq: number, kind: string, data: JsonObject, by = 'orchestrator', quote?: string): LedgerRecord => ({
   seq,
   kind,
   key: `${kind}:${seq}`,
   at: '2026-01-01T00:00:00.000Z',
   by,
-  ...(quote ? { quote } : {}),
+  ...(quote && { quote }),
   data,
 });
 
-const makeFold = (...records: LedgerRecord[]): Fold => ({
+const makeFold = (...records: Array<LedgerRecord>): Fold => ({
   records,
   lastSeq: records.at(-1)?.seq ?? 0,
   torn: null,
@@ -92,9 +80,9 @@ const designHashes: Hashes = { spec: SPEC_HASH, design: DESIGN_HASH };
 const okResult = (value: unknown = {}, reason?: string): StepHintInput['result'] => ({
   ok: true,
   value,
-  ...(reason ? { reason } : {}),
+  ...(reason && { reason }),
 });
-const checkResult = (tree: string, extra: Record<string, unknown> = {}) =>
+const checkResult = (tree: string, extra: JsonObject = {}) =>
   okResult({ checks: [{ tree, clean: true, before: tree, after: tree, exit: 0, ...extra }] });
 
 const openedIntegrate = (seq: number) =>
@@ -274,8 +262,8 @@ describe('stepHint state machine and router hint envelope', () => {
         hint,
         'Run review — help review run — review run <artifact> --session <session> --host <platform> [--pins <pins>]',
       );
-      assert.ok(Buffer.byteLength(hint!, 'utf8') <= HINT_MAX_BYTES);
-      assert.ok(hint!.includes('--session <session> --host <platform> [--pins <pins>]'));
+      assert.ok(Buffer.byteLength(hint, 'utf8') <= HINT_MAX_BYTES);
+      assert.ok(hint.includes('--session <session> --host <platform> [--pins <pins>]'));
     }
 
     // Deduplicated bind yields undefined
@@ -591,7 +579,6 @@ describe('stepHint state machine and router hint envelope', () => {
       );
 
       // Active launch -> undefined
-      const { checks, taskSection, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
       const loadedPlan = loadPlan(f.session, manifest);
       const planChecks = checks(loadedPlan);
       const digestFor = (criterion: string) => planChecks.find((row) => row.criterion === criterion)!.commandDigest;
@@ -845,7 +832,7 @@ describe('stepHint state machine and router hint envelope', () => {
         );
 
         const baseFold = foldLedger(fDone.session);
-        const withEvidence = (criterion: string, extra: Record<string, unknown>): Fold => ({
+        const withEvidence = (criterion: string, extra: JsonObject): Fold => ({
           ...baseFold,
           lastSeq: baseFold.lastSeq + 1,
           records: [
@@ -1199,7 +1186,6 @@ describe('stepHint state machine and router hint envelope', () => {
       f.artifact('s.spec.md', SPEC_SOURCE);
       f.artifact('p.plan.md', multiPlan);
       const manifest = readManifest(f.session);
-      const { checks, taskSection, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
       await appendRecord(
         f.session,
         { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 's.spec.md', plan: 'p.plan.md' } },
@@ -1732,7 +1718,6 @@ describe('stepHint state machine and router hint envelope', () => {
       fRev.artifact('s.spec.md', SPEC_SOURCE);
       fRev.artifact('p.plan.md', reviewOnlyPlan);
       const mRev = readManifest(fRev.session);
-      const { taskSection, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
       await appendRecord(
         fRev.session,
         { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 's.spec.md', plan: 'p.plan.md' } },
@@ -1877,7 +1862,6 @@ describe('stepHint state machine and router hint envelope', () => {
         },
         fCap.deps,
       );
-      const { taskSection, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
       const longSection = taskSection(loadPlan(fCap.session, capManifest), longTask);
       await appendRecord(
         fCap.session,
@@ -1925,14 +1909,13 @@ describe('stepHint state machine and router hint envelope', () => {
       const skill = path.join(f.root, 'skill');
       fs.mkdirSync(skill);
       fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-      const { generateSkillHashes } = await import('../../../skills/dispatch/scripts/lib/integrity.ts');
       fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
       fs.writeFileSync(
         path.join(skill, 'config.jsonc'),
         JSON.stringify({
           'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
           'write-subagents': { codex: { medium: { model: 'writer' } } },
-          'utility-subagents': { codex: { model: 'explorer', 'context-limit': 300000 } },
+          'utility-subagents': { codex: { model: 'explorer', 'context-limit': 300_000 } },
         }),
       );
 

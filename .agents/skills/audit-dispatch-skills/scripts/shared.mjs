@@ -26,7 +26,7 @@ const REPORT_OR_WORK_PATTERN = /(\d{4}-\d{2}-\d{2}-\d{4})-(?:audit\.md|work)$/;
 /** @returns {string} Absolute repository root. */
 export function resolveRepoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-  if (res.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
+  if (res.status !== 0) {throw new Error('Run from inside the dispatch-skills repository.');}
   return path.resolve(res.stdout.trim());
 }
 
@@ -52,10 +52,10 @@ export function relTo(root) {
 export function resolveRunDirs(root, argv) {
   const index = argv.indexOf('--run');
   const value = index === -1 ? null : argv[index + 1];
-  if (!value) throw new Error('Missing --run <yyyy-mm-dd-hhmm>');
+  if (!value) {throw new Error('Missing --run <yyyy-mm-dd-hhmm>');}
   // A bare id keeps callers off path separators; a full report path is accepted for convenience.
   const runId = RUN_ID_PATTERN.test(value) ? value : REPORT_OR_WORK_PATTERN.exec(toPosix(value))?.[1];
-  if (!runId) throw new Error(`--run must be a run id like 2026-09-11-1853 (got ${value})`);
+  if (!runId) {throw new Error(`--run must be a run id like 2026-09-11-1853 (got ${value})`);}
   const auditsDir = path.join(root, ...AUDIT_PREFIX.split('/').filter(Boolean));
   return {
     runId,
@@ -84,12 +84,12 @@ export function frontmatterDescription(text) {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? text;
   const lines = frontmatter.split(/\r?\n/);
   const startIndex = lines.findIndex((l) => /^description:/.test(l));
-  if (startIndex === -1) return '';
+  if (startIndex === -1) {return '';}
 
   const inlineValue = lines[startIndex].replace(/^description:\s*/, '');
   const blockMatch = /^([>|][+-]?)\s*$/.exec(inlineValue);
   if (!blockMatch) {
-    return inlineValue.trim().replace(/^["']|["']$/g, '');
+    return inlineValue.trim().replaceAll(/^["']|["']$/g, '');
   }
 
   const isFolded = blockMatch[1].startsWith('>');
@@ -97,11 +97,11 @@ export function frontmatterDescription(text) {
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '') {
-      if (isFolded) continue;
+      if (isFolded) {continue;}
       continuation.push('');
       continue;
     }
-    if (!/^\s/.test(line)) break; // Dedented line ends the block.
+    if (!/^\s/.test(line)) {break;} // Dedented line ends the block.
     continuation.push(line.replace(/^\s+/, ''));
   }
 
@@ -118,7 +118,7 @@ export function frontmatterDescription(text) {
  */
 export function auditGitStatus(root) {
   const res = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' });
-  if (res.status !== 0) return null;
+  if (res.status !== 0) {return null;}
   return filterAuditStatus(res.stdout);
 }
 
@@ -133,8 +133,8 @@ export function filterAuditStatus(stdout) {
   return stdout
     .split('\n')
     .filter((line) => {
-      if (!line.trim()) return false;
-      const entryPath = line.slice(3).split(' -> ').pop().replace(/^"|"$/g, '');
+      if (!line.trim()) {return false;}
+      const entryPath = line.slice(3).split(' -> ').pop().replaceAll(/^"|"$/g, '');
       return !entryPath.startsWith(AUDIT_PREFIX);
     })
     .sort()
@@ -145,7 +145,7 @@ export function filterAuditStatus(stdout) {
 export function diffStatus(before, after) {
   const a = new Set(before.split('\n').filter(Boolean));
   const b = new Set(after.split('\n').filter(Boolean));
-  return [...[...b].filter((l) => !a.has(l)).map((l) => `+ ${l}`), ...[...a].filter((l) => !b.has(l)).map((l) => `- ${l}`)];
+  return [...[...b].flatMap((l) => (a.has(l) ? [] : [`+ ${l}`])), ...[...a].flatMap((l) => (b.has(l) ? [] : [`- ${l}`]))];
 }
 
 // ============================================================================
@@ -157,9 +157,14 @@ const PROTECTED_IGNORED = [':(glob)**/config.local.*', ':(glob)**/config.jsonc']
 
 function gitPaths(root, args) {
   const res = spawnSync('git', ['ls-files', '-z', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (res.status !== 0) return null;
+  if (res.status !== 0) {return null;}
   return res.stdout.split('\0').filter(Boolean);
 }
+
+/** UTF-16 code-unit order, the default `sort` order for strings. */
+export const compareCodeUnits = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+const sha256Hex = (data) => createHash('sha256').update(data).digest('hex');
 
 /**
  * Content fingerprints for tracked, nonignored untracked, and protected ignored local-config
@@ -180,23 +185,22 @@ export function contentSnapshot(root, options = {}) {
   const gaps = [];
   const listed = gitPaths(root, ['--cached', '--others', '--exclude-standard']);
   const ignored = gitPaths(root, ['--others', '--ignored', '--exclude-standard', '--', ...PROTECTED_IGNORED]);
-  if (listed === null) gaps.push('git ls-files failed; tracked and untracked content not fingerprinted');
-  if (ignored === null) gaps.push('git ls-files failed; ignored local configs not fingerprinted');
+  if (listed === null) {gaps.push('git ls-files failed; tracked and untracked content not fingerprinted');}
+  if (ignored === null) {gaps.push('git ls-files failed; ignored local configs not fingerprinted');}
   const excluded = (p) => exclusions.some((e) => p === e || p.startsWith(`${e}/`));
-  const hash = (data) => createHash('sha256').update(data).digest('hex');
   const entries = {};
-  for (const rel of [...new Set([...(listed ?? []), ...(ignored ?? [])])].sort()) {
-    if (excluded(rel)) continue;
+  for (const rel of [...new Set([...(listed ?? []), ...(ignored ?? [])])].sort(compareCodeUnits)) {
+    if (excluded(rel)) {continue;}
     const full = path.join(root, rel);
     try {
       const stat = io.lstatSync(full);
-      entries[rel] = stat.isSymbolicLink() ? `symlink:${hash(io.readlinkSync(full))}` : `sha256:${hash(io.readFileSync(full))}`;
-    } catch (err) {
-      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+      entries[rel] = stat.isSymbolicLink() ? `symlink:${sha256Hex(io.readlinkSync(full))}` : `sha256:${sha256Hex(io.readFileSync(full))}`;
+    } catch (error) {
+      if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
         entries[rel] = 'missing';
       } else {
         entries[rel] = 'unreadable';
-        gaps.push(`${rel} unreadable (${err?.code ?? err?.message ?? String(err)}); its content is not compared`);
+        gaps.push(`${rel} unreadable (${error?.code ?? error?.message ?? String(error)}); its content is not compared`);
       }
     }
   }
@@ -207,9 +211,9 @@ export function contentSnapshot(root, options = {}) {
 export function diffContent(before, after) {
   const lines = [];
   for (const [p, hash] of Object.entries(after.entries)) {
-    if (!(p in before.entries)) lines.push(`+ ${p}`);
-    else if (before.entries[p] !== hash) lines.push(`~ ${p}`);
+    if (!(p in before.entries)) {lines.push(`+ ${p}`);}
+    else if (before.entries[p] !== hash) {lines.push(`~ ${p}`);}
   }
-  for (const p of Object.keys(before.entries)) if (!(p in after.entries)) lines.push(`- ${p}`);
+  for (const p of Object.keys(before.entries)) {if (!(p in after.entries)) {lines.push(`- ${p}`);}}
   return lines.sort((a, b) => a.slice(2).localeCompare(b.slice(2)));
 }

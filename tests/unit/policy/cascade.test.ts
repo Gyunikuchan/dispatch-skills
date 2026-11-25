@@ -8,8 +8,8 @@ import {
   next,
   reservePool,
   takeReserve,
-  type Voice,
 } from '../../../skills/dispatch/scripts/policy/cascade.ts';
+import type { Voice } from '../../../skills/dispatch/scripts/policy/cascade.ts';
 
 const agy: Voice = {
   slot: 'agy[0]',
@@ -23,7 +23,7 @@ const lastModel = { model: 1, mode: 0 };
 // SECTION: Failure dispositions
 
 test('delegates-failure-classes: every class has a disposition; integrity and config end the run', () => {
-  const classes: FailureClass[] = [
+  const classes: Array<FailureClass> = [
     'quota',
     'context-overflow',
     'auth',

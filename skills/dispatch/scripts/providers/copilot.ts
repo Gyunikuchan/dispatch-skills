@@ -16,15 +16,19 @@ import { sessionUsageReader } from './session-usage.ts';
 const AUTH =
   /(no authentication|can be authenticated|oauth token|personal access token|gh auth login|subscription required|not subscribed|active github copilot subscription)/i;
 
-const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
+const join = (env: PlatformEnv, ...parts: Array<string>): string => parts.join(env.os === 'win32' ? '\\' : '/');
 const SANDBOX_FLAGS = ['--sandbox', '--allow-all-tools'] as const;
 const EFFORT_REJECTION =
   /^(?:error: invalid value '[^'\r\n]+' for '--reasoning-effort <level>'|Error: Model "[^"\r\n]+" does not support reasoning effort configuration \(requested: "[^"\r\n]+"\)\.)\r?$/im;
 const UNSUPPORTED_HOST_WARNING = /^Sandboxing is enabled but is not supported on this host\b[^\r\n]*(?:\r?\n|$)/i;
 
 function classify(text: string, checkSandbox = true): FailureClass | null {
-  if (checkSandbox && isSandboxUnsupported(text)) return 'sandbox-unsupported';
-  if (AUTH.test(text)) return 'auth';
+  if (checkSandbox && isSandboxUnsupported(text)) {
+    return 'sandbox-unsupported';
+  }
+  if (AUTH.test(text)) {
+    return 'auth';
+  }
   return classifyFailure(text);
 }
 
@@ -81,11 +85,19 @@ export const copilot: ProviderSpec = {
   // NOTE: a preset id alone proves nothing; only an idle kill after streamed output reports it.
   presetsSession: true,
   attemptSession(out: ProcessResult, req: LaunchRequest): string | null {
-    if (req.resume) return validSessionId(req.resume);
+    if (req.resume) {
+      return validSessionId(req.resume);
+    }
     const extracted = extractSessionId(out.stdout, 'copilot') ?? extractSessionId(out.stderrTail, 'copilot');
-    if (extracted) return validSessionId(extracted);
-    if (out.idleMs !== undefined && out.stdout.trim() && req.sessionPreset) return validSessionId(req.sessionPreset);
-    if (out.wrapUpStop && out.stdout.trim() && req.sessionPreset) return validSessionId(req.sessionPreset);
+    if (extracted) {
+      return validSessionId(extracted);
+    }
+    if (out.idleMs !== undefined && out.stdout.trim() && req.sessionPreset) {
+      return validSessionId(req.sessionPreset);
+    }
+    if (out.wrapUpStop && out.stdout.trim() && req.sessionPreset) {
+      return validSessionId(req.sessionPreset);
+    }
     return null;
   },
   argv(req) {
@@ -97,12 +109,21 @@ export const copilot: ProviderSpec = {
       '-p',
       req.prompt,
     ];
-    if (req.resume) argv.push('--resume', req.resume);
-    else if (req.sessionPreset) argv.push('--session-id', req.sessionPreset);
-    if (req.model) argv.push('--model', req.model);
-    if (req.effort) argv.push('--reasoning-effort', req.effort);
+    if (req.resume) {
+      argv.push('--resume', req.resume);
+    } else if (req.sessionPreset) {
+      argv.push('--session-id', req.sessionPreset);
+    }
+    if (req.model) {
+      argv.push('--model', req.model);
+    }
+    if (req.effort) {
+      argv.push('--reasoning-effort', req.effort);
+    }
     for (const command of req.readCommands ?? []) {
-      if (command && !/\s/.test(command)) argv.push('--allow-tool', `shell(${command}:*)`);
+      if (command && !/\s/.test(command)) {
+        argv.push('--allow-tool', `shell(${command}:*)`);
+      }
     }
     argv.push('--mode', 'plan');
     return { argv, stdin: null, env: {}, cwd: req.cwd };
@@ -120,7 +141,9 @@ export const copilot: ProviderSpec = {
       return { status: 'ok', text, sessionId: id, resume: id ? `copilot --resume ${id}` : null };
     }
     const detail = `copilot exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
-    if (cls) return failOutcome(cls, detail);
+    if (cls) {
+      return failOutcome(cls, detail);
+    }
     if (out.exit !== 0 && out.exit !== null && req.effort && EFFORT_REJECTION.test(out.stderrTail)) {
       return { ...failOutcome('empty-output', detail), retryWithoutEffort: true };
     }

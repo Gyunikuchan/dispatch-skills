@@ -3,10 +3,24 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { main, nodeDeps, type CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main, nodeDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { normalizeProvider } from '../../../skills/dispatch/scripts/policy/roster.ts';
 import { initSession } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { isRecord } from '../../../skills/dispatch/scripts/lib/config.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
+import { isBoolean, isString, maybe, narrow, nullable, objectWith } from './json.ts';
+
+const envelopeGuard = objectWith({
+  ok: isBoolean,
+  summary: isString,
+  reason: maybe(isString),
+  path: maybe(nullable(isString)),
+});
+const readEnvelope = (raw: string) => narrow(JSON.parse(raw), envelopeGuard);
+type Envelope = ReturnType<typeof readEnvelope>;
+type ConcurrentResult = { exit: number; output: Envelope; value: unknown };
 export const planSource = [
   '# Work',
   '',
@@ -49,14 +63,17 @@ export const contextMapSource = [
 let baseTemplate: string | null = null;
 function getBaseTemplate(): string {
   if (!baseTemplate) {
-    baseTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-template-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-template-'));
+    baseTemplate = dir;
     process.on('exit', () => {
       try {
-        fs.rmSync(baseTemplate!, { recursive: true, force: true });
-      } catch {}
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors on exit.
+      }
     });
-    const git = (args: string[]) => {
-      const r = spawnSync('git', args, { cwd: baseTemplate!, encoding: 'utf8', windowsHide: true });
+    const git = (args: Array<string>) => {
+      const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true });
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.trim();
     };
@@ -83,14 +100,16 @@ function getBaseTemplate(): string {
 export async function toolkitRepo(source = planSource, files: Record<string, string> = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-git-'));
   const session = path.join(root, '20261023T0000Z-test');
-  const git = (args: string[], cwd = root) => {
+  const git = (args: Array<string>, cwd = root) => {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim();
   };
   fs.cpSync(getBaseTemplate(), root, { recursive: true });
   if (source !== planSource || Object.keys(files).length > 0) {
-    if (source !== planSource) fs.writeFileSync(path.join(root, 'work.plan.md'), source);
+    if (source !== planSource) {
+      fs.writeFileSync(path.join(root, 'work.plan.md'), source);
+    }
     for (const [file, text] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       fs.writeFileSync(path.join(root, file), text);
@@ -156,7 +175,7 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
         { kind: 'level', by: 'orchestrator', key: 'level:' + foldLedger(session).lastSeq, data: { level: value } },
         deps,
       );
-    const edit = async (data: object) =>
+    const edit = async (data: JsonObject) =>
       appendRecord(
         session,
         { kind: 'edit', by: 'orchestrator', key: 'edit:' + foldLedger(session).lastSeq, data },
@@ -172,17 +191,23 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
       'brief verifier',
       'brief fix-review-lite',
     ]);
-    const withHost = (args: string[]) => {
-      if (args.includes('--host')) return args;
-      if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;
+    const withHost = (args: Array<string>) => {
+      if (args.includes('--host')) {
+        return args;
+      }
+      if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) {
+        return args;
+      }
       const platform = (deps.orchestrator as { platform: string } | null)?.platform;
       let host: string;
-      if (typeof platform === 'string' && platform) host = normalizeProvider(platform);
-      else {
+      if (typeof platform === 'string' && platform) {
+        host = normalizeProvider(platform);
+      } else {
         try {
-          const config = JSON.parse(fs.readFileSync(path.join(deps.skillRoot, 'config.jsonc'), 'utf8')) as {
-            ['read-delegates']?: Record<string, unknown>;
-          };
+          const config = narrow(
+            JSON.parse(fs.readFileSync(path.join(deps.skillRoot, 'config.jsonc'), 'utf8')),
+            objectWith({ 'read-delegates': maybe(isRecord) }),
+          );
           const present = new Set(Object.keys(config['read-delegates'] ?? {}).map((key) => normalizeProvider(key)));
           host =
             ['opencode', 'claude', 'agy', 'copilot', 'codex'].find((candidate) => !present.has(candidate)) ??
@@ -193,14 +218,14 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
       }
       return [...args, '--host', host];
     };
-    const run = async (args: string[], hook?: CliDeps['hook'], seedVerification = true) => {
+    const run = async (args: Array<string>, hook?: CliDeps['hook'], seedVerification = true, gitRun = deps.run) => {
       if (seedVerification && args[0] === 'worktree' && args[1] === 'deliver') {
         const fold = foldLedger(session);
         const opened = fold.records.findLast((r) => r.kind === 'integrate' && r.data['phase'] === 'opened');
         if (
           opened &&
           !fold.records.some((r) => r.seq > opened.seq && r.kind === 'integrate' && r.data['phase'] === 'verification')
-        )
+        ) {
           await appendRecord(
             session,
             {
@@ -217,20 +242,25 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
             },
             deps,
           );
+        }
       }
-      const lines: string[] = [];
+      const lines: Array<string> = [];
       const exit = await main([...withHost(args), '--session', session], {
         ...deps,
+        run: gitRun,
         stdout: (line) => lines.push(line),
-        ...(hook ? { hook } : {}),
+        ...(hook && { hook }),
       });
       assert.equal(lines.length, 1);
-      const output = JSON.parse(lines[0]!);
+      const line = lines[0];
+      assert.ok(line !== undefined);
+      const output = readEnvelope(line);
       assert.ok(Buffer.byteLength(output.summary) <= 1024);
-      return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
+      const value: unknown = output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null;
+      return { exit, output, value };
     };
     const spawned = (
-      args: string[],
+      args: Array<string>,
       entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'),
       env?: NodeJS.ProcessEnv,
     ) =>
@@ -240,11 +270,11 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
         env: env ?? process.env,
       });
     const concurrent = (
-      args: string[],
+      args: Array<string>,
       entry = path.resolve('skills/dispatch/scripts/toolkit/cli.ts'),
       env?: NodeJS.ProcessEnv,
     ) =>
-      new Promise<{ exit: number; output: any; value: any }>((resolve, reject) => {
+      new Promise<ConcurrentResult>((resolve, reject) => {
         const child = spawn(process.execPath, [entry, ...withHost(args), '--session', session], {
           windowsHide: true,
           env: env ?? process.env,
@@ -255,15 +285,21 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
         child.stderr.on('data', (b) => (stderr += b));
         child.on('error', reject);
         child.on('close', (exit) => {
+          let result: ConcurrentResult;
           try {
             const lines = stdout.trim().split(/\r?\n/);
             assert.equal(lines.length, 1, stderr);
-            const output = JSON.parse(lines[0]!);
+            const line = lines[0];
+            assert.ok(line !== undefined);
+            const output = readEnvelope(line);
             assert.ok(Buffer.byteLength(output.summary) <= 1024);
-            resolve({ exit: exit ?? 1, output, value: JSON.parse(fs.readFileSync(output.path, 'utf8')) });
+            const value: unknown = output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null;
+            result = { exit: exit ?? 1, output, value };
           } catch (error) {
             reject(error);
+            return;
           }
+          resolve(result);
         });
       });
     return {
@@ -290,12 +326,14 @@ export async function toolkitRepo(source = planSource, files: Record<string, str
 export function captureIntegrationReview(
   r: Awaited<ReturnType<typeof toolkitRepo>>,
   round = 1,
-  findings: Record<string, unknown>[] = [],
+  findings: Array<JsonObject> = [],
 ) {
   const dir = path.join(r.session, '.state/reviews/code-integration/round-' + round);
   fs.mkdirSync(path.join(dir, 'gen-1/slots'), { recursive: true });
   const hashes = currentHashes(r.root, latest(foldLedger(r.session), 'bind'));
-  const base = foldLedger(r.session).records.find((x) => x.data['phase'] === 'opened')!.data['base'];
+  const opened = foldLedger(r.session).records.find((x) => x.data['phase'] === 'opened');
+  assert.ok(opened, 'opened integrate record');
+  const base = opened.data['base'];
   fs.writeFileSync(
     path.join(dir, 'round.json'),
     JSON.stringify({
@@ -321,7 +359,7 @@ export function captureIntegrationReview(
   return dir;
 }
 
-export function setupTestSkill(deps: CliDeps, session: string, name = 'skill', config: object = {}) {
+export function setupTestSkill(deps: CliDeps, session: string, name = 'skill', config: JsonObject = {}) {
   const skill = path.join(session, name);
   fs.mkdirSync(path.join(skill, 'references'), { recursive: true });
   fs.cpSync(path.join(deps.skillRoot, 'references/templates'), path.join(skill, 'references/templates'), {

@@ -1,3 +1,9 @@
+import { isRecord } from '../lib/config.ts';
+import type { JsonValue } from '../lib/config.ts';
+import { nodeErrorCode } from '../lib/fs-ext.ts';
+import { parseJson } from '../lib/integrity.ts';
+import { present, stringList, stringMap, textValue } from './narrow.ts';
+import { validateReviewFix } from './records.ts';
 import {
   INTEGRATION_REVIEW,
   reviewDirectory,
@@ -10,17 +16,12 @@ import { reviewIdentity } from './review-identity.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import {
-  cleanupBinding,
-  criterionStatusCounts,
-  criterionStatuses,
-  latestCleanup,
-  verifiedStage,
-  type CriterionStatus,
-} from './evidence.ts';
+import { cleanupBinding, criterionStatusCounts, criterionStatuses, latestCleanup, verifiedStage } from './evidence.ts';
+import type { CriterionStatus } from './evidence.ts';
 import { git, gitOk, headTree, splitPaths, testedTree } from './git.ts';
 import { integrationRecord } from './integration-state.ts';
-import { currentHashes, foldLedger, latest, withLedger, type Fold } from './ledger.ts';
+import { currentHashes, foldLedger, latest, withLedger } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { readArtifact } from './artifacts.ts';
 import { checks, loadPlan, ownedPaths } from './plan-view.ts';
 import { parseGlance } from './domain/plan.ts';
@@ -29,12 +30,14 @@ import { ToolError, writePrivateOutput } from './output.ts';
 import { diagnosticsEnabled } from './diagnostics-capture.ts';
 import { optionalDiagnostics, retroWarning } from './diagnostics.ts';
 import { deliveredSourceRef } from './writers.ts';
-import { renderWalkthrough, type WalkthroughView } from './walkthrough.ts';
+import { renderWalkthrough } from './walkthrough.ts';
+import type { WalkthroughView } from './walkthrough.ts';
 import { reviewRows } from './review-findings.ts';
 import type { LedgerRecord, ReviewFix } from './records.ts';
 import type { ParsedPlan } from './domain/types.ts';
 
-import { loadRejections, applicableReviewIds, type RejectionState } from './confirmations.ts';
+import { loadRejections, applicableReviewIds } from './confirmations.ts';
+import type { RejectionState } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
 type Current = { headTree: string; testedTree: string };
 export type ReviewFixReport = {
@@ -42,8 +45,8 @@ export type ReviewFixReport = {
   reason: string;
   metadata: ReviewFix;
   status: 're-reviewed' | 'verified but not re-reviewed' | 'not verified';
-  paths: string[];
-  verification?: { tree: string; criteria: string[]; contract: string[] };
+  paths: Array<string>;
+  verification?: { tree: string; criteria: Array<string>; contract: Array<string> };
 };
 type Snapshot = {
   risk: string;
@@ -60,15 +63,15 @@ type Snapshot = {
   integrationPath: string | null;
   head: string | null;
   current: Current | null;
-  statuses: CriterionStatus[];
+  statuses: Array<CriterionStatus>;
   delivered: LedgerRecord | undefined;
   deliveredAtHead: boolean;
   integrated: number;
-  rejectionConfirmations: RejectionState[];
+  rejectionConfirmations: Array<RejectionState>;
   confirmationError: string | undefined;
   coverage: WalkthroughView['coverage'];
   reviewedCodeBaseline: string | undefined;
-  reviewFixes: ReviewFixReport[];
+  reviewFixes: Array<ReviewFixReport>;
   testCleanup: WalkthroughView['testCleanup'];
 };
 type ReportFacts = Snapshot & { view: WalkthroughView };
@@ -77,75 +80,108 @@ function isDirectory(directory: string): boolean {
   try {
     return fs.statSync(directory).isDirectory();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return false;
+    }
     throw error;
   }
 }
 
+const destinationOf = (record: LedgerRecord) => {
+  const dest: unknown = record.data['dest'];
+  return isRecord(dest) ? dest : undefined;
+};
+
 function recordForDestination(fold: Fold, integration: LedgerRecord): LedgerRecord | undefined {
-  const dest = integration.data['dest'] as { path?: unknown; branch?: unknown } | undefined;
+  const dest = destinationOf(integration);
   return fold.records.findLast(
     (record) =>
       record.kind === 'integrate' &&
       record.data['phase'] === 'delivered' &&
-      record.data['dest']?.path === dest?.path &&
-      record.data['dest']?.branch === dest?.branch,
+      destinationOf(record)?.['path'] === dest?.['path'] &&
+      destinationOf(record)?.['branch'] === dest?.['branch'],
   );
 }
 
-function completedReviewHeads(session: string): string[] {
+function completedReviewHeads(session: string): Array<string> {
   const root = reviewDirectory(session, INTEGRATION_REVIEW);
   const heads = new Set<string>();
-  if (!isDirectory(root)) return [];
+  if (!isDirectory(root)) {
+    return [];
+  }
   for (const name of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!name.isDirectory() || reviewRoundNumber(name.name) === undefined) continue;
+    if (!name.isDirectory() || reviewRoundNumber(name.name) === undefined) {
+      continue;
+    }
     const directory = path.join(root, name.name);
-    if (!fs.existsSync(reviewFindingsFile(directory))) continue;
-    const round = readReviewJson<{ scope?: string; generation?: number; target?: { head?: string } }>(
-      reviewRoundFile(directory),
-    );
-    const head = round?.target?.head;
-    const generation = round?.generation;
+    if (!fs.existsSync(reviewFindingsFile(directory))) {
+      continue;
+    }
+    const saved = readReviewJson(reviewRoundFile(directory));
+    const round = isRecord(saved) ? saved : undefined;
+    const target = round?.['target'];
+    const head = isRecord(target) ? target['head'] : undefined;
+    const generation = round?.['generation'];
     if (
       typeof head !== 'string' ||
       !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ||
-      /\(confirmation-only\)/i.test(round?.scope ?? '') ||
+      /\(confirmation-only\)/i.test(String(round?.['scope'] ?? '')) ||
       typeof generation !== 'number' ||
       !Number.isSafeInteger(generation) ||
       generation < 1
-    )
+    ) {
       continue;
+    }
     const slots = path.join(reviewGenerationDirectory(directory, generation), 'slots');
     if (
       isDirectory(slots) &&
-      fs
-        .readdirSync(slots, { withFileTypes: true })
-        .some(
-          (file) =>
-            file.isFile() &&
-            file.name.endsWith('.json') &&
-            readReviewJson<{ state?: string }>(path.join(slots, file.name))?.state === 'done',
-        )
-    )
+      fs.readdirSync(slots, { withFileTypes: true }).some((file) => {
+        if (!file.isFile() || !file.name.endsWith('.json')) {
+          return false;
+        }
+        const slot = readReviewJson(path.join(slots, file.name));
+        return isRecord(slot) && slot['state'] === 'done';
+      })
+    ) {
       heads.add(head);
+    }
   }
   return [...heads];
 }
 
-function readReviewJson<T>(file: string): T | undefined {
+function readReviewJson(file: string): JsonValue | undefined {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+    return parseJson(fs.readFileSync(file, 'utf8'));
   } catch (error) {
-    if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if (error instanceof SyntaxError || nodeErrorCode(error) === 'ENOENT') {
+      return undefined;
+    }
     throw error;
   }
 }
+
+const countValue = (value: unknown): number => {
+  if (typeof value !== 'number') {
+    throw new TypeError('Expected a number value, received ' + typeof value);
+  }
+  return value;
+};
+
+const testCleanupView = ({ data }: LedgerRecord): WalkthroughView['testCleanup'] => ({
+  from: textValue(data['from']),
+  trees: stringMap(data['trees']),
+  removed: stringList(data['removed']),
+  deleted: countValue(data['deleted']),
+  merged: countValue(data['merged']),
+});
 
 /** Captures only the plan, ledger and Git facts needed to decide completion. */
 async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
   const bind = latest(fold, 'bind');
   const plan = loadPlan(ctx.session, ctx.manifest);
-  if (!bind) throw new ToolError(4, 'lint-errors', 'No bound plan');
+  if (!bind) {
+    throw new ToolError(4, 'lint-errors', 'No bound plan');
+  }
   const planPath = String(bind.data['plan']);
   const specPath = String(bind.data['spec']);
   const hashes = currentHashes(ctx.manifest.repositoryRoot, bind);
@@ -177,17 +213,19 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
       reviewedCodeBaseline = (await reviewIdentity(ctx, fold, integrationPath, head, integration.data['base']))
         .baseline;
     } catch (error) {
-      if (!(error instanceof ToolError && error.reason === 'review-required')) throw error;
+      if (!(error instanceof ToolError && error.reason === 'review-required')) {
+        throw error;
+      }
     }
   }
   const reviewHeads = fixRecords.length ? completedReviewHeads(ctx.session) : [];
   const hasCurrentVerification =
     fixRecords.length && current && checkRows.length && verifiedStage(fold, checkRows, current, cleanup);
-  const reviewFixes: ReviewFixReport[] = [];
+  const reviewFixes: Array<ReviewFixReport> = [];
   const repository = ctx.manifest.repositoryRoot;
   for (const record of fixRecords) {
     const commit = String(record.data['commit']);
-    const metadata = record.data['reviewFix'] as ReviewFix;
+    const metadata = validateReviewFix(record.data['reviewFix']);
     const isAncestor = async (target: string) =>
       (await git(ctx.deps, repository, ['merge-base', '--is-ancestor', commit, target])).exit === 0;
     let reviewed = false;
@@ -200,7 +238,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     const verification =
       !reviewed && head && hasCurrentVerification && (await isAncestor(head))
         ? {
-            tree: current!.headTree,
+            tree: present(current, 'the current integration trees').headTree,
             criteria: checkRows.filter((check) => check.criterion !== 'contract').map((check) => check.criterion),
             contract: checkRows.filter((check) => check.criterion === 'contract').map((check) => check.criterion),
           }
@@ -220,7 +258,7 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
       metadata,
       status: reviewed ? 're-reviewed' : verification ? 'verified but not re-reviewed' : 'not verified',
       paths: names.exit === 0 ? splitPaths(names.stdout) : [],
-      ...(verification ? { verification } : {}),
+      ...(verification && { verification }),
     });
   }
   const statusRows = criterionStatuses(fold, checkRows, current, cleanup);
@@ -233,19 +271,21 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
       record.data['phase'] === 'done' &&
       typeof record.data['task'] === 'string' &&
       planTaskIds.has(record.data['task'])
-        ? [record.data['task'] as string]
+        ? [record.data['task']]
         : [],
     ),
   );
   const riskToken = plan.box['Risk']?.trim().split(/\s+/, 1)[0];
   const risk = riskToken === 'med' || riskToken === 'high' ? riskToken : 'low';
   const planStem = path.basename(planPath).replace(/\.plan\.md$/i, '') || plan.title || 'walkthrough';
-  let rejectionConfirmations: RejectionState[] = [],
+  let rejectionConfirmations: Array<RejectionState> = [],
     confirmationError: string | undefined;
   try {
     rejectionConfirmations = loadRejections(ctx.session, fold, applicableReviewIds(ctx.manifest, fold));
   } catch (error) {
-    if (!(error instanceof ToolError && error.reason === 'review-confirmation-required')) throw error;
+    if (!(error instanceof ToolError && error.reason === 'review-confirmation-required')) {
+      throw error;
+    }
     confirmationError = error.message;
   }
   let coverage: WalkthroughView['coverage'];
@@ -257,7 +297,9 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
       applicableReviewIds(ctx.manifest, fold).get(INTEGRATION_REVIEW),
     );
   } catch (error) {
-    if (!(error instanceof ToolError && error.reason === 'coverage-required')) throw error;
+    if (!(error instanceof ToolError && error.reason === 'coverage-required')) {
+      throw error;
+    }
     coverage = 'unreadable';
   }
   return {
@@ -284,31 +326,26 @@ async function capture(ctx: HandlerContext, fold: Fold): Promise<Snapshot> {
     coverage,
     reviewedCodeBaseline,
     reviewFixes,
-    testCleanup: cleanupRecord
-      ? {
-          from: cleanupRecord.data['from'],
-          trees: cleanupRecord.data['trees'],
-          removed: cleanupRecord.data['removed'],
-          deleted: cleanupRecord.data['deleted'],
-          merged: cleanupRecord.data['merged'],
-        }
-      : undefined,
+    testCleanup: cleanupRecord ? testCleanupView(cleanupRecord) : undefined,
   };
 }
 
-function parseNameStatus(bytes: string): { status: string; path: string }[] {
+function parseNameStatus(bytes: string): Array<{ status: string; path: string }> {
   const parts = bytes.split('\0').filter(Boolean);
-  const changes: { status: string; path: string }[] = [];
+  const changes: Array<{ status: string; path: string }> = [];
   for (let index = 0; index < parts.length;) {
-    const token = parts[index++]!;
+    const token = present(parts[index++], 'a name-status token');
     const tab = token.indexOf('\t');
-    if (tab >= 0) changes.push({ status: token.slice(0, tab), path: token.slice(tab + 1) });
-    else if (index < parts.length) changes.push({ status: token, path: parts[index++]! });
+    if (tab >= 0) {
+      changes.push({ status: token.slice(0, tab), path: token.slice(tab + 1) });
+    } else if (index < parts.length) {
+      changes.push({ status: token, path: present(parts[index++], 'a name-status path') });
+    }
   }
   return changes;
 }
 
-function userDataSummary(data: Record<string, unknown>): string {
+function userDataSummary(data: LedgerRecord['data']): string {
   try {
     return JSON.stringify(data);
   } catch {
@@ -316,10 +353,52 @@ function userDataSummary(data: Record<string, unknown>): string {
   }
 }
 
+type FocusBullets = Array<{ text: string; evidence: string }>;
+const isFocusBullets = (value: unknown): value is FocusBullets =>
+  Array.isArray(value) &&
+  value.every(
+    (bullet) => isRecord(bullet) && typeof bullet['text'] === 'string' && typeof bullet['evidence'] === 'string',
+  );
+
+function focusBulletsOf(record: LedgerRecord | undefined): FocusBullets {
+  const bullets: unknown = record?.data['bullets'] ?? [];
+  if (!isFocusBullets(bullets)) {
+    throw new TypeError('Expected review focus bullets');
+  }
+  return bullets;
+}
+
+function runtimeProofView(
+  fold: Fold,
+  proof: LedgerRecord,
+  settled: LedgerRecord | undefined,
+): NonNullable<WalkthroughView['runtimeProof']> {
+  const report: unknown = proof.data['report'];
+  const artifacts: unknown = proof.data['artifacts'];
+  const dirty: unknown = proof.data['dirty'];
+  return {
+    outcome: textValue(proof.data['outcome']),
+    head: textValue(proof.data['head']),
+    reason: textValue(proof.data['reason']),
+    ...(report !== undefined && { report: textValue(report) }),
+    ...(artifacts !== undefined && { artifacts: stringList(artifacts) }),
+    ...(typeof dirty === 'boolean' && { dirty }),
+    fixes: settled
+      ? fold.records
+          .filter((r) => r.seq > settled.seq && r.kind === 'integrate' && r.data['phase'] === 'fix')
+          .map((r) => ({
+            commit: textValue(r.data['commit']),
+            reason: textValue(r.data['reason']),
+            beforeLatest: r.seq < proof.seq,
+          }))
+      : [],
+  };
+}
+
 /** Joins captured facts with changes and review results to form a rendered report. */
 async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<ReportFacts> {
-  const changes: WalkthroughView['changes'][number][] = [];
-  const unplannedPaths: string[] = [];
+  const changes: Array<WalkthroughView['changes'][number]> = [];
+  const unplannedPaths: Array<string> = [];
   if (snapshot.integrationPath && snapshot.integration) {
     const result = await git(ctx.deps, snapshot.integrationPath, [
       'diff',
@@ -329,13 +408,17 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       String(snapshot.integration.data['base']),
       snapshot.head ?? 'HEAD',
     ]);
-    if (result.exit !== 0) throw new ToolError(2, 'fault', result.stderr || result.stdout || 'Git diff failed');
+    if (result.exit !== 0) {
+      throw new ToolError(2, 'fault', result.stderr || result.stdout || 'Git diff failed');
+    }
     for (const change of parseNameStatus(result.stdout)) {
       const relative = change.path.replaceAll('\\', '/');
       const owners = snapshot.plan.tasks
         .filter((task) => ownedPaths(snapshot.plan, task.id).includes(relative))
         .map((task) => ({ id: task.id, title: task.title }));
-      if (!owners.length) unplannedPaths.push(relative);
+      if (!owners.length) {
+        unplannedPaths.push(relative);
+      }
       changes.push({
         action: change.status === 'A' ? 'NEW' : change.status === 'D' ? 'DELETE' : 'MODIFY',
         path: relative,
@@ -347,12 +430,20 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   let bindingAtEdit: LedgerRecord | undefined;
   const edits = snapshot.fold.records
     .filter((record) => {
-      if (record.kind === 'bind') bindingAtEdit = record;
-      if (record.kind !== 'edit') return false;
-      const artifact = record.data['artifact'];
-      const bound = bindingAtEdit?.data[artifact];
-      const reported = snapshot.bind.data[artifact];
-      return !!bound && !!reported && path.relative(path.resolve(root, reported), path.resolve(root, bound)) === '';
+      if (record.kind === 'bind') {
+        bindingAtEdit = record;
+      }
+      if (record.kind !== 'edit') {
+        return false;
+      }
+      const artifact = textValue(record.data['artifact']);
+      const bound: unknown = bindingAtEdit?.data[artifact];
+      const reported: unknown = snapshot.bind.data[artifact];
+      return (
+        !!bound &&
+        !!reported &&
+        path.relative(path.resolve(root, textValue(reported)), path.resolve(root, textValue(bound))) === ''
+      );
     })
     .map((record) => ({
       seq: record.seq,
@@ -363,14 +454,14 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       affects: Array.isArray(record.data['affects']) ? record.data['affects'].map(String) : [],
     }));
   const escalations = new Map<string, LedgerRecord>();
-  for (const record of snapshot.fold.records)
-    if (record.kind === 'escalation') escalations.set(String(record.data['id']), record);
-  const openEscalations = [...escalations.values()]
-    .filter((record) => record.data['state'] === 'open')
-    .map((record) => ({
-      id: String(record.data['id']),
-      summary: String(record.data['summary']),
-    }));
+  for (const record of snapshot.fold.records) {
+    if (record.kind === 'escalation') {
+      escalations.set(String(record.data['id']), record);
+    }
+  }
+  const openEscalations = [...escalations.values()].flatMap(({ data }) =>
+    data['state'] === 'open' ? [{ id: String(data['id']), summary: String(data['summary']) }] : [],
+  );
   const deferredEscalations = [...escalations.values()].flatMap((record) => {
     const summary = String(record.data['summary']);
     const id = String(record.data['id']);
@@ -379,11 +470,16 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       : [];
   });
   const rulings = new Map<string, LedgerRecord>();
-  for (const record of snapshot.fold.records)
-    if (record.kind === 'ruling') rulings.set(String(record.data['subject']), record);
+  for (const record of snapshot.fold.records) {
+    if (record.kind === 'ruling') {
+      rulings.set(String(record.data['subject']), record);
+    }
+  }
   const deferredRulings = [...rulings.values()].flatMap((record) => {
     const match = /^review:([^:]+):(.+)$/.exec(String(record.data['subject']));
-    return record.data['ruling'] === 'deferred' && match ? [{ review: match[1]!, finding: match[2]! }] : [];
+    return record.data['ruling'] === 'deferred' && match
+      ? [{ review: present(match[1], 'the review ID'), finding: present(match[2], 'the finding ID') }]
+      : [];
   });
   const userRecords = snapshot.fold.records
     .filter((record) => record.by === 'user')
@@ -397,20 +493,26 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
   try {
     review = reviewRows(ctx.session, snapshot.fold, snapshot.rejectionConfirmations);
   } catch (error) {
-    if (!snapshot.confirmationError || !(error instanceof ToolError && error.reason === 'review-corrupt')) throw error;
+    if (!snapshot.confirmationError || !(error instanceof ToolError && error.reason === 'review-corrupt')) {
+      throw error;
+    }
     snapshot.confirmationError += '; ' + error.message;
     review = { rows: [], rounds: [] };
   }
-  const destBranch = String(snapshot.integration?.data['dest']?.branch ?? '');
+  const destination = snapshot.integration && destinationOf(snapshot.integration);
+  const destBranch = String(destination?.['branch'] ?? '');
   const glance = snapshot.plan.glance;
   const focusRecord = latest(snapshot.fold, 'focus');
-  const focusBullets = (focusRecord?.data['bullets'] as { text: string; evidence: string }[] | undefined) ?? [];
-  const focusVisual = typeof focusRecord?.data['visual'] === 'string' ? focusRecord.data['visual'] : undefined;
+  const focusBullets = focusBulletsOf(focusRecord);
+  const visualInput: unknown = focusRecord?.data['visual'];
+  const focusVisual = typeof visualInput === 'string' ? visualInput : undefined;
   let visuals = glance?.visuals ?? '';
-  const designPath = snapshot.bind.data['design'];
+  const designPath: unknown = snapshot.bind.data['design'];
   if (!visuals && typeof designPath === 'string') {
     const source = readArtifact(ctx.manifest.repositoryRoot, designPath);
-    if (source !== null) visuals = parseGlance(structuralLines(source))?.visuals ?? '';
+    if (source !== null) {
+      visuals = parseGlance(structuralLines(source))?.visuals ?? '';
+    }
   }
 
   const integrationSeq = snapshot.integration?.seq ?? 0;
@@ -418,22 +520,12 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     (r) => r.seq > integrationSeq && r.kind === 'integrate' && r.data['phase'] === 'verification',
   );
   const proof = proofRecords.at(-1);
-  const settled = proofRecords.find((r) => r.data['open'].length === 0);
-  const runtimeProof = proof
-    ? {
-        outcome: proof.data['outcome'],
-        head: proof.data['head'],
-        reason: proof.data['reason'],
-        report: proof.data['report'],
-        artifacts: proof.data['artifacts'],
-        dirty: proof.data['dirty'],
-        fixes: settled
-          ? snapshot.fold.records
-              .filter((r) => r.seq > settled.seq && r.kind === 'integrate' && r.data['phase'] === 'fix')
-              .map((r) => ({ commit: r.data['commit'], reason: r.data['reason'], beforeLatest: r.seq < proof.seq }))
-          : [],
-      }
-    : undefined;
+  const settled = proofRecords.find((r) => {
+    const open: unknown = r.data['open'];
+    return Array.isArray(open) && open.length === 0;
+  });
+  const runtimeProof = proof ? runtimeProofView(snapshot.fold, proof, settled) : undefined;
+  const source: unknown = snapshot.delivered?.data['source'] ?? null;
   const view: WalkthroughView = {
     title: snapshot.plan.title || snapshot.planStem,
     specPath: snapshot.specPath,
@@ -445,17 +537,17 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
       ? {
           integrated: snapshot.integrated,
           total: snapshot.plan.tasks.length,
-          source: snapshot.delivered?.data['source'] ?? null,
+          source: source === null ? null : textValue(source),
           branch: destBranch,
           ref: deliveredSourceRef(ctx.manifest.safeSessionId),
         }
       : null,
     glance: glance ? { what: glance.what, visuals: glance.visuals } : null,
     repositoryRoot: ctx.manifest.repositoryRoot,
-    ...(typeof designPath === 'string' ? { designPath, designHash: snapshot.designHash ?? 'unavailable' } : {}),
-    ...(runtimeProof ? { runtimeProof } : {}),
+    ...(typeof designPath === 'string' && { designPath, designHash: snapshot.designHash ?? 'unavailable' }),
+    ...(runtimeProof && { runtimeProof }),
     visuals,
-    focus: focusRecord ? { bullets: focusBullets, ...(focusVisual ? { visual: focusVisual } : {}) } : null,
+    focus: focusRecord ? { bullets: focusBullets, ...(focusVisual && { visual: focusVisual }) } : null,
     tasks: snapshot.plan.tasks.map((task) => ({ id: task.id, title: task.title, outcome: task.summary })),
     statuses: snapshot.statuses,
     changes,
@@ -468,9 +560,9 @@ async function materialize(ctx: HandlerContext, snapshot: Snapshot): Promise<Rep
     reviewRows: review.rows,
     reviewRounds: review.rounds,
     reviewFixes: snapshot.reviewFixes,
-    ...(snapshot.coverage ? { coverage: snapshot.coverage } : {}),
-    ...(snapshot.reviewedCodeBaseline ? { reviewedCodeBaseline: snapshot.reviewedCodeBaseline } : {}),
-    ...(snapshot.testCleanup ? { testCleanup: snapshot.testCleanup } : {}),
+    ...(snapshot.coverage && { coverage: snapshot.coverage }),
+    ...(snapshot.reviewedCodeBaseline && { reviewedCodeBaseline: snapshot.reviewedCodeBaseline }),
+    ...(snapshot.testCleanup && { testCleanup: snapshot.testCleanup }),
   };
   return { ...snapshot, view };
 }
@@ -518,43 +610,51 @@ function publishReport(
     summary: (complete ? 'complete: ' : '') + summary + confirmation + (warning ? '; ' + warning : ''),
     value: {
       ...resultValue(facts, relative),
-      ...(diagnosticsPath ? { diagnostics: diagnosticsPath } : {}),
-      ...(warning ? { warning } : {}),
+      ...(diagnosticsPath && { diagnostics: diagnosticsPath }),
+      ...(warning && { warning }),
     },
     postFold: facts.fold,
   };
 }
 
 export async function reportRender(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'report render takes no positional arguments');
+  if (ctx.args.length) {
+    throw new ToolError(1, 'invalid-input', 'report render takes no positional arguments');
+  }
   const diagnostics = diagnosticsEnabled(ctx.deps.skillRoot);
   const facts = await materialize(ctx, await capture(ctx, foldLedger(ctx.session)));
   return publishReport(ctx, facts, 'rendered', diagnostics);
 }
 
 function refusal(snapshot: Snapshot): ToolError | null {
-  if (snapshot.confirmationError) return new ToolError(4, 'review-confirmation-required', snapshot.confirmationError);
-  if (snapshot.rejectionConfirmations.some((state) => state.state !== 'confirmed'))
+  if (snapshot.confirmationError) {
+    return new ToolError(4, 'review-confirmation-required', snapshot.confirmationError);
+  }
+  if (snapshot.rejectionConfirmations.some((state) => state.state !== 'confirmed')) {
     return new ToolError(
       4,
       'review-confirmation-required',
       'Rejected MUST findings need explicit reviewer confirmation',
     );
-  if (!snapshot.integration || !snapshot.integrationPath)
+  }
+  if (!snapshot.integration || !snapshot.integrationPath) {
     return new ToolError(4, 'no-integration', 'No integration worktree is available');
+  }
   const missing = snapshot.statuses.filter((status) => status.state === 'missing').map((status) => status.criterion);
   const dirty = snapshot.current !== null && snapshot.current.testedTree !== snapshot.current.headTree;
-  if (missing.length)
+  if (missing.length) {
     return new ToolError(
       4,
       'criteria-unmet',
       `Missing criteria: ${missing.join(', ')}${dirty ? '; dirty checkout (integration tree differs from HEAD tree)' : ''}`,
     );
-  if (!snapshot.deliveredAtHead)
+  }
+  if (!snapshot.deliveredAtHead) {
     return new ToolError(4, 'undelivered', `No delivery record matches integration HEAD ${snapshot.head ?? 'unknown'}`);
+  }
   const risk = snapshot.risk;
   const focus = latest(snapshot.fold, 'focus');
-  const bullets = focus?.data['bullets'];
+  const bullets: unknown = focus?.data['bullets'];
   if ((risk === 'med' || risk === 'high') && (!Array.isArray(bullets) || bullets.length < 3)) {
     return new ToolError(
       4,
@@ -566,7 +666,9 @@ function refusal(snapshot: Snapshot): ToolError | null {
 }
 
 export async function reportComplete(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'report complete takes no positional arguments');
+  if (ctx.args.length) {
+    throw new ToolError(1, 'invalid-input', 'report complete takes no positional arguments');
+  }
   const captured = await withLedger(ctx.session, 'report complete', ctx.deps, async (tx) => {
     const snapshot = await capture(ctx, tx.fold);
     return { snapshot, refusal: refusal(snapshot) };

@@ -3,19 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import {
-  appendRecord,
-  appendRecords,
-  currentHashes,
-  foldLedger,
-  type Fold,
-} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { validateRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
-import { sessionFixture } from './helpers/session.ts';
 
-const ledgerFile = (session: string) => path.join(session, 'ledger.jsonl');
-const note = (key: string, text = key) => ({ kind: 'note', key, by: 'orchestrator', data: { text } });
-const reasonOf = (error: unknown) => (error as { reason?: string }).reason;
+import { sessionFixture } from './helpers/session.ts';
+import type { JsonObject } from './helpers/json.ts';
+
 test('ledger bind suffixes match their keys while prior retries stay write-free', async () => {
   const f = sessionFixture({ memory: true });
   try {
@@ -23,7 +14,7 @@ test('ledger bind suffixes match their keys while prior retries stay write-free'
     f.artifact('s.spec.md', 'spec');
     f.artifact('p.plan.md', 'plan');
     f.artifact('d.design.md', 'design');
-    const append = async (record: object) => {
+    const append = async (record: JsonObject) => {
       f.lines.length = 0;
       fs.writeFileSync(input, JSON.stringify(record));
       return main(['ledger', 'append', '--session', f.session, input], f.deps);
@@ -42,7 +33,7 @@ test('ledger bind suffixes match their keys while prior retries stay write-free'
     ]) {
       assert.equal(await append({ ...bind, data: { ...bind.data, [kind!]: file } }), 1);
       assert.equal(f.output().reason, 'invalid-record');
-      assert.match(f.output().summary, new RegExp('data\\.' + kind));
+      assert.match(f.output().summary, new RegExp(String.raw`data\.` + kind));
       assert.equal(fs.existsSync(ledger), false);
     }
     assert.equal(await append(bind), 0);

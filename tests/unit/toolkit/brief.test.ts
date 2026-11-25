@@ -8,7 +8,10 @@ import { taskMarkdown } from '../../../skills/dispatch/scripts/toolkit/brief.ts'
 import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
 import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { qualityCriteria } from '../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import type { ProviderId } from '../../../skills/dispatch/scripts/providers/types.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { anything, nullable, numeric, optional, parseJson, readJson, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 const PLAN = `# Scoped work
 Shared gated context 日本語.
@@ -69,9 +72,13 @@ after(() => sharedFixture.cleanup());
 async function fixture(design = false, source = PLAN) {
   const f = { ...sharedFixture, cleanup: () => {} };
   // Reset scenario state while retaining the same physical session and templates.
-  if (fs.existsSync(tornPath)) fs.unlinkSync(tornPath);
+  if (fs.existsSync(tornPath)) {
+    fs.unlinkSync(tornPath);
+  }
   if (design) {
-    if (!fs.existsSync(designPath)) f.artifact('strategy.design.md', '# Strategy\n');
+    if (!fs.existsSync(designPath)) {
+      f.artifact('strategy.design.md', '# Strategy\n');
+    }
   } else if (fs.existsSync(designPath)) {
     fs.unlinkSync(designPath);
   }
@@ -81,7 +88,7 @@ async function fixture(design = false, source = PLAN) {
   const binding = bindings.get(design);
   let key = binding ? 2 : 0;
   let lastSeq = key;
-  const add = async (kind: string, data: object, extra: object = {}) => {
+  const add = async (kind: string, data: JsonObject, extra: JsonObject = {}) => {
     lastSeq++;
     const record = {
       seq: lastSeq,
@@ -99,11 +106,13 @@ async function fixture(design = false, source = PLAN) {
     fs.writeFileSync(ledgerPath, binding);
     key = 2;
   } else {
-    if (fs.existsSync(ledgerPath)) fs.unlinkSync(ledgerPath);
+    if (fs.existsSync(ledgerPath)) {
+      fs.unlinkSync(ledgerPath);
+    }
     await add('bind', {
       spec: 'mission.spec.md',
       plan: 'work.plan.md',
-      ...(design ? { design: 'strategy.design.md' } : {}),
+      ...(design && { design: 'strategy.design.md' }),
     });
     await add(
       'confirm',
@@ -115,7 +124,9 @@ async function fixture(design = false, source = PLAN) {
   let hashes = source === PLAN ? cachedHashes.get(design) : undefined;
   if (!hashes) {
     hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
-    if (source === PLAN) cachedHashes.set(design, hashes);
+    if (source === PLAN) {
+      cachedHashes.set(design, hashes);
+    }
   }
   const approve = () => add('approval', hashes, { by: 'user', quote: 'Approved' });
   const launch = (task = 'T1') =>
@@ -160,16 +171,15 @@ function captureCommand(section: string): string {
   return match[1]!;
 }
 
-function captureData(command: string): { data: { command: string; cwd: string; logDir: string; criterion: string } } {
+const captureDataShape = shape({ command: text, cwd: text, logDir: text, criterion: text });
+
+function captureData(command: string) {
   const match = /([A-Za-z0-9_-]+)$/.exec(command);
   assert.ok(match, 'outer command ends with a base64url payload');
+  const payload = match[1];
+  assert.ok(payload);
   return {
-    data: JSON.parse(Buffer.from(match[1]!, 'base64url').toString('utf8')) as {
-      command: string;
-      cwd: string;
-      logDir: string;
-      criterion: string;
-    },
+    data: parseJson(Buffer.from(payload, 'base64url').toString('utf8'), captureDataShape),
   };
 }
 
@@ -178,12 +188,14 @@ function assertCompleteBrief(
   brief: string,
   value: { bytes: number; briefPath: string },
   summary: string,
-  texts: string[],
+  texts: Array<string>,
 ) {
   assert.equal(value.bytes, Buffer.byteLength(brief));
   assert.doesNotMatch(brief, /\{\{\w+\}\}/);
   assert.doesNotMatch(brief, /]\(/);
-  for (const text of texts) assert.ok(brief.includes(text), text);
+  for (const text of texts) {
+    assert.ok(brief.includes(text), text);
+  }
   assert.ok(summary.includes(value.briefPath));
 }
 
@@ -227,10 +239,10 @@ describe('writer brief', () => {
         for (const [kind, name] of Object.entries({
           spec: 'mission.spec.md',
           plan: 'work.plan.md',
-          ...(design ? { design: 'strategy.design.md' } : {}),
+          ...(design && { design: 'strategy.design.md' }),
         })) {
           originals[kind] = fs.readFileSync(path.join(f.root, name), 'utf8');
-          fs.writeFileSync(path.join(directory, name), originals[kind]!);
+          fs.writeFileSync(path.join(directory, name), originals[kind]);
           bound[kind] = path.relative(f.root, path.join(directory, name));
         }
         await f.add('bind', bound);
@@ -244,13 +256,21 @@ describe('writer brief', () => {
         const addresses = {
           spec: /Read the governing spec whole: `([^`]+)`/.exec(brief)?.[1],
           plan: /Governing plan: `([^`]+)`/.exec(brief)?.[1],
-          ...(design ? { design: /Governing design: `([^`]+)`/.exec(brief)?.[1] } : {}),
+          design: design ? /Governing design: `([^`]+)`/.exec(brief)?.[1] : undefined,
         };
-        for (const [kind, address] of Object.entries(addresses)) {
+        for (const kind of ['spec', 'plan', 'design'] as const) {
+          if (kind === 'design' && !design) {
+            continue;
+          }
+          const address = addresses[kind];
           assert.ok(address, kind + ' read address');
           assert.equal(fs.readFileSync(path.resolve(worktree, address), 'utf8'), originals[kind]);
-          assert.ok(brief.includes(f.hashes[kind as keyof typeof f.hashes]!));
-          assert.equal(fs.existsSync(path.resolve(worktree, bound[kind]!)), false);
+          const hash = f.hashes[kind];
+          assert.ok(hash);
+          assert.ok(brief.includes(hash));
+          const boundPath = bound[kind];
+          assert.ok(boundPath);
+          assert.equal(fs.existsSync(path.resolve(worktree, boundPath)), false);
         }
         if (design) {
           assert.ok(brief.includes('strategy.design.md'));
@@ -274,8 +294,9 @@ describe('writer brief', () => {
             'Read the whole plan only when',
             'Constraints:',
             'Invariants:',
-          ])
+          ]) {
             assert.ok(brief.includes(rule), rule);
+          }
         }
       } finally {
         f.cleanup();
@@ -369,13 +390,15 @@ describe('writer brief', () => {
         'DONE',
         'BLOCKED',
         'NEEDS_CONTEXT',
-      ])
+      ]) {
         assert.ok(brief.includes(text), text);
+      }
       assert.match(brief, /read.*whole/i);
       assert.match(brief, /failing tests/i);
       assert.match(brief, /Git write commands/);
-      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check'])
+      for (const forbidden of ['poison-red', '### T2', 'Private second detail', 'node second-check']) {
         assert.ok(!brief.includes(forbidden), forbidden);
+      }
       const template = getWriterTemplate(f.deps.skillRoot);
       const reportPath = path.join(f.session, '.state', 'briefs', 'T1-1.report.md');
       const logDir = path.join(f.session, '.state', 'briefs', 'T1-1.red');
@@ -415,7 +438,9 @@ describe('writer brief', () => {
       const commands = [...section.matchAll(/`(node [^`]+)`/g)].map((match) => match[1]!);
       assert.equal(commands.length, 2);
       const capture = path.join(f.session, '.state', 'briefs', 'T1-1.red', 'capture.cjs');
-      for (const command of commands) assert.ok(command.includes(capture), command);
+      for (const command of commands) {
+        assert.ok(command.includes(capture), command);
+      }
       assert.doesNotMatch(section, /node -e/);
     } finally {
       f.cleanup();
@@ -478,14 +503,15 @@ test('writer brief binds plan constraints, leaves routine choices to the writer 
     await f.launch();
     const rendered = await f.call();
     assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
-    const brief = fs.readFileSync(rendered.value.path, 'utf8').replace(/\s+/g, ' ');
+    const brief = fs.readFileSync(rendered.value.path, 'utf8').replaceAll(/\s+/g, ' ');
     for (const text of [
       '`Constraints:`, `Overlap:`, `Invariants:` and stated exact algorithms as binding',
       'decide routine implementation choices yourself',
       'the orchestrator runs post-integration `Evidence: review` checks',
       "RED command runs as written in the platform's subprocess shell",
-    ])
+    ]) {
       assert.equal(brief.split(text).length - 1, 1, text);
+    }
     // Collapsed plan sections still contribute task behaviour and criterion fields.
     const behaviour = '- First returns the validated value after retrying once.';
     const collapsed = PLAN.replace('### T1 — First', `### T1 — First\n${behaviour}`)
@@ -508,8 +534,9 @@ test('writer brief binds plan constraints, leaves routine choices to the writer 
         '  - Check: `node first-check`',
         '  - RED: `node first-red`',
         '  - Evidence: red',
-      ])
+      ]) {
         assert.ok(collapsedBrief.includes(text), text);
+      }
       assert.equal(collapsedBrief.split(behaviour).length - 1, 1);
     } finally {
       g.cleanup();
@@ -532,8 +559,8 @@ test('writer brief states explorer and utility subagent rules', async () => {
   const valid = JSON.stringify({
     'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
     'utility-subagents': {
-      'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000 },
-      'openai-codex': { model: 'codex-mid', 'context-limit': 300000 },
+      'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150_000 },
+      'openai-codex': { model: 'codex-mid', 'context-limit': 300_000 },
     },
     'write-subagents': {
       claude: { low: { model: 'claude-writer' } },
@@ -544,11 +571,11 @@ test('writer brief states explorer and utility subagent rules', async () => {
     await f.approve();
     await f.launch();
     f.deps.skillRoot = skill;
-    const render = async (host: string) => {
-      f.deps.orchestrator = { platform: host as 'claude', model: null };
+    const render = async (host: ProviderId) => {
+      f.deps.orchestrator = { platform: host, model: null };
       const result = await f.call('high');
       assert.equal(result.exit, 0, JSON.stringify(result.output));
-      return fs.readFileSync(result.value.path, 'utf8').replace(/\s+/g, ' ');
+      return fs.readFileSync(result.value.path, 'utf8').replaceAll(/\s+/g, ' ');
     };
     fs.writeFileSync(config, valid);
     const claudeBrief = await render('claude');
@@ -592,8 +619,9 @@ test('writer brief states explorer and utility subagent rules', async () => {
 function limitSkill(skill: string, skillRoot: string): string {
   const templates = path.join(skill, 'references', 'templates');
   fs.mkdirSync(templates, { recursive: true });
-  for (const name of ['explorer-brief.md', 'context-map.md'])
+  for (const name of ['explorer-brief.md', 'context-map.md']) {
     fs.copyFileSync(path.join(skillRoot, 'references', 'templates', name), path.join(templates, name));
+  }
   fs.writeFileSync(path.join(templates, 'quality-bar.md'), getQuality(skillRoot));
   fs.copyFileSync(path.join(skillRoot, 'references/spec-stage.md'), path.join(skill, 'references', 'spec-stage.md'));
   fs.writeFileSync(
@@ -601,8 +629,8 @@ function limitSkill(skill: string, skillRoot: string): string {
     JSON.stringify({
       'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
       'utility-subagents': {
-        'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150000 },
-        'openai-codex': { model: 'codex-mid', 'context-limit': 300000 },
+        'claude-code': { model: ['cheap-a', 'cheap-b'], effort: 'medium', 'context-limit': 150_000 },
+        'openai-codex': { model: 'codex-mid', 'context-limit': 300_000 },
       },
     }),
   );
@@ -665,7 +693,7 @@ describe('explorer brief', () => {
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
       assert.equal(value.kind, 'map');
-      assert.equal(value.contextLimit, 150000);
+      assert.equal(value.contextLimit, 150_000);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
 
       // host limit and nested launch model and effort
@@ -795,7 +823,7 @@ describe('explorer brief', () => {
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
       assert.equal(value.kind, 'research');
-      assert.equal(value.contextLimit, 150000);
+      assert.equal(value.contextLimit, 150_000);
       const brief = fs.readFileSync(value.briefPath, 'utf8');
 
       // Token limit and 8,192 byte reply limit
@@ -860,7 +888,7 @@ describe('explorer brief', () => {
       await f.approve();
       const briefs = path.join(f.session, '.state', 'briefs');
       const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
-      const cases: Record<string, string>[] = [
+      const cases: Array<Record<string, string>> = [
         { questions: '- Q?' },
         { objective: 'Map.', questions: '- Q?', outputPath: 'out.md', extra: 'x' },
         { objective: '   ', questions: '- Q?', outputPath: 'out.md' },
@@ -926,7 +954,7 @@ describe('test-cleanup brief', () => {
       await f.approve();
       const briefs = path.join(f.session, '.state', 'briefs');
       const before = fs.existsSync(briefs) ? fs.readdirSync(briefs).sort() : [];
-      const cases: Record<string, string>[] = [
+      const cases: Array<Record<string, string>> = [
         { integrationPath: 'integration' },
         { base: 'a'.repeat(40), integrationPath: 'integration', extra: 'x' },
         { base: '', integrationPath: 'integration' },
@@ -1002,9 +1030,9 @@ test('brief results name the host model and effort', async () => {
           claude: { low: { model: 'claude-haiku-5-5', effort: 'medium' } },
         },
         'utility-subagents': {
-          opencode: { model: 'exp/model', effort: 'exp-eff', 'context-limit': 300000 },
-          codex: { model: 'codex-exp', 'context-limit': 300000 },
-          claude: { model: 'claude-haiku-5-5', effort: 'medium', 'context-limit': 300000 },
+          opencode: { model: 'exp/model', effort: 'exp-eff', 'context-limit': 300_000 },
+          codex: { model: 'codex-exp', 'context-limit': 300_000 },
+          claude: { model: 'claude-haiku-5-5', effort: 'medium', 'context-limit': 300_000 },
         },
       }),
     );
@@ -1012,23 +1040,25 @@ test('brief results name the host model and effort', async () => {
     await f.approve();
     await f.launch();
     f.deps.skillRoot = skill;
-    const writerValue = async (host: string, level: string) => {
+    const writerShape = shape({
+      path: text,
+      launch: numeric,
+      model: anything,
+      effort: anything,
+      launchAs: nullable(text),
+      subagentModels: optional(anything),
+    });
+    const writerValue = async (host: ProviderId, level: string) => {
       await f.add('level', { level }, { by: level === 'low' ? 'orchestrator' : 'orchestrator' });
-      f.deps.orchestrator = { platform: host as never, model: null } as never;
+      f.deps.orchestrator = { platform: host, model: null };
       f.lines.length = 0;
       const exit = await main(['brief', 'render', 'T1', '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
+      assert.ok(out.path);
       return {
         summary: out.summary,
-        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
-          path: string;
-          launch: number;
-          model: unknown;
-          effort: unknown;
-          launchAs: string | null;
-          subagentModels?: unknown;
-        }),
+        ...readJson(out.path, writerShape),
       };
     };
     writeConfig();
@@ -1046,14 +1076,12 @@ test('brief results name the host model and effort', async () => {
     assert.equal('subagentModels' in high, false);
     // Level fallback through resolveLevel: medium resolves to the nearest defined below (low).
     await f.add('level', { level: 'medium' });
-    f.deps.orchestrator = { platform: 'codex', model: null } as never;
+    f.deps.orchestrator = { platform: 'codex', model: null };
     f.lines.length = 0;
     assert.equal(await main(['brief', 'render', 'T1', '--session', f.session, '--host', 'codex'], f.deps), 0);
-    const fallback = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as {
-      model: unknown;
-      effort: unknown;
-      launchAs: string | null;
-    };
+    const fallbackOutPath = f.output().path;
+    assert.ok(fallbackOutPath);
+    const fallback = readJson(fallbackOutPath, shape({ model: anything, effort: anything, launchAs: nullable(text) }));
     assert.deepEqual(fallback.model, ['codex-low']);
     assert.equal(fallback.effort, 'low-eff');
     assert.equal(fallback.launchAs, 'launch: model codex-low, effort low-eff');
@@ -1099,23 +1127,25 @@ test('brief results name the host model and effort', async () => {
     assert.equal(missing.launchAs, null);
     assert.equal('subagentModels' in missing, false);
     // Explorer and test-cleanup read the utility entry.
-    const explorerValue = async (host: string) => {
+    const explorerShape = shape({
+      briefPath: text,
+      model: anything,
+      effort: anything,
+      launchAs: nullable(text),
+      subagentModels: optional(anything),
+    });
+    const explorerValue = async (host: ProviderId) => {
       const valuesPath = path.join(f.session, `explorer-${host}.json`);
       fs.writeFileSync(valuesPath, JSON.stringify({ objective: 'Map.', questions: '- Q?', outputPath: 'out.md' }));
-      f.deps.orchestrator = { platform: host as never, model: null } as never;
+      f.deps.orchestrator = { platform: host, model: null };
       f.lines.length = 0;
       const exit = await main(['brief', 'explorer', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
+      assert.ok(out.path);
       return {
         summary: out.summary,
-        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
-          briefPath: string;
-          model: unknown;
-          effort: unknown;
-          launchAs: string | null;
-          subagentModels?: unknown;
-        }),
+        ...readJson(out.path, explorerShape),
       };
     };
     const expOpen = await explorerValue('opencode');
@@ -1153,22 +1183,24 @@ test('brief results name the host model and effort', async () => {
     assert.equal(expMissing.effort, null);
     assert.equal(expMissing.launchAs, null);
     // Test-cleanup shares the utility entry, including launchAs.
-    const cleanupValue = async (host: string) => {
+    const cleanupShape = shape({
+      model: anything,
+      effort: anything,
+      launchAs: nullable(text),
+      subagentModels: optional(anything),
+    });
+    const cleanupValue = async (host: ProviderId) => {
       const valuesPath = path.join(f.session, `cleanup-${host}.json`);
       fs.writeFileSync(valuesPath, JSON.stringify({ base: 'a'.repeat(40), integrationPath: 'integration' }));
-      f.deps.orchestrator = { platform: host as never, model: null } as never;
+      f.deps.orchestrator = { platform: host, model: null };
       f.lines.length = 0;
       const exit = await main(['brief', 'test-cleanup', valuesPath, '--session', f.session, '--host', host], f.deps);
       assert.equal(exit, 0, JSON.stringify(f.lines));
       const out = f.output();
+      assert.ok(out.path);
       return {
         summary: out.summary,
-        ...(JSON.parse(fs.readFileSync(out.path!, 'utf8')) as {
-          model: unknown;
-          effort: unknown;
-          launchAs: string | null;
-          subagentModels?: unknown;
-        }),
+        ...readJson(out.path, cleanupShape),
       };
     };
     const cleanOpen = await cleanupValue('opencode');
@@ -1332,8 +1364,9 @@ test('verifier brief launch works without a bound plan and refuses blanks; verif
       values.focus,
       'Give each artifact a new path.',
       'If a report exists, append `## Cycle <n>` and leave earlier content unchanged',
-    ])
+    ]) {
       assert.ok(brief.includes(phrase), phrase);
+    }
     const before = fs.readdirSync(path.join(f.session, '.state', 'briefs'));
     fs.writeFileSync(file, JSON.stringify({ ...values, focus: ' ' }));
     assert.equal(await main(['brief', 'verifier', file, '--session', f.session, '--host', 'codex'], f.deps), 1);

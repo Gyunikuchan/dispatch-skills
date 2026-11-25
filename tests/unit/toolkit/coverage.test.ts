@@ -9,6 +9,8 @@ import { admission, renderBudget } from '../../../skills/dispatch/scripts/toolki
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import type { LedgerRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import { memoryNodeFs } from '../../helpers/memory-node-fs.ts';
+import { narrow, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 // SECTION: In-memory review tree
 
@@ -17,37 +19,38 @@ const REVIEW = 'code-integration',
 type Attempt = { slot: string; seq: number; wholeTarget: boolean; outcome: unknown };
 type Put = {
   n: number;
-  roster: string[];
+  roster: Array<string>;
   scope?: string;
   cap?: number;
   generation?: number;
   coverage?: 'open' | 'full';
   coverageUse?: 'free' | 'grant';
   base?: string;
-  done?: string[];
-  failed?: string[];
-  native?: string[];
-  substitute?: string[];
-  attempts?: Record<number, (Partial<Attempt> & { slot: string; seq: number })[]>;
+  done?: Array<string>;
+  failed?: Array<string>;
+  native?: Array<string>;
+  substitute?: Array<string>;
+  attempts?: Record<number, Array<Partial<Attempt> & { slot: string; seq: number }>>;
   unfinished?: boolean;
-  findings?: object[];
+  findings?: Array<object>;
 };
+function writeJson(file: string, value: unknown) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value));
+}
+
 function tree() {
   const root = path.join(path.parse(os.tmpdir()).root, 'coverage-' + crypto.randomUUID()),
     cleanup = memoryNodeFs(root);
   const session = path.join(root, '.scratch/dispatch-skills/20261023T0000Z-test');
   fs.mkdirSync(session, { recursive: true });
-  const write = (file: string, value: unknown) => {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(value));
-  };
   const put = (input: Put) => {
     const dir = path.join(session, '.state/reviews', REVIEW, 'round-' + input.n),
       generation = input.generation ?? 1;
     const scope =
       input.scope ?? (input.n === 1 ? 'Full review' : `Re-review round ${input.n} (narrowed) — changed: a.ts`);
     const whole = scope.startsWith('Full review') || input.coverage !== undefined;
-    write(path.join(dir, 'round.json'), {
+    writeJson(path.join(dir, 'round.json'), {
       round: input.n,
       generation,
       cap: input.cap ?? 2,
@@ -60,50 +63,62 @@ function tree() {
         ...input.roster.map((slot) => ({ slot, provider: 'codex', index: 0, reserve: false })),
         { slot: 'reserve[9]', provider: 'opencode', index: 9, reserve: true },
       ],
-      ...(input.coverage ? { coverage: input.coverage } : {}),
-      ...(input.coverageUse ? { coverageUse: input.coverageUse } : {}),
+      ...(input.coverage && { coverage: input.coverage }),
+      ...(input.coverageUse && { coverageUse: input.coverageUse }),
     });
     const slots = path.join(dir, 'gen-' + generation, 'slots');
-    for (const slot of input.done ?? [])
-      write(path.join(slots, slot + '.json'), {
+    for (const slot of input.done ?? []) {
+      writeJson(path.join(slots, slot + '.json'), {
         slot,
         state: 'done',
         text: 'report',
-        ...(input.substitute?.includes(slot)
-          ? { responder: { slot: 'reserve[9]', provider: 'opencode', model: null, native: false } }
-          : {}),
+        ...(input.substitute?.includes(slot) && {
+          responder: { slot: 'reserve[9]', provider: 'opencode', model: null, native: false },
+        }),
       });
-    for (const slot of input.failed ?? [])
-      write(path.join(slots, slot + '.json'), { slot, state: 'failed', cls: 'timeout', reason: 'slow' });
-    for (const slot of input.native ?? [])
-      write(path.join(slots, slot + '.json'), { slot, state: 'native', promptPath: 'p.md', replyPath: 'r.md' });
+    }
+    for (const slot of input.failed ?? []) {
+      writeJson(path.join(slots, slot + '.json'), { slot, state: 'failed', cls: 'timeout', reason: 'slow' });
+    }
+    for (const slot of input.native ?? []) {
+      writeJson(path.join(slots, slot + '.json'), { slot, state: 'native', promptPath: 'p.md', replyPath: 'r.md' });
+    }
     // Each failed slot of the current generation carries its own failure entry, as the review run records it.
-    const entries: Record<number, Attempt[]> = {
-      [generation]: (input.failed ?? []).map((slot) => ({
-        slot,
-        seq: input.n,
-        wholeTarget: whole,
-        outcome: 'timeout',
-      })),
-    };
-    for (const [gen, list] of Object.entries(input.attempts ?? {}))
-      entries[Number(gen)] = [
-        ...(entries[Number(gen)] ?? []),
+    const entries = new Map<number, Array<Attempt>>([
+      [
+        generation,
+        (input.failed ?? []).map((slot) => ({
+          slot,
+          seq: input.n,
+          wholeTarget: whole,
+          outcome: 'timeout',
+        })),
+      ],
+    ]);
+    for (const [gen, list] of Object.entries(input.attempts ?? {})) {
+      const key = Number(gen);
+      entries.set(key, [
+        ...(entries.get(key) ?? []),
         ...list.map((item) => ({ wholeTarget: whole, outcome: 'timeout', ...item })),
-      ];
-    for (const [gen, list] of Object.entries(entries))
-      if (list.length) write(path.join(dir, 'gen-' + gen, 'attempts.json'), list);
-    if (!input.unfinished)
-      write(path.join(dir, 'findings.json'), {
+      ]);
+    }
+    for (const [gen, list] of entries) {
+      if (list.length) {
+        writeJson(path.join(dir, 'gen-' + gen, 'attempts.json'), list);
+      }
+    }
+    if (!input.unfinished) {
+      writeJson(path.join(dir, 'findings.json'), {
         review: REVIEW,
         round: input.n,
         findings: input.findings ?? [],
         failed: [],
       });
+    }
   };
-  return { session, put, write, cleanup };
+  return { session, put, write: writeJson, cleanup };
 }
-const user = (seq: number, summary: string, extra: object = {}): LedgerRecord => ({
+const user = (seq: number, summary: string, extra: JsonObject = {}): LedgerRecord => ({
   seq,
   key: 'coverage:' + REVIEW + ':' + seq,
   at: 't',
@@ -113,7 +128,7 @@ const user = (seq: number, summary: string, extra: object = {}): LedgerRecord =>
   data: { id: 'coverage:' + REVIEW + ':' + seq, state: 'resolved', summary },
   ...extra,
 });
-const fold = (...records: LedgerRecord[]): Fold => ({ records, lastSeq: records.at(-1)?.seq ?? 0, torn: null });
+const fold = (...records: Array<LedgerRecord>): Fold => ({ records, lastSeq: records.at(-1)?.seq ?? 0, torn: null });
 const [A, B, C, D] = ['codex[0]', 'opencode[1]', 'claude[2]', 'agy[3]'];
 const withTree = (run: (t: ReturnType<typeof tree>) => void) => {
   const t = tree();
@@ -218,7 +233,7 @@ test('slot stays open until whole-target completion; a round in flight is incomp
       t.session,
       fold(),
       REVIEW,
-      (metadata) => (metadata.target as { base: string }).base === 'base',
+      (metadata) => narrow(metadata.target, shape({ base: text })).base === 'base',
     );
     assert.deepEqual([scoped.targets, scoped.open, scoped.incomplete], [[A, B], [], null]);
   }));
@@ -289,11 +304,11 @@ test('coverage override ignores records that are not a quoted user decision', ()
 
 // SECTION: Admission
 
-const budgetOf = (t: ReturnType<typeof tree>, ...records: LedgerRecord[]) =>
+const budgetOf = (t: ReturnType<typeof tree>, ...records: Array<LedgerRecord>) =>
   admission(t.session, fold(...records), REVIEW, 0).budget;
 
 test('coverage admission resolves rounds across caps, reruns and user decisions', () => {
-  const cases: { name: string; run: () => void }[] = [
+  const cases: Array<{ name: string; run: () => void }> = [
     {
       name: 'allows a rerun within the cap',
       run: () => {
@@ -374,7 +389,7 @@ test('coverage admission resolves rounds across caps, reruns and user decisions'
               quote: 'go',
               data: { id: 'ceiling:' + REVIEW + ':3', state: 'resolved', summary: 're-author: split' },
             },
-          ] satisfies LedgerRecord[];
+          ] satisfies Array<LedgerRecord>;
           const budget = admission(t.session, fold(...ceiling), REVIEW, 0).budget;
           assert.deepEqual(
             [budget.nextRound, budget.ceiling, budget.state, budget.coverage],
@@ -383,11 +398,13 @@ test('coverage admission resolves rounds across caps, reruns and user decisions'
         }),
     },
   ];
-  for (const item of cases) item.run();
+  for (const item of cases) {
+    item.run();
+  }
 });
 
 test('coverage admission grants, reuses grants and reports state problems', () => {
-  const cases: { name: string; run: () => void }[] = [
+  const cases: Array<{ name: string; run: () => void }> = [
     {
       name: 'consumes one grant per granted round',
       run: () => {
@@ -395,7 +412,7 @@ test('coverage admission grants, reuses grants and reports state problems', () =
         withTree((t) => {
           t.put({ n: 1, roster: [A, B, C, D], done: [C, D], failed: [A, B], cap: 2 });
           t.put({ n: 2, roster: [A, B], failed: [A, B], coverage: 'open', cap: 2 });
-          const use = (...records: LedgerRecord[]) => {
+          const use = (...records: Array<LedgerRecord>) => {
             const budget = budgetOf(t, ...records);
             return [
               budget.nextRound,
@@ -536,7 +553,9 @@ test('coverage admission grants, reuses grants and reports state problems', () =
         }),
     },
   ];
-  for (const item of cases) item.run();
+  for (const item of cases) {
+    item.run();
+  }
 });
 
 test('coverage decision stays rerun while a round is in flight, even with a majority', () =>

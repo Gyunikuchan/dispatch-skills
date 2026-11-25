@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { numeric, parseJson, shape, text } from './helpers/json.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 test('session lock skips dead breaker slots without displacing a live breaker', async () => {
@@ -59,7 +60,9 @@ test('session lock stale contenders preserve the replacement owner', async () =>
       },
     };
     contender.isAlive = (pid: number) => {
-      if (pid === 99 && !first) first = main(['ledger', 'append', '--session', f.session, a], f.deps);
+      if (pid === 99 && !first) {
+        first = main(['ledger', 'append', '--session', f.session, a], f.deps);
+      }
       return pid === 42;
     };
     assert.equal(await main(['ledger', 'append', '--session', f.session, b], contender), 0);
@@ -67,7 +70,7 @@ test('session lock stale contenders preserve the replacement owner', async () =>
       .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
       .trim()
       .split('\n')
-      .map((x) => JSON.parse(x));
+      .map((x) => parseJson(x, shape({ seq: numeric, data: shape({ text }) })));
     assert.deepEqual(
       records.map((r) => r.seq),
       [1, 2, 3],

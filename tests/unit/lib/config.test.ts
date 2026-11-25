@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import type { JsonObject, JsonValue } from '../../../skills/dispatch/scripts/lib/config.ts';
 
 import {
   loadConfig,
@@ -11,14 +12,18 @@ import {
   validateConfig,
 } from '../../../skills/dispatch/scripts/lib/config.ts';
 
+const isObject = (value: JsonValue | undefined): value is JsonObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const contextLimit = (entry: JsonValue | undefined) => (isObject(entry) ? entry['context-limit'] : undefined);
+
 // SECTION: Configuration loading and validation
 
 test('config resolution is first-existing-wins with no merge', () => {
-  const files: Record<string, string> = {
-    [path.join('/s', 'config.local.jsonc')]: '{ "read-delegates": { "claude": [] } }',
-    [path.join('/s', 'config.jsonc')]: '{ "read-delegates": { "codex": [] }, "phases": { "x": 1 } }',
-  };
-  const local = loadConfig('/s', (file) => files[file] ?? null);
+  const files = new Map([
+    [path.join('/s', 'config.local.jsonc'), '{ "read-delegates": { "claude": [] } }'],
+    [path.join('/s', 'config.jsonc'), '{ "read-delegates": { "codex": [] }, "phases": { "x": 1 } }'],
+  ]);
+  const local = loadConfig('/s', (file) => files.get(file) ?? null);
   assert.equal(local.path, path.join('/s', 'config.local.jsonc'));
   assert.deepEqual(local.config, {
     'read-delegates': { claude: [] },
@@ -26,15 +31,19 @@ test('config resolution is first-existing-wins with no merge', () => {
     'utility-subagents': {},
     phases: {},
   });
-  const only = loadConfig('/s', (file) => (file.endsWith(`${path.sep}config.jsonc`) ? (files[file] ?? null) : null));
+  const only = loadConfig('/s', (file) =>
+    file.endsWith(`${path.sep}config.jsonc`) ? (files.get(file) ?? null) : null,
+  );
   assert.deepEqual(only.config['phases'], { x: 1 });
   assert.throws(() => loadConfig('/s', () => null), /Config file not found.*config\.sample\.jsonc/);
   // A read error other than absence propagates instead of falling through to config.jsonc.
   assert.throws(
     () =>
       loadConfig('/s', (file) => {
-        if (file.endsWith('config.local.jsonc')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
-        return files[file] ?? null;
+        if (file.endsWith('config.local.jsonc')) {
+          throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        }
+        return files.get(file) ?? null;
       }),
     /EACCES/,
   );
@@ -64,8 +73,8 @@ test('utility-subagents validates entries, requires context-limit, and reports o
   const valid = {
     ...minimal,
     'utility-subagents': {
-      codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300000 },
-      claude: { model: 'fast-explorer', 'context-limit': 150000 },
+      codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300_000 },
+      claude: { model: 'fast-explorer', 'context-limit': 150_000 },
     },
   };
   assert.deepEqual(validateConfig(valid), []);
@@ -73,24 +82,25 @@ test('utility-subagents validates entries, requires context-limit, and reports o
   // Shipped sample limit values: 150,000 for claude and 300,000 for every other listed platform
   const sample = parseJsonc(
     fs.readFileSync(new URL('../../../skills/dispatch/config.sample.jsonc', import.meta.url), 'utf8'),
-  ) as Record<string, any>;
+  );
+  assert.ok(isObject(sample));
   const utilitySample = sample['utility-subagents'];
-  assert.ok(utilitySample, 'sample has utility-subagents');
-  assert.equal(utilitySample.claude['context-limit'], 150000);
+  assert.ok(isObject(utilitySample), 'sample has utility-subagents');
+  assert.equal(contextLimit(utilitySample['claude']), 150_000);
   for (const [platform, entry] of Object.entries(utilitySample)) {
     if (platform !== 'claude') {
-      assert.equal((entry as any)['context-limit'], 300000, platform);
+      assert.equal(contextLimit(entry), 300_000, platform);
     }
   }
 
   // Missing, non-positive, or fractional limit, and unknown keys
   const invalidCases: Array<[unknown, RegExp]> = [
-    [{ bogus: { model: 'fast-explorer', 'context-limit': 300000 } }, /utility-subagents: unknown platform "bogus"/],
+    [{ bogus: { model: 'fast-explorer', 'context-limit': 300_000 } }, /utility-subagents: unknown platform "bogus"/],
     [{ codex: { bogus: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "bogus"/],
     [{ codex: { low: { model: 'fast-explorer' } } }, /utility-subagents\.codex has unrecognized key "low"/],
     [{ codex: { model: ' ' } }, /utility-subagents\.codex\.model must be a nonblank string/],
     [
-      { codex: { model: 'fast-explorer', deep: true, 'context-limit': 300000 } },
+      { codex: { model: 'fast-explorer', deep: true, 'context-limit': 300_000 } },
       /utility-subagents\.codex has unrecognized key "deep"\. Valid keys: model, effort, context-limit/,
     ],
     [{ codex: { model: 'fast-explorer' } }, /utility-subagents\.codex\.context-limit/],
@@ -105,9 +115,10 @@ test('utility-subagents validates entries, requires context-limit, and reports o
 
   // context-limit in write-subagents entry is an unrecognized key
   assert.match(
-    validateConfig({ ...minimal, 'write-subagents': { codex: { low: { model: 'm', 'context-limit': 300000 } } } }).join(
-      ' ',
-    ),
+    validateConfig({
+      ...minimal,
+      'write-subagents': { codex: { low: { model: 'm', 'context-limit': 300_000 } } },
+    }).join(' '),
     /write-subagents\.codex\.low has unrecognized key "context-limit"/,
   );
 
@@ -158,13 +169,14 @@ test('read-commands accepts plain command prefixes and rejects shell syntax', ()
   }
 });
 
+const config = (commands: unknown) => (file: string) =>
+  file.endsWith('config.jsonc') ? JSON.stringify({ ...minimal, 'read-commands': commands }) : null;
+
 test('loadReadCommands returns none without a config and rejects an invalid list', () => {
   assert.deepEqual(
     loadReadCommands('/skill', () => null),
     [],
   );
-  const config = (commands: unknown) => (file: string) =>
-    file.endsWith('config.jsonc') ? JSON.stringify({ ...minimal, 'read-commands': commands }) : null;
   assert.deepEqual(loadReadCommands('/skill', config(['codegraph explore'])), ['codegraph explore']);
   assert.deepEqual(
     loadReadCommands('/skill', (file) => (file.endsWith('config.jsonc') ? JSON.stringify(minimal) : null)),
@@ -179,10 +191,8 @@ test('pricing override is a known table that validation never inspects', () => {
   for (const pricing of [{ 'lmstudio/*': { rates: { input: 0, output: 0 } } }, { bad: 5 }, 'x', 7]) {
     assert.deepEqual(validateConfig({ ...minimal, pricing }), []);
   }
-  const files: Record<string, string> = {
-    [path.join('/s', 'config.jsonc')]: JSON.stringify({ ...minimal, pricing: { a: 1 } }),
-  };
-  assert.deepEqual(loadConfig('/s', (file) => files[file] ?? null).config['pricing'], { a: 1 });
-  const unset: Record<string, string> = { [path.join('/s', 'config.jsonc')]: JSON.stringify(minimal) };
-  assert.equal('pricing' in loadConfig('/s', (file) => unset[file] ?? null).config, false);
+  const files = new Map([[path.join('/s', 'config.jsonc'), JSON.stringify({ ...minimal, pricing: { a: 1 } })]]);
+  assert.deepEqual(loadConfig('/s', (file) => files.get(file) ?? null).config['pricing'], { a: 1 });
+  const unset = new Map([[path.join('/s', 'config.jsonc'), JSON.stringify(minimal)]]);
+  assert.equal('pricing' in loadConfig('/s', (file) => unset.get(file) ?? null).config, false);
 });

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
+import { loadProbe } from '../helpers/audit-probe.ts';
 import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import {
   DEFAULT_CONFIG_PATH,
@@ -10,19 +11,15 @@ import {
   readRun,
   reserveRun,
   updateRun,
-  type LimitName,
-  type ProbeRecord,
 } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
-// The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
-const probe = await import(
-  new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
-);
+import type { LimitName, ProbeRecord } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+const probe = await loadProbe();
 
 // SECTION: Fakes
 
 function fakeClock() {
   let t = 1_000_000;
-  const timers: { at: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
   return {
     timers,
     now: () => t,
@@ -35,16 +32,19 @@ function fakeClock() {
     },
     advance(ms: number) {
       t += ms;
-      for (const timer of timers)
+      for (const timer of timers) {
         if (timer.live && timer.at <= t) {
           timer.live = false;
           timer.fn();
         }
+      }
     },
   };
 }
 
-function fakeSpec(extra: Record<string, unknown> = {}) {
+type SpecOverrides = { argv?: unknown; parse?: unknown; prepare?: unknown; modes?: unknown; modeCascadeOn?: unknown };
+
+function fakeSpec(extra: SpecOverrides = {}) {
   return {
     id: 'claude',
     modes: [],
@@ -92,7 +92,7 @@ type MainOptions = {
   modes?: boolean;
   hang?: boolean;
   limits?: Partial<Record<LimitName, number>>;
-  args?: string[];
+  args?: Array<string>;
 };
 
 /** Reserves a run in a fresh repo; `limits` overrides the reserved settings, standing in for a later config edit. */
@@ -114,25 +114,33 @@ function reserveMainRun(options: MainOptions = {}) {
     revision: 'abc',
     config: { ...settings, limits: { ...settings.limits, ...options.limits } },
   });
-  if (options.previous)
+  if (options.previous) {
     updateRun(workDir, (m) => {
       Object.assign(m.probes, options.previous);
     });
+  }
   return { root, repo, workDir };
 }
 
+const doctor = () => [
+  { provider: 'claude', mode: 'cli', path: '/bin/claude', status: 'path' },
+  { provider: 'claude', mode: 'desktop', path: '/apps/claude', status: 'path' },
+];
+
 function startMain(run: { root: string; repo: string }, options: MainOptions & { onStart?: () => void } = {}) {
   const controller = new AbortController();
-  const launches: string[] = [];
+  const launches: Array<string> = [];
   const clock = fakeClock();
   const processPort = {
-    start(launch: { argv: readonly string[] }, io: { logPath: string }) {
+    start(launch: { argv: ReadonlyArray<string> }, io: { logPath: string }) {
       launches.push(launch.argv.join(' '));
       fs.writeFileSync(io.logPath, 'partial');
       options.onStart?.();
       // A hung child never settles; the abort stands in for the operator's interrupt.
       if (options.hang) {
-        if (!options.onStart) queueMicrotask(() => controller.abort());
+        if (!options.onStart) {
+          queueMicrotask(() => controller.abort());
+        }
         return { pid: 5001, done: new Promise(() => {}) };
       }
       return {
@@ -151,10 +159,6 @@ function startMain(run: { root: string; repo: string }, options: MainOptions & {
     },
     signal() {},
   };
-  const doctor = () => [
-    { provider: 'claude', mode: 'cli', path: '/bin/claude', status: 'path' },
-    { provider: 'claude', mode: 'desktop', path: '/apps/claude', status: 'path' },
-  ];
   const done = probe.main({
     root: run.repo,
     home: path.join(run.root, 'home'),
@@ -169,43 +173,39 @@ function startMain(run: { root: string; repo: string }, options: MainOptions & {
       ...(options.modes ? ['--modes'] : []),
       ...(options.args ?? []),
     ],
-    ports: { doctor, process: processPort, clock, specs: { claude: fakeSpec() }, env: {}, platform: currentPlatform() },
+    ports: {
+      writeSummary() {},
+      doctor,
+      process: processPort,
+      clock,
+      specs: { claude: fakeSpec() },
+      env: {},
+      platform: currentPlatform(),
+    },
   });
   return { done, launches, clock, controller };
 }
 
-async function quietly<T>(body: () => Promise<T>): Promise<T> {
-  const write = process.stdout.write;
-  process.stdout.write = (() => true) as typeof process.stdout.write;
-  try {
-    return await body();
-  } finally {
-    process.stdout.write = write;
-  }
-}
-
 async function runMain(options: MainOptions = {}) {
   const run = reserveMainRun(options);
-  return quietly(async () => {
-    const { done, launches, clock } = startMain(run, options);
-    const result = await done;
-    const outDir = path.join(run.workDir, 'dispatch');
-    return {
-      result,
-      launches,
-      clock,
-      manifest: readRun(run.workDir),
-      summary: fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8'),
-      outDir,
-    };
-  });
+  const { done, launches, clock } = startMain(run, options);
+  const result = await done;
+  const outDir = path.join(run.workDir, 'dispatch');
+  return {
+    result,
+    launches,
+    clock,
+    manifest: readRun(run.workDir),
+    summary: fs.readFileSync(path.join(outDir, 'summary.md'), 'utf8'),
+    outDir,
+  };
 }
 
 test('audit probe resume reuses completed target evidence without relaunching', async () => {
   const { launches, result, manifest } = await runMain({ previous: { claude: priorRecord() } });
   assert.equal(launches.length, 0);
-  assert.equal(result.live[0].lifecycle, 'complete');
-  assert.ok(result.live[0].gaps.includes('reused recorded evidence; not relaunched'));
+  assert.equal(result.live[0]!.lifecycle, 'complete');
+  assert.ok(result.live[0]!.gaps.includes('reused recorded evidence; not relaunched'));
   assert.equal(manifest.probes['claude']?.attempts, 1);
   assert.equal(manifest.probes['claude']?.outcome, 'pass');
 });
@@ -224,8 +224,8 @@ test('audit probe resume blocks a terminal prior launch whose exit is unconfirme
     },
   });
   assert.equal(launches.length, 0);
-  assert.equal(result.live[0].liveness, 'unknown');
-  assert.match(result.live[0].cause, /no confirmed exit; not relaunched/);
+  assert.equal(result.live[0]!.liveness, 'unknown');
+  assert.match(result.live[0]!.cause, /no confirmed exit; not relaunched/);
   assert.equal(manifest.probes['claude']?.exitConfirmed, false);
   assert.equal(manifest.probes['claude']?.lifecycle, 'timeout');
   assert.equal(manifest.probes['claude']?.cleanup, 'blocked');
@@ -244,8 +244,9 @@ test('audit probe resume with --modes spends the remaining per-provider launch b
       ['claude/desktop', 'skipped'],
     ],
   );
-  for (const record of result.live)
+  for (const record of result.live) {
     assert.match(record.cause, /probeLaunchesPerProvider=1 already spent by 1 recorded launch/);
+  }
 });
 
 test('audit probe launches the closest configured model and effort and records configured versus applied', async () => {

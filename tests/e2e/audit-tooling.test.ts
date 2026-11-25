@@ -3,14 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
+import { loadProbe } from '../helpers/audit-probe.ts';
+import { baselineModule, finalizeModule, sharedModule } from './helpers/audit-modules.ts';
+import { text } from './helpers/json.ts';
+import { nodeErrorCode } from '../../skills/dispatch/scripts/lib/fs-ext.ts';
+import { isRecord } from '../../skills/dispatch/scripts/lib/config.ts';
 
 const argv = ['node', 'audit', '--run', '2026-10-01-0636'];
 const WORK = '.scratch/audits/2026-10-01-0636-work';
 const REPORT = '.scratch/audits/2026-10-01-0636-audit.md';
-const baselineModule = () =>
-  import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/baseline.mjs', import.meta.url).href);
-const finalizeModule = () =>
-  import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/finalize.mjs', import.meta.url).href);
 const fakeMetrics = async () => ({ markdown: '# fixture metrics', brokenCount: 0, hashLines: [] });
 function counted() {
   const calls = { runs: 0 };
@@ -27,14 +28,13 @@ const relocatedFrom = (body: string) => /Run artifacts[^:]*: `([^`]+)`/.exec(bod
 // SECTION: Tooling imports and artifacts
 
 test('audit probe imports current provider and config APIs and publishes discovery artifacts', async () => {
-  const audit = await import(
-    new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href
-  );
+  const audit = await loadProbe();
   const f = fixture();
   try {
     fs.mkdirSync(path.join(f.repo, 'skills'), { recursive: true });
     fs.cpSync(f.skill, path.join(f.repo, 'skills/dispatch'), { recursive: true });
-    assert.ok(audit.loadConfig(f.repo).config?.['read-delegates']);
+    const { config } = audit.loadConfig(f.repo);
+    assert.ok(isRecord(config) && config['read-delegates']);
     await audit.main({ root: f.repo, argv: [...argv, '--discover-only', '--only', 'opencode'] });
     const work = path.join(f.repo, '.scratch/audits/2026-10-01-0636-work/dispatch');
     assert.ok(fs.existsSync(path.join(work, 'summary.md')));
@@ -54,11 +54,11 @@ test('audit lifecycle baseline runs the aggregate suite once and resume reuses i
   const f = fixture();
   try {
     let command = '';
-    let selected: readonly string[] = [];
+    let selected: ReadonlyArray<string> = [];
     let runs = 0;
     const runTests = (root: string) => {
       runs++;
-      return audit.runTests(root, (cmd: string, args: readonly string[]) => {
+      return audit.runTests(root, (cmd: string, args: ReadonlyArray<string>) => {
         command = cmd;
         selected = args;
         return { stdout: '✔ All 1 test(s) passed', stderr: '', status: 0 };
@@ -124,7 +124,9 @@ test('audit lifecycle finalize detects a content edit to an already-dirty tracke
     assert.match(body, /Repo integrity: CHANGED/);
     assert.match(body, /~ src\/a\.ts/);
   } finally {
-    if (relocated) fs.rmSync(relocated, { recursive: true, force: true });
+    if (relocated) {
+      fs.rmSync(relocated, { recursive: true, force: true });
+    }
     f.cleanup();
   }
 });
@@ -154,7 +156,9 @@ test('audit lifecycle finalize fingerprints an ignored local config without repo
     assert.match(body, /~ skills\/dispatch\/config\.local\.jsonc/);
     assert.doesNotMatch(body, /first-value|second-value/);
   } finally {
-    if (relocated) fs.rmSync(relocated, { recursive: true, force: true });
+    if (relocated) {
+      fs.rmSync(relocated, { recursive: true, force: true });
+    }
     f.cleanup();
   }
 });
@@ -182,7 +186,7 @@ test('audit lifecycle failed relocation preserves evidence and a retry completes
   const baseline = await baselineModule();
   const audit = await finalizeModule();
   const f = fixture();
-  const created: string[] = [];
+  const created: Array<string> = [];
   try {
     await baseline.main({ root: f.repo, argv, ...counted(), buildMetrics: fakeMetrics });
     const work = path.join(f.repo, WORK),
@@ -204,12 +208,14 @@ test('audit lifecycle failed relocation preserves evidence and a retry completes
     body = fs.readFileSync(report, 'utf8');
     const relocated = relocatedFrom(body);
     assert.ok(relocated);
-    created.push(relocated!);
+    created.push(relocated);
     assert.match(body, /Repo integrity: unchanged/);
     assert.equal(fs.existsSync(work), false);
-    assert.equal(fs.readFileSync(path.join(relocated!, 'tests.txt'), 'utf8'), 'generation 1');
+    assert.equal(fs.readFileSync(path.join(relocated, 'tests.txt'), 'utf8'), 'generation 1');
   } finally {
-    for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
+    for (const dir of created) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
     f.cleanup();
   }
 });
@@ -249,9 +255,6 @@ test('audit lifecycle finalize refuses a terminal probe whose exit is unconfirme
 
 // SECTION: Content snapshot and integrity gaps
 
-const sharedModule = () =>
-  import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/shared.mjs', import.meta.url).href);
-
 test('audit lifecycle content snapshot fingerprints an external symlink by its target without following it', async (t) => {
   const shared = await sharedModule();
   const f = fixture();
@@ -260,16 +263,16 @@ test('audit lifecycle content snapshot fingerprints an external symlink by its t
     fs.writeFileSync(outside, 'first');
     try {
       fs.symlinkSync(outside, path.join(f.repo, 'link.txt'), 'file');
-    } catch (err) {
+    } catch (error) {
       // NOTE: Windows without Developer Mode or elevation cannot create symlinks.
-      if (['EPERM', 'EACCES'].includes((err as NodeJS.ErrnoException).code ?? '')) {
+      if (['EPERM', 'EACCES'].includes(nodeErrorCode(error) ?? '')) {
         t.skip('symlink creation unavailable');
         return;
       }
-      throw err;
+      throw error;
     }
     const before = shared.contentSnapshot(f.repo);
-    assert.match(before.entries['link.txt'], /^symlink:/);
+    assert.match(text(before.entries['link.txt']), /^symlink:/);
     fs.writeFileSync(outside, 'second');
     const after = shared.contentSnapshot(f.repo);
     assert.equal(after.entries['link.txt'], before.entries['link.txt']);
@@ -286,17 +289,19 @@ test('audit lifecycle content snapshot reports repeated read failures as integri
   try {
     const denied = {
       ...fs,
-      readFileSync: ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
-        if (String(file).endsWith('a.ts')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
-        return (fs.readFileSync as (...args: unknown[]) => unknown)(file, ...rest);
-      }) as typeof fs.readFileSync,
+      readFileSync: (file: string) => {
+        if (file.endsWith('a.ts')) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return fs.readFileSync(file);
+      },
     };
     const first = shared.contentSnapshot(f.repo, { fs: denied });
     const second = shared.contentSnapshot(f.repo, { fs: denied });
     for (const snapshot of [first, second]) {
       assert.equal(snapshot.entries['src/a.ts'], 'unreadable');
       assert.ok(
-        snapshot.gaps.some((g: string) => /src\/a\.ts unreadable \(EACCES\)/.test(g)),
+        snapshot.gaps.some((g) => /src\/a\.ts unreadable \(EACCES\)/.test(g)),
         snapshot.gaps.join('\n'),
       );
     }
@@ -311,6 +316,13 @@ test('audit lifecycle content snapshot reports repeated read failures as integri
 
 // SECTION: Interruption recovery and report footers
 
+const crashBeforeFooter = () => {
+  throw new Error('interrupted before the footer');
+};
+const removeThenCrash = (dir: string) => {
+  fs.rmSync(dir, { recursive: true, force: true });
+  throw new Error('interrupted after removal');
+};
 const footers = (body: string) => body.match(/Run artifacts \(/g)?.length ?? 0;
 
 test('audit lifecycle finalize interrupted after publication completes the report footer once on retry', async () => {
@@ -323,10 +335,10 @@ test('audit lifecycle finalize interrupted after publication completes the repor
     const work = path.join(f.repo, WORK),
       report = path.join(f.repo, REPORT);
     fs.writeFileSync(report, '# audit');
-    const crash = () => {
-      throw new Error('interrupted before the footer');
-    };
-    assert.throws(() => audit.main({ root: f.repo, argv, appendReport: crash }), /interrupted before the footer/);
+    assert.throws(
+      () => audit.main({ root: f.repo, argv, appendReport: crashBeforeFooter }),
+      /interrupted before the footer/,
+    );
     const manifest = JSON.parse(fs.readFileSync(path.join(work, 'manifest.json'), 'utf8'));
     assert.equal(manifest.relocation.phase, 'published');
     assert.equal(manifest.relocation.integrity, 'unchanged');
@@ -345,11 +357,10 @@ test('audit lifecycle finalize interrupted after publication completes the repor
     const report2 = '.scratch/audits/2026-10-01-0637-audit.md';
     await baseline.main({ root: f.repo, argv: run2Argv, ...counted(), buildMetrics: fakeMetrics });
     fs.writeFileSync(path.join(f.repo, report2), '# audit');
-    const removeDir = (dir: string) => {
-      fs.rmSync(dir, { recursive: true, force: true });
-      throw new Error('interrupted after removal');
-    };
-    assert.throws(() => audit.main({ root: f.repo, argv: run2Argv, removeDir }), /interrupted after removal/);
+    assert.throws(
+      () => audit.main({ root: f.repo, argv: run2Argv, removeDir: removeThenCrash }),
+      /interrupted after removal/,
+    );
     assert.equal(fs.existsSync(path.join(f.repo, work2)), false);
     audit.main({ root: f.repo, argv: run2Argv });
     body = fs.readFileSync(path.join(f.repo, report2), 'utf8');
@@ -358,9 +369,13 @@ test('audit lifecycle finalize interrupted after publication completes the repor
     assert.ok(relocated2 && fs.existsSync(path.join(relocated2, 'manifest.json')));
     assert.match(body, /Repo integrity: unchanged/);
     assert.doesNotMatch(body, /Run artifacts[^:]*: none/);
-    if (relocated2) fs.rmSync(relocated2, { recursive: true, force: true });
+    if (relocated2) {
+      fs.rmSync(relocated2, { recursive: true, force: true });
+    }
   } finally {
-    if (relocated) fs.rmSync(relocated, { recursive: true, force: true });
+    if (relocated) {
+      fs.rmSync(relocated, { recursive: true, force: true });
+    }
     f.cleanup();
   }
 });

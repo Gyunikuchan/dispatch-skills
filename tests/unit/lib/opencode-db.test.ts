@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test from 'node:test';
+import type { TestContext } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { opencodeDbPath, readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 
@@ -15,7 +16,7 @@ function databasePath(t: TestContext): string {
   return path.join(dir, 'opencode.db');
 }
 
-function seedDatabase(dbPath: string, sessions: SessionSeed[], messages: MessageSeed[]): void {
+function seedDatabase(dbPath: string, sessions: Array<SessionSeed>, messages: Array<MessageSeed>): void {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('CREATE TABLE session_v2 (id TEXT PRIMARY KEY, parent_id TEXT)');
@@ -23,7 +24,9 @@ function seedDatabase(dbPath: string, sessions: SessionSeed[], messages: Message
       'CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, data TEXT)',
     );
     const insertSession = db.prepare('INSERT INTO session_v2 (id, parent_id) VALUES (?, ?)');
-    for (const session of sessions) insertSession.run(session.id, session.parentId ?? null);
+    for (const session of sessions) {
+      insertSession.run(session.id, session.parentId ?? null);
+    }
     const insertMessage = db.prepare(
       'INSERT INTO session_message (id, session_id, type, seq, time_created, data) VALUES (?, ?, ?, ?, ?, ?)',
     );
@@ -43,8 +46,8 @@ function seedDatabase(dbPath: string, sessions: SessionSeed[], messages: Message
 }
 
 const assistant = (tokens: unknown, model?: unknown) => ({
-  ...(model === undefined ? {} : { model }),
-  ...(tokens === undefined ? {} : { tokens }),
+  ...(!(model === undefined) && { model }),
+  ...(!(tokens === undefined) && { tokens }),
 });
 
 test('readOpencodeMessages returns root and nested descendant messages with model effort and counters', (t) => {
@@ -185,11 +188,11 @@ test('readOpencodeMessages caps descendant sessions with one session cap across 
     ],
   );
 
-  const breadth = readOpencodeMessages(breadthPath, 'root', { fromMs: 0, toMs: 10000, maxSessions: 2 });
+  const breadth = readOpencodeMessages(breadthPath, 'root', { fromMs: 0, toMs: 10_000, maxSessions: 2 });
 
   const identified = readOpencodeMessages(breadthPath, 'root', {
     fromMs: 0,
-    toMs: 10000,
+    toMs: 10_000,
     maxSessions: 2,
     includeSessionIdentity: true,
   });
@@ -224,7 +227,7 @@ test('readOpencodeMessages caps descendant sessions with one session cap across 
     ],
   );
 
-  const chain = readOpencodeMessages(chainPath, 'root', { fromMs: 0, toMs: 10000, maxSessions: 2 });
+  const chain = readOpencodeMessages(chainPath, 'root', { fromMs: 0, toMs: 10_000, maxSessions: 2 });
 
   assert.equal(chain.truncated, 'sessions');
   assert.deepEqual(
@@ -250,7 +253,7 @@ test('readOpencodeMessages caps message rows and reports row truncation', (t) =>
     })),
   );
 
-  const read = readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 10000, maxRows: 2 });
+  const read = readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 10_000, maxRows: 2 });
   assert.deepEqual(
     read.messages.map((message) => message.createdMs),
     [1000, 2000],
@@ -258,7 +261,7 @@ test('readOpencodeMessages caps message rows and reports row truncation', (t) =>
   assert.equal(read.truncated, 'rows');
   assert.equal(read.skipped, 0);
 
-  assert.deepEqual(readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 10000, maxRows: 0 }), {
+  assert.deepEqual(readOpencodeMessages(dbPath, 'root', { fromMs: 0, toMs: 10_000, maxRows: 0 }), {
     messages: [],
     skipped: 0,
     truncated: 'rows',

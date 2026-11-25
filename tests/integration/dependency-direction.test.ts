@@ -3,13 +3,15 @@ import path from 'node:path';
 import { describe, test } from 'node:test';
 import { LanguageVariant, SyntaxKind } from 'typescript/unstable/ast';
 import { createScanner } from 'typescript/unstable/ast/scanner';
-import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay, type FileTable } from './scan.ts';
+import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay } from './scan.ts';
+import type { FileTable } from './scan.ts';
 
 const SCRIPTS = 'skills/dispatch/scripts/';
 type Layer = 'dispatch' | 'policy' | 'providers' | 'lib' | 'toolkit';
 
 // Design § Layers: anything not listed is forbidden (which also rules out cycles).
-export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
+type LayerRules = { readonly [K in Layer]: ReadonlyArray<Layer> };
+export const ALLOWED: LayerRules = {
   dispatch: ['lib', 'providers', 'policy', 'toolkit'],
   policy: [],
   providers: ['lib'],
@@ -17,9 +19,9 @@ export const ALLOWED: { readonly [K in Layer]: readonly Layer[] } = {
   toolkit: ['toolkit', 'providers', 'lib', 'policy'],
 };
 
-const PURE: readonly Layer[] = ['policy'];
+const PURE = new Set<Layer>(['policy']);
 const IMPURE_MODULES = ['fs', 'child_process', 'os'];
-const IMPURE_TOKENS: readonly [RegExp, string][] = [
+const IMPURE_TOKENS: ReadonlyArray<[RegExp, string]> = [
   [/\bDate\b/, 'Date'],
   [/\bMath\.random\b/, 'Math.random'],
   [/\bprocess\.env\b/, 'process.env'],
@@ -67,26 +69,38 @@ function hasIdentifier(text: string, name: string): boolean {
   const scanner = createScanner(true, LanguageVariant.Standard, text);
   let previous = '';
   for (let token = scanner.scan(); token !== SyntaxKind.EndOfFile; token = scanner.scan()) {
-    if (token === SyntaxKind.SlashToken && REGEX_PREFIXES.has(previous)) token = scanner.reScanSlashToken();
-    if (token === SyntaxKind.Identifier && scanner.getTokenText() === name) return true;
+    if (token === SyntaxKind.SlashToken && REGEX_PREFIXES.has(previous)) {
+      token = scanner.reScanSlashToken();
+    }
+    if (token === SyntaxKind.Identifier && scanner.getTokenText() === name) {
+      return true;
+    }
     previous = scanner.getTokenText();
   }
   return false;
 }
 
+const isLayer = (name: string): name is Layer => Object.hasOwn(ALLOWED, name);
+
 function layerOf(file: string): Layer | null {
-  if (!file.startsWith(SCRIPTS)) return null;
+  if (!file.startsWith(SCRIPTS)) {
+    return null;
+  }
   const rest = file.slice(SCRIPTS.length);
-  if (rest === 'dispatch.ts') return 'dispatch';
-  const head = rest.split('/')[0] as Layer;
-  return head in ALLOWED && rest.includes('/') ? head : null;
+  if (rest === 'dispatch.ts') {
+    return 'dispatch';
+  }
+  const head = rest.split('/')[0] ?? '';
+  return isLayer(head) && rest.includes('/') ? head : null;
 }
 
-export function checkDependencies(files: FileTable): string[] {
-  const errors: string[] = [];
+export function checkDependencies(files: FileTable): Array<string> {
+  const errors: Array<string> = [];
   for (const { path: file, text } of files) {
     const layer = layerOf(file);
-    if (!file.endsWith('.ts') || !file.startsWith(SCRIPTS)) continue;
+    if (!file.endsWith('.ts') || !file.startsWith(SCRIPTS)) {
+      continue;
+    }
     if (!layer) {
       errors.push(
         `dependency rule: ${file} is outside the shipped layers; move it to toolkit/, providers/, lib/ or policy/`,
@@ -94,7 +108,7 @@ export function checkDependencies(files: FileTable): string[] {
       continue;
     }
     for (const { specifier, typeOnly } of extractImports(text)) {
-      if (PURE.includes(layer) && IMPURE_MODULES.some((name) => specifier === name || specifier === `node:${name}`)) {
+      if (PURE.has(layer) && IMPURE_MODULES.some((name) => specifier === name || specifier === `node:${name}`)) {
         errors.push(
           `purity rule: ${file} (${layer}) imports ${specifier}; pure layers do no I/O, so move it to toolkit/ or lib/`,
         );
@@ -106,25 +120,30 @@ export function checkDependencies(files: FileTable): string[] {
         continue;
       }
       if (targetLayer === 'toolkit' && layer !== 'toolkit' && layer !== 'dispatch') {
-        if (typeOnly && [SCRIPTS + 'toolkit/types.ts', SCRIPTS + 'toolkit/domain/types.ts'].includes(target!)) continue;
+        if (typeOnly && [SCRIPTS + 'toolkit/types.ts', SCRIPTS + 'toolkit/domain/types.ts'].includes(target!)) {
+          continue;
+        }
         errors.push(
           `dependency rule: ${file} imports ${specifier}; shared layers may only type-import toolkit/types.ts or toolkit/domain/types.ts`,
         );
         continue;
       }
-      if (!targetLayer || targetLayer === layer) continue;
+      if (!targetLayer || targetLayer === layer) {
+        continue;
+      }
       if (!ALLOWED[layer].includes(targetLayer)) {
         errors.push(
           `dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(', ') || 'nothing'}, so invert the dependency or move the code`,
         );
       }
     }
-    if (PURE.includes(layer)) {
+    if (PURE.has(layer)) {
       for (const [pattern, token] of IMPURE_TOKENS) {
-        if (pattern.test(text) && (token !== 'performance' || hasIdentifier(text, token)))
+        if (pattern.test(text) && (token !== 'performance' || hasIdentifier(text, token))) {
           errors.push(
             `purity rule: ${file} (${layer}) uses ${token}; pure layers read time and randomness only from events, so pass it in`,
           );
+        }
       }
     }
   }
@@ -138,7 +157,7 @@ test('the overlay obeys the dependency matrix and purity rules', () => {
 });
 
 const IMPORT = 'imp' + 'ort';
-const file = (path: string, ...lines: string[]) => ({ path, text: lines.join('\n') });
+const file = (path: string, ...lines: Array<string>) => ({ path, text: lines.join('\n') });
 
 test('dispatch entry imports only portable services and toolkit', () => {
   for (const layer of ['lib', 'providers', 'policy', 'toolkit']) {

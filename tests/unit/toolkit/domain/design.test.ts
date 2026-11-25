@@ -12,6 +12,7 @@ import {
   validateSpecTraceability,
   validateDesignTraceability,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
+import type { ParsedPlan } from '../../../../skills/dispatch/scripts/toolkit/domain/types.ts';
 
 const detail = (id: string) => `### ${id} Step
 - ${id} behaviour is implemented.
@@ -239,21 +240,20 @@ test('design-section-order: old order fails and new order passes', () => {
   assert.ok(parseDesign(DESIGN).ok);
 });
 
+const assertInvalidDesign = (payload: unknown) => assert.equal(asParsedDesign(payload), null);
+
 test('journal design admission rejects malformed objectives and dependency graphs', () => {
   assert.ok(asParsedDesign(design));
   const rows = design.increments;
-  const invalid = [
-    { ...design, box: { Parent: 1 } as never },
-    { ...design, increments: [{ ...rows[0]!, paths: [] }, rows[1]!] },
-    { ...design, increments: [rows[0]!, { ...rows[1]!, id: 'I01' }] },
-    { ...design, increments: [rows[0]!, { ...rows[1]!, priority: 1 }] },
-    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] },
-    { ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] },
-    { ...design, increments: [rows[1]!] },
-    { ...design, increments: [{ ...rows[0]!, behaviour: undefined as never }, rows[1]!] },
-    { ...design, increments: [{ ...rows[0]!, behaviour: ['I01 outcome', 4] as never }, rows[1]!] },
-  ];
-  for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
+  assertInvalidDesign({ ...design, box: { Parent: 1 } });
+  assertInvalidDesign({ ...design, increments: [{ ...rows[0]!, paths: [] }, rows[1]!] });
+  assertInvalidDesign({ ...design, increments: [rows[0]!, { ...rows[1]!, id: 'I01' }] });
+  assertInvalidDesign({ ...design, increments: [rows[0]!, { ...rows[1]!, priority: 1 }] });
+  assertInvalidDesign({ ...design, increments: [{ ...rows[0]!, prerequisites: ['I99'] }, rows[1]!] });
+  assertInvalidDesign({ ...design, increments: [{ ...rows[0]!, prerequisites: ['I02'] }, rows[1]!] });
+  assertInvalidDesign({ ...design, increments: [rows[1]!] });
+  assertInvalidDesign({ ...design, increments: [{ ...rows[0]!, behaviour: undefined }, rows[1]!] });
+  assertInvalidDesign({ ...design, increments: [{ ...rows[0]!, behaviour: ['I01 outcome', 4] }, rows[1]!] });
 });
 
 test('designScopeGrew compares validation case-insensitively', () => {
@@ -307,21 +307,42 @@ const binding = {
   paths: ['src/a.ts'],
 };
 
+const makePlan = (overrides: Partial<ParsedPlan>): ParsedPlan => ({
+  title: null,
+  box: {},
+  glance: null,
+  keyDecisions: [],
+  criteria: [],
+  tasks: [],
+  changes: [],
+  verification: { automated: [], none: null, manual: [] },
+  seams: [],
+  warnings: [],
+  traceability: null,
+  governedText: '',
+  planIds: [],
+  sharedContext: '',
+  ...overrides,
+});
+
+const change = (file: string) => ({ action: 'MODIFY' as const, path: file, note: '', command: null, line: 1 });
+
 test('design traceability rejects stale revision and wrong increment', () => {
-  const plan = {
+  const plan = makePlan({
     traceability: { Design: binding.path, Revision: hash, Increment: 'I01', Outcome: 'First behavior' },
-  } as never;
+  });
   assert.deepEqual(validateDesignTraceability(plan, binding), []);
   assert.ok(validateDesignTraceability(plan, { ...binding, increment: 'I02' }).length);
   assert.ok(validateDesignTraceability(plan, { ...binding, revision: `sha256:${'b'.repeat(64)}` }).length);
 });
 
+const plan = (file: string) =>
+  makePlan({
+    traceability: { Design: binding.path, Revision: hash, Increment: 'I01', Outcome: 'First behavior' },
+    changes: [change(file)],
+  });
+
 test('traceability scope admits directory and glob forms while rejecting escapes and sibling prefixes', () => {
-  const plan = (file: string) =>
-    ({
-      traceability: { Design: binding.path, Revision: hash, Increment: 'I01', Outcome: 'First behavior' },
-      changes: [{ path: file }],
-    }) as never;
   for (const [scope, allowed, denied] of [
     ['src/a.ts', 'src/a.ts', 'src/b.ts'],
     ['src/', 'src/deep/a.ts', 'src-other/a.ts'],
@@ -338,7 +359,7 @@ test('traceability scope admits directory and glob forms while rejecting escapes
 });
 
 test('template traceability binds Parent path, revision, increment, contract and owned changes', () => {
-  const plan = {
+  const plan = makePlan({
     box: { Parent: `\`${binding.path}\` · I01` },
     traceability: {
       'Approved revision': hash,
@@ -346,8 +367,8 @@ test('template traceability binds Parent path, revision, increment, contract and
       'Prerequisite evidence': 'None',
       'Acceptance mapping': 'src/a.ts → SC1',
     },
-    changes: [{ path: 'src/a.ts' }],
-  } as never;
+    changes: [change('src/a.ts')],
+  });
   assert.deepEqual(validateDesignTraceability(plan, binding), []);
   for (const other of [
     { ...binding, path: 'other.design.md' },
@@ -355,12 +376,32 @@ test('template traceability binds Parent path, revision, increment, contract and
     { ...binding, increment: 'I02' },
     { ...binding, contract: { Outcome: 'Other behavior' } },
     { ...binding, paths: ['src/b.ts'] },
-  ])
+  ]) {
     assert.ok(validateDesignTraceability(plan, other).length);
+  }
 });
 
 const requirements = ['REQ-1', 'REQ-2', 'REQ-3'];
-const tracedPlan = (ids: string[]) => ({ criteria: [{ id: 'SC1', line: 12, satisfies: ids }] }) as never;
+const tracedPlan = (ids: Array<string>) =>
+  makePlan({
+    criteria: [
+      {
+        id: 'SC1',
+        title: 'Criterion 1',
+        line: 12,
+        satisfies: ids,
+        changes: [],
+        tests: [],
+        verify: [],
+        evidence: null,
+        preExisting: null,
+        redException: null,
+        red: null,
+        review: null,
+        enforcementInfeasibility: null,
+      },
+    ],
+  });
 
 test('requirement references reject unknown requirements and report unsatisfied coverage', () => {
   assert.deepEqual(validateSpecTraceability(tracedPlan(requirements), requirements), []);
@@ -380,7 +421,7 @@ test('requirement references reject unknown requirements and report unsatisfied 
   );
   assert.match(uncited[0]!.message, /REQ-2/);
   assert.match(uncited[1]!.message, /REQ-3/);
-  const defects = validateApproachRequirements({ approachRequirements: ['REQ-1', 'REQ-9'] } as never, requirements);
+  const defects = validateApproachRequirements({ ...design, approachRequirements: ['REQ-1', 'REQ-9'] }, requirements);
   assert.deepEqual(
     defects.map((item) => [item.code, item.severity]),
     [['unknown-requirement', 'warning']],

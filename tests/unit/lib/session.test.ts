@@ -15,7 +15,7 @@ import {
 
 const now = new Date('2026-09-29T17:54:00.000Z');
 
-function repo(): { root: string; temp: string } {
+function repo() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-'));
   const root = path.join(base, 'repo');
   fs.mkdirSync(path.join(root, '.git'), { recursive: true });
@@ -85,7 +85,7 @@ test('held claim waits for the winner and reuses its folder', (t) => {
     path.join(winner, 'manifest.json'),
     fs
       .readFileSync(path.join(first, 'manifest.json'), 'utf8')
-      .replace(/"c1"/g, '"c2"')
+      .replaceAll('"c1"', '"c2"')
       .replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'),
   );
   assert.equal(

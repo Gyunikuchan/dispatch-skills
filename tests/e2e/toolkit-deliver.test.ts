@@ -4,9 +4,34 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import { toolkitRepo, planSource, setupTestSkill } from './helpers/toolkit-repo.ts';
+import { arrayOf, isBoolean, isNumber, isString, maybe, narrow, objectWith } from './helpers/json.ts';
 import { foldLedger, appendRecord } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { abandonedRef, candidateRef } from '../../skills/dispatch/scripts/toolkit/writers.ts';
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
+const createdGuard = objectWith({ path: isString, launch: maybe(isNumber) });
+const reviewGuard = objectWith({ pending: arrayOf(objectWith({ promptPath: isString, replyPath: isString })) });
+const deliverGuard = objectWith({
+  delivered: isBoolean,
+  mode: maybe(isString),
+  source: maybe(isString),
+  from: maybe(isString),
+  ref: maybe(isString),
+  noop: maybe(isBoolean),
+  paths: maybe(arrayOf(isString)),
+});
+const cleanupGuard = objectWith({
+  removed: arrayOf(isString),
+  kept: arrayOf(
+    objectWith({
+      path: isString,
+      reason: isString,
+      code: maybe(isString),
+      message: maybe(isString),
+      recoveryPath: maybe(isString),
+      paths: maybe(arrayOf(isString)),
+    }),
+  ),
+});
 const rows = (r: Repo, phase: string) =>
   foldLedger(r.session).records.filter((x) => x.kind === 'integrate' && x.data['phase'] === phase);
 const ref = 'refs/dispatch/test/delivered-source';
@@ -22,7 +47,7 @@ async function prepared(files: Record<string, string> = base) {
   const r = await toolkitRepo(planSource, files);
   await r.level();
   const made = await r.run(['worktree', 'create', 'T1']);
-  const writer = path.join(r.session, made.value.path);
+  const writer = path.join(r.session, narrow(made.value, createdGuard).path);
   fs.writeFileSync(path.join(writer, 'src/file.ts'), 'delivered\n');
   assert.equal((await r.run(['worktree', 'submit', 'T1'])).exit, 0);
   assert.equal((await r.run(['worktree', 'integrate', 'T1'])).exit, 0);
@@ -40,8 +65,11 @@ async function change(r: Repo) {
   fs.writeFileSync(path.join(w, 'swap-a/child'), 'child\n');
   fs.rmSync(path.join(w, 'swap-b'), { recursive: true });
   fs.writeFileSync(path.join(w, 'swap-b'), 'now a file\n');
-  if (process.platform === 'win32') r.git(['update-index', '--chmod=+x', 'exec.sh'], w);
-  else fs.chmodSync(path.join(w, 'exec.sh'), 0o755);
+  if (process.platform === 'win32') {
+    r.git(['update-index', '--chmod=+x', 'exec.sh'], w);
+  } else {
+    fs.chmodSync(path.join(w, 'exec.sh'), 0o755);
+  }
   assert.equal((await r.run(['worktree', 'commit', '--reason', 'final'])).exit, 0);
   return r.git(['rev-parse', 'HEAD'], r.integration);
 }
@@ -53,37 +81,40 @@ const caller = (r: Repo) => ({
 });
 const cat = (r: Repo, spec: string) => {
   const t = spawnSync('git', ['cat-file', '-t', spec], { cwd: r.root, encoding: 'utf8' });
-  if (t.status) return null;
+  if (t.status) {
+    return null;
+  }
   const type = t.stdout.trim();
   return type === 'blob' ? spawnSync('git', ['cat-file', 'blob', spec], { cwd: r.root }).stdout : type;
 };
-const registered = (r: Repo, cwd: string) => {
-  const key = (value: string) => {
-    const resolved = path.resolve(value).replace(/^\\\\\?\\/, '');
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-  };
-  return r
+const pathKey = (value: string) => {
+  const resolved = path.resolve(value).replace(/^\\\\\?\\/, '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
+const registered = (r: Repo, cwd: string) =>
+  r
     .git(['worktree', 'list', '--porcelain'])
     .split(/\r?\n/)
     .filter((line) => line.startsWith('worktree '))
-    .some((line) => key(line.slice(9)) === key(cwd));
-};
+    .some((line) => pathKey(line.slice(9)) === pathKey(cwd));
 function assertMatchesSource(r: Repo, from: string, source: string) {
   const names = r.git(['diff', '--name-only', '--no-renames', '-z', from, source]).split('\0').filter(Boolean);
   assert.ok(names.length >= 6, names.join());
   for (const name of names) {
     const want = cat(r, source + ':' + name),
       file = path.join(r.root, name);
-    if (want === null) assert.equal(fs.existsSync(file), false, name);
-    else if (want === 'tree') assert.ok(fs.statSync(file).isDirectory(), name);
-    else {
+    if (want === null) {
+      assert.equal(fs.existsSync(file), false, name);
+    } else if (want === 'tree') {
+      assert.ok(fs.statSync(file).isDirectory(), name);
+    } else {
       assert.ok(fs.statSync(file).isFile(), name);
       assert.deepEqual(fs.readFileSync(file), want, name);
     }
   }
 }
 // Cases use independent repositories, so run them concurrently and name the failing case.
-const each = (modes: string[], fn: (mode: string) => Promise<void>) =>
+const each = (modes: Array<string>, fn: (mode: string) => Promise<void>) =>
   Promise.all(
     modes.map((mode) =>
       fn(mode).catch((error: unknown) => {
@@ -92,30 +123,192 @@ const each = (modes: string[], fn: (mode: string) => Promise<void>) =>
     ),
   );
 async function holdCwd(cwd: string) {
-  const child = spawn(process.execPath, ['-e', "process.stdout.write('ready\\n');setInterval(()=>{},1000)"], {
+  const child = spawn(process.execPath, ['-e', String.raw`process.stdout.write('ready\n');setInterval(()=>{},1000)`], {
     cwd,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let ready = false;
-  const exited = new Promise((resolve) => child.once('exit', resolve));
+  const exited = new Promise((resolve) => {
+    child.once('exit', resolve);
+  });
   await new Promise<void>((resolve, reject) => {
-    child.stdout!.once('data', () => {
+    child.stdout.once('data', () => {
       ready = true;
       resolve();
     });
     child.once('error', reject);
     child.once('exit', (code) => {
-      if (!ready) reject(new Error('directory holder exited early: ' + code));
+      if (!ready) {
+        reject(new Error('directory holder exited early: ' + code));
+      }
     });
   });
   return {
     release: async () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill();
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+      }
       await exited;
     },
   };
 }
+const integrate = async (r: Repo, mode: string) => {
+  const from = r.git(['rev-parse', 'HEAD']),
+    w = r.integration;
+  if (mode === 'gitlink') {
+    fs.mkdirSync(path.join(w, 'sub'));
+    r.git(['update-index', '--add', '--cacheinfo', '160000,' + from + ',sub'], w);
+    r.git(['commit', '-m', 'gitlink'], w);
+    return;
+  }
+  if (mode === 'descendant') {
+    fs.mkdirSync(path.join(w, 'new-file'));
+    fs.writeFileSync(path.join(w, 'new-file/child'), 'new');
+  } else {
+    fs.writeFileSync(path.join(w, 'new-file'), 'new');
+  }
+  fs.writeFileSync(path.join(w, 'src/file.ts'), 'final\n');
+  assert.equal((await r.run(['worktree', 'commit', '--reason', 'add'])).exit, 0);
+};
+const refuses = async (r: Repo, mode: string) => {
+  const from = r.git(['rev-parse', 'HEAD']);
+  const file = path.join(r.root, 'src/file.ts'),
+    keep = path.join(r.root, 'keep.txt'),
+    exclude = path.join(r.root, '.git/info/exclude');
+  const initial = caller(r),
+    srcBytes = fs.readFileSync(file),
+    keepBytes = fs.readFileSync(keep),
+    excludeBytes = fs.readFileSync(exclude);
+  if (mode === 'tracked-edit') {
+    fs.writeFileSync(file, 'caller');
+  }
+  if (mode === 'untracked') {
+    fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
+  }
+  if (mode === 'ignored') {
+    fs.appendFileSync(exclude, '\nnew-file\n');
+    fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
+  }
+  if (mode === 'ancestor') {
+    fs.mkdirSync(path.join(r.root, 'new-file'));
+    fs.writeFileSync(path.join(r.root, 'new-file/child'), 'caller');
+  }
+  if (mode === 'descendant') {
+    fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
+  }
+  if (mode === 'staged') {
+    fs.writeFileSync(keep, 'staged');
+    r.git(['add', 'keep.txt']);
+  }
+  if (mode === 'intent-to-add') {
+    fs.writeFileSync(path.join(r.root, 'extra.txt'), 'x');
+    r.git(['add', '-N', 'extra.txt']);
+  }
+  if (mode === 'moved') {
+    r.git(['commit', '--allow-empty', '-m', 'moved']);
+  }
+  if (mode === 'other-branch') {
+    r.git(['switch', '-c', 'other']);
+  }
+  if (mode === 'sparse') {
+    r.git(['config', 'core.sparseCheckout', 'true']);
+  }
+  const before = caller(r);
+  const result = await r.run(['worktree', 'deliver'], (p) => {
+    if (p !== 'deliver:before-apply') {
+      return;
+    }
+    if (mode === 'late-edit') {
+      fs.writeFileSync(file, 'late');
+    }
+    if (mode === 'late-index') {
+      fs.writeFileSync(keep, 'late');
+      r.git(['add', 'keep.txt']);
+    }
+    if (mode === 'late-untracked') {
+      fs.writeFileSync(path.join(r.root, 'new-file'), 'late');
+    }
+  });
+  assert.equal(result.exit, 4, mode + JSON.stringify(result));
+  assert.equal(
+    result.output.reason,
+    mode === 'moved' || mode === 'other-branch'
+      ? 'caller-moved'
+      : mode === 'sparse'
+        ? 'unsupported-sparse'
+        : mode === 'gitlink'
+          ? 'unsupported-entry'
+          : 'caller-dirty',
+    mode,
+  );
+  const after = caller(r);
+  assert.equal(after.head, before.head);
+  assert.equal(after.branch, before.branch);
+  if (!mode.startsWith('late-')) {
+    assert.deepEqual(after, before);
+  }
+  if (mode === 'tracked-edit') {
+    assert.deepEqual(fs.readFileSync(file), Buffer.from('caller'));
+  }
+  if (mode === 'late-edit') {
+    assert.equal(fs.readFileSync(file, 'utf8'), 'late');
+  }
+  assert.equal(rows(r, 'delivered').length, 0, mode);
+  if (mode === 'descendant' || mode === 'gitlink') {
+    return;
+  }
+  // Undo the caller state so the next shared case starts from the same caller.
+  if (mode === 'staged' || mode === 'late-index') {
+    r.git(['reset', '-q', '--', 'keep.txt']);
+  }
+  if (mode === 'intent-to-add') {
+    r.git(['rm', '-q', '--cached', 'extra.txt']);
+  }
+  if (mode === 'moved') {
+    r.git(['reset', '-q', '--soft', from]);
+  }
+  if (mode === 'other-branch') {
+    r.git(['switch', '-q', initial.branch]);
+    r.git(['branch', '-q', '-D', 'other']);
+  }
+  if (mode === 'sparse') {
+    r.git(['config', '--unset', 'core.sparseCheckout']);
+  }
+  for (const extra of ['new-file', 'extra.txt']) {
+    fs.rmSync(path.join(r.root, extra), { recursive: true, force: true });
+  }
+  fs.writeFileSync(file, srcBytes);
+  fs.writeFileSync(keep, keepBytes);
+  fs.writeFileSync(exclude, excludeBytes);
+  assert.deepEqual(caller(r), initial, mode + ' undo');
+};
+const sharedUncommittedSafety = async () => {
+  const { r } = await prepared();
+  try {
+    await integrate(r, 'shared');
+    for (const mode of [
+      'tracked-edit',
+      'untracked',
+      'ignored',
+      'ancestor',
+      'staged',
+      'intent-to-add',
+      'moved',
+      'other-branch',
+      'sparse',
+      'late-edit',
+      'late-index',
+      'late-untracked',
+    ]) {
+      await refuses(r, mode).catch((error: unknown) => {
+        throw Object.assign(new Error(mode + ': ' + String(error)), { cause: error });
+      });
+    }
+  } finally {
+    r.cleanup();
+  }
+};
 describe('toolkit delivery and cleanup', () => {
   it('pending MUST rejection blocks caller writes and delivered records until native agreement', async () => {
     const { r } = await prepared();
@@ -130,8 +323,10 @@ describe('toolkit delivery and cleanup', () => {
         r.run(['review', 'run', 'integration', '--kind', 'code', '--level', 'low', '--host', 'codex']);
       const first = await review();
       assert.equal(first.output.reason, 'native-pending');
+      const firstPending = narrow(first.value, reviewGuard).pending[0];
+      assert.ok(firstPending);
       fs.writeFileSync(
-        first.value.pending[0].replyPath,
+        firstPending.replyPath,
         JSON.stringify({
           status: 'FINDINGS',
           findings: [
@@ -194,10 +389,12 @@ describe('toolkit delivery and cleanup', () => {
       );
       const confirm = await review();
       assert.equal(confirm.output.reason, 'native-pending');
-      const prompt = fs.readFileSync(confirm.value.pending[0].promptPath, 'utf8'),
+      const confirmPending = narrow(confirm.value, reviewGuard).pending[0];
+      assert.ok(confirmPending);
+      const prompt = fs.readFileSync(confirmPending.promptPath, 'utf8'),
         requestId = /Request ID: `([^`]+)`/.exec(prompt)![1]!;
       fs.writeFileSync(
-        confirm.value.pending[0].replyPath,
+        confirmPending.replyPath,
         JSON.stringify({
           status: 'CLEAN',
           findings: [],
@@ -223,18 +420,21 @@ describe('toolkit delivery and cleanup', () => {
       const before = caller(r);
       const first = await r.run(['worktree', 'deliver']);
       assert.equal(first.exit, 0, JSON.stringify(first));
-      assert.equal(first.value.mode, 'uncommitted');
-      assert.equal(first.value.source, source);
-      assert.equal(first.value.from, from);
-      assert.equal(first.value.ref, ref);
-      assert.equal(first.value.delivered, true);
+      const firstValue = narrow(first.value, deliverGuard);
+      assert.equal(firstValue.mode, 'uncommitted');
+      assert.equal(firstValue.source, source);
+      assert.equal(firstValue.from, from);
+      assert.equal(firstValue.ref, ref);
+      assert.equal(firstValue.delivered, true);
       assert.deepEqual(caller(r), before);
       assert.equal(r.git(['rev-parse', ref]), source);
       assertMatchesSource(r, from, source);
       assert.equal(r.git(['diff', '--cached', '--name-only']), '');
       assert.ok(r.git(['status', '--porcelain', '-uall']).includes('src/file.ts'));
       assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), source);
-      if (process.platform !== 'win32') assert.ok(fs.statSync(path.join(r.root, 'exec.sh')).mode & 0o111);
+      if (process.platform !== 'win32') {
+        assert.ok(fs.statSync(path.join(r.root, 'exec.sh')).mode & 0o111);
+      }
       assert.equal(fs.readFileSync(path.join(r.root, 'scratch'), 'utf8'), 'scratch');
       assert.equal(fs.readFileSync(path.join(r.root, 'ignored'), 'utf8'), 'ignored');
       const started = rows(r, 'deliver-started')[0]!.data,
@@ -245,7 +445,7 @@ describe('toolkit delivery and cleanup', () => {
       fs.unlinkSync(path.join(r.root, 'bin/blob.bin'));
       const again = await r.run(['worktree', 'deliver']);
       assert.equal(again.exit, 0);
-      assert.equal(again.value.delivered, false);
+      assert.equal(narrow(again.value, deliverGuard).delivered, false);
       assert.equal(fs.readFileSync(path.join(r.root, 'src/file.ts'), 'utf8'), 'later edit');
       assert.equal(rows(r, 'delivered').length, 1);
       const unowned = path.join(r.root, 'outside');
@@ -253,7 +453,7 @@ describe('toolkit delivery and cleanup', () => {
       const beforeCleanup = caller(r),
         run = r.deps.run;
       let interrupted = 0;
-      r.deps.run = async (argv, opts) => {
+      const faultingRun: Repo['deps']['run'] = async (argv, opts) => {
         const result = await run(argv, opts);
         if (argv[1] === 'branch' && argv[2] === '-D' && result.exit === 0) {
           interrupted++;
@@ -261,8 +461,7 @@ describe('toolkit delivery and cleanup', () => {
         }
         return result;
       };
-      const failedCleanup = await r.run(['worktree', 'cleanup']);
-      r.deps.run = run;
+      const failedCleanup = await r.run(['worktree', 'cleanup'], undefined, true, faultingRun);
       assert.equal(interrupted, 1, JSON.stringify(failedCleanup));
       assert.equal(failedCleanup.exit, 2);
       assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
@@ -292,15 +491,16 @@ describe('toolkit delivery and cleanup', () => {
       const before = caller(r);
       const first = await r.run(['worktree', 'deliver']);
       assert.equal(first.exit, 0, JSON.stringify(first));
-      assert.equal(first.value.noop, true);
-      assert.equal(first.value.source, source);
-      assert.equal(first.value.from, from);
-      assert.deepEqual(first.value.paths, []);
+      const firstValue = narrow(first.value, deliverGuard);
+      assert.equal(firstValue.noop, true);
+      assert.equal(firstValue.source, source);
+      assert.equal(firstValue.from, from);
+      assert.deepEqual(firstValue.paths, []);
       assert.deepEqual(caller(r), before);
       assert.equal(fs.readFileSync(path.join(r.root, 'src/file.ts'), 'utf8'), 'caller edit');
       assert.equal(r.git(['rev-parse', ref]), source);
       assert.equal(rows(r, 'delivered')[0]!.data['noop'], true);
-      assert.equal((await r.run(['worktree', 'deliver'])).value.delivered, false);
+      assert.equal(narrow((await r.run(['worktree', 'deliver'])).value, deliverGuard).delivered, false);
       assert.equal(rows(r, 'delivered').length, 1);
       assert.equal((await r.run(['worktree', 'cleanup'])).exit, 0);
       assert.equal(r.git(['rev-parse', ref]), source);
@@ -310,127 +510,8 @@ describe('toolkit delivery and cleanup', () => {
     }
   });
   it('uncommitted safety refuses overlapping caller state and keeps the caller unchanged', async () => {
-    // Refusals before deliver-started leave no ledger state, so caller-only modes share one repo and undo between cases; integration-shape and late modes need their own.
-    const integrate = async (r: Repo, mode: string) => {
-      const from = r.git(['rev-parse', 'HEAD']),
-        w = r.integration;
-      if (mode === 'gitlink') {
-        fs.mkdirSync(path.join(w, 'sub'));
-        r.git(['update-index', '--add', '--cacheinfo', '160000,' + from + ',sub'], w);
-        r.git(['commit', '-m', 'gitlink'], w);
-        return;
-      }
-      if (mode === 'descendant') {
-        fs.mkdirSync(path.join(w, 'new-file'));
-        fs.writeFileSync(path.join(w, 'new-file/child'), 'new');
-      } else fs.writeFileSync(path.join(w, 'new-file'), 'new');
-      fs.writeFileSync(path.join(w, 'src/file.ts'), 'final\n');
-      assert.equal((await r.run(['worktree', 'commit', '--reason', 'add'])).exit, 0);
-    };
-    const refuses = async (r: Repo, mode: string) => {
-      const from = r.git(['rev-parse', 'HEAD']);
-      const file = path.join(r.root, 'src/file.ts'),
-        keep = path.join(r.root, 'keep.txt'),
-        exclude = path.join(r.root, '.git/info/exclude');
-      const initial = caller(r),
-        srcBytes = fs.readFileSync(file),
-        keepBytes = fs.readFileSync(keep),
-        excludeBytes = fs.readFileSync(exclude);
-      if (mode === 'tracked-edit') fs.writeFileSync(file, 'caller');
-      if (mode === 'untracked') fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
-      if (mode === 'ignored') {
-        fs.appendFileSync(exclude, '\nnew-file\n');
-        fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
-      }
-      if (mode === 'ancestor') {
-        fs.mkdirSync(path.join(r.root, 'new-file'));
-        fs.writeFileSync(path.join(r.root, 'new-file/child'), 'caller');
-      }
-      if (mode === 'descendant') fs.writeFileSync(path.join(r.root, 'new-file'), 'caller');
-      if (mode === 'staged') {
-        fs.writeFileSync(keep, 'staged');
-        r.git(['add', 'keep.txt']);
-      }
-      if (mode === 'intent-to-add') {
-        fs.writeFileSync(path.join(r.root, 'extra.txt'), 'x');
-        r.git(['add', '-N', 'extra.txt']);
-      }
-      if (mode === 'moved') r.git(['commit', '--allow-empty', '-m', 'moved']);
-      if (mode === 'other-branch') r.git(['switch', '-c', 'other']);
-      if (mode === 'sparse') r.git(['config', 'core.sparseCheckout', 'true']);
-      const before = caller(r);
-      const result = await r.run(['worktree', 'deliver'], (p) => {
-        if (p !== 'deliver:before-apply') return;
-        if (mode === 'late-edit') fs.writeFileSync(file, 'late');
-        if (mode === 'late-index') {
-          fs.writeFileSync(keep, 'late');
-          r.git(['add', 'keep.txt']);
-        }
-        if (mode === 'late-untracked') fs.writeFileSync(path.join(r.root, 'new-file'), 'late');
-      });
-      assert.equal(result.exit, 4, mode + JSON.stringify(result));
-      assert.equal(
-        result.output.reason,
-        mode === 'moved' || mode === 'other-branch'
-          ? 'caller-moved'
-          : mode === 'sparse'
-            ? 'unsupported-sparse'
-            : mode === 'gitlink'
-              ? 'unsupported-entry'
-              : 'caller-dirty',
-        mode,
-      );
-      const after = caller(r);
-      assert.equal(after.head, before.head);
-      assert.equal(after.branch, before.branch);
-      if (!mode.startsWith('late-')) assert.deepEqual(after, before);
-      if (mode === 'tracked-edit') assert.deepEqual(fs.readFileSync(file), Buffer.from('caller'));
-      if (mode === 'late-edit') assert.equal(fs.readFileSync(file, 'utf8'), 'late');
-      assert.equal(rows(r, 'delivered').length, 0, mode);
-      if (mode === 'descendant' || mode === 'gitlink') return;
-      // Undo the caller state so the next shared case starts from the same caller.
-      if (mode === 'staged' || mode === 'late-index') r.git(['reset', '-q', '--', 'keep.txt']);
-      if (mode === 'intent-to-add') r.git(['rm', '-q', '--cached', 'extra.txt']);
-      if (mode === 'moved') r.git(['reset', '-q', '--soft', from]);
-      if (mode === 'other-branch') {
-        r.git(['switch', '-q', initial.branch]);
-        r.git(['branch', '-q', '-D', 'other']);
-      }
-      if (mode === 'sparse') r.git(['config', '--unset', 'core.sparseCheckout']);
-      for (const extra of ['new-file', 'extra.txt'])
-        fs.rmSync(path.join(r.root, extra), { recursive: true, force: true });
-      fs.writeFileSync(file, srcBytes);
-      fs.writeFileSync(keep, keepBytes);
-      fs.writeFileSync(exclude, excludeBytes);
-      assert.deepEqual(caller(r), initial, mode + ' undo');
-    };
-    const shared = async () => {
-      const { r } = await prepared();
-      try {
-        await integrate(r, 'shared');
-        for (const mode of [
-          'tracked-edit',
-          'untracked',
-          'ignored',
-          'ancestor',
-          'staged',
-          'intent-to-add',
-          'moved',
-          'other-branch',
-          'sparse',
-          'late-edit',
-          'late-index',
-          'late-untracked',
-        ])
-          await refuses(r, mode).catch((error: unknown) => {
-            throw Object.assign(new Error(mode + ': ' + String(error)), { cause: error });
-          });
-      } finally {
-        r.cleanup();
-      }
-    };
     await Promise.all([
-      shared(),
+      sharedUncommittedSafety(),
       each(['descendant', 'gitlink'], async (mode) => {
         const { r } = await prepared();
         try {
@@ -502,14 +583,14 @@ describe('toolkit delivery and cleanup', () => {
         }
         const retry = await r.run(['worktree', 'deliver']);
         assert.equal(retry.exit, 0, boundary + JSON.stringify(retry));
-        assert.equal(retry.value.delivered, boundary !== 'after-delivered');
+        assert.equal(narrow(retry.value, deliverGuard).delivered, boundary !== 'after-delivered');
         assertMatchesSource(r, from, source);
         assert.deepEqual(caller(r), beforeRetry);
         assert.equal(fs.readFileSync(path.join(r.root, 'extra-untracked'), 'utf8'), 'caller file');
         assert.equal(r.git(['rev-parse', ref]), source);
         assert.equal(rows(r, 'deliver-started').length, 1);
         assert.equal(rows(r, 'delivered').length, 1);
-        assert.equal((await r.run(['worktree', 'deliver'])).value.delivered, false);
+        assert.equal(narrow((await r.run(['worktree', 'deliver'])).value, deliverGuard).delivered, false);
         assert.equal(rows(r, 'delivered').length, 1);
       } finally {
         r.cleanup();
@@ -522,8 +603,10 @@ describe('toolkit delivery and cleanup', () => {
       try {
         const from = r.git(['rev-parse', 'HEAD']);
         const dest = { path: r.root, branch: r.git(['symbolic-ref', '--short', 'HEAD']) };
-        if (mode === 'conflicting-ref') r.git(['update-ref', ref, from]);
-        if (mode === 'other-source')
+        if (mode === 'conflicting-ref') {
+          r.git(['update-ref', ref, from]);
+        }
+        if (mode === 'other-source') {
           await appendRecord(
             r.session,
             {
@@ -533,6 +616,7 @@ describe('toolkit delivery and cleanup', () => {
             },
             r.deps,
           );
+        }
         if (mode === 'changed-completed') {
           assert.equal((await r.run(['worktree', 'deliver'])).exit, 0);
           fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'later');
@@ -545,7 +629,9 @@ describe('toolkit delivery and cleanup', () => {
         assert.equal(retry.output.reason, 'recovery-blocked');
         assert.deepEqual(caller(r), before);
         assert.deepEqual(fs.readFileSync(path.join(r.root, 'src/file.ts')), bytes);
-        if (mode === 'conflicting-ref') assert.equal(r.git(['rev-parse', ref]), from);
+        if (mode === 'conflicting-ref') {
+          assert.equal(r.git(['rev-parse', ref]), from);
+        }
         await r.run(['worktree', 'cleanup']);
         assert.ok(fs.existsSync(r.integration));
         assert.ok(r.git(['branch', '--list', 'dispatch/test/integration']));
@@ -558,7 +644,7 @@ describe('toolkit delivery and cleanup', () => {
     const r = await toolkitRepo();
     try {
       const made = await r.run(['worktree', 'create', 'T1']);
-      const writer = path.join(r.session, made.value.path);
+      const writer = path.join(r.session, narrow(made.value, createdGuard).path);
       await r.run(['worktree', 'cleanup']);
       assert.ok(fs.existsSync(writer));
       assert.ok(fs.existsSync(r.integration));
@@ -582,7 +668,8 @@ describe('toolkit delivery and cleanup', () => {
       let holder: Awaited<ReturnType<typeof holdCwd>> | undefined;
       try {
         const next = await r.run(['worktree', 'create', 'T1']);
-        const other = path.join(r.session, next.value.path);
+        const nextPath = narrow(next.value, createdGuard).path;
+        const other = path.join(r.session, nextPath);
         fs.writeFileSync(path.join(other, 'src/file.ts'), 'second delivered\n');
         assert.equal((await r.run(['worktree', 'submit', 'T1'])).exit, 0);
         assert.equal((await r.run(['worktree', 'integrate', 'T1'])).exit, 0);
@@ -601,12 +688,14 @@ describe('toolkit delivery and cleanup', () => {
         assert.equal(partial.exit, 2, JSON.stringify(partial));
         assert.equal(partial.output.ok, false);
         assert.equal(partial.output.reason, 'cleanup-incomplete');
-        assert.ok(partial.value.removed.includes(next.value.path), JSON.stringify(partial.value));
-        const writerRelative = path.relative(r.session, writer).replace(/\\/g, '/');
-        const blocked = partial.value.kept.find((row: { path: string }) => row.path === writerRelative);
-        assert.ok(blocked, JSON.stringify(partial.value));
+        const partialValue = narrow(partial.value, cleanupGuard);
+        assert.ok(partialValue.removed.includes(nextPath), JSON.stringify(partialValue));
+        const writerRelative = path.relative(r.session, writer).replaceAll('\\', '/');
+        const blocked = partialValue.kept.find((row) => row.path === writerRelative);
+        assert.ok(blocked, JSON.stringify(partialValue));
         assert.equal(blocked.reason, 'removal-failed');
         assert.ok(blocked.code);
+        assert.ok(blocked.message);
         assert.ok(Buffer.byteLength(blocked.message, 'utf8') <= 1024);
         assert.match(blocked.message, /permission|busy|in use|remove/i);
         assert.ok(fs.existsSync(writer));
@@ -643,27 +732,27 @@ describe('toolkit delivery and cleanup', () => {
     const { r, writer } = await prepared();
     try {
       const next = await r.run(['worktree', 'create', 'T1']),
-        other = path.join(r.session, next.value.path);
+        other = path.join(r.session, narrow(next.value, createdGuard).path);
       fs.writeFileSync(path.join(other, 'src/file.ts'), 'second delivered\n');
       await r.run(['worktree', 'submit', 'T1']);
       await r.run(['worktree', 'integrate', 'T1']);
       await r.run(['worktree', 'deliver']);
       const run = r.deps.run;
       let refusals = 0;
-      r.deps.run = async (argv, opts) => {
+      const faultingRun: Repo['deps']['run'] = async (argv, opts) => {
         if (argv[1] === 'worktree' && argv[2] === 'remove' && path.resolve(argv[4]!) === path.resolve(writer)) {
           refusals++;
           return { exit: 1, stdout: '', stderr: 'fatal: simulated permission refusal' };
         }
         return run(argv, opts);
       };
-      const partial = await r.run(['worktree', 'cleanup']);
-      r.deps.run = run;
+      const partial = await r.run(['worktree', 'cleanup'], undefined, true, faultingRun);
       assert.equal(refusals, 1);
       assert.equal(partial.exit, 2, JSON.stringify(partial));
       assert.equal(partial.output.reason, 'cleanup-incomplete');
-      const relative = path.relative(r.session, writer).replace(/\\/g, '/'),
-        blocked = partial.value.kept.find((row: { path: string }) => row.path === relative);
+      const relative = path.relative(r.session, writer).replaceAll('\\', '/'),
+        blocked = narrow(partial.value, cleanupGuard).kept.find((row) => row.path === relative);
+      assert.ok(blocked);
       assert.equal(blocked.reason, 'removal-failed');
       assert.ok(fs.existsSync(path.join(writer, '.git')));
       assert.ok(registered(r, writer));
@@ -680,11 +769,11 @@ describe('toolkit delivery and cleanup', () => {
   it('restores a missing registered control link before cleanup checks', async () => {
     const { r, writer } = await prepared();
     try {
-      const relative = path.relative(r.session, writer).replace(/\\/g, '/');
+      const relative = path.relative(r.session, writer).replaceAll('\\', '/');
       fs.rmSync(path.join(writer, '.git'));
       const cleaned = await r.run(['worktree', 'cleanup']);
       assert.equal(cleaned.exit, 0, JSON.stringify(cleaned));
-      assert.ok(cleaned.value.removed.includes(relative));
+      assert.ok(narrow(cleaned.value, cleanupGuard).removed.includes(relative));
       assert.ok(!fs.existsSync(writer));
     } finally {
       r.cleanup();
@@ -695,8 +784,8 @@ describe('toolkit delivery and cleanup', () => {
     try {
       await r.level();
       const made = await r.run(['worktree', 'create', 'T1']),
-        writer = path.join(r.session, made.value.path),
-        relative = made.value.path;
+        relative = narrow(made.value, createdGuard).path,
+        writer = path.join(r.session, relative);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved\n');
       await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
       await r.run(['worktree', 'close', '--reason', 'stop']);
@@ -704,7 +793,7 @@ describe('toolkit delivery and cleanup', () => {
       assert.ok(registered(r, writer));
       const cleaned = await r.run(['worktree', 'cleanup']);
       assert.equal(cleaned.exit, 0, JSON.stringify(cleaned));
-      assert.ok(cleaned.value.removed.includes(relative));
+      assert.ok(narrow(cleaned.value, cleanupGuard).removed.includes(relative));
       assert.ok(!registered(r, writer));
     } finally {
       r.cleanup();
@@ -719,14 +808,13 @@ describe('toolkit delivery and cleanup', () => {
       fs.rmSync(path.join(writer, '.git'));
       fs.writeFileSync(path.join(admin, 'commondir'), '../missing-common-dir\n');
       const result = await r.run(['worktree', 'cleanup']),
-        relative = path.relative(r.session, writer).replace(/\\/g, '/');
+        relative = path.relative(r.session, writer).replaceAll('\\', '/');
       assert.equal(result.exit, 2, JSON.stringify(result));
       assert.equal(result.output.reason, 'cleanup-incomplete');
       assert.ok(fs.existsSync(writer));
       assert.ok(
-        result.value.kept.some(
-          (row: { path: string; reason: string }) =>
-            row.path === relative && row.reason === 'control-metadata-unverifiable',
+        narrow(result.value, cleanupGuard).kept.some(
+          (row) => row.path === relative && row.reason === 'control-metadata-unverifiable',
         ),
       );
       assert.equal(r.git(['rev-parse', candidateRef('test', 'T1', 1)]).length, 40);
@@ -744,8 +832,8 @@ describe('toolkit delivery and cleanup', () => {
       try {
         await r.level();
         const made = await r.run(['worktree', 'create', 'T1']),
-          writer = path.join(r.session, made.value.path),
-          relative = made.value.path;
+          relative = narrow(made.value, createdGuard).path,
+          writer = path.join(r.session, relative);
         fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved\n');
         await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
         await r.run(['worktree', 'close', '--reason', 'stop']);
@@ -756,8 +844,8 @@ describe('toolkit delivery and cleanup', () => {
         assert.equal(partial.exit, 2, JSON.stringify(partial));
         assert.equal(partial.output.reason, 'cleanup-incomplete');
         assert.ok(
-          partial.value.kept.some(
-            (row: { path: string; reason: string }) => row.path === relative && row.reason === 'removal-failed',
+          narrow(partial.value, cleanupGuard).kept.some(
+            (row) => row.path === relative && row.reason === 'removal-failed',
           ),
         );
         assert.ok(fs.existsSync(writer));
@@ -783,33 +871,41 @@ describe('toolkit delivery and cleanup', () => {
         await r.level();
         const abandoned = async () => {
           const made = await r.run(['worktree', 'create', 'T1']);
+          const madeValue = narrow(made.value, createdGuard);
           assert.equal(made.exit, 0, JSON.stringify(made));
-          const writer = path.join(r.session, made.value.path);
-          fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved ' + made.value.launch + '\n');
+          const writer = path.join(r.session, madeValue.path);
+          assert.ok(madeValue.launch !== undefined);
+          fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved ' + madeValue.launch + '\n');
           const result = await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
           assert.equal(result.exit, 0, JSON.stringify(result));
-          const ref = abandonedRef('test', 'T1', made.value.launch);
-          return { writer, relative: made.value.path, ref, saved: r.git(['rev-parse', ref]) };
+          const ref = abandonedRef('test', 'T1', madeValue.launch);
+          return { writer, relative: madeValue.path, ref, saved: r.git(['rev-parse', ref]) };
         };
         const blocked = await abandoned(),
           other = await abandoned();
         const closed = await r.run(['worktree', 'close', '--reason', 'stop']);
         assert.equal(closed.exit, 0, JSON.stringify(closed));
-        if (failure === 'tree-diff')
+        if (failure === 'tree-diff') {
           fs.writeFileSync(path.join(blocked.writer, 'ignored'), 'ignored while checking preservation');
+        }
         const snapshotTree = r.git(['rev-parse', blocked.saved + '^{tree}']),
           run = r.deps.run;
         let faults = 0;
-        const matches = (argv: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }) => {
+        const matches = (argv: Array<string>, opts: { cwd: string; env?: NodeJS.ProcessEnv }) => {
           const inBlocked = path.resolve(opts.cwd) === path.resolve(blocked.writer),
             inRoot = path.resolve(opts.cwd) === path.resolve(r.root);
-          if (failure === 'head') return inBlocked && argv[1] === 'rev-parse' && argv[2] === 'HEAD';
-          if (failure === 'ls-files')
+          if (failure === 'head') {
+            return inBlocked && argv[1] === 'rev-parse' && argv[2] === 'HEAD';
+          }
+          if (failure === 'ls-files') {
             return inBlocked && argv[1] === 'ls-files' && argv[2] === '--others' && argv[3] === '--ignored';
-          if (failure === 'tested-tree')
+          }
+          if (failure === 'tested-tree') {
             return inBlocked && argv[1] === 'read-tree' && argv[2] === 'HEAD' && !!opts.env?.['GIT_INDEX_FILE'];
-          if (failure === 'snapshot-tree')
+          }
+          if (failure === 'snapshot-tree') {
             return inRoot && argv[1] === 'rev-parse' && argv[2] === blocked.saved + '^{tree}';
+          }
           return (
             failure === 'tree-diff' &&
             inBlocked &&
@@ -818,33 +914,33 @@ describe('toolkit delivery and cleanup', () => {
             argv.includes(snapshotTree)
           );
         };
-        r.deps.run = async (argv, opts) => {
+        const faultingRun: Repo['deps']['run'] = async (argv, opts) => {
           if (!faults && matches(argv, opts)) {
             faults++;
             return { exit: 1, stdout: '', stderr: 'fatal: simulated ' + failure + ' read failure' };
           }
           return run(argv, opts);
         };
-        let partial;
-        try {
-          partial = await r.run(['worktree', 'cleanup']);
-        } finally {
-          r.deps.run = run;
-        }
+        const partial = await r.run(['worktree', 'cleanup'], undefined, true, faultingRun);
         assert.equal(faults, 1, failure);
         assert.equal(partial.exit, 2, JSON.stringify(partial));
         assert.equal(partial.output.reason, 'cleanup-incomplete');
-        const row = partial.value.kept.find((entry: { path: string }) => entry.path === blocked.relative);
+        const partialValue = narrow(partial.value, cleanupGuard);
+        const row = partialValue.kept.find((entry) => entry.path === blocked.relative);
+        assert.ok(row);
         assert.equal(row.reason, failure === 'head' ? 'head-check-failed' : 'preservation-check-failed');
         assert.equal(row.code, 'GIT_EXIT_2');
+        assert.ok(row.message);
         assert.match(row.message, /simulated/);
         assert.ok(fs.existsSync(blocked.writer));
         assert.ok(registered(r, blocked.writer));
         assert.equal(r.git(['rev-parse', blocked.ref]), blocked.saved);
-        assert.ok(partial.value.removed.includes(other.relative), JSON.stringify(partial.value));
+        assert.ok(partialValue.removed.includes(other.relative), JSON.stringify(partialValue));
         assert.ok(!fs.existsSync(other.writer));
         assert.ok(!registered(r, other.writer));
-        if (failure === 'tree-diff') fs.rmSync(path.join(blocked.writer, 'ignored'), { force: true });
+        if (failure === 'tree-diff') {
+          fs.rmSync(path.join(blocked.writer, 'ignored'), { force: true });
+        }
         const retry = await r.run(['worktree', 'cleanup']);
         assert.equal(retry.exit, 0, JSON.stringify(retry));
         assert.ok(!fs.existsSync(blocked.writer));
@@ -861,12 +957,12 @@ describe('toolkit delivery and cleanup', () => {
       const delivered = await r.run(['worktree', 'deliver']);
       assert.equal(delivered.exit, 0, JSON.stringify(delivered));
       const branch = r.git(['symbolic-ref', '--short', 'HEAD'], r.integration),
-        integrationRelative = path.relative(r.session, r.integration).replace(/\\/g, '/'),
+        integrationRelative = path.relative(r.session, r.integration).replaceAll('\\', '/'),
         saved = r.git(['rev-parse', ref]);
       fs.rmSync(r.integration, { recursive: true, force: true });
       const run = r.deps.run;
       let probes = 0;
-      r.deps.run = async (argv, opts) => {
+      const faultingRun: Repo['deps']['run'] = async (argv, opts) => {
         if (
           path.resolve(opts.cwd) === path.resolve(r.root) &&
           argv[1] === 'rev-parse' &&
@@ -879,20 +975,18 @@ describe('toolkit delivery and cleanup', () => {
         }
         return run(argv, opts);
       };
-      let partial;
-      try {
-        partial = await r.run(['worktree', 'cleanup']);
-      } finally {
-        r.deps.run = run;
-      }
+      const partial = await r.run(['worktree', 'cleanup'], undefined, true, faultingRun);
       assert.equal(probes, 1);
       assert.equal(partial.exit, 2, JSON.stringify(partial));
       assert.equal(partial.output.reason, 'cleanup-incomplete');
-      const row = partial.value.kept.find((entry: { path: string }) => entry.path === integrationRelative);
+      const partialValue = narrow(partial.value, cleanupGuard);
+      const row = partialValue.kept.find((entry) => entry.path === integrationRelative);
+      assert.ok(row);
       assert.equal(row.reason, 'registration-check-failed');
       assert.equal(row.code, 'CLEANUP_FAILED');
+      assert.ok(row.message);
       assert.match(row.message, /simulated integration branch verification failure/);
-      assert.ok(partial.value.removed.includes(path.relative(r.session, writer).replace(/\\/g, '/')));
+      assert.ok(partialValue.removed.includes(path.relative(r.session, writer).replaceAll('\\', '/')));
       assert.ok(!fs.existsSync(writer));
       assert.ok(r.git(['branch', '--list', branch]));
       assert.equal(r.git(['rev-parse', ref]), saved);
@@ -900,23 +994,22 @@ describe('toolkit delivery and cleanup', () => {
       r.cleanup();
     }
   });
-  it('reports and recovers a stranded cleanup preflight path', { skip: process.platform !== 'win32' }, async () => {
+  it('reports and recovers a stranded cleanup preflight path', { skip: process.platform !== 'win32' }, async (t) => {
     const r = await toolkitRepo();
-    let originalRename: typeof fs.renameSync | undefined,
-      restoreFailures = 0;
+    let restoreFailures = 0;
     try {
       await r.level();
       const made = await r.run(['worktree', 'create', 'T1']),
-        writer = path.join(r.session, made.value.path),
-        relative = made.value.path;
+        relative = narrow(made.value, createdGuard).path,
+        writer = path.join(r.session, relative);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved\n');
       await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
       await r.run(['worktree', 'close', '--reason', 'stop']);
       const recovery = path.join(path.dirname(writer), '.' + path.basename(writer) + '.cleanup-recovery'),
         ref = abandonedRef('test', 'T1', 1),
         saved = r.git(['rev-parse', ref]);
-      originalRename = fs.renameSync;
-      fs.renameSync = ((from, to) => {
+      const originalRename = fs.renameSync;
+      const rename = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
         const source = path.resolve(String(from)),
           target = path.resolve(String(to));
         if (
@@ -927,21 +1020,22 @@ describe('toolkit delivery and cleanup', () => {
           restoreFailures++;
           throw Object.assign(new Error('simulated restore refusal'), { code: 'EPERM' });
         }
-        return originalRename!(from, to);
-      }) as typeof fs.renameSync;
+        originalRename(from, to);
+      });
       let partial;
       try {
         partial = await r.run(['worktree', 'cleanup']);
       } finally {
-        fs.renameSync = originalRename;
+        rename.mock.restore();
       }
       assert.equal(restoreFailures, 2);
       assert.equal(partial.exit, 2, JSON.stringify(partial));
       assert.equal(partial.output.reason, 'cleanup-incomplete');
-      const blocked = partial.value.kept.find((row: { path: string }) => row.path === relative);
+      const blocked = narrow(partial.value, cleanupGuard).kept.find((row) => row.path === relative);
+      assert.ok(blocked);
       assert.equal(blocked.reason, 'removal-failed');
       assert.equal(blocked.code, 'WORKTREE_RESTORE_FAILED');
-      assert.equal(blocked.recoveryPath, path.relative(r.session, recovery).replace(/\\/g, '/'));
+      assert.equal(blocked.recoveryPath, path.relative(r.session, recovery).replaceAll('\\', '/'));
       assert.ok(fs.existsSync(recovery));
       assert.ok(!fs.existsSync(writer));
       assert.ok(registered(r, writer));
@@ -953,7 +1047,6 @@ describe('toolkit delivery and cleanup', () => {
       assert.ok(!registered(r, writer));
       assert.equal(r.git(['rev-parse', ref]), saved);
     } finally {
-      if (originalRename) fs.renameSync = originalRename;
       r.cleanup();
     }
   });
@@ -962,8 +1055,8 @@ describe('toolkit delivery and cleanup', () => {
     try {
       await r.level();
       const made = await r.run(['worktree', 'create', 'T1']),
-        writer = path.join(r.session, made.value.path),
-        relative = made.value.path;
+        relative = narrow(made.value, createdGuard).path,
+        writer = path.join(r.session, relative);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved\n');
       await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
       await r.run(['worktree', 'close', '--reason', 'stop']);
@@ -978,10 +1071,11 @@ describe('toolkit delivery and cleanup', () => {
         result = await r.run(['worktree', 'cleanup']);
       assert.equal(result.exit, 2, JSON.stringify(result));
       assert.equal(result.output.reason, 'cleanup-incomplete');
-      const blocked = result.value.kept.find((row: { path: string }) => row.path === relative);
+      const blocked = narrow(result.value, cleanupGuard).kept.find((row) => row.path === relative);
+      assert.ok(blocked);
       assert.equal(blocked.reason, 'recovery-failed');
       assert.equal(blocked.code, 'WORKTREE_RECOVERY_PATH_CONFLICT');
-      assert.equal(blocked.recoveryPath, path.relative(r.session, recovery).replace(/\\/g, '/'));
+      assert.equal(blocked.recoveryPath, path.relative(r.session, recovery).replaceAll('\\', '/'));
       assert.ok(fs.existsSync(writer));
       assert.equal(fs.lstatSync(recovery).isSymbolicLink(), true);
       assert.equal(fs.readFileSync(sentinel, 'utf8'), 'keep\n');
@@ -997,8 +1091,8 @@ describe('toolkit delivery and cleanup', () => {
     try {
       await r.level();
       const made = await r.run(['worktree', 'create', 'T1']),
-        writer = path.join(r.session, made.value.path),
-        relative = made.value.path;
+        relative = narrow(made.value, createdGuard).path,
+        writer = path.join(r.session, relative);
       fs.writeFileSync(path.join(writer, 'src/file.ts'), 'preserved\n');
       await r.run(['worktree', 'abandon', 'T1', '--reason', 'preserve snapshot']);
       await r.run(['worktree', 'close', '--reason', 'stop']);
@@ -1013,9 +1107,8 @@ describe('toolkit delivery and cleanup', () => {
       assert.ok(fs.existsSync(writer));
       assert.equal(fs.readFileSync(path.join(writer, 'src/file.ts'), 'utf8'), 'changed after interruption\n');
       assert.ok(
-        retry.value.kept.some(
-          (row: { path: string; reason: string; paths?: string[] }) =>
-            row.path === relative && row.reason === 'unpreserved' && row.paths?.includes('src/file.ts'),
+        narrow(retry.value, cleanupGuard).kept.some(
+          (row) => row.path === relative && row.reason === 'unpreserved' && row.paths?.includes('src/file.ts'),
         ),
       );
       assert.equal(r.git(['rev-parse', ref]), saved);
@@ -1030,22 +1123,22 @@ describe('toolkit delivery and cleanup', () => {
     try {
       const run = r.deps.run;
       let prunes = 0;
-      r.deps.run = async (argv, opts) => {
-        if (argv[1] === 'worktree' && argv[2] === 'prune' && ++prunes === 1)
+      const faultingRun: Repo['deps']['run'] = async (argv, opts) => {
+        if (argv[1] === 'worktree' && argv[2] === 'prune' && ++prunes === 1) {
           return { exit: 1, stdout: '', stderr: 'fatal: simulated prune failure' };
+        }
         return run(argv, opts);
       };
-      const partial = await r.run(['worktree', 'cleanup']);
-      r.deps.run = run;
+      const partial = await r.run(['worktree', 'cleanup'], undefined, true, faultingRun);
       assert.equal(prunes, 1);
       assert.equal(partial.exit, 2, JSON.stringify(partial));
       assert.equal(partial.output.reason, 'cleanup-incomplete');
-      const relative = path.relative(r.session, writer).replace(/\\/g, '/');
-      assert.ok(partial.value.removed.includes(relative), JSON.stringify(partial));
+      const relative = path.relative(r.session, writer).replaceAll('\\', '/');
+      const partialValue = narrow(partial.value, cleanupGuard);
+      assert.ok(partialValue.removed.includes(relative), JSON.stringify(partial));
       assert.ok(
-        partial.value.kept.some(
-          (row: { path: string; reason: string; code?: string }) =>
-            row.path === relative && row.reason === 'prune-failed' && row.code === 'GIT_EXIT_1',
+        partialValue.kept.some(
+          (row) => row.path === relative && row.reason === 'prune-failed' && row.code === 'GIT_EXIT_1',
         ),
       );
       assert.equal(r.git(['rev-parse', candidateRef('test', 'T1', 1)]).length, 40);
@@ -1081,8 +1174,12 @@ describe('toolkit delivery and cleanup', () => {
         assert.equal(cleaned.exit, 0);
         assert.ok(!fs.existsSync(dir));
         assert.ok(!JSON.stringify(cleaned.value).includes('unpreserved'));
-        if (mode === 'writer') assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
-        if (mode === 'delivered') assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
+        if (mode === 'writer') {
+          assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
+        }
+        if (mode === 'delivered') {
+          assert.equal(r.git(['branch', '--list', 'dispatch/test/integration']), '');
+        }
       } finally {
         r.cleanup();
       }
@@ -1103,7 +1200,7 @@ describe('toolkit delivery and cleanup', () => {
       assert.equal(cleaned.exit, 0);
       assert.ok(!fs.existsSync(writer));
       assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
-      assert.ok(JSON.stringify(cleaned.value.removed).includes(path.basename(writer)));
+      assert.ok(JSON.stringify(narrow(cleaned.value, cleanupGuard).removed).includes(path.basename(writer)));
     } finally {
       r.cleanup();
     }
@@ -1114,11 +1211,11 @@ describe('toolkit delivery and cleanup', () => {
       try {
         await r.level();
         let dir: string;
-        if (mode === 'active-writer')
-          dir = path.join(r.session, (await r.run(['worktree', 'create', 'T1'])).value.path);
-        else {
+        if (mode === 'active-writer') {
+          dir = path.join(r.session, narrow((await r.run(['worktree', 'create', 'T1'])).value, createdGuard).path);
+        } else {
           const made = await r.run(['worktree', 'create', 'T1']);
-          fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), 'delivered\n');
+          fs.writeFileSync(path.join(r.session, narrow(made.value, createdGuard).path, 'src/file.ts'), 'delivered\n');
           await r.run(['worktree', 'submit', 'T1']);
           await r.run(['worktree', 'integrate', 'T1']);
           await r.run(['worktree', 'deliver']);
@@ -1132,7 +1229,7 @@ describe('toolkit delivery and cleanup', () => {
         const cleaned = await r.run(['worktree', 'cleanup']);
         assert.equal(cleaned.exit, 0);
         assert.equal(fs.readFileSync(path.join(dir, 'work'), 'utf8'), 'kept');
-        assert.ok(JSON.stringify(cleaned.value.kept).includes('unpreserved'));
+        assert.ok(JSON.stringify(narrow(cleaned.value, cleanupGuard).kept).includes('unpreserved'));
       } finally {
         r.cleanup();
       }
@@ -1142,18 +1239,18 @@ describe('toolkit delivery and cleanup', () => {
     const r = await toolkitRepo();
     try {
       await r.level();
-      const first = await r.run(['worktree', 'create', 'T1']);
-      fs.writeFileSync(path.join(r.session, first.value.path, 'src/file.ts'), 'abandoned\n');
+      const firstPath = narrow((await r.run(['worktree', 'create', 'T1'])).value, createdGuard).path;
+      fs.writeFileSync(path.join(r.session, firstPath, 'src/file.ts'), 'abandoned\n');
       await r.run(['worktree', 'abandon', 'T1', '--reason', 'discard']);
-      const second = await r.run(['worktree', 'create', 'T1']);
-      fs.writeFileSync(path.join(r.session, second.value.path, 'src/file.ts'), 'rejected\n');
+      const secondPath = narrow((await r.run(['worktree', 'create', 'T1'])).value, createdGuard).path;
+      fs.writeFileSync(path.join(r.session, secondPath, 'src/file.ts'), 'rejected\n');
       await r.run(['worktree', 'submit', 'T1']);
       await r.run(['worktree', 'abort', 'T1', '--reason', 'reject']);
       await r.run(['worktree', 'close', '--reason', 'stop']);
       const clean = await r.run(['worktree', 'cleanup']);
       assert.equal(clean.exit, 0);
-      assert.ok(!fs.existsSync(path.join(r.session, first.value.path)));
-      assert.ok(!fs.existsSync(path.join(r.session, second.value.path)));
+      assert.ok(!fs.existsSync(path.join(r.session, firstPath)));
+      assert.ok(!fs.existsSync(path.join(r.session, secondPath)));
       assert.ok(!fs.existsSync(r.integration));
     } finally {
       r.cleanup();
@@ -1165,28 +1262,29 @@ describe('toolkit delivery and cleanup', () => {
 const [A, B, C, D] = ['codex[0]', 'opencode[1]', 'claude[2]', 'agy[3]'];
 type RoundInput = {
   n: number;
-  roster: string[];
-  done?: string[];
-  failed?: string[];
+  roster: Array<string>;
+  done?: Array<string>;
+  failed?: Array<string>;
   coverage?: 'open' | 'full';
   generation?: number;
   unfinished?: boolean;
   // Failure entries per generation; the current generation defaults to one entry per failed slot.
-  attempts?: Record<number, { slot: string; seq: number }[]>;
+  attempts?: Record<number, Array<{ slot: string; seq: number }>>;
 };
+function writeJsonFile(file: string, value: unknown) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value));
+}
+
 // Writes a round as `review run` leaves it, replacing any earlier copy of the same number.
 function coverageRound(r: Repo, input: RoundInput) {
   const dir = path.join(r.session, '.state/reviews/code-integration/round-' + input.n),
-    generation = input.generation ?? 1,
-    write = (file: string, value: unknown) => {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(value));
-    };
+    generation = input.generation ?? 1;
   fs.rmSync(dir, { recursive: true, force: true });
   const records = foldLedger(r.session),
     base = records.records.find((x) => x.data['phase'] === 'opened')!.data['base'],
     seq = records.lastSeq;
-  write(path.join(dir, 'round.json'), {
+  writeJsonFile(path.join(dir, 'round.json'), {
     round: input.n,
     generation,
     cap: 3,
@@ -1196,37 +1294,41 @@ function coverageRound(r: Repo, input: RoundInput) {
     spec: { path: path.join(r.root, 'work.spec.md'), hash: 'sha256:' + 'a'.repeat(64) },
     target: { base, head: r.git(['rev-parse', 'HEAD'], r.integration) },
     roster: input.roster.map((slot) => ({ slot, provider: 'codex', index: 0, reserve: false })),
-    ...(input.coverage ? { coverage: input.coverage } : {}),
+    ...(input.coverage && { coverage: input.coverage }),
   });
-  for (const slot of input.done ?? [])
-    write(path.join(dir, 'gen-' + generation, 'slots', slot + '.json'), {
+  for (const slot of input.done ?? []) {
+    writeJsonFile(path.join(dir, 'gen-' + generation, 'slots', slot + '.json'), {
       slot,
       state: 'done',
       text: '{"status":"CLEAN","findings":[]}',
     });
-  for (const slot of input.failed ?? [])
-    write(path.join(dir, 'gen-' + generation, 'slots', slot + '.json'), {
+  }
+  for (const slot of input.failed ?? []) {
+    writeJsonFile(path.join(dir, 'gen-' + generation, 'slots', slot + '.json'), {
       slot,
       state: 'failed',
       cls: 'timeout',
       reason: 'slow',
     });
-  const entries: Record<number, { slot: string; seq: number }[]> = {
+  }
+  const entries = {
     [generation]: (input.failed ?? []).map((slot) => ({ slot, seq })),
     ...input.attempts,
   };
-  for (const [gen, list] of Object.entries(entries))
-    write(
+  for (const [gen, list] of Object.entries(entries)) {
+    writeJsonFile(
       path.join(dir, 'gen-' + gen, 'attempts.json'),
       list.map((item) => ({ wholeTarget: true, outcome: 'timeout', ...item })),
     );
-  if (!input.unfinished)
-    write(path.join(dir, 'findings.json'), {
+  }
+  if (!input.unfinished) {
+    writeJsonFile(path.join(dir, 'findings.json'), {
       review: 'code-integration',
       round: input.n,
       findings: [],
       failed: input.failed ?? [],
     });
+  }
   return dir;
 }
 const userCoverage = (r: Repo, summary: string, quote: string) =>
@@ -1283,7 +1385,7 @@ describe('deliver coverage gate', () => {
       coverageRound(r, { n: 2, roster: [A], failed: [A], coverage: 'open' });
       const result = await r.run(['worktree', 'deliver']);
       assert.equal(result.exit, 0, JSON.stringify(result));
-      assert.equal(result.value.delivered, true);
+      assert.equal(narrow(result.value, deliverGuard).delivered, true);
       assert.equal(rows(r, 'delivered').length, 1);
     } finally {
       r.cleanup();
@@ -1311,7 +1413,7 @@ describe('deliver coverage gate', () => {
       fs.rmSync(path.join(r.session, '.state/reviews/code-integration/round-2'), { recursive: true });
       const result = await r.run(['worktree', 'deliver']);
       assert.equal(result.exit, 0, JSON.stringify(result));
-      assert.equal(result.value.delivered, true);
+      assert.equal(narrow(result.value, deliverGuard).delivered, true);
     } finally {
       r.cleanup();
     }
@@ -1320,7 +1422,9 @@ describe('deliver coverage gate', () => {
     const { r } = await prepared();
     try {
       const crash = await r.run(['worktree', 'deliver'], (p) => {
-        if (p === 'deliver:after-started') throw Error('injected');
+        if (p === 'deliver:after-started') {
+          throw Error('injected');
+        }
       });
       assert.equal(crash.exit, 2);
       assert.equal(rows(r, 'deliver-started').length, 1);
@@ -1344,7 +1448,7 @@ describe('deliver coverage gate', () => {
       );
       const retry = await r.run(['worktree', 'deliver']);
       assert.equal(retry.exit, 0, JSON.stringify(retry));
-      assert.equal(retry.value.delivered, true);
+      assert.equal(narrow(retry.value, deliverGuard).delivered, true);
     } finally {
       r.cleanup();
     }
@@ -1369,7 +1473,7 @@ it('deliver verification gate follows latest outcome and later rulings', async (
   try {
     let n = 0;
     const head = r.git(['rev-parse', 'HEAD'], r.integration);
-    const proof = (cycle: number, outcome: string, open: string[]) =>
+    const proof = (cycle: number, outcome: string, open: Array<string>) =>
       appendRecord(
         r.session,
         {
@@ -1383,7 +1487,7 @@ it('deliver verification gate follows latest outcome and later rulings', async (
             head,
             reason: 'test',
             open,
-            ...(outcome === 'no-op' ? {} : { report: 'verification/report.md' }),
+            ...(!(outcome === 'no-op') && { report: 'verification/report.md' }),
           },
         },
         r.deps,

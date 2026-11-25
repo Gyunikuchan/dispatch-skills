@@ -18,7 +18,7 @@ interface Block {
   kind: BlockKind;
   level: number; // blockquote depth
   width: number; // leading whitespace width of the opening line (tab = 4)
-  lines: string[];
+  lines: Array<string>;
   head: string; // prose: leading whitespace plus list marker
   text: string; // prose: source after the head
   brk: 'spaces' | 'backslash' | null; // trailing hard-break marker candidate
@@ -30,7 +30,7 @@ interface Block {
   fenceChar: string;
   fenceLen: number;
   info: string;
-  code: string[];
+  code: Array<string>;
 }
 
 const QUOTE = /^ {0,3}>[ \t]?/;
@@ -74,13 +74,17 @@ function make(kind: BlockKind, level: number, width: number, extra: Partial<Bloc
 
 // NOTE: a blockquote line with no text renders as bare `>` so it stays a distinct empty quote line.
 function wrap(level: number, body: string): string {
-  if (level === 0) return body;
+  if (level === 0) {
+    return body;
+  }
   return body === '' ? '>'.repeat(level) : `${'>'.repeat(level)} ${body}`;
 }
 
 function indentWidth(ws: string): number {
   let width = 0;
-  for (const ch of ws) width += ch === '\t' ? 4 : 1;
+  for (const ch of ws) {
+    width += ch === '\t' ? 4 : 1;
+  }
   return width;
 }
 
@@ -88,7 +92,9 @@ function leading(text: string): string {
   return /^[ \t]*/.exec(text)?.[0] ?? '';
 }
 
-function stripAllQuotes(line: string): { level: number; rest: string } {
+type Unquoted = { level: number; rest: string };
+
+function stripAllQuotes(line: string): Unquoted {
   let rest = line;
   let level = 0;
   for (let m = QUOTE.exec(rest); m; m = QUOTE.exec(rest)) {
@@ -103,7 +109,9 @@ function stripQuotes(line: string, count: number): string | null {
   let rest = line;
   for (let k = 0; k < count; k++) {
     const m = QUOTE.exec(rest);
-    if (!m) return null;
+    if (!m) {
+      return null;
+    }
     rest = rest.slice(m[0].length);
   }
   return rest;
@@ -111,7 +119,9 @@ function stripQuotes(line: string, count: number): string | null {
 
 function runLength(s: string, at: number, ch: string): number {
   let end = at;
-  while (end < s.length && s[end] === ch) end++;
+  while (end < s.length && s[end] === ch) {
+    end++;
+  }
   return end - at;
 }
 
@@ -123,7 +133,9 @@ function findRun(s: string, from: number, ch: string, len: number): number {
       continue;
     }
     const run = runLength(s, p, ch);
-    if (run === len) return p;
+    if (run === len) {
+      return p;
+    }
     p += run;
   }
   return -1;
@@ -131,7 +143,9 @@ function findRun(s: string, from: number, ch: string, len: number): number {
 
 function isEscaped(s: string, index: number): boolean {
   let slashes = 0;
-  while (index - 1 - slashes >= 0 && s[index - 1 - slashes] === '\\') slashes++;
+  while (index - 1 - slashes >= 0 && s[index - 1 - slashes] === '\\') {
+    slashes++;
+  }
   return slashes % 2 === 1;
 }
 
@@ -140,8 +154,12 @@ function isBoundary(ch: string): boolean {
 }
 
 function trailingBreak(text: string): 'spaces' | 'backslash' | null {
-  if (/ {2,}$/.test(text)) return 'spaces';
-  if (text.endsWith('\\') && !isEscaped(text, text.length - 1)) return 'backslash';
+  if (/ {2,}$/.test(text)) {
+    return 'spaces';
+  }
+  if (text.endsWith('\\') && !isEscaped(text, text.length - 1)) {
+    return 'backslash';
+  }
   return null;
 }
 
@@ -149,12 +167,16 @@ function fenceOpener(content: string): { char: string; len: number; info: string
   const m = FENCE.exec(content);
   const run = m?.[1] ?? '';
   const info = m?.[2] ?? '';
-  if (!run || (run[0] === '`' && info.includes('`'))) return null;
+  if (!run || (run[0] === '`' && info.includes('`'))) {
+    return null;
+  }
   return { char: run[0] ?? '`', len: run.length, info: info.trim() };
 }
 
 function startsBlock(content: string, width: number): boolean {
-  if (width >= 4) return false;
+  if (width >= 4) {
+    return false;
+  }
   return ATX.test(content) || THEMATIC.test(content) || LIST.test(content) || fenceOpener(content) !== null;
 }
 
@@ -166,20 +188,26 @@ function inline(s: string): string {
   return inlineSpan(s, 0, '').out;
 }
 
+type InlineResult = { out: string; open: number };
+
 // NOTE: code spans may span lines. `open` carries an unclosed backtick run length from the previous
 // paragraph line; `later` holds the paragraph's later lines. A run closed only in `later` keeps the rest
 // of the line verbatim so whitespace inside stays distinct; a run never closed is literal prose.
-function inlineSpan(s: string, open: number, later: string): { out: string; open: number } {
+function inlineSpan(s: string, open: number, later: string): InlineResult {
   const n = s.length;
   const verb = new Array<boolean>(n).fill(false);
   const mark = (from: number, to: number): void => {
-    for (let q = from; q < to; q++) verb[q] = true;
+    for (let q = from; q < to; q++) {
+      verb[q] = true;
+    }
   };
   let pending = 0;
   let start = 0;
   if (open > 0) {
     const close = findRun(s, 0, '`', open);
-    if (close < 0) return { out: s, open };
+    if (close < 0) {
+      return { out: s, open };
+    }
     start = close + open;
     mark(0, start);
   }
@@ -218,8 +246,11 @@ function inlineSpan(s: string, open: number, later: string): { out: string; open
       let depth = 0;
       let j = i + 1;
       for (; j < n; j++) {
-        if (s[j] === '(') depth++;
-        else if (s[j] === ')' && --depth === 0) break;
+        if (s[j] === '(') {
+          depth++;
+        } else if (s[j] === ')' && --depth === 0) {
+          break;
+        }
       }
       if (j < n) {
         mark(i, j + 1);
@@ -232,7 +263,9 @@ function inlineSpan(s: string, open: number, later: string): { out: string; open
 
   const underscoreRun = (at: number): number => {
     let e = at;
-    while (e < n && s[e] === '_' && !verb[e]) e++;
+    while (e < n && s[e] === '_' && !verb[e]) {
+      e++;
+    }
     return e - at;
   };
   const emphasis = new Array<boolean>(n).fill(false);
@@ -270,14 +303,18 @@ function inlineSpan(s: string, open: number, later: string): { out: string; open
   }
 
   let end = n;
-  while (end > 0 && !verb[end - 1] && (s[end - 1] === ' ' || s[end - 1] === '\t')) end--;
+  while (end > 0 && !verb[end - 1] && (s[end - 1] === ' ' || s[end - 1] === '\t')) {
+    end--;
+  }
   let out = '';
   for (let q = 0; q < end; q++) {
     const ch = s[q] ?? '';
     if (verb[q]) {
       out += ch;
     } else if (ch === ' ' || ch === '\t') {
-      if (!(q > 0 && !verb[q - 1] && (s[q - 1] === ' ' || s[q - 1] === '\t'))) out += ' ';
+      if (!(q > 0 && !verb[q - 1] && (s[q - 1] === ' ' || s[q - 1] === '\t'))) {
+        out += ' ';
+      }
     } else {
       out += emphasis[q] ? '*' : ch;
     }
@@ -288,8 +325,8 @@ function inlineSpan(s: string, open: number, later: string): { out: string; open
 // SECTION: tables
 
 // Splits on unescaped pipes outside code spans; cells are trimmed.
-function splitCells(body: string): string[] {
-  const cells: string[] = [];
+function splitCells(body: string): Array<string> {
+  const cells: Array<string> = [];
   let cur = '';
   for (let i = 0; i < body.length;) {
     const c = body[i] ?? '';
@@ -318,7 +355,9 @@ function splitCells(body: string): string[] {
   return cells;
 }
 
-function tableCells(content: string): { cells: string[]; piped: boolean } {
+type TableRow = { cells: Array<string>; piped: boolean };
+
+function tableCells(content: string): TableRow {
   let body = content.replace(/[ \t]+$/, '');
   let piped = false;
   if (body.startsWith('|')) {
@@ -344,40 +383,52 @@ function delimiterCell(cell: string): string {
 
 function tableLine(lead: string, content: string, delimiter: boolean): string {
   const { cells, piped } = tableCells(content);
-  if (!piped) return lead + inline(cells[0] ?? '');
+  if (!piped) {
+    return lead + inline(cells[0] ?? '');
+  }
   const body = cells.map((cell) => (delimiter ? delimiterCell(cell) : inline(cell))).join('|');
   return `${lead}|${body}|`;
 }
 
 // SECTION: fences
 
-function renderFence(b: Block): string[] {
+function renderFence(b: Block): Array<string> {
   const char = b.info.includes('`') ? '~' : '`';
   const runs = b.code.join('\n').match(char === '`' ? /`+/g : /~+/g) ?? [];
   const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
   const marker = char.repeat(Math.max(3, longest + 1));
   const out = [wrap(b.level, `${b.head}${marker}${b.info ? ` ${b.info}` : ''}`)];
-  for (const line of b.code) out.push(wrap(b.level, line));
-  if (b.closed) out.push(wrap(b.level, b.closeWs + marker));
+  for (const line of b.code) {
+    out.push(wrap(b.level, line));
+  }
+  if (b.closed) {
+    out.push(wrap(b.level, b.closeWs + marker));
+  }
   return out;
 }
 
 // SECTION: prose and block-run rules
 
-function renderProse(b: Block, open: number, later: string): { line: string; open: number } {
+type ProseLine = { line: string; open: number };
+
+function renderProse(b: Block, open: number, later: string): ProseLine {
   const whole = inlineSpan(b.text, open, later);
   // NOTE: a line ending inside a code span has no hard break; its trailing spaces or backslash are code.
   const hard = b.hard && b.brk && whole.open === 0;
-  if (!hard) return { line: wrap(b.level, b.head + whole.out), open: whole.open };
+  if (!hard) {
+    return { line: wrap(b.level, b.head + whole.out), open: whole.open };
+  }
   const source = b.brk === 'spaces' ? b.text.replace(/ +$/, '') : b.text.slice(0, -1);
   return { line: wrap(b.level, `${b.head}${inlineSpan(source, open, later).out}\\`), open: 0 };
 }
 
 // Index of the first block of the paragraph run containing blocks[index] (same blockquote level).
-function paragraphRunStart(blocks: Block[], index: number): number {
+function paragraphRunStart(blocks: Array<Block>, index: number): number {
   const level = blocks[index]?.level;
   let j = index;
-  while (j > 0 && blocks[j - 1]?.kind === 'para' && blocks[j - 1]?.level === level) j--;
+  while (j > 0 && blocks[j - 1]?.kind === 'para' && blocks[j - 1]?.level === level) {
+    j--;
+  }
   return j;
 }
 
@@ -390,22 +441,32 @@ function isPlain(b: Block, side: 'start' | 'end'): boolean {
 }
 
 function isSpecial(b: Block, side: 'start' | 'end'): boolean {
-  if (b.kind === 'fence') return b.level === 0 && (side === 'start' || b.closed) && isPlain(b, side);
+  if (b.kind === 'fence') {
+    return b.level === 0 && (side === 'start' || b.closed) && isPlain(b, side);
+  }
   return (b.kind === 'heading' || b.kind === 'thematic') && isPlain(b, side);
 }
 
 // True when a top-level blank line between blocks p and n has no structural effect.
-function dropBlank(items: Block[], k: number): boolean {
+function dropBlank(items: Array<Block>, k: number): boolean {
   let p = k - 1;
-  while (p >= 0 && items[p]?.kind === 'blank') p--;
+  while (p >= 0 && items[p]?.kind === 'blank') {
+    p--;
+  }
   let n = k + 1;
-  while (n < items.length && items[n]?.kind === 'blank') n++;
+  while (n < items.length && items[n]?.kind === 'blank') {
+    n++;
+  }
   const before = items[p];
   const after = items[n];
-  if (!before || !after) return true;
+  if (!before || !after) {
+    return true;
+  }
   const ruleA =
     (isSpecial(before, 'end') && isPlain(after, 'start')) || (isSpecial(after, 'start') && isPlain(before, 'end'));
-  if (ruleA) return true;
+  if (ruleA) {
+    return true;
+  }
   const start = paragraphRunStart(items, p);
   const first = items[start];
   const ruleB =
@@ -428,7 +489,7 @@ function dropBlank(items: Block[], k: number): boolean {
 export function canonicalMarkdown(text: string): string {
   const raw = text.split(/\r\n|\r|\n/);
   const full = raw.map(stripAllQuotes);
-  const blocks: Block[] = [];
+  const blocks: Array<Block> = [];
   let fence: Block | null = null;
   let html: { level: number; end: RegExp | null } | null = null;
 
@@ -439,7 +500,9 @@ export function canonicalMarkdown(text: string): string {
       const inner = stripQuotes(line, html.level);
       if (inner !== null && (html.end !== null || inner.trim() !== '')) {
         blocks.push(make('html', html.level, 0, { lines: [wrap(html.level, inner)] }));
-        if (html.end?.test(inner)) html = null;
+        if (html.end?.test(inner)) {
+          html = null;
+        }
         i++;
         continue;
       }
@@ -494,8 +557,11 @@ export function canonicalMarkdown(text: string): string {
 
     if (width >= 4) {
       const canStart = !prev || !['para', 'setextText', 'list', 'table'].includes(prev.kind);
-      if (canStart) blocks.push(make('verbatim', level, width, { lines: [wrap(level, rest)] }));
-      else blocks.push(make('para', level, width, { head: lead, text: content, brk: trailingBreak(content) }));
+      if (canStart) {
+        blocks.push(make('verbatim', level, width, { lines: [wrap(level, rest)] }));
+      } else {
+        blocks.push(make('para', level, width, { head: lead, text: content, brk: trailingBreak(content) }));
+      }
       i++;
       continue;
     }
@@ -531,7 +597,9 @@ export function canonicalMarkdown(text: string): string {
       const tag = HTML_RAW.exec(content)?.[1];
       const end = tag ? new RegExp(`</${tag}>`, 'i') : content.startsWith('<!--') ? /-->/ : null;
       blocks.push(make('html', level, width, { lines: [wrap(level, rest)] }));
-      if (!end?.test(content.slice(1))) html = { level, end };
+      if (!end?.test(content.slice(1))) {
+        html = { level, end };
+      }
       i++;
       continue;
     }
@@ -577,8 +645,8 @@ export function canonicalMarkdown(text: string): string {
         isDelimiter(nextContent) &&
         tableCells(content).cells.length === tableCells(nextContent).cells.length
       ) {
-        blocks.push(make('table', level, width, { lines: [wrap(level, tableLine(lead, content, false))] }));
         blocks.push(
+          make('table', level, width, { lines: [wrap(level, tableLine(lead, content, false))] }),
           make('table', level, indentWidth(nextLead), { lines: [wrap(level, tableLine(nextLead, nextContent, true))] }),
         );
         i += 2;
@@ -596,46 +664,61 @@ export function canonicalMarkdown(text: string): string {
 // True when the next non-blank line at `level` is indented by 4 or more (indented code continues).
 function nextIndentedAt(full: Array<{ level: number; rest: string }>, from: number, level: number): boolean {
   let j = from;
-  while (j < full.length && (full[j]?.rest.trim() ?? '') === '') j++;
+  while (j < full.length && (full[j]?.rest.trim() ?? '') === '') {
+    j++;
+  }
   const target = full[j];
   return target !== undefined && target.level === level && indentWidth(leading(target.rest)) >= 4;
 }
 
-function finish(blocks: Block[]): string {
+function finish(blocks: Array<Block>): string {
   // A prose line followed by a paragraph line of the same level keeps a trailing hard break.
   blocks.forEach((b, index) => {
     const after = blocks[index + 1];
-    if (b.brk && after?.kind === 'para' && after.level === b.level) b.hard = true;
+    if (b.brk && after?.kind === 'para' && after.level === b.level) {
+      b.hard = true;
+    }
   });
 
   // A code span left open continues only into later lines of the same paragraph.
   let open = 0;
   blocks.forEach((b, index) => {
-    if (b.kind !== 'para' && b.kind !== 'setextText') open = 0;
-    if (b.kind === 'fence') b.lines = renderFence(b);
-    else if (b.kind === 'para' || b.kind === 'setextText' || b.kind === 'list') {
-      const later: string[] = [];
+    if (b.kind !== 'para' && b.kind !== 'setextText') {
+      open = 0;
+    }
+    if (b.kind === 'fence') {
+      b.lines = renderFence(b);
+    } else if (b.kind === 'para' || b.kind === 'setextText' || b.kind === 'list') {
+      const later: Array<string> = [];
       for (let j = index + 1; blocks[j]?.kind === 'para' || blocks[j]?.kind === 'setextText'; j++) {
-        if (blocks[j]?.level !== b.level) break;
+        if (blocks[j]?.level !== b.level) {
+          break;
+        }
         later.push(blocks[j]?.text ?? '');
       }
       const r = renderProse(b, open, later.join('\n'));
       b.lines = [r.line];
       open = r.open;
-    } else if (b.kind === 'blank') b.lines = [wrap(b.level, '')];
+    } else if (b.kind === 'blank') {
+      b.lines = [wrap(b.level, '')];
+    }
   });
 
   // Collapse runs of blank lines at the same blockquote level into one.
-  const items: Block[] = [];
+  const items: Array<Block> = [];
   for (const b of blocks) {
     const last = items.at(-1);
-    if (b.kind === 'blank' && last?.kind === 'blank' && last.level === b.level) continue;
+    if (b.kind === 'blank' && last?.kind === 'blank' && last.level === b.level) {
+      continue;
+    }
     items.push(b);
   }
 
-  const out: string[] = [];
+  const out: Array<string> = [];
   items.forEach((b, k) => {
-    if (b.kind === 'blank' && b.level === 0 && dropBlank(items, k)) return;
+    if (b.kind === 'blank' && b.level === 0 && dropBlank(items, k)) {
+      return;
+    }
     out.push(...b.lines);
   });
   return out.join('\n');

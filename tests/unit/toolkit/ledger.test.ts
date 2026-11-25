@@ -8,14 +8,15 @@ import {
   appendRecords,
   currentHashes,
   foldLedger,
-  type Fold,
 } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { validateRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { isError, narrow, numeric, parseJson, refusal, shape } from './helpers/json.ts';
 
 const ledgerFile = (session: string) => path.join(session, 'ledger.jsonl');
 const note = (key: string, text = key) => ({ kind: 'note', key, by: 'orchestrator', data: { text } });
-const reasonOf = (error: unknown) => (error as { reason?: string }).reason;
+const reasonOf = (error: unknown) => narrow(error, refusal).reason;
 
 test('ledger records preserve retries and recover torn tails', async () => {
   const f = sessionFixture({ memory: true });
@@ -52,7 +53,7 @@ test('ledger records preserve retries and recover torn tails', async () => {
   }
 });
 
-test('ledger append processes record arrays atomically', async () => {
+test('ledger append processes record arrays atomically', async (t) => {
   const stored = {
     kind: 'note',
     key: 'stored-note',
@@ -97,7 +98,7 @@ test('ledger append processes record arrays atomically', async () => {
         data: { spec: hashes.spec, plan: hashes.plan },
       },
     ];
-    const commits: Fold[] = [];
+    const commits: Array<Fold> = [];
     const result = await appendRecords(f.session, records, f.deps, {
       onCommit: (fold) => {
         commits.push(fold);
@@ -134,7 +135,7 @@ test('ledger append processes record arrays atomically', async () => {
       .readFileSync(ledgerFile(f.session), 'utf8')
       .trimEnd()
       .split('\n')
-      .map((line) => JSON.parse(line));
+      .map((line) => parseJson(line, shape({ batchEndSeq: numeric })));
     assert.deepEqual(
       raw.map((row) => row.batchEndSeq),
       [4, 4, 4, 4],
@@ -155,7 +156,7 @@ test('ledger append processes record arrays atomically', async () => {
       by: 'orchestrator',
       data: { spec: 'mission.spec.md', plan: 'work.plan.md' },
     };
-    const cases: [object, RegExp][] = [
+    const cases: Array<[object, RegExp]> = [
       [{ ...bind, data: { ...bind.data, plan: '../escape.plan.md' } }, /data\.plan/],
       [{ ...bind, data: { ...bind.data, plan: 'strategy.design.md' } }, /data\.plan/],
       [{ ...bind, data: { ...bind.data, plan: 'missing.plan.md' } }, /data\.plan/],
@@ -164,7 +165,7 @@ test('ledger append processes record arrays atomically', async () => {
     for (const [record, pattern] of cases) {
       await assert.rejects(
         appendRecords(g.session, [record, note('after-bind')], g.deps),
-        (error) => reasonOf(error) === 'invalid-record' && pattern.test((error as Error).message),
+        (error) => reasonOf(error) === 'invalid-record' && pattern.test(narrow(error, isError).message),
       );
       assert.equal(fs.existsSync(ledgerFile(g.session)), false);
     }
@@ -188,7 +189,7 @@ test('ledger append processes record arrays atomically', async () => {
     };
     await assert.rejects(
       appendRecords(h.session, [bind, note('after-bind')], h.deps),
-      (error) => reasonOf(error) === 'invalid-record' && /data\.plan/.test((error as Error).message),
+      (error) => reasonOf(error) === 'invalid-record' && /data\.plan/.test(narrow(error, isError).message),
     );
     assert.equal(fs.existsSync(ledgerFile(h.session)), false);
     fs.unlinkSync(linked);
@@ -214,7 +215,7 @@ test('ledger append processes record arrays atomically', async () => {
         data: { subject: 'review:plan-work.plan:R1-F002', ruling: 'deferred', rationale: 'Later' },
       },
     ];
-    const committed: number[] = [];
+    const committed: Array<number> = [];
     const result = await appendRecords(r.session, rulings, r.deps, {
       onCommit: (fold) => {
         committed.push(fold.lastSeq);
@@ -279,17 +280,8 @@ test('ledger append processes record arrays atomically', async () => {
     );
 
     // SECTION: a short write closes the handle and truncates to baseSize
-    const closeDescriptor = Object.getOwnPropertyDescriptor(fs, 'closeSync')!;
-    const closeSync = fs.closeSync;
-    const closed: number[] = [];
+    const close = t.mock.method(fs, 'closeSync');
     let failedHandle: number | undefined;
-    Object.defineProperty(fs, 'closeSync', {
-      ...closeDescriptor,
-      value: (fd: number) => {
-        closed.push(fd);
-        return closeSync(fd);
-      },
-    });
     try {
       let calls = 0;
       await assert.rejects(
@@ -297,7 +289,9 @@ test('ledger append processes record arrays atomically', async () => {
           writeBatch(handle, buffer, offset) {
             failedHandle = handle;
             calls++;
-            if (calls > 1) return 0;
+            if (calls > 1) {
+              return 0;
+            }
             fs.writeSync(handle, buffer.subarray(offset, offset + 4));
             return 4;
           },
@@ -305,28 +299,21 @@ test('ledger append processes record arrays atomically', async () => {
         /short write/,
       );
     } finally {
-      Object.defineProperty(fs, 'closeSync', { ...closeDescriptor, value: closeSync });
+      close.mock.restore();
     }
-    assert.ok(failedHandle !== undefined && closed.includes(failedHandle));
+    assert.ok(failedHandle !== undefined && close.mock.calls.some(({ arguments: [fd] }) => fd === failedHandle));
     assert.equal(fs.readFileSync(ledgerFile(r.session), 'utf8'), before);
 
     // SECTION: an fsync failure truncates to baseSize by path
-    const fsyncDescriptor = Object.getOwnPropertyDescriptor(fs, 'fsyncSync')!;
-    const fsyncSync = fs.fsyncSync;
-    let fsyncFailures = 0;
-    Object.defineProperty(fs, 'fsyncSync', {
-      ...fsyncDescriptor,
-      value: () => {
-        fsyncFailures++;
-        throw new Error('fsync failed');
-      },
+    const fsync = t.mock.method(fs, 'fsyncSync', () => {
+      throw new Error('fsync failed');
     });
     try {
       await assert.rejects(appendRecords(r.session, [note('fsync-a'), note('fsync-b')], r.deps), /fsync failed/);
     } finally {
-      Object.defineProperty(fs, 'fsyncSync', { ...fsyncDescriptor, value: fsyncSync });
+      fsync.mock.restore();
     }
-    assert.ok(fsyncFailures >= 1);
+    assert.ok(fsync.mock.callCount() >= 1);
     assert.equal(fs.readFileSync(ledgerFile(r.session), 'utf8'), before);
   } finally {
     r.cleanup();
@@ -443,7 +430,7 @@ test('ledger append processes record arrays atomically', async () => {
   try {
     await assert.rejects(
       appendRecords(e.session, [], e.deps),
-      (error) => reasonOf(error) === 'invalid-record' && /non-empty array/.test((error as Error).message),
+      (error) => reasonOf(error) === 'invalid-record' && /non-empty array/.test(narrow(error, isError).message),
     );
     for (const input of [[null], [1], ['note']]) {
       await assert.rejects(appendRecords(e.session, input, e.deps), (error) => reasonOf(error) === 'invalid-record');
@@ -472,7 +459,7 @@ test('severity correction and missing-bind approval rejections include current s
         f.deps,
       ),
       (error) => {
-        const message = (error as Error).message;
+        const message = narrow(error, isError).message;
         return (
           reasonOf(error) === 'invalid-record' &&
           /spec,\s*plan\?,\s*design\?/.test(message) &&
@@ -496,7 +483,7 @@ test('severity correction and missing-bind approval rejections include current s
       }),
     );
 
-    const cases: [object, RegExp][] = [
+    const cases: Array<[object, RegExp]> = [
       [
         {
           kind: 'ruling',
@@ -545,7 +532,7 @@ test('severity correction and missing-bind approval rejections include current s
     ];
     for (const [record, pattern] of cases) {
       await assert.rejects(appendRecord(f.session, record, f.deps), (error) => {
-        const message = (error as Error).message;
+        const message = narrow(error, isError).message;
         return (
           reasonOf(error) === 'invalid-record' && pattern.test(message) && Buffer.byteLength(message, 'utf8') <= 1024
         );

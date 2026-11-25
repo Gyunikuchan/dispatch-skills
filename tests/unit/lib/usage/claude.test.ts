@@ -5,30 +5,34 @@ import { foldRows } from '../../../../skills/dispatch/scripts/lib/usage/bands.ts
 import { claudeCode, claudeUsage } from '../../../../skills/dispatch/scripts/lib/usage/claude.ts';
 import { lines, memoryFs, query } from './helpers/memory-fs.ts';
 
+const effortMessage = (id: string, at: number, input: number, model = 'opus') => ({
+  type: 'assistant',
+  timestamp: new Date(at).toISOString(),
+  effort: 'high',
+  message: {
+    id,
+    model,
+    usage: { input_tokens: input, output_tokens: 2, cache_read_input_tokens: 3 },
+    text: 'secret transcript',
+  },
+});
+
 test('turns: claude counts the last in-window message usage row fields once by stage and excludes synthetic usage', () => {
-  const message = (id: string, at: number, input: number, model = 'opus') => ({
-    type: 'assistant',
-    timestamp: new Date(at).toISOString(),
-    effort: 'high',
-    message: {
-      id,
-      model,
-      usage: { input_tokens: input, output_tokens: 2, cache_read_input_tokens: 3 },
-      text: 'secret transcript',
-    },
-  });
   const fs = memoryFs({
     '/home/.claude/projects/p/host.jsonl': lines(
-      message('a', 2000, 1),
-      message('a', 3000, 5),
-      message('second', 4000, 8),
-      message('synthetic', 3000, 100, '<synthetic>'),
-      message('late', 20000, 100),
+      effortMessage('a', 2000, 1),
+      effortMessage('a', 3000, 5),
+      effortMessage('second', 4000, 8),
+      effortMessage('synthetic', 3000, 100, '<synthetic>'),
+      effortMessage('late', 20_000, 100),
     ),
-    '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(message('a', 2400, 1), message('a', 2500, 7)),
-    '/home/.claude/projects/p/host/subagents/agent-2.jsonl': lines(message('a', 2600, 11)),
+    '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(
+      effortMessage('a', 2400, 1),
+      effortMessage('a', 2500, 7),
+    ),
+    '/home/.claude/projects/p/host/subagents/agent-2.jsonl': lines(effortMessage('a', 2600, 11)),
   });
-  const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100000 } }, fs);
+  const result = claudeCode.read({ ...query, startMs: 2000, budget: { remaining: 100_000 } }, fs);
   assert.deepEqual(result.rows, [
     {
       stage: 'plan',
@@ -107,24 +111,25 @@ test('turns: claude counts the last in-window message usage row fields once by s
   assert.ok(!JSON.stringify(result).includes('secret transcript'));
 });
 
+const plainMessage = (id: string, input: number) => ({
+  type: 'assistant',
+  timestamp: new Date(3000).toISOString(),
+  message: { id, model: 'm', usage: { input_tokens: input, output_tokens: 1 } },
+});
+
 test('claude selects only the current transcript and its children', () => {
-  const msg = (id: string, input: number) => ({
-    type: 'assistant',
-    timestamp: new Date(3000).toISOString(),
-    message: { id, model: 'm', usage: { input_tokens: input, output_tokens: 1 } },
-  });
   const older = '/home/.claude/projects/old/host.jsonl';
   const newer = '/home/.claude/projects/new/host.jsonl';
   const fs = memoryFs(
     {
-      [older]: lines(msg('old', 1)),
-      [newer]: lines(msg('new', 2)),
-      '/home/.claude/projects/old/host/subagents/agent-old.jsonl': lines(msg('old-child', 4)),
-      '/home/.claude/projects/new/host/subagents/agent-new.jsonl': lines(msg('new-child', 8)),
+      [older]: lines(plainMessage('old', 1)),
+      [newer]: lines(plainMessage('new', 2)),
+      '/home/.claude/projects/old/host/subagents/agent-old.jsonl': lines(plainMessage('old-child', 4)),
+      '/home/.claude/projects/new/host/subagents/agent-new.jsonl': lines(plainMessage('new-child', 8)),
     },
     { [older]: 100, [newer]: 200 },
   );
-  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, fs);
+  const result = claudeCode.read({ ...query, budget: { remaining: 100_000 } }, fs);
   assert.deepEqual(
     result.rows.map((row) => row.input),
     [2, 8],
@@ -157,11 +162,13 @@ test('claude hides host read errors and retains child counters', () => {
     ['PRIVATE', 'read-error:EUNKNOWN'],
   ]) {
     const result = claudeCode.read(
-      { ...query, budget: { remaining: 10000 } },
+      { ...query, budget: { remaining: 10_000 } },
       {
         ...fs,
         read: (file, max) => {
-          if (file.endsWith('host.jsonl')) throw Object.assign(new Error('private sentinel'), { code });
+          if (file.endsWith('host.jsonl')) {
+            throw Object.assign(new Error('private sentinel'), { code });
+          }
           return fs.read(file, max);
         },
       },
@@ -186,7 +193,7 @@ test('claude ignores unrelated records, rejects malformed usage, and keeps valid
   const missingModel = { ...good, message: { ...good.message, id: 'missing-model', model: null } };
   const missingTime = { ...good, timestamp: 'invalid', message: { ...good.message, id: 'missing-time' } };
   const fs = memoryFs({ [host]: lines(null, 5, { type: 'user' }, malformedUsage, missingModel, missingTime, good) });
-  const result = claudeCode.read({ ...query, budget: { remaining: 10000 } }, fs);
+  const result = claudeCode.read({ ...query, budget: { remaining: 10_000 } }, fs);
   assert.equal(result.rows[0]?.input, 6);
   assert.equal(result.notes?.host?.['unparsed lines'], 3);
   assert.equal(result.unavailable, undefined);
@@ -198,7 +205,7 @@ test('claude ignores unrelated records, rejects malformed usage, and keeps valid
     message: { id: 'child', model: 'm', usage: { input_tokens: 2, output_tokens: 1 } },
   };
   const partial = claudeCode.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     memoryFs({ [host]: '{bad\n', [child]: lines(childMessage) }),
   );
   assert.equal(partial.unavailable, 'no usage records');
@@ -220,7 +227,7 @@ test('claude honors its config root and skips stale child files', () => {
       ...query,
       startMs: 2000,
       env: (name) => (name === 'CLAUDE_CONFIG_DIR' ? '/custom' : undefined),
-      budget: { remaining: 10000 },
+      budget: { remaining: 10_000 },
     },
     fs,
   );
@@ -247,7 +254,7 @@ test('claude retains host rows and notes child size and exhausted-budget stops',
     {
       ...oversizedFs,
       stat: (file) =>
-        file.endsWith('agent-1.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10000 } : oversizedFs.stat(file),
+        file.endsWith('agent-1.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10_000 } : oversizedFs.stat(file),
     },
   );
   assert.equal(oversized.rows.length, 1);
@@ -266,7 +273,7 @@ test('claude retains host rows and notes child size and exhausted-budget stops',
     {
       ...hostOversizedFs,
       stat: (file) =>
-        file.endsWith('host.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10000 } : hostOversizedFs.stat(file),
+        file.endsWith('host.jsonl') ? { size: 64 * 1024 * 1024 + 1, mtimeMs: 10_000 } : hostOversizedFs.stat(file),
     },
   );
   assert.equal(hostOversized.unavailable, 'transcript over size cap');
@@ -282,11 +289,13 @@ test('claude preserves host counters when child listing or stat fails', () => {
   };
   const fs = memoryFs({ [host]: lines(msg), [child]: lines(msg) });
   const listFailure = claudeCode.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       list: (dir) => {
-        if (dir.endsWith('subagents')) throw Error('private');
+        if (dir.endsWith('subagents')) {
+          throw Error('private');
+        }
         return fs.list(dir);
       },
     },
@@ -294,11 +303,13 @@ test('claude preserves host counters when child listing or stat fails', () => {
   assert.equal(listFailure.rows[0]?.role, 'host');
   assert.equal(listFailure.notes?.subagent?.['unreadable files'], 1);
   const statFailure = claudeCode.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       stat: (file) => {
-        if (file.endsWith('agent-1.jsonl')) throw Error('private');
+        if (file.endsWith('agent-1.jsonl')) {
+          throw Error('private');
+        }
         return fs.stat(file);
       },
     },
@@ -316,11 +327,13 @@ test('claude refuses all attribution when a matching project cannot be inspected
   };
   const fs = memoryFs({ [host]: lines(msg), [inaccessible]: 'x' });
   const result = claudeCode.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     {
       ...fs,
       stat: (file) => {
-        if (file.includes('blocked')) throw Object.assign(Error('private'), { code: 'EACCES' });
+        if (file.includes('blocked')) {
+          throw Object.assign(Error('private'), { code: 'EACCES' });
+        }
         return fs.stat(file);
       },
     },
@@ -341,7 +354,7 @@ test('claude reports selected host and child files that vanish before read', () 
   for (const role of ['host', 'subagent']) {
     let calls = 0;
     const result = claudeCode.read(
-      { ...query, budget: { remaining: 10000 } },
+      { ...query, budget: { remaining: 10_000 } },
       {
         ...fs,
         stat: (file) => {
@@ -350,8 +363,9 @@ test('claude reports selected host and child files that vanish before read', () 
         },
       },
     );
-    if (role === 'host') assert.equal(result.unavailable, 'read-error:ENOENT');
-    else {
+    if (role === 'host') {
+      assert.equal(result.unavailable, 'read-error:ENOENT');
+    } else {
       assert.equal(result.notes?.subagent?.['unreadable files'], 1);
       assert.equal(result.rows[0]?.role, 'host');
     }
@@ -360,7 +374,7 @@ test('claude reports selected host and child files that vanish before read', () 
   const vanished = '/home/.claude/projects/p/host/subagents/agent-vanished.jsonl';
   const discoveryFs = memoryFs({ [host]: lines(msg), [vanished]: lines(msg), [child]: lines(msg) });
   const discoveryResult = claudeCode.read(
-    { ...query, budget: { remaining: 10000 } },
+    { ...query, budget: { remaining: 10_000 } },
     { ...discoveryFs, stat: (file) => (file.endsWith('agent-vanished.jsonl') ? null : discoveryFs.stat(file)) },
   );
   assert.equal(discoveryResult.notes?.subagent?.['unreadable files'], 1);
@@ -417,18 +431,19 @@ test('key bound: claude usage keeps 9 models and bounds 40 models to 32 plus oth
   assert.equal('m08' in (forty?.models ?? {}), true);
 });
 
+const sonnetMessage = (id: string, input: number) => ({
+  type: 'assistant',
+  timestamp: new Date(3000).toISOString(),
+  message: { id, model: 'claude-sonnet-4-5', usage: { input_tokens: input, output_tokens: 1 } },
+});
+
 test('claude nested subagents count depth-2 transcripts', () => {
-  const msg = (id: string, input: number) => ({
-    type: 'assistant',
-    timestamp: new Date(3000).toISOString(),
-    message: { id, model: 'claude-sonnet-4-5', usage: { input_tokens: input, output_tokens: 1 } },
-  });
   const result = claudeCode.read(
-    { ...query, budget: { remaining: 100000 } },
+    { ...query, budget: { remaining: 100_000 } },
     memoryFs({
-      '/home/.claude/projects/p/host.jsonl': lines(msg('h', 1)),
-      '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(msg('s1', 2)),
-      '/home/.claude/projects/p/host/subagents/agent-1/subagents/agent-2.jsonl': lines(msg('s2', 3)),
+      '/home/.claude/projects/p/host.jsonl': lines(sonnetMessage('h', 1)),
+      '/home/.claude/projects/p/host/subagents/agent-1.jsonl': lines(sonnetMessage('s1', 2)),
+      '/home/.claude/projects/p/host/subagents/agent-1/subagents/agent-2.jsonl': lines(sonnetMessage('s2', 3)),
     }),
   );
   assert.deepEqual(
@@ -471,7 +486,7 @@ test('claude cache split carries 5m and 1h counters in host transcripts, stdout,
     },
   };
   const hostResult = claudeCode.read(
-    { ...query, budget: { remaining: 100000 } },
+    { ...query, budget: { remaining: 100_000 } },
     memoryFs({
       '/home/.claude/projects/p/host.jsonl': lines(splitMsg, unsplitMsg),
     }),
@@ -554,7 +569,7 @@ test('streaming tool_use blocks accumulate unique ids across chunks without dupl
     },
   };
   const fs = memoryFs({ [host]: lines(chunk1, chunk2, textOnly) });
-  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, fs);
+  const result = claudeCode.read({ ...query, budget: { remaining: 100_000 } }, fs);
   assert.equal(result.rows.length, 2);
   assert.equal(result.rows[0]?.toolCalls, 2);
   assert.equal(result.rows[0]?.toolTurns, 1);
@@ -563,19 +578,20 @@ test('streaming tool_use blocks accumulate unique ids across chunks without dupl
   assert.ok(!JSON.stringify(result).includes('secret'));
 });
 
+const assistant = (id: string, at: number) => ({
+  type: 'assistant',
+  timestamp: new Date(at).toISOString(),
+  message: {
+    id,
+    model: 'claude-sonnet-4-5',
+    content: [{ type: 'text', text: 'ok' }],
+    usage: { input_tokens: 4, output_tokens: 2 },
+  },
+});
+
 test('claude extracts root host user turns by stage while excluding meta and tool_result wrappers', () => {
   const host = '/home/.claude/projects/p/host.jsonl';
   const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl';
-  const assistant = (id: string, at: number) => ({
-    type: 'assistant',
-    timestamp: new Date(at).toISOString(),
-    message: {
-      id,
-      model: 'claude-sonnet-4-5',
-      content: [{ type: 'text', text: 'ok' }],
-      usage: { input_tokens: 4, output_tokens: 2 },
-    },
-  });
   const fs = memoryFs({
     [host]: lines(
       {
@@ -618,46 +634,47 @@ test('claude extracts root host user turns by stage while excluding meta and too
         message: { role: 'user', content: 'second plan prompt' },
       },
       assistant('h2', 3200),
-      { type: 'user', timestamp: new Date(20000).toISOString(), message: { role: 'user', content: 'out of window' } },
+      { type: 'user', timestamp: new Date(20_000).toISOString(), message: { role: 'user', content: 'out of window' } },
     ),
     [child]: lines(
       { type: 'user', timestamp: new Date(2600).toISOString(), message: { role: 'user', content: 'subagent prompt' } },
       assistant('c1', 2700),
     ),
   });
-  const result = claudeCode.read({ ...query, budget: { remaining: 100000 } }, fs);
+  const result = claudeCode.read({ ...query, budget: { remaining: 100_000 } }, fs);
   assert.equal(result.userTurns, 3);
   assert.deepEqual(result.userTurnsByStage, { spec: 1, plan: 2 });
   assert.ok(!JSON.stringify(result).includes('spec prompt secret'));
+});
+
+const toolMessage = (id: string, at: number, tools: number) => ({
+  type: 'assistant',
+  timestamp: new Date(at).toISOString(),
+  message: {
+    id,
+    model: 'claude-sonnet-4-5',
+    content: Array.from({ length: tools }, (_, i) => ({
+      type: 'tool_use',
+      id: `${id}-t${i}`,
+      name: 'Read',
+      input: {},
+    })),
+    usage: { input_tokens: 5, output_tokens: 2 },
+  },
 });
 
 test('claude emits tool calls and unified turns on subagent and delegate rows', async () => {
   const { collectClaudeUsage } = await import('../../../../skills/dispatch/scripts/lib/usage/claude.ts');
   const host = '/home/.claude/projects/p/host.jsonl';
   const child = '/home/.claude/projects/p/host/subagents/agent-1.jsonl';
-  const msg = (id: string, at: number, tools: number) => ({
-    type: 'assistant',
-    timestamp: new Date(at).toISOString(),
-    message: {
-      id,
-      model: 'claude-sonnet-4-5',
-      content: Array.from({ length: tools }, (_, i) => ({
-        type: 'tool_use',
-        id: `${id}-t${i}`,
-        name: 'Read',
-        input: {},
-      })),
-      usage: { input_tokens: 5, output_tokens: 2 },
-    },
-  });
   const fs = memoryFs({
     [host]: lines(
       { type: 'user', timestamp: new Date(1000).toISOString(), message: { role: 'user', content: 'delegate prompt' } },
-      msg('d1', 1500, 1),
+      toolMessage('d1', 1500, 1),
     ),
-    [child]: lines(msg('s1', 2500, 3)),
+    [child]: lines(toolMessage('s1', 2500, 3)),
   });
-  const delegateResult = collectClaudeUsage({ ...query, budget: { remaining: 100000 } }, fs, {
+  const delegateResult = collectClaudeUsage({ ...query, budget: { remaining: 100_000 } }, fs, {
     projectDir: 'p',
     rootRole: 'delegate',
   });

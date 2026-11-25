@@ -2,21 +2,24 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
-import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import {
-  MODE_IDS,
-  type LaunchRequest,
-  type PlatformEnv,
-  type ProcessResult,
-  type ProviderId,
+import { runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { MODE_IDS } from '../../../skills/dispatch/scripts/providers/types.ts';
+import type {
+  LaunchRequest,
+  PlatformEnv,
+  ProcessResult,
+  ProviderId,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
+
+const isProviderId = (key: string): key is ProviderId => Object.hasOwn(SPECS, key);
 
 const env = (os: PlatformEnv['os'], bubblewrap = false): PlatformEnv => ({
   os,
   arch: 'x64',
   wsl: false,
   bubblewrap,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
@@ -30,7 +33,7 @@ const request = (sandbox: boolean, platform = env('linux', true)): LaunchRequest
   schemaPath: null,
   resume: null,
   cwd: '/repo',
-  timeoutMs: 60000,
+  timeoutMs: 60_000,
   outputCapBytes: 1000,
   attachments: [],
   logPath: '/r/log',
@@ -54,13 +57,14 @@ const WRITE_FLAGS = [
 ];
 
 test('delegates-read-only: every provider × mode × sandbox argv carries the read-only flags and no write flag', () => {
-  for (const id of Object.keys(SPECS) as ProviderId[]) {
+  for (const id of Object.keys(SPECS).filter(isProviderId)) {
     const spec = SPECS[id];
     for (const mode of MODE_IDS) {
       for (const sandbox of [true, false]) {
         const argv = spec.argv(request(sandbox), mode).argv;
-        for (const flag of spec.readOnlyFlags)
+        for (const flag of spec.readOnlyFlags) {
           assert.ok(argv.includes(flag), `${id}/${mode}/${String(sandbox)} lacks ${flag}`);
+        }
         for (const pattern of WRITE_FLAGS) {
           const hit = argv.some((arg) => pattern.test(arg));
           // codex's only unsandboxed escape: `sandbox: false` explicitly selects danger-full-access.
@@ -69,8 +73,11 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
             (id === 'copilot' && sandbox && pattern.source === '^--allow-all-tools$');
           assert.equal(hit && !allowed, false, `${id}/${mode}/${String(sandbox)} has ${pattern.source}`);
         }
-        if (spec.sandbox && sandbox && id !== 'opencode')
-          for (const flag of spec.sandbox.flags) assert.ok(argv.includes(flag), `${id} sandbox flag ${flag}`);
+        if (spec.sandbox && sandbox && id !== 'opencode') {
+          for (const flag of spec.sandbox.flags) {
+            assert.ok(argv.includes(flag), `${id} sandbox flag ${flag}`);
+          }
+        }
         if (id === 'opencode') {
           const format = argv.indexOf('--format');
           assert.ok(format > 0 && argv[format + 1] === 'json', `${mode}/${String(sandbox)} lacks --format json`);
@@ -99,19 +106,24 @@ test('claude delegates cannot launch subagents', () => {
   for (const mode of MODE_IDS) {
     for (const sandbox of [true, false]) {
       const argv = SPECS.claude.argv(request(sandbox), mode).argv;
-      const denied: string[] = [];
+      const denied: Array<string> = [];
       let inList = false;
       for (const arg of argv) {
-        if (arg.startsWith('--')) inList = arg === '--disallowedTools';
-        else if (inList) denied.push(arg);
+        if (arg.startsWith('--')) {
+          inList = arg === '--disallowedTools';
+        } else if (inList) {
+          denied.push(arg);
+        }
       }
-      for (const tool of ['Agent', 'Task'])
+      for (const tool of ['Agent', 'Task']) {
         assert.ok(denied.includes(tool), `${mode}/${String(sandbox)} does not disallow ${tool}`);
+      }
       assert.ok(!argv.some((arg) => /^Task[A-Z]/.test(arg)), `${mode}/${String(sandbox)} disallows a task-list tool`);
     }
   }
-  for (const tool of ['Agent', 'Task'])
+  for (const tool of ['Agent', 'Task']) {
     assert.ok(SPECS.claude.readOnlyFlags.includes(tool), `read-only flags lack ${tool}`);
+  }
 });
 
 test('claude allowlists configured read commands as prefix Bash rules', () => {
@@ -248,8 +260,9 @@ test('resume argv: codex keeps read-only approval and sandbox keys without forbi
       String(sandbox),
     );
     assert.ok(argv.includes('-c'), String(sandbox));
-    for (const flag of ['--cd', '--sandbox', '--config'])
+    for (const flag of ['--cd', '--sandbox', '--config']) {
       assert.ok(!argv.includes(flag), `${String(sandbox)} has ${flag}`);
+    }
   }
 });
 
@@ -263,7 +276,9 @@ test('resume argv: opencode keeps read-only run flag and session id', () => {
     const session = argv.indexOf('--session');
     assert.ok(session > 0 && argv[session + 1] === 'ses_last', String(sandbox));
     assert.ok(session < argv.lastIndexOf('--'), String(sandbox));
-    if (sandbox) assert.equal(argv[0], 'bwrap');
+    if (sandbox) {
+      assert.equal(argv[0], 'bwrap');
+    }
   }
 });
 
@@ -275,10 +290,12 @@ test('resume argv: copilot argv keeps plan mode, assisted-approval and sandbox f
     ).argv;
     assert.ok(argv.includes('--resume') && argv.includes('preset-id-4'), String(sandbox));
     assert.ok(!argv.includes('--session-id'), String(sandbox));
-    for (const flag of ['--assisted-approval', '--no-ask-user', '--mode', 'plan'])
+    for (const flag of ['--assisted-approval', '--no-ask-user', '--mode', 'plan']) {
       assert.ok(argv.includes(flag), `${String(sandbox)} lacks ${flag}`);
-    for (const flag of ['--sandbox', '--allow-all-tools'])
+    }
+    for (const flag of ['--sandbox', '--allow-all-tools']) {
       assert.equal(argv.includes(flag), sandbox, `${String(sandbox)} ${flag}`);
+    }
   }
 });
 
@@ -286,9 +303,12 @@ test('resume argv: claude keeps plan mode and tool denylist with resume', () => 
   for (const sandbox of [true, false]) {
     const argv = SPECS.claude.argv({ ...request(sandbox), resume: 'abc123' }, 'cli').argv;
     assert.ok(argv.includes('--resume') && argv.includes('abc123'), String(sandbox));
-    for (const flag of ['--permission-mode', 'plan', 'Write', 'Edit', 'Agent', 'Task'])
+    for (const flag of ['--permission-mode', 'plan', 'Write', 'Edit', 'Agent', 'Task']) {
       assert.ok(argv.includes(flag), String(sandbox));
-    if (sandbox) assert.ok(argv.includes('--settings'), String(sandbox));
+    }
+    if (sandbox) {
+      assert.ok(argv.includes('--settings'), String(sandbox));
+    }
   }
 });
 

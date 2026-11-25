@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { setupTestSkill, toolkitRepo } from './helpers/toolkit-repo.ts';
+import { isNumber, isString, narrow, objectWith } from './helpers/json.ts';
 import { appendRecord } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { nodeErrorCode } from '../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { consumerSearchArgs } from '../../skills/dispatch/scripts/toolkit/domain/fix-review-lite.ts';
 
 type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
@@ -49,7 +51,7 @@ async function startRepo(): Promise<{ f: Repo; g: Second }> {
   });
   f.deps.liveness = { claude: true, agy: true, codex: true, copilot: true, opencode: true };
   f.deps.orchestrator = null;
-  f.deps.modes = () => ['cli'] as never;
+  f.deps.modes = () => ['cli'];
   f.deps.delegate = async () => ({
     outcome: { status: 'ok', text: REPORT, resume: null, sessionId: null },
     invocations: [],
@@ -102,20 +104,32 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
 
     const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
-    const text = fs.readFileSync(brief.value.briefPath, 'utf8');
+    const briefVal = narrow(
+      brief.value,
+      objectWith({
+        briefPath: isString,
+        diffPath: isString,
+        citations: isNumber,
+        unresolved: isNumber,
+        withheld: isNumber,
+      }),
+    );
+    const text = fs.readFileSync(briefVal.briefPath, 'utf8');
 
     // The brief's own listing keeps every listed name and withholds the ignored file.
-    assert.equal(brief.value.citations, LISTED.length);
-    for (const name of LISTED) assert.ok(text.includes(`\`${name}:1\``), name);
+    assert.equal(briefVal.citations, LISTED.length);
+    for (const name of LISTED) {
+      assert.ok(text.includes(`\`${name}:1\``), name);
+    }
     assert.ok(text.includes('`skipped.txt`: not listed'));
     assert.ok(text.includes('`missing.ts`: no match'));
-    assert.equal(brief.value.unresolved, 1);
+    assert.equal(briefVal.unresolved, 1);
     // Sensitive paths are search excludes; only the ignored file and the unsafe sensitive path are withheld.
-    assert.equal(brief.value.withheld, 2);
+    assert.equal(briefVal.withheld, 2);
     assert.match(brief.output.summary, /3 citations, 1 unresolved, 2 withheld/);
 
     // The diff is the real git diff of the round input against the governed plan.
-    const diff = fs.readFileSync(brief.value.diffPath, 'utf8');
+    const diff = fs.readFileSync(briefVal.diffPath, 'utf8');
     assert.match(diff, /^\+See `-x:1`, `foo\(:1`, `a\.b\[1\]\.txt:1`/m);
 
     // Excludes come from the rendered command, so the check covers what the explorer runs.
@@ -128,8 +142,9 @@ test('brief fix-review-lite on a real repository lists, diffs and searches liter
     assert.equal(dash.status, 0, dash.stderr);
     const dashHits = hitFiles(dash.stdout);
     assert.ok(dashHits.has('src/consumer.ts'));
-    for (const hit of ['.env', 'ops/my secrets.env', 'src/secrets.ts', 'skipped.txt'])
+    for (const hit of ['.env', 'ops/my secrets.env', 'src/secrets.ts', 'skipped.txt']) {
       assert.ok(!dashHits.has(hit), hit);
+    }
     assert.ok(![...dashHits].some((hit) => hit.startsWith('.scratch/')), 'sessions root excluded');
 
     const bracket = search('a.b[1].txt');
@@ -155,7 +170,7 @@ test('brief fix-review-lite keeps a listed unrenderable citation out of the cons
 
     const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
-    const text = fs.readFileSync(brief.value.briefPath, 'utf8');
+    const text = fs.readFileSync(narrow(brief.value, objectWith({ briefPath: isString })).briefPath, 'utf8');
     const excludes = [...text.matchAll(/":\(exclude,(?:literal|glob)\)([^"]+)"/g)].map((match) => match[1]!).sort();
     assert.deepEqual(excludes, ['.scratch/dispatch-skills', '??x??/a.md']);
 
@@ -182,7 +197,7 @@ test('brief fix-review-lite withholds a symlink that resolves outside the reposi
     try {
       fs.symlinkSync(target, path.join(f.root, 'linked.ts'), 'file');
     } catch (error) {
-      if (['EPERM', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+      if (['EPERM', 'EACCES'].includes(nodeErrorCode(error) ?? '')) {
         t.skip('symlink creation needs a privilege this host lacks');
         return;
       }
@@ -193,7 +208,7 @@ test('brief fix-review-lite withholds a symlink that resolves outside the reposi
 
     const brief = await g.run(['brief', 'fix-review-lite', 'work.plan.md']);
     assert.equal(brief.exit, 0, JSON.stringify(brief.output));
-    const text = fs.readFileSync(brief.value.briefPath, 'utf8');
+    const text = fs.readFileSync(narrow(brief.value, objectWith({ briefPath: isString })).briefPath, 'utf8');
     assert.ok(text.includes('`linked.ts`: outside repository'));
     assert.ok(!text.includes('`linked.ts:1`'));
   } finally {

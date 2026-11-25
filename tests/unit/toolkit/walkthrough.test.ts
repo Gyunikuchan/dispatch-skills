@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { renderWalkthrough } from '../../../skills/dispatch/scripts/toolkit/walkthrough.ts';
+import type { WalkthroughView } from '../../../skills/dispatch/scripts/toolkit/walkthrough.ts';
+import type { CoverageState } from '../../../skills/dispatch/scripts/toolkit/coverage.ts';
 
-function view(overrides: Record<string, unknown> = {}) {
+function view(overrides: Partial<WalkthroughView> = {}): WalkthroughView {
   return {
     title: 'Report plan',
     specPath: 'spec/report.spec.md',
@@ -43,7 +45,7 @@ function view(overrides: Record<string, unknown> = {}) {
     reviewRounds: [],
     reviewFixes: [],
     ...overrides,
-  } as Parameters<typeof renderWalkthrough>[0];
+  };
 }
 
 function section(rendered: string, heading: string, nextHeading?: string): string {
@@ -273,8 +275,9 @@ test('walkthrough review focus points to attention details in their owning secti
   );
 
   const verification = section(rendered, '## Verification', '## Deviations & Follow-ups');
-  for (const detail of ['manual approval', 'approved exception', 'SC4'])
+  for (const detail of ['manual approval', 'approved exception', 'SC4']) {
     assert.ok(verification.includes(detail), detail);
+  }
   const deviations = section(rendered, '## Deviations & Follow-ups', '## Review Findings & Resolutions');
   for (const detail of [
     'No user decision is needed.',
@@ -284,8 +287,9 @@ test('walkthrough review focus points to attention details in their owning secti
     'src/orphan.ts',
     '- Deviation: review fix R2-F001: verified but not re-reviewed; commit dddddddddddd; paths src/report.ts',
     '- Deviation: review fix R2-F002: not verified; commit eeeeeeeeeeee; paths none',
-  ])
+  ]) {
     assert.ok(deviations.includes(detail), detail);
+  }
   const findings = section(rendered, '## Review Findings & Resolutions', '## Appendix');
   for (const detail of [
     'R1-F011',
@@ -436,10 +440,11 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     '[source evidence](evidence/first.json)',
     'verified at fedcba6543210987; tests removed in cleanup',
     '### User-Attributed Records',
-    'the user approved this row \\| &lt;!-- literal --&gt;',
+    String.raw`the user approved this row \| &lt;!-- literal --&gt;`,
     '</details>',
-  ])
+  ]) {
     assert.ok(appendix.includes(detail), detail);
+  }
 
   assert.ok(
     section(rendered, '## Verification', '## Deviations & Follow-ups').includes(
@@ -457,14 +462,16 @@ test('walkthrough appendix keeps evidence, user records, deviations, findings, p
     deviations,
     /- Deviation: review fix R1-F001: verified but not re-reviewed; commit dddddddddddd; paths src\/report\.ts/,
   );
-  for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010'])
+  for (const detail of ['diff/1.patch', 'src/orphan.ts', 'Confirm the remaining owner.', 'review-alpha:R1-F010']) {
     assert.ok(deviations.includes(detail), detail);
+  }
   const findings = section(rendered, '## Review Findings & Resolutions');
   for (const detail of [
     '| review-alpha | R1-F001 | 1 | SHOULD | — | Accepted (recurs R1-F001) |',
     '[findings](.state/reviews/review-alpha/round-1/findings.json)',
-  ])
+  ]) {
     assert.ok(findings.includes(detail), detail);
+  }
   assert.ok(!appendix.includes('Review Findings & Resolutions') && !appendix.includes('Deviations & Follow-ups'));
   assert.ok(
     rendered.indexOf('## Verification') < rendered.indexOf('## Deviations & Follow-ups') &&
@@ -560,7 +567,7 @@ test('downgraded finding: a downgraded row appears in attention and in the findi
 
 // SECTION: Coverage
 
-const coverage = (overrides: Record<string, unknown> = {}) => ({
+const coverage = (overrides: Partial<CoverageState> = {}): CoverageState => ({
   targets: ['codex[0]', 'opencode[1]', 'claude[2]', 'agy[3]'],
   completed: ['claude[2]', 'agy[3]'],
   open: [],
@@ -660,8 +667,9 @@ test('walkthrough links governing artifacts instead of restating them', () => {
     'Outcome 1 ([plan task](../../repo/plans/report.plan.md#t1--path-bytes))',
     '[spec/report.spec.md](../../repo/spec/report.spec.md)',
     '[designs/report.design.md](../../repo/designs/report.design.md)',
-  ])
+  ]) {
     assert.ok(rendered.includes(expected), expected);
+  }
   assert.doesNotMatch(rendered, /Copied explanation|Copied behaviour|Plan diagram content/);
   const noDesign = renderWalkthrough(
     view({ repositoryRoot: '/repo', glance: { what: 'Done', how: '', visuals: '' }, visuals: 'Design visual' }),

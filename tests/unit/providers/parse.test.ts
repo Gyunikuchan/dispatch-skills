@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
-import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type {
   Launch,
   LaunchRequest,
@@ -33,7 +34,7 @@ const req: LaunchRequest = {
     arch: 'x64',
     wsl: false,
     bubblewrap: false,
-    argvLimit: 100000,
+    argvLimit: 100_000,
     home: '/h',
     path: [],
     pathExt: [],
@@ -69,8 +70,8 @@ const COPILOT_UNSUPPORTED_HOST_WARNING =
 const COPILOT_INVALID_EFFORT =
   "error: invalid value 'invalid' for '--reasoning-effort <level>'\n  [possible values: none, minimal, low, medium, high, xhigh, max]\n\n  tip: a similar value exists: 'minimal'\n\nFor more information, try '--help'.\n";
 
-function runnerPorts(...results: ProcessResult[]): RunnerPorts & { launches: Launch[] } {
-  const launches: Launch[] = [];
+function runnerPorts(...results: Array<ProcessResult>): RunnerPorts & { launches: Array<Launch> } {
+  const launches: Array<Launch> = [];
   const pending = [...results];
   const ports: RunnerPorts = {
     process: {
@@ -218,7 +219,7 @@ test('copilot retries an effort rejection once without the effort flag', async (
   for (const diagnostic of [
     COPILOT_INVALID_EFFORT,
     COPILOT_INVALID_EFFORT.replaceAll('\n', '\r\n'),
-    'Error: Model \"auto\" does not support reasoning effort configuration (requested: \"low\").\r\n',
+    'Error: Model "auto" does not support reasoning effort configuration (requested: "low").\r\n',
   ]) {
     const ports = runnerPorts(out('', 1, diagnostic), out('ok'));
     const run = await runDelegate(SPECS.copilot, { ...req, effort: 'high' }, 'cli', ports);
@@ -282,7 +283,7 @@ test('attempt session: copilot prefers resume, extracts id, presets only after i
   assert.equal(attempt('copilot', out(''), { resume: 'preset-id-1' }), 'preset-id-1');
   assert.equal(attempt('copilot', out('R\n\nTo resume: copilot --resume 0123456789abcdef')), '0123456789abcdef');
   assert.equal(
-    attempt('copilot', { ...out('partial'), idleMs: 120000 }, { sessionPreset: 'preset-id-2' }),
+    attempt('copilot', { ...out('partial'), idleMs: 120_000 }, { sessionPreset: 'preset-id-2' }),
     'preset-id-2',
   );
   assert.equal(attempt('copilot', out('', 1)), null);

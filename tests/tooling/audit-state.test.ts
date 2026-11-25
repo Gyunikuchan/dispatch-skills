@@ -11,9 +11,8 @@ import {
   reserveRun,
   resolveAuthority,
   updateRun,
-  type RunIo,
-  type ScopeRecord,
 } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+import type { RunIo, ScopeRecord } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 
 const clock = { now: () => new Date('2026-10-07T00:00:00Z') };
 const config = () => loadAuditConfig(DEFAULT_CONFIG_PATH);
@@ -36,10 +35,9 @@ test('audit lifecycle config loads versioned defaults and rejects unknown keys a
       fs.writeFileSync(file, JSON.stringify(value));
       return file;
     };
-  const valid = JSON.parse(fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8')) as {
-    version: number;
-    limits: Record<string, number>;
-  };
+  const valid: { version: number; limits: Record<string, number> } = JSON.parse(
+    fs.readFileSync(DEFAULT_CONFIG_PATH, 'utf8'),
+  );
   assert.throws(() => loadAuditConfig(write({ ...valid, extra: true })), /unknown key.*extra/i);
   assert.throws(
     () => loadAuditConfig(write({ ...valid, limits: { ...valid.limits, madeUp: 1 } })),
@@ -84,8 +82,9 @@ test('audit lifecycle legacy work directory requires a fresh run and keeps its e
 
 test('audit lifecycle budget blocks new work at the configured limit while terminal updates persist', () => {
   const workDir = reserved();
-  for (let i = 1; i <= 3; i++)
+  for (let i = 1; i <= 3; i++) {
     assert.deepEqual(consumeBudget(workDir, 'lead', 'focusedReproductions'), { allowed: true, used: i, limit: 3 });
+  }
   assert.deepEqual(consumeBudget(workDir, 'lead', 'focusedReproductions'), { allowed: false, used: 3, limit: 3 });
   assert.equal(readRun(workDir).budgets['lead']?.['focusedReproductions'], 3);
   assert.throws(() => consumeBudget(workDir, 'lead', 'notALimit'), /unknown limit/i);
@@ -126,14 +125,18 @@ test('audit lifecycle persists terminal probe state with unknown liveness and re
   assert.throws(
     () =>
       updateRun(workDir, (m) => {
-        m.probes['codex/read'] = { ...probe, lifecycle: 'exploded' as never };
+        const exploded = { ...probe };
+        Reflect.set(exploded, 'lifecycle', 'exploded');
+        m.probes['codex/read'] = exploded;
       }),
     /lifecycle/,
   );
   assert.throws(
     () =>
       updateRun(workDir, (m) => {
-        m.scopes['ask'] = { lifecycle: 'done' as never, handle: null, budgets: {}, resultPath: null, gaps: [] };
+        const done: ScopeRecord = { lifecycle: 'running', handle: null, budgets: {}, resultPath: null, gaps: [] };
+        Reflect.set(done, 'lifecycle', 'done');
+        m.scopes['ask'] = done;
       }),
     /lifecycle/,
   );
@@ -185,10 +188,11 @@ test('audit lifecycle stale baseline rejection protects a completed baseline and
   assert.equal(readRun(workDir, { revision: 'abc123' }).baseline.fingerprints['git-status.txt'], 'sha256:1');
 });
 
+const exists = (present: Array<string>) => (p: string) => present.includes(p);
+
 test('audit lifecycle authority reconciliation keeps the source authoritative until publication', () => {
   const source = '/repo/work',
     destination = '/tmp/dest';
-  const exists = (present: string[]) => (p: string) => present.includes(p);
   assert.deepEqual(resolveAuthority(source, null, exists([source])), {
     authoritative: source,
     uncertain: [],
@@ -219,8 +223,8 @@ test('audit lifecycle authority reconciliation keeps the source authoritative un
 test('audit lifecycle manifest lock serializes a concurrent scope update so probe and lead updates both survive', () => {
   const workDir = reserved();
   const scope: ScopeRecord = { lifecycle: 'running', handle: 'agent-1', budgets: {}, resultPath: null, gaps: [] };
-  const sleeps: number[] = [];
-  let blocked: unknown = null;
+  const sleeps: Array<number> = [];
+  let blocked: unknown;
   // The lead's write lands while the probe holds the lock, between its read and its write.
   updateRun(workDir, (m) => {
     try {
@@ -232,8 +236,8 @@ test('audit lifecycle manifest lock serializes a concurrent scope update so prob
         fs,
         { retries: 2, sleep: (ms) => sleeps.push(ms) },
       );
-    } catch (err) {
-      blocked = err;
+    } catch (error) {
+      blocked = error;
     }
     m.hostHandles['probe'] = 'h-probe';
   });
@@ -262,7 +266,7 @@ test('audit lifecycle manifest lock reclaims a stale lock and keeps waiting on a
     { clock: { now: () => now }, sleep: () => assert.fail('stale lock must not be waited on') },
   );
   assert.equal(readRun(workDir).hostHandles['lead'], 'h1');
-  fs.writeFileSync(lock, JSON.stringify({ pid: 1, at: now.getTime() - 1_000 }));
+  fs.writeFileSync(lock, JSON.stringify({ pid: 1, at: now.getTime() - 1000 }));
   let waits = 0;
   assert.throws(
     () =>

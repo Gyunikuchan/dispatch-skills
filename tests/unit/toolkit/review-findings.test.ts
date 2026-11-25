@@ -6,14 +6,17 @@ import { test } from 'node:test';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
 import { appendRecords, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import {
+  renderFindingsFile,
   renderFindingsSection,
   reviewRows,
   refreshFindingsSection,
   rulingReview,
+  rulingsTemplate,
 } from '../../../skills/dispatch/scripts/toolkit/review-findings.ts';
-import * as findingsFiles from '../../../skills/dispatch/scripts/toolkit/review-findings.ts';
 import type { Finding } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
 import type { Manifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { narrow } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'review-findings-'));
@@ -21,11 +24,22 @@ function fixture() {
   const docs = path.join(root, 'docs');
   fs.mkdirSync(session, { recursive: true });
   fs.mkdirSync(docs, { recursive: true });
+  const manifest: Manifest = {
+    schemaVersion: 1,
+    folderName: '20261028T0000Z-review-findings',
+    sessionId: 'review-findings',
+    safeSessionId: 'review-findings',
+    repositoryRoot: root,
+    sessionTitle: 'Review findings',
+    createdAt: '2026-10-28T00:00:00.000Z',
+    lastUsedAt: '2026-10-28T00:00:00.000Z',
+    location: 'workspace',
+  };
   return {
     root,
     session,
     docs,
-    manifest: { repositoryRoot: root } as Manifest,
+    manifest,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -34,8 +48,8 @@ function addRound(
   session: string,
   review: string,
   round: number,
-  findings: readonly object[],
-  roster: readonly object[] = [],
+  findings: ReadonlyArray<object>,
+  roster: ReadonlyArray<object> = [],
   generation = 1,
 ): void {
   const directory = path.join(session, '.state', 'reviews', review, `round-${round}`);
@@ -50,7 +64,7 @@ function addSlotOutcome(
   round: number,
   generation: number,
   physicalSlot: string,
-  outcome: object,
+  outcome: JsonObject,
 ): void {
   const directory = path.join(session, '.state', 'reviews', review, `round-${round}`, `gen-${generation}`, 'slots');
   fs.mkdirSync(directory, { recursive: true });
@@ -187,7 +201,9 @@ test('plan and design refresh only the findings section and preserve governed ha
         '# Strategy\r\n\r\n## Review Findings & Resolutions\r\nOld findings\r\n\r\n## Next\r\nKeep this design.\r\n',
       ],
     ]);
-    for (const [file, source] of before) fs.writeFileSync(file, source);
+    for (const [file, source] of before) {
+      fs.writeFileSync(file, source);
+    }
     addRound(
       f.session,
       'plan-work.plan',
@@ -220,7 +236,9 @@ test('plan and design refresh only the findings section and preserve governed ha
       assert.ok(updated.endsWith(suffix));
       assert.equal(artifactHash(kind, updated), hash);
       assert.match(updated, /Round 1/);
-      if (kind === 'plan') assert.match(updated, /\| SHOULD \| actual-plan-reviewer\/medium \| Open \|/);
+      if (kind === 'plan') {
+        assert.match(updated, /\| SHOULD \| actual-plan-reviewer\/medium \| Open \|/);
+      }
       assert.equal(refreshFindingsSection(f.session, f.manifest, review), 'unchanged');
     }
   } finally {
@@ -264,7 +282,7 @@ test('rulingReview accepts only plan and design review finding subjects', () => 
 
 // SECTION: Corrected severity in rendered rows
 
-function ledgerWith(f: ReturnType<typeof fixture>, rulings: readonly object[]): void {
+function ledgerWith(f: ReturnType<typeof fixture>, rulings: ReadonlyArray<object>): void {
   const rows = rulings.map((data, index) => ({
     kind: 'ruling',
     by: 'orchestrator',
@@ -289,7 +307,7 @@ const BLOCKS = {
 };
 
 test('corrected severity: rows reflect latest corrected severity rules across accepted, deferred, and rejected rulings', () => {
-  const cases: [string, string, readonly object[], string, string | undefined][] = [
+  const cases: Array<[string, string, ReadonlyArray<object>, string, string | undefined]> = [
     ['MUST', 'blocks', [DEGRADES], 'SHOULD', 'MUST'],
     ['MUST', 'blocks', [DEGRADES, { ruling: 'deferred', rationale: 'Later' }], 'SHOULD', 'MUST'],
     ['MUST', 'blocks', [DEGRADES, { ruling: 'accepted', rationale: 'Applied the fix' }], 'SHOULD', 'MUST'],
@@ -387,11 +405,14 @@ const ratedFinding: Finding = {
   scope: 'in',
   origin: 'fix-induced',
 };
-const legacyFinding = { id: 'R1-F001', severity: 'SHOULD' } as Finding;
+const legacyFinding = narrow(
+  { id: 'R1-F001', severity: 'SHOULD' },
+  (value): value is Finding => typeof value === 'object' && value !== null && 'id' in value && 'severity' in value,
+);
 
 test('findings file: renders Markdown in severity order with neutralized text and missing ratings', () => {
   assert.equal(
-    findingsFiles.renderFindingsFile([legacyFinding, ratedFinding]),
+    renderFindingsFile([legacyFinding, ratedFinding]),
     [
       '### R1-F002 MUST',
       '- Rating: blocks/realistic; category reliability; scope in; origin fix-induced',
@@ -409,8 +430,8 @@ test('findings file: renders Markdown in severity order with neutralized text an
       '',
     ].join('\n'),
   );
-  assert.equal(findingsFiles.renderFindingsFile([]), 'No findings.\n');
-  assert.deepEqual(findingsFiles.rulingsTemplate('plan-work.plan', 1, []), []);
+  assert.equal(renderFindingsFile([]), 'No findings.\n');
+  assert.deepEqual(rulingsTemplate('plan-work.plan', 1, []), []);
 });
 
 test('findings file: a filled batch appends and a later ruling needs a new key', async () => {
@@ -428,7 +449,7 @@ test('findings file: a filled batch appends and a later ruling needs a new key',
       }),
     );
     const review = 'plan-work.plan';
-    const template = findingsFiles.rulingsTemplate(review, 1, [ratedFinding, legacyFinding]);
+    const template = rulingsTemplate(review, 1, [ratedFinding, legacyFinding]);
     assert.deepEqual(
       template,
       ['R1-F002', 'R1-F001'].map((id) => ({

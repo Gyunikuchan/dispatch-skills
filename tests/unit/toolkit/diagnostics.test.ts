@@ -1,41 +1,70 @@
+import { memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { readReviews } from '../../../skills/dispatch/scripts/toolkit/review-storage.ts';
 import { hostThreadId, observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
 import {
-  optionalDiagnostics,
   sessionFacts,
+  stageMilestones,
   writeDiagnostics,
 } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
+import { isRecord } from '../../../skills/dispatch/scripts/lib/config.ts';
+import type { DelegateRequest } from '../../../skills/dispatch/scripts/providers/types.ts';
 import {
   heuristics,
   normalizeUsage,
   sanitizeFacts,
 } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
-import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
-import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
-import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
+
+function requestForLog(logPath: string): DelegateRequest {
+  const cwd = path.dirname(path.dirname(logPath));
+  return {
+    logPath,
+    cwd,
+    promptPath: path.join(cwd, 'prompt.md'),
+    briefPath: path.join(cwd, 'brief.md'),
+    attachments: [],
+    model: null,
+    effort: null,
+    sandbox: true,
+    schemaPath: null,
+    resume: null,
+    timeoutMs: 1000,
+    outputCapBytes: 1024,
+  };
+}
 
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value) + '\n');
 };
 
+function readCapture(file: string) {
+  const captured: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(isRecord(captured));
+  return captured;
+}
+
+const isoTime = (ms: number) => new Date(ms).toISOString();
+
+const stageCapture = (name: string, start: number, end: number) => ({
+  capture: { state: 'completed' as const, start, end },
+  phases: [{ key: name, name }],
+  invocations: [],
+  reviews: [],
+});
+
 test('Copilot diagnostics retains billing evidence without disabled reads', async () => {
-  const { memoryFs } = await import('../lib/usage/helpers/memory-fs.ts');
   for (const enabled of [false, true]) {
     const f = sessionFixture({ memory: true });
     try {
@@ -144,10 +173,15 @@ test('Copilot native replacement clears primary effort in persistence and saved 
     assert.equal(replacement.model, 'reserve');
     assert.equal(replacement.effort, undefined);
     observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'pending', value: null });
-    const captures = fs
-      .readdirSync(path.join(f.session, '.state', 'diagnostics'))
-      .map((file) => JSON.parse(fs.readFileSync(path.join(f.session, '.state', 'diagnostics', file), 'utf8')));
-    assert.equal(captures[0].invocations.find((i: { surface: string }) => i.surface === 'native').effort, undefined);
+    const directory = path.join(f.session, '.state', 'diagnostics');
+    const [file] = fs.readdirSync(directory);
+    assert.ok(file);
+    const capture = readCapture(path.join(directory, file));
+    assert.ok(Array.isArray(capture['invocations']));
+    const invocations: Array<unknown> = capture['invocations'];
+    const native = invocations.find((invocation) => isRecord(invocation) && invocation['surface'] === 'native');
+    assert.ok(isRecord(native));
+    assert.equal(native['effort'], undefined);
     captureRuns(f.session, [
       {
         phase: 'code-review',
@@ -347,7 +381,7 @@ test('native failed slots retain captured physical settings after roster changes
   }
 });
 
-test('saved invalid and interrupted native fallback markers remain terminal', async () => {
+test('saved invalid and interrupted native fallback markers remain terminal', async (t) => {
   const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
 
   const invalidFixture = sessionFixture({ memory: true });
@@ -397,14 +431,16 @@ test('saved invalid and interrupted native fallback markers remain terminal', as
     const nativeSlotPath = path.join(dir, 'slots', `${primary.slot}.json`);
     const rename = fs.renameSync;
     const interruptedSave = Object.assign(new Error('interrupted done save'), { code: 'EIO' });
-    fs.renameSync = (from, to) => {
-      if (to === nativeSlotPath) throw interruptedSave;
+    const interruptedRename = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+      if (to === nativeSlotPath) {
+        throw interruptedSave;
+      }
       return rename(from, to);
-    };
+    });
     try {
       await assert.rejects(fanOutComplete(input, observer.deps), /interrupted done save/);
     } finally {
-      fs.renameSync = rename;
+      interruptedRename.mock.restore();
     }
     observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'interrupted', value: null });
     saveRound({ session: invalidFixture.session, review, round: 1, roster: [primary], outcomes: [invalid] });
@@ -454,13 +490,12 @@ test('saved invalid and interrupted native fallback markers remain terminal', as
       observer.deps,
     );
     const savedPath = path.join(dir, 'slots', `${original.slot}.json`);
-    const marked = JSON.parse(fs.readFileSync(savedPath, 'utf8')) as {
-      state: string;
-      cliFallback?: true;
-      model?: string;
-      effort?: string;
-    };
-    assert.equal(marked.cliFallback, true);
+    const marked: unknown = JSON.parse(fs.readFileSync(savedPath, 'utf8'));
+    assert.ok(isRecord(marked));
+    const { slot: savedSlot, state, cliFallback } = marked;
+    assert.equal(savedSlot, original.slot);
+    assert.ok(typeof state === 'string');
+    assert.equal(cliFallback, true);
     const newPending = next.find((row) => row.slot === replacement.slot)!;
     observer.finish({ ok: false, exit: 4, reason: 'native-pending', summary: 'fallback interrupted', value: null });
     const changedOriginal = { ...original, model: 'changed-roster-model', effort: 'low' };
@@ -469,7 +504,7 @@ test('saved invalid and interrupted native fallback markers remain terminal', as
       review,
       round: 1,
       roster: [changedOriginal, replacement],
-      outcomes: [marked, newPending],
+      outcomes: [{ ...marked, slot: savedSlot, state }, newPending],
     });
     const row = sessionFacts(
       fallbackFixture.session,
@@ -500,7 +535,7 @@ const rosterSlot = (
 
 const finding = (
   id: string,
-  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: string[] } = {},
+  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: Array<string> } = {},
 ) => ({
   id,
   severity: marker.severity ?? 'SHOULD',
@@ -510,8 +545,8 @@ const finding = (
   requiredChange: `Resolve ${id}`,
   sources: marker.sources ?? ['claude[0]'],
   scope: 'in',
-  ...(marker.recurrence ? { recurrence: marker.recurrence } : {}),
-  ...(marker.unresolved ? { unresolved: marker.unresolved } : {}),
+  ...(marker.recurrence && { recurrence: marker.recurrence }),
+  ...(marker.unresolved && { unresolved: marker.unresolved }),
 });
 
 const slotFile = (reviewDir: string, round: number, slot: string, generation = 1) =>
@@ -524,7 +559,7 @@ const roundSubject = (session: string, review: string, round: number, generation
     .digest('hex')
     .slice(0, 16);
 
-const captureRuns = (session: string, invocations: unknown[]) =>
+const captureRuns = (session: string, invocations: Array<unknown>) =>
   writeJson(path.join(session, '.state', 'diagnostics', 'run-1.json'), {
     capture: { state: 'completed', start: 0, end: 1 },
     phases: [],
@@ -532,49 +567,13 @@ const captureRuns = (session: string, invocations: unknown[]) =>
     reviews: [],
   });
 
-const attempt = (
-  subject: string,
-  input: {
-    slot: string;
-    provider: string;
-    model: string;
-    attempt?: number;
-    targetSlot?: string;
-    outcome?: string;
-    launched?: boolean;
-    tokens?: number;
-  },
-) => ({
-  phase: 'plan-review',
-  subject,
-  attempt: input.attempt ?? 1,
-  provider: input.provider,
-  model: input.model,
-  mode: 'cli',
-  surface: 'cli',
-  launched: input.launched ?? true,
-  outcome: input.outcome ?? 'ok',
-  slot: input.slot,
-  ...(input.targetSlot ? { targetSlot: input.targetSlot } : {}),
-  ...(input.tokens === undefined ? {} : { usage: { input: input.tokens, output: 0 } }),
-});
-
-const ruling = (seq: number, review: string, id: string, value: string) => ({
-  seq,
-  key: `ruling-${seq}`,
-  at: `2026-01-01T00:00:0${seq}Z`,
-  kind: 'ruling',
-  by: 'tool',
-  data: { subject: `review:${review}:${id}`, ruling: value, rationale: 'Recorded.' },
-});
-
-function saveRound(input: {
+function saveRound<Outcome extends { slot: string; state: string }>(input: {
   session: string;
   review: string;
   round: number;
-  roster: ReturnType<typeof rosterSlot>[];
-  outcomes: unknown[];
-  findings?: unknown[];
+  roster: Array<ReturnType<typeof rosterSlot>>;
+  outcomes: Array<Outcome>;
+  findings?: Array<unknown>;
   generation?: number;
 }) {
   const generation = input.generation ?? 1;
@@ -592,8 +591,7 @@ function saveRound(input: {
     target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
   });
   input.outcomes.forEach((outcome) => {
-    const slot = (outcome as { slot: string }).slot;
-    writeJson(slotFile(reviewDir, input.round, slot, generation), outcome);
+    writeJson(slotFile(reviewDir, input.round, outcome.slot, generation), outcome);
   });
   if (input.findings) {
     writeJson(path.join(roundDir, 'findings.json'), {
@@ -603,197 +601,9 @@ function saveRound(input: {
       level: 'high',
       findings: input.findings,
       clusters: [],
-      failed: input.outcomes.filter((outcome) => (outcome as { state: string }).state === 'failed'),
+      failed: input.outcomes.filter((outcome) => outcome.state === 'failed'),
     });
   }
-}
-
-const hostTest_HEAD = 'a'.repeat(40);
-const hostTest_TREE = 'b'.repeat(40);
-
-function hostTest_planSource(): string {
-  return [
-    '# Report fixture',
-    '',
-    '## Task Map',
-    '| ID | Title | Outcome | Prerequisites | Criteria |',
-    '| --- | --- | --- | --- | --- |',
-    '| T1 | Task 1 | Works | none | SC1 |',
-    '',
-    '## Proposed Changes',
-    '',
-    '### T1 — Task 1',
-    '#### [NEW] src/task-1.ts',
-    '- Purpose: implements the fixture behavior.',
-    '',
-    '## Success Criteria',
-    '- [SC1] Criterion works',
-    '  - Changes: src/task-1.ts',
-    '  - Check: `node verify-1.js`',
-    '  - Evidence: check',
-    '',
-    '## Verification Plan',
-    '### Automated Tests',
-    '- `node verify-1.js`',
-    '- `node contract-check.js`',
-    '',
-  ].join('\n');
-}
-
-let hostTest_eventNumber = 0;
-
-async function hostTest_fixture() {
-  const f = sessionFixture({ memory: true });
-  const skillRoot = path.join(f.root, 'isolated-skill');
-  fs.mkdirSync(skillRoot);
-  fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
-  f.deps.skillRoot = skillRoot;
-  f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', hostTest_planSource());
-  await hostTest_append(f, {
-    kind: 'bind',
-    by: 'tool',
-    key: `bind:${++hostTest_eventNumber}`,
-    data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
-  });
-  return { ...f, skillRoot };
-}
-
-async function hostTest_invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
-  f.lines.splice(0);
-  const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
-  assert.equal(f.lines.length, 1);
-  return {
-    exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
-  };
-}
-
-async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
-  const file = f.artifact(`event-${++hostTest_eventNumber}.json`, JSON.stringify(record));
-  const result = await hostTest_invoke(f, 'ledger', 'append', file);
-  assert.equal(result.exit, 0, result.output.summary);
-  return result.output;
-}
-
-async function hostTest_integrate(
-  f: ReturnType<typeof sessionFixture>,
-  state: FakeGitState,
-  dest = { path: f.root, branch: 'main' },
-) {
-  const worktree = path.join(f.session, '.state', 'worktrees', 'integration');
-  fs.mkdirSync(worktree, { recursive: true });
-  state.session = f.session;
-  f.deps.run = fakeGit(state);
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:opened:${++hostTest_eventNumber}`,
-    data: {
-      phase: 'opened',
-      path: '.state/worktrees/integration',
-      branch: 'dispatch/test/integration',
-      base: 'f'.repeat(40),
-      dest,
-    },
-  });
-  return worktree;
-}
-
-async function hostTest_evidence(
-  f: ReturnType<typeof sessionFixture>,
-  criterion: string,
-  commandDigest: string,
-  tree: string,
-) {
-  const data = { criterion, commandDigest, tree, clean: true, before: tree, after: tree, exit: 0 };
-  const digest = crypto.createHash('sha256').update(stableValue(data)).digest('hex');
-  const evidencePath = `.state/evidence/${digest}.json`;
-  const evidenceFile = path.join(f.session, evidencePath);
-  fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
-  fs.writeFileSync(evidenceFile, JSON.stringify(data));
-  await hostTest_append(f, {
-    kind: 'evidence',
-    by: 'tool',
-    key: `evidence:${digest}`,
-    data: { ...data, path: evidencePath },
-  });
-  return evidencePath;
-}
-
-async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
-  const plan = loadPlan(f.session, readManifest(f.session));
-  const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
-  const paths = new Map<string, string>();
-  for (const row of rows) paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
-  return paths;
-}
-
-function hostTest_gitState(
-  session: string,
-  head = hostTest_HEAD,
-  tree = hostTest_TREE,
-  testedTree = tree,
-): FakeGitState {
-  return { session, head, tree, testedTree, changes: [], calls: [] };
-}
-
-async function hostTest_deliver(
-  f: ReturnType<typeof sessionFixture>,
-  head: string,
-  dest = { path: f.root, branch: 'main' },
-) {
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:delivered:${++hostTest_eventNumber}`,
-    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
-  });
-}
-
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
-  let n = BigInt(val);
-  while (n > 0x7fn) {
-    bytes.push(Number((n & 0x7fn) | 0x80n));
-    n >>= 7n;
-  }
-  bytes.push(Number(n & 0x7fn));
-  return bytes;
-}
-function encodeTag(fieldNum: number, wireType: number): number[] {
-  return encodeVarint((fieldNum << 3) | wireType);
-}
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
-  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
-  return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
-}
-function buildGenMetadataBlob(options: {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  reasoning?: number;
-  modelSlug?: string;
-  displayName?: string;
-  lastStepIndex?: number;
-}): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
-  if (options.lastStepIndex !== undefined) {
-    const kv = [
-      ...encodeLengthDelimited(1, 'last_step_index'),
-      ...encodeLengthDelimited(2, String(options.lastStepIndex)),
-    ];
-    tag1Fields.push(...encodeLengthDelimited(20, kv));
-  }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
-  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
 
 test('diagnostic storage failure preserves durable attempts and reports one bounded failure', async (t) => {
@@ -809,22 +619,24 @@ test('diagnostic storage failure preserves durable attempts and reports one boun
     });
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
     const dir = path.join(f.session, 'work');
-    await observer.deps.delegate('claude', { logPath: path.join(dir, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate('claude', requestForLog(path.join(dir, 'logs', 'claude[0].log')), 'cli');
     const directory = path.join(f.session, '.state', 'diagnostics'),
       file = path.join(directory, fs.readdirSync(directory)[0]!);
     const previous = fs.readFileSync(file);
     const rename = fs.renameSync,
       write = fs.writeFileSync;
     t.mock.method(fs, 'renameSync', ((from: fs.PathLike, to: fs.PathLike) => {
-      if (String(to) === file) throw new Error('rename failure');
+      if (String(to) === file) {
+        throw new Error('rename failure');
+      }
       return rename(from, to);
     }) as typeof fs.renameSync);
-    t.mock.method(fs, 'writeFileSync', ((target: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+    t.mock.method(fs, 'writeFileSync', ((target: fs.PathOrFileDescriptor, ...args: Array<unknown>) => {
       if (String(target) === file) {
         write(file, '{partial');
         throw new Error('partial write');
       }
-      return (write as (...args: any[]) => void)(target, ...args);
+      return (write as (...args: Array<any>) => void)(target, ...args);
     }) as typeof fs.writeFileSync);
     observer.deps.diagnostics!({
       kind: 'routing',
@@ -1004,20 +816,24 @@ test('diagnostics aggregate subjects provenance and partial collection determini
     }
     const directory = path.join(f.session, '.state', 'diagnostics');
     const files = fs.readdirSync(directory);
-    const captures = files.map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), 'utf8')));
-    assert.deepEqual(captures.map((c) => c.version).sort(), ['1.2.3', '1.2.4']);
-    assert.notEqual(captures[0].build, captures[1].build);
+    const captures = files.map((file) => readCapture(path.join(directory, file)));
+    const versions = captures.map((capture) => capture['version']);
+    assert.equal(versions.length, 2);
+    assert.deepEqual(new Set(versions), new Set(['1.2.3', '1.2.4']));
+    assert.notEqual(captures[0]?.['build'], captures[1]?.['build']);
     for (const capture of captures) {
+      const version = capture['version'];
+      assert.equal(typeof version, 'string');
       const contentHash = crypto
         .createHash('sha256')
-        .update('skill ' + capture.version)
+        .update('skill ' + version)
         .digest('hex');
       const build = crypto
         .createHash('sha256')
         .update(JSON.stringify([['SKILL.md', contentHash]]))
         .digest('hex')
         .slice(0, 12);
-      assert.equal(capture.build, build, 'stored build measures the collecting tree');
+      assert.equal(capture['build'], build, 'stored build measures the collecting tree');
     }
     const nativeDir = path.join(f.session, '.state', 'asks', 'subject', 'attempt-1');
     for (const state of ['pending', 'completed', 'completed'] as const) {
@@ -1060,7 +876,7 @@ test('diagnostics aggregate subjects provenance and partial collection determini
       facts.provenance
         ?.filter((p) => p.version)
         .map((p) => [p.version, p.config?.['write-concurrency']])
-        .sort(),
+        .sort((left, right) => String(left[0]).localeCompare(String(right[0]))),
       [
         ['1.2.3', 2],
         ['1.2.4', 3],
@@ -1092,8 +908,9 @@ test('diagnostics aggregate subjects provenance and partial collection determini
     assert.match(report, /plan review/);
     assert.match(report, /subject [a-f0-9]{16}/);
     assert.match(report, /unknown historical/);
-    for (let i = 0; i < files.length; i++)
+    for (let i = 0; i < files.length; i++) {
       fs.renameSync(path.join(directory, files[i]!), path.join(directory, 'shuffled-' + (files.length - i) + '.json'));
+    }
     assert.deepEqual(sessionFacts(f.session, fold, 'complete').phases, facts.phases);
   } finally {
     f.cleanup();
@@ -1107,7 +924,7 @@ test('diagnostics detect toolkit rejection and writer relaunch evidence', async 
     fs.mkdirSync(skill);
     writeJson(path.join(skill, 'config.jsonc'), { diagnostics: true });
     f.deps.skillRoot = skill;
-    for (const reason of ['native-pending', 'approval-required', 'invalid-record', 'invalid-record'])
+    for (const reason of ['native-pending', 'approval-required', 'invalid-record', 'invalid-record']) {
       observeTool(f.session, 'record', 'append', undefined, f.deps)!.finish({
         ok: false,
         exit: 4,
@@ -1115,6 +932,7 @@ test('diagnostics detect toolkit rejection and writer relaunch evidence', async 
         summary: 'private',
         value: null,
       });
+    }
     const records = [
       ['A', 'launched', 'one'],
       ['B', 'launched', 'two'],
@@ -1473,7 +1291,9 @@ test('disabled toolkit diagnostics add no fields or artifacts and diagnostic I/O
       assert.equal(await main(['review', 'run', '--session', f.session, '--host', 'codex'], f.deps), 4);
       assert.equal(f.output().reason, 'native-pending');
       assert.doesNotMatch(f.lines[0]!, /diagnostic|retro/);
-      if (!enabled) assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false);
+      if (!enabled) {
+        assert.equal(fs.existsSync(path.join(f.session, '.state', 'diagnostics')), false);
+      }
     } finally {
       f.cleanup();
     }
@@ -1533,7 +1353,7 @@ test('diagnostics keep durable attempts across a later crash and exclude cumulat
           schemaPath: null,
           resume: null,
           cwd: f.root,
-          timeoutMs: 10000,
+          timeoutMs: 10_000,
           outputCapBytes: 1024,
           attachments: [],
           logPath: 'codex[0].log',
@@ -1586,18 +1406,25 @@ test('diagnostics preserve exception attempts and durable capture boundaries', a
     };
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
     const directory = path.join(f.session, '.state', 'diagnostics');
-    assert.equal(fs.readdirSync(directory).length, 1);
+    const files = fs.readdirSync(directory);
+    const [file] = files;
+    assert.equal(files.length, 1);
+    assert.ok(file);
     await assert.rejects(
-      observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli'),
+      observer.deps.delegate('claude', requestForLog(path.join(f.session, 'logs', 'claude[0].log')), 'cli'),
       (e) => e === error,
     );
-    const read = () => JSON.parse(fs.readFileSync(path.join(directory, fs.readdirSync(directory)[0]!), 'utf8'));
-    assert.equal(read().invocations.length, 1);
-    assert.equal(read().capture.state, 'opened');
+    const opened = readCapture(path.join(directory, file));
+    assert.ok(Array.isArray(opened['invocations']));
+    assert.equal(opened['invocations'].length, 1);
+    assert.ok(isRecord(opened['capture']));
+    assert.equal(opened['capture']['state'], 'opened');
     observer.finish({ ok: false, exit: 2, reason: 'invalid-input', summary: 'private', value: null });
-    assert.equal(read().capture.state, 'completed');
-    assert.deepEqual(read().rejectedTools, [{ tool: 'ask', action: 'run', cls: 'invalid-input' }]);
-    assert.doesNotMatch(JSON.stringify(read()), /private/);
+    const completed = readCapture(path.join(directory, file));
+    assert.ok(isRecord(completed['capture']));
+    assert.equal(completed['capture']['state'], 'completed');
+    assert.deepEqual(completed['rejectedTools'], [{ tool: 'ask', action: 'run', cls: 'invalid-input' }]);
+    assert.doesNotMatch(JSON.stringify(completed), /private/);
   } finally {
     f.cleanup();
   }
@@ -1606,31 +1433,27 @@ test('diagnostics preserve exception attempts and durable capture boundaries', a
 test('host phase milestones order reviews and attribute host usage and slot yield', async () => {
   // design-led milestones enter plan after the last design review and implementation at the earlier launch
   {
-    const { stageMilestones } = await import('../../../skills/dispatch/scripts/toolkit/diagnostics.ts');
-    const stamp = (n: number) => new Date(n).toISOString();
-    const basic = { records: [{ kind: 'confirm', at: stamp(1), data: {} }], lastSeq: 1, torn: null } as unknown as Fold;
+    const basic: Fold = {
+      records: [{ seq: 1, key: 'confirm', by: 'user', kind: 'confirm', at: isoTime(1), data: {} }],
+      lastSeq: 1,
+      torn: null,
+    };
     assert.deepEqual(stageMilestones(basic, [], 0), [
       { stage: 'spec', atMs: 0 },
       { stage: 'plan', atMs: 1 },
     ]);
-    const fold = {
+    const fold: Fold = {
       records: [
-        { kind: 'confirm', at: stamp(2), data: {} },
-        { kind: 'writer', at: stamp(9), data: { phase: 'launched' } },
-        { kind: 'approval', at: stamp(10), data: {} },
+        { seq: 1, key: 'confirm', by: 'user', kind: 'confirm', at: isoTime(2), data: {} },
+        { seq: 2, key: 'writer', by: 'tool', kind: 'writer', at: isoTime(9), data: { phase: 'launched' } },
+        { seq: 3, key: 'approval', by: 'user', kind: 'approval', at: isoTime(10), data: {} },
       ],
       lastSeq: 3,
       torn: null,
-    } as unknown as Fold;
-    const capture = (name: string, start: number, end: number) => ({
-      capture: { state: 'completed' as const, start, end },
-      phases: [{ key: name, name }],
-      invocations: [],
-      reviews: [],
-    });
+    };
     const stages = stageMilestones(
       fold,
-      [capture('design review', 3, 4), capture('design review', 5, 6), capture('plan review', 7, 8)],
+      [stageCapture('design review', 3, 4), stageCapture('design review', 5, 6), stageCapture('plan review', 7, 8)],
       1,
     );
     assert.deepEqual(stages, [
@@ -1641,9 +1464,10 @@ test('host phase milestones order reviews and attribute host usage and slot yiel
       { stage: 'plan review', atMs: 7 },
       { stage: 'implementation', atMs: 9 },
     ]);
-    assert.deepEqual(stageMilestones({ records: [], lastSeq: 0, torn: null }, [capture('design review', 3, 4)], 1), [
-      { stage: 'design review', atMs: 1 },
-    ]);
+    assert.deepEqual(
+      stageMilestones({ records: [], lastSeq: 0, torn: null }, [stageCapture('design review', 3, 4)], 1),
+      [{ stage: 'design review', atMs: 1 }],
+    );
   }
 
   // host phase: sessionFacts builds phase milestones including interleaved A, B, A review subjects
@@ -1715,13 +1539,9 @@ test('host phase milestones order reviews and attribute host usage and slot yiel
           .digest('hex')
           .slice(0, 16);
 
-      const msg = (id: string, at: number) =>
-        JSON.stringify({
-          type: 'assistant',
-          timestamp: new Date(at).toISOString(),
-          message: { id, model: 'm', usage: { input_tokens: 10, output_tokens: 1 } },
-        });
-      const content = Buffer.from([msg('m0', 500), msg('m1', 1200), msg('m2', 2200), msg('m3', 3200)].join('\n'));
+      const content = Buffer.from(
+        [500, 1200, 2200, 3200].map((at, index) => usageLine('m' + index, at, 10, 1)).join('\n'),
+      );
       const customDeps = {
         ...f.deps,
         clock: () => 4000,
@@ -1734,7 +1554,7 @@ test('host phase milestones order reviews and attribute host usage and slot yiel
           decompress: null,
         },
       };
-      const manifest = { createdAt: new Date(100).toISOString() } as never;
+      const manifest = { ...readManifest(f.session), createdAt: new Date(100).toISOString() };
       const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete', {
         manifest,
         deps: customDeps,
@@ -1842,7 +1662,7 @@ test('host phase milestones order reviews and attribute host usage and slot yiel
       assert.equal(facts.startedAt, '2026-12-05');
       assert.deepEqual(facts.hosts, ['claude', 'agy']);
       assert.equal(facts.slotYield?.length, 1);
-      const row = facts.slotYield![0]!;
+      const row = facts.slotYield[0]!;
       assert.equal(row.tokens, 360);
       assert.equal(row.attempts?.length, 2);
       assert.deepEqual(
@@ -1857,9 +1677,9 @@ test('host phase milestones order reviews and attribute host usage and slot yiel
       const f2 = sessionFixture({ memory: true });
       try {
         const manifestPath = path.join(f2.session, 'manifest.json');
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-        manifest.createdAt = '2026-11-20T08:00:00Z';
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+        const manifest = readManifest(f2.session);
+        assert.ok(manifest);
+        writeJson(manifestPath, { ...manifest, createdAt: '2026-11-20T08:00:00Z' });
         writeJson(path.join(f2.session, '.state', 'diagnostics', 'run-0.json'), {
           capture: { state: 'completed', start: 0, end: 1 },
           phases: [],
@@ -1903,7 +1723,9 @@ const reviewKey = (session: string, review: string) =>
 const workloadRound = (session: string, review: string, round: number, generations = 1) => {
   const roundDir = path.join(session, '.state', 'reviews', review, `round-${round}`);
   writeJson(path.join(roundDir, 'round.json'), { round, generation: generations, cap: 4, roster: [] });
-  for (let g = 1; g <= generations; g++) fs.mkdirSync(path.join(roundDir, `gen-${g}`), { recursive: true });
+  for (let g = 1; g <= generations; g++) {
+    fs.mkdirSync(path.join(roundDir, `gen-${g}`), { recursive: true });
+  }
 };
 
 const workloadCapture = (
@@ -1911,19 +1733,19 @@ const workloadCapture = (
   name: string,
   capture: { start: number; end?: number },
   phase: string | undefined,
-  invocations: unknown[] = [],
+  invocations: Array<unknown> = [],
   meta: { host?: string; hostThread?: string } = {},
 ) =>
   writeJson(path.join(session, '.state', 'diagnostics', `${name}.json`), {
-    ...(meta.host === undefined ? {} : { host: meta.host }),
-    ...(meta.hostThread === undefined ? {} : { hostThread: meta.hostThread }),
+    ...(!(meta.host === undefined) && { host: meta.host }),
+    ...(!(meta.hostThread === undefined) && { hostThread: meta.hostThread }),
     capture: { state: capture.end === undefined ? 'opened' : 'completed', ...capture },
     phases: phase ? [{ key: phase, name: 'plan review' }] : [],
     invocations,
     reviews: [],
   });
 
-const reviewRun = (subject: string, extra: Record<string, unknown> = {}) => ({
+const reviewRun = (subject: string) => ({
   phase: 'review-run-plan',
   subject,
   attempt: 1,
@@ -1933,7 +1755,6 @@ const reviewRun = (subject: string, extra: Record<string, unknown> = {}) => ({
   launched: true,
   outcome: 'ok',
   slot: 'claude[0]',
-  ...extra,
 });
 
 const usageLine = (id: string, at: number, input: number, output: number) =>
@@ -1946,7 +1767,7 @@ const usageLine = (id: string, at: number, input: number, output: number) =>
 // Claude host thread plus one subagent transcript, read through the injected filesystem port.
 const claudeHostDeps = (
   f: ReturnType<typeof sessionFixture>,
-  input: { clock: number; main: string[]; subagent?: string[] },
+  input: { clock: number; main: Array<string>; subagent?: Array<string> },
 ) => {
   const main = Buffer.from(input.main.join('\n'));
   const subagent = Buffer.from((input.subagent ?? []).join('\n'));
@@ -1969,7 +1790,7 @@ const claudeHostDeps = (
   };
 };
 
-const sessionRows = (session: string, hostContext?: { manifest: never; deps: CliDeps }) =>
+const sessionRows = (session: string, hostContext?: Parameters<typeof sessionFacts>[3]) =>
   sessionFacts(session, { records: [], lastSeq: 0, torn: null }, 'complete', hostContext).roundWorkload;
 
 test('round workload counts observed calls per round window by phase key', () => {
@@ -2011,7 +1832,11 @@ test('round workload counts observed calls per round window by phase key', () =>
 test('round workload attributes interleaved rounds of two reviews without double counting', () => {
   const f = sessionFixture({ memory: true });
   try {
-    for (const review of ['plan-a', 'plan-b']) for (const round of [1, 2]) workloadRound(f.session, review, round);
+    for (const review of ['plan-a', 'plan-b']) {
+      for (const round of [1, 2]) {
+        workloadRound(f.session, review, round);
+      }
+    }
     workloadCapture(f.session, 'a1', { start: 1000, end: 1100 }, 'review-run-plan', [
       reviewRun(roundSubject(f.session, 'plan-a', 1)),
     ]);
@@ -2062,10 +1887,17 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         main: [usageLine('first', 1050, 1, 1), usageLine('check', 1450, 2, 2), usageLine('outside', 1750, 3, 3)],
         subagent: [usageLine('sub', 1050, 20, 20)],
       });
-      const manifest = { createdAt: new Date(100).toISOString() } as never;
-      const records = [
-        { kind: 'note', key: 'fix-review-lite:plan-a:1:1', at: new Date(1600).toISOString() },
-      ] as Fold['records'];
+      const manifest = { ...readManifest(f.session), createdAt: new Date(100).toISOString() };
+      const records: Fold['records'] = [
+        {
+          seq: 1,
+          by: 'tool',
+          kind: 'note',
+          key: 'fix-review-lite:plan-a:1:1',
+          at: new Date(1600).toISOString(),
+          data: {},
+        },
+      ];
       const facts = sessionFacts(f.session, { records, lastSeq: 1, torn: null }, 'complete', { manifest, deps });
       const row = facts.roundWorkload?.[0];
       assert.deepEqual([row?.calls?.total, row?.hostTokens, row?.hostTurns], [2, 6, 2]);
@@ -2095,20 +1927,22 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         usageLine('prior', 700, 1, 1),
         ...[1100, 1250, 1500, 1700, 2100, 2300].map((at) => usageLine(String(at), at, 1, 1)),
       ];
-      const manifest = { createdAt: new Date(100).toISOString() } as never;
-      const at = (ms: number) => new Date(ms).toISOString();
-      const ruling = { kind: 'ruling', data: { subject: 'review:plan-a:earlier-finding' }, at: at(1250) };
-      const note = { kind: 'note', key: 'fix-review-lite:plan-a:2:1', at: at(1500) };
-      const unrelated = { kind: 'note', key: 'unrelated', at: at(1800) };
-      const late = { ...ruling, at: at(2300) };
-      const read = (records: unknown[], host = main, subagent = ['malformed']) => {
+      const manifest = { ...readManifest(f.session), createdAt: new Date(100).toISOString() };
+      const ruling = {
+        seq: 1,
+        key: 'ruling',
+        by: 'orchestrator',
+        kind: 'ruling',
+        data: { subject: 'review:plan-a:earlier-finding' },
+        at: isoTime(1250),
+      };
+      const note = { seq: 2, by: 'tool', kind: 'note', key: 'fix-review-lite:plan-a:2:1', at: isoTime(1500), data: {} };
+      const unrelated = { seq: 3, by: 'tool', kind: 'note', key: 'unrelated', at: isoTime(1800), data: {} };
+      const late = { ...ruling, at: isoTime(2300) };
+      const read = (records: Fold['records'], host = main, subagent = ['malformed']) => {
         const deps = claudeHostDeps(f, { clock: 2500, main: host, subagent });
-        return sessionFacts(
-          f.session,
-          { records: records as Fold['records'], lastSeq: records.length, torn: null },
-          'complete',
-          { manifest, deps },
-        ).roundWorkload;
+        return sessionFacts(f.session, { records, lastSeq: records.length, torn: null }, 'complete', { manifest, deps })
+          .roundWorkload;
       };
       const workload = (row: NonNullable<ReturnType<typeof read>>[number] | undefined) => [
         row?.calls?.total,
@@ -2185,31 +2019,29 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         ],
       });
       const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-      await observer.deps.delegate(
-        'claude',
-        { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never,
-        'cli',
-      );
+      await observer.deps.delegate('claude', requestForLog(path.join(f.session, 'logs', 'claude[0].log')), 'cli');
       observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
 
       const diagDir = path.join(f.session, '.state', 'diagnostics');
-      const persisted = JSON.parse(fs.readFileSync(path.join(diagDir, fs.readdirSync(diagDir)[0]!), 'utf8')) as Record<
-        string,
-        unknown
-      >;
+      const [file] = fs.readdirSync(diagDir);
+      assert.ok(file);
+      const persisted = readCapture(path.join(diagDir, file));
       assert.equal(persisted['hostThread'], expectedThread);
       assert.doesNotMatch(JSON.stringify(persisted), /host-thread-1|secret-session-1/);
 
-      const sanitized = sanitizeFacts(persisted as never) as Record<string, unknown>;
-      assert.equal(sanitized['hostThread'], expectedThread);
-      const inv = (sanitized['invocations'] as Array<Record<string, unknown>>)[0]!;
-      assert.equal(inv['wrapUp'], true);
-      const usage = inv['usage'] as Record<string, unknown>;
-      assert.deepEqual([usage['turns'], usage['toolCalls'], usage['toolTurns']], [3, 5, 2]);
-      const modelPart = (usage['models'] as Record<string, Record<string, unknown>>)['m#high']!;
-      assert.deepEqual([modelPart['turns'], modelPart['toolCalls'], modelPart['toolTurns']], [3, 5, 2]);
-      const resp = (inv['responses'] as Array<Record<string, unknown>>)[0]!;
-      assert.deepEqual([resp['toolCalls'], resp['toolTurns']], [5, 2]);
+      const sanitized = sanitizeFacts(persisted);
+      assert.equal(sanitized.hostThread, expectedThread);
+      const [inv] = sanitized.invocations;
+      assert.ok(inv?.usage);
+      const { usage } = inv;
+      assert.equal(inv.wrapUp, true);
+      assert.deepEqual([usage.turns, usage.toolCalls, usage.toolTurns], [3, 5, 2]);
+      const modelPart = usage.models?.['m#high'];
+      assert.ok(modelPart);
+      assert.deepEqual([modelPart.turns, modelPart.toolCalls, modelPart.toolTurns], [3, 5, 2]);
+      const resp = inv.responses?.[0];
+      assert.ok(resp);
+      assert.deepEqual([resp.toolCalls, resp.toolTurns], [5, 2]);
 
       const normalized = normalizeUsage(
         {
@@ -2224,10 +2056,12 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
           },
         },
         'uncached',
-      ) as unknown as Record<string, unknown>;
-      assert.deepEqual([normalized['turns'], normalized['toolCalls'], normalized['toolTurns']], [2, 4, 2]);
-      const mergedPart = (normalized['models'] as Record<string, Record<string, unknown>>)['m#']!;
-      assert.deepEqual([mergedPart['turns'], mergedPart['toolCalls'], mergedPart['toolTurns']], [2, 4, 2]);
+      );
+      assert.ok(normalized);
+      assert.deepEqual([normalized.turns, normalized.toolCalls, normalized.toolTurns], [2, 4, 2]);
+      const mergedPart = normalized.models?.['m#'];
+      assert.ok(mergedPart);
+      assert.deepEqual([mergedPart.turns, mergedPart.toolCalls, mergedPart.toolTurns], [2, 4, 2]);
 
       const partialMerged = normalizeUsage(
         {
@@ -2239,8 +2073,10 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
           },
         },
         'uncached',
-      ) as unknown as Record<string, unknown>;
-      assert.equal((partialMerged['models'] as Record<string, Record<string, unknown>>)['m#']!['turns'], undefined);
+      );
+      const partialModel = partialMerged?.models?.['m#'];
+      assert.ok(partialModel);
+      assert.equal(partialModel.turns, undefined);
 
       const malformed = sanitizeFacts({
         hostThread: '/Users/dev/secret',
@@ -2254,25 +2090,26 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
             surface: 'cli',
             launched: true,
             outcome: 'ok',
-            wrapUp: 'yes' as never,
-            usage: { input: 10, output: 2, turns: -1, toolCalls: 1.5, toolTurns: NaN } as never,
+            wrapUp: 'yes',
+            usage: { input: 10, output: 2, turns: -1, toolCalls: 1.5, toolTurns: Number.NaN },
           },
         ],
-      } as never) as Record<string, unknown>;
-      assert.equal(malformed['hostThread'], undefined);
-      const badInv = (malformed['invocations'] as Array<Record<string, unknown>>)[0]!;
-      assert.equal(badInv['wrapUp'], undefined);
-      assert.equal((badInv['usage'] as Record<string, unknown>)['turns'], undefined);
-      assert.equal((badInv['usage'] as Record<string, unknown>)['toolCalls'], undefined);
-      assert.equal((badInv['usage'] as Record<string, unknown>)['toolTurns'], undefined);
+      });
+      assert.equal(malformed.hostThread, undefined);
+      const [badInv] = malformed.invocations;
+      assert.ok(badInv?.usage);
+      assert.equal(badInv.wrapUp, undefined);
+      assert.equal(badInv.usage.turns, undefined);
+      assert.equal(badInv.usage.toolCalls, undefined);
+      assert.equal(badInv.usage.toolTurns, undefined);
 
       const longHex = sanitizeFacts({
         hostThread: 'a'.repeat(32),
         phases: [],
         reviews: [],
         invocations: [],
-      } as never) as Record<string, unknown>;
-      assert.equal(longHex['hostThread'], undefined);
+      });
+      assert.equal(longHex.hostThread, undefined);
     } finally {
       f.cleanup();
     }
@@ -2287,7 +2124,7 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
       hostUsage: {
         platform: 'claude',
         userTurns: 4,
-        userTurnsByStage: { spec: 1, implementation: 3, bogus: 9, 'plan review': -1 } as never,
+        userTurnsByStage: { spec: 1, implementation: 3, bogus: 9, 'plan review': -1 },
         subagentCount: 5,
         maxSubagentDepth: 2,
         rows: [
@@ -2334,27 +2171,24 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
             coverage: 'unknown',
             toolCalls: 99,
             toolTurns: 99,
-          } as never,
+          },
         ],
-      } as never,
-    }) as unknown as { hostUsage?: Record<string, unknown> };
-    const hu = clean.hostUsage!;
-    assert.equal(hu['userTurns'], 4);
-    assert.deepEqual(hu['userTurnsByStage'], { spec: 1, implementation: 3 });
-    assert.equal(hu['subagentCount'], 5);
-    assert.equal(hu['maxSubagentDepth'], 2);
-    const rows = hu['rows'] as Array<Record<string, unknown>>;
-    assert.deepEqual(
-      [rows[0]!['turns'], rows[0]!['toolCalls'], rows[0]!['toolTurns'], rows[0]!['maxDepth']],
-      [2, 4, 2, undefined],
-    );
-    assert.deepEqual(
-      [rows[1]!['turns'], rows[1]!['toolCalls'], rows[1]!['toolTurns'], rows[1]!['maxDepth']],
-      [3, 1, 1, 2],
-    );
-    const resps = hu['responses'] as Array<Record<string, unknown>>;
-    assert.deepEqual([resps[0]!['toolCalls'], resps[0]!['toolTurns']], [4, 2]);
-    assert.deepEqual([resps[1]!['toolCalls'], resps[1]!['toolTurns']], [undefined, undefined]);
+      },
+    });
+    const hu = clean.hostUsage;
+    assert.ok(hu);
+    assert.equal(hu.userTurns, 4);
+    assert.deepEqual(hu.userTurnsByStage, { spec: 1, implementation: 3 });
+    assert.equal(hu.subagentCount, 5);
+    assert.equal(hu.maxSubagentDepth, 2);
+    const [host, subagent] = hu.rows ?? [];
+    assert.ok(host && subagent);
+    assert.deepEqual([host.turns, host.toolCalls, host.toolTurns, host.maxDepth], [2, 4, 2, undefined]);
+    assert.deepEqual([subagent.turns, subagent.toolCalls, subagent.toolTurns, subagent.maxDepth], [3, 1, 1, 2]);
+    const [hostResponse, subagentResponse] = hu.responses ?? [];
+    assert.ok(hostResponse && subagentResponse);
+    assert.deepEqual([hostResponse.toolCalls, hostResponse.toolTurns], [4, 2]);
+    assert.deepEqual([subagentResponse.toolCalls, subagentResponse.toolTurns], [undefined, undefined]);
 
     const invalid = sanitizeFacts({
       phases: [],
@@ -2363,7 +2197,7 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
       hostUsage: {
         platform: 'claude',
         userTurns: -1,
-        userTurnsByStage: { bogus: 1, spec: 'https://evil.example.com' } as never,
+        userTurnsByStage: { bogus: 1, spec: 'https://evil.example.com' },
         subagentCount: 1.5,
         maxSubagentDepth: -2,
         rows: [
@@ -2376,20 +2210,22 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
             output: 2,
             turns: -1,
             toolCalls: 'bad',
-            toolTurns: NaN,
+            toolTurns: Number.NaN,
             maxDepth: 0.5,
-          } as never,
+          },
         ],
-      } as never,
-    }) as unknown as { hostUsage?: Record<string, unknown> };
-    const badHu = invalid.hostUsage!;
-    assert.equal(badHu['userTurns'], undefined);
-    assert.equal(badHu['userTurnsByStage'], undefined);
-    assert.equal(badHu['subagentCount'], undefined);
-    assert.equal(badHu['maxSubagentDepth'], undefined);
-    const badRow = (badHu['rows'] as Array<Record<string, unknown>>)[0]!;
+      },
+    });
+    const badHu = invalid.hostUsage;
+    assert.ok(badHu);
+    assert.equal(badHu.userTurns, undefined);
+    assert.equal(badHu.userTurnsByStage, undefined);
+    assert.equal(badHu.subagentCount, undefined);
+    assert.equal(badHu.maxSubagentDepth, undefined);
+    const badRow = badHu.rows?.[0];
+    assert.ok(badRow);
     assert.deepEqual(
-      [badRow['turns'], badRow['toolCalls'], badRow['toolTurns'], badRow['maxDepth']],
+      [badRow.turns, badRow.toolCalls, badRow.toolTurns, badRow.maxDepth],
       [undefined, undefined, undefined, undefined],
     );
   }
@@ -2429,7 +2265,10 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         clock: 4000,
         main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 3050, 30, 3)],
       });
-      const rows = sessionRows(f.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps })!;
+      const rows = sessionRows(f.session, {
+        manifest: { ...readManifest(f.session), createdAt: new Date(100).toISOString() },
+        deps,
+      })!;
       assert.deepEqual([rows[0]!.hostTokens, rows[0]!.hostTurns], [undefined, undefined]);
       assert.deepEqual([rows[1]!.hostTokens, rows[1]!.hostTurns], [22, 1]);
       assert.deepEqual([rows[2]!.hostTokens, rows[2]!.hostTurns], [undefined, undefined]);
@@ -2463,7 +2302,7 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
           main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2), usageLine('m3', 3050, 30, 3)],
         });
         const ambRows = sessionRows(fAmb.session, {
-          manifest: { createdAt: new Date(100).toISOString() } as never,
+          manifest: { ...readManifest(f.session), createdAt: new Date(100).toISOString() },
           deps: ambDeps,
         })!;
         assert.deepEqual([ambRows[0]!.hostTokens, ambRows[0]!.hostTurns], [undefined, undefined]);
@@ -2513,7 +2352,10 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         clock: 3000,
         main: [usageLine('m1', 1020, 10, 1), usageLine('m2', 2050, 20, 2)],
       });
-      const rows = sessionRows(f.session, { manifest: { createdAt: new Date(100).toISOString() } as never, deps })!;
+      const rows = sessionRows(f.session, {
+        manifest: { ...readManifest(f.session), createdAt: new Date(100).toISOString() },
+        deps,
+      })!;
       assert.deepEqual([rows[0]!.hostTokens, rows[0]!.hostTurns], [undefined, undefined]);
       assert.deepEqual([rows[1]!.hostTokens, rows[1]!.hostTurns], [22, 1]);
 
@@ -2548,7 +2390,7 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
           main: [usageLine('m1', 1050, 10, 1), usageLine('m2', 2050, 20, 2)],
         });
         const mixedRows = sessionRows(fMixed.session, {
-          manifest: { createdAt: new Date(100).toISOString() } as never,
+          manifest: { ...readManifest(f.session), createdAt: new Date(100).toISOString() },
           deps: mixedDeps,
         })!;
         assert.deepEqual([mixedRows[0]!.hostTokens, mixedRows[0]!.hostTurns], [undefined, undefined]);
@@ -2619,15 +2461,15 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         { ...reviewRun(g2), slot: 'copilot[0]', targetSlot: 'claude[0]', usage: { input: 10, output: 1, turns: 2 } },
       ]);
       const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
-      const rows = facts.roundWorkload as Array<Record<string, unknown>>;
-      assert.equal(rows[0]!['reviewerTurns'], 5);
-      assert.equal(rows[0]!['reviewerTurnsPartial'], undefined);
-      assert.equal(rows[1]!['reviewerTurns'], undefined);
-      assert.equal(rows[1]!['reviewerTurnsPartial'], undefined);
-      assert.equal(rows[2]!['reviewerTurns'], undefined);
-      assert.equal(rows[2]!['reviewerTurnsPartial'], undefined);
-      const sanitized = sanitizeFacts(facts).roundWorkload as Array<Record<string, unknown>>;
-      assert.equal(sanitized[0]!['reviewerTurns'], 5);
+      const [first, second, third] = facts.roundWorkload ?? [];
+      assert.ok(first && second && third);
+      assert.equal(first.reviewerTurns, 5);
+      assert.equal(first.reviewerTurnsPartial, undefined);
+      assert.equal(second.reviewerTurns, undefined);
+      assert.equal(second.reviewerTurnsPartial, undefined);
+      assert.equal(third.reviewerTurns, undefined);
+      assert.equal(third.reviewerTurnsPartial, undefined);
+      assert.equal(sanitizeFacts(facts).roundWorkload?.[0]?.reviewerTurns, 5);
     } finally {
       f.cleanup();
     }
@@ -2696,11 +2538,12 @@ test('round workload attributes turns, threads and reviewer turns while sanitizi
         },
       ]);
       const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
-      const rows = facts.roundWorkload as Array<Record<string, unknown>>;
-      assert.equal(rows[0]!['reviewerTurns'], 4);
-      assert.equal(rows[0]!['reviewerTurnsPartial'], true);
-      assert.equal(rows[1]!['reviewerTurns'], 6);
-      assert.equal(rows[1]!['reviewerTurnsPartial'], undefined);
+      const [first, second] = facts.roundWorkload ?? [];
+      assert.ok(first && second);
+      assert.equal(first.reviewerTurns, 4);
+      assert.equal(first.reviewerTurnsPartial, true);
+      assert.equal(second.reviewerTurns, 6);
+      assert.equal(second.reviewerTurnsPartial, undefined);
     } finally {
       f.cleanup();
     }
@@ -2786,7 +2629,7 @@ test('H11 emits non-review turn churn finding above threshold and stays silent o
         launched: true,
         outcome: 'ok',
         usageSource: 'session',
-        usage: { input: 100, output: 10, turns: 15 } as never,
+        usage: { input: 100, output: 10, turns: 15 },
       },
     ],
     hostUsage: {

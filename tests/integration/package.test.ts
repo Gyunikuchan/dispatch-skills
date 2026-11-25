@@ -8,7 +8,7 @@ import { REPO_ROOT } from './scan.ts';
 // Escalation approved: commitlint tooling for conventional commits.
 // Approved Oxc rollout adds formatting, type-aware linting and two shared presets.
 export const EXPECTED = {
-  dependencies: [] as string[],
+  dependencies: [] as Array<string>,
   devDependencies: [
     '@cloudflare/oxlint-config',
     '@commitlint/cli',
@@ -24,24 +24,29 @@ export const EXPECTED = {
   engines: { node: '^22.18 || >=23.6' },
 };
 
-export function checkPackage(pkg: Record<string, unknown>): string[] {
-  const keys = (value: unknown) => Object.keys(typeof value === 'object' && value !== null ? value : {}).sort();
-  const errors: string[] = [];
+const keys = (value: unknown) => Object.keys(typeof value === 'object' && value !== null ? value : {}).sort();
+
+type Manifest = { dependencies?: unknown; devDependencies?: unknown; engines?: unknown };
+
+export function checkPackage(pkg: Manifest): Array<string> {
+  const errors: Array<string> = [];
   const fix = 'remove it, or record the escalation and update EXPECTED in the same change';
   for (const field of ['dependencies', 'devDependencies'] as const) {
     const extra = keys(pkg[field]).filter((name) => !EXPECTED[field].includes(name));
-    if (extra.length) errors.push(`package rule: ${field} adds ${extra.join(', ')}; ${fix}`);
+    if (extra.length) {
+      errors.push(`package rule: ${field} adds ${extra.join(', ')}; ${fix}`);
+    }
   }
-  if (JSON.stringify(pkg['engines']) !== JSON.stringify(EXPECTED.engines)) {
+  if (JSON.stringify(pkg.engines) !== JSON.stringify(EXPECTED.engines)) {
     errors.push(
-      `package rule: engines is ${JSON.stringify(pkg['engines'])}, expected ${JSON.stringify(EXPECTED.engines)}; ${fix}`,
+      `package rule: engines is ${JSON.stringify(pkg.engines)}, expected ${JSON.stringify(EXPECTED.engines)}; ${fix}`,
     );
   }
   return errors;
 }
 
 test('root package.json holds the approved manifest and rejects unapproved changes with the rule and the fix', () => {
-  const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as Record<string, unknown>;
+  const pkg: Manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
   assert.deepEqual(checkPackage(pkg), []);
   const errors = checkPackage({
     dependencies: { zod: '1' },

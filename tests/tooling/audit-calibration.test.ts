@@ -9,30 +9,21 @@ import { load, ARMS, SETTINGS, NOW, readBrief, fixture, defects, prepared, ids }
 test('audit calibration prepare rejects malformed fixtures and invalid settings', async () => {
   const { prepare } = await load();
   const f1 = fixture();
-  delete defects(f1)[0]['source']['parent'];
-  assert.throws(
-    () => prepare({ fixture: f1 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }),
-    /parent/,
-  );
+  Reflect.deleteProperty(defects(f1)[0].source, 'parent');
+  assert.throws(() => prepare({ fixture: f1, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /parent/);
 
   const f2 = fixture();
-  defects(f2)[1]['excerpts'][0]['text'] += 'tampered\n';
-  assert.throws(
-    () => prepare({ fixture: f2 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }),
-    /sha256/,
-  );
+  defects(f2)[1]!.excerpts[0]!.text += 'tampered\n';
+  assert.throws(() => prepare({ fixture: f2, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /sha256/);
 
   const f3 = fixture();
-  defects(f3)[2]['category'] = 'ambiguity';
-  assert.throws(
-    () => prepare({ fixture: f3 as never, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }),
-    /categor/,
-  );
+  defects(f3)[2]!.category = 'ambiguity';
+  assert.throws(() => prepare({ fixture: f3, workDir: tempDir(), settings: SETTINGS, now: NOW, readBrief }), /categor/);
 
   assert.throws(
     () =>
       prepare({
-        fixture: fixture() as never,
+        fixture: fixture(),
         workDir: tempDir(),
         settings: { ...SETTINGS, model: '' },
         now: NOW,
@@ -59,7 +50,7 @@ describe('prepared audit calibration artifacts', () => {
         [],
         `${arm} packet filenames reveal the case kind`,
       );
-      for (const c of f['cases']) {
+      for (const c of f.cases) {
         const text = fs.readFileSync(
           path.join(workDir, 'calibration', 'packets', arm, `${packetIds[c.id]}.json`),
           'utf8',
@@ -69,18 +60,22 @@ describe('prepared audit calibration artifacts', () => {
         assert.equal(text.includes(c.id), false, `${arm}/${c.id} leaks the labelled case id`);
         assert.equal(packet.scenario, c.scenario);
         assert.equal(packet.constraints.probes, false);
-        for (const key of ['answer', 'kind', 'category', 'severity'])
+        for (const key of ['answer', 'kind', 'category', 'severity']) {
           assert.equal(key in packet, false, `${arm}/${c.id} leaks ${key}`);
-        for (const secret of Object.values(c.answer as Record<string, string>))
+        }
+        for (const secret of Object.values(c.answer)) {
           assert.equal(text.includes(secret), false, `${arm}/${c.id} leaks the answer key`);
-        if (c.kind === 'defect')
+        }
+        if (c.kind === 'defect') {
           assert.equal(text.includes(c.source.commit), false, `${arm}/${c.id} leaks the fix commit`);
-        for (const excerpt of packet.excerpts)
+        }
+        for (const excerpt of packet.excerpts) {
           assert.doesNotMatch(
             excerpt.text,
             /\/\/\s*NOTE\b/,
             `${arm}/${c.id} keeps a rationale comment that would reveal the answer`,
           );
+        }
       }
     }
   });
@@ -90,9 +85,9 @@ describe('prepared audit calibration artifacts', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(workDir, 'calibration', 'manifest.json'), 'utf8'));
     assert.deepEqual(manifest.settings, SETTINGS);
     assert.deepEqual(Object.keys(manifest.arms).sort(), ['new', 'old']);
-    assert.equal(manifest.arms.old.commit, f['briefs'].old.commit);
+    assert.equal(manifest.arms.old.commit, f.briefs.old.commit);
     assert.match(manifest.arms.new.paths[0].sha256, /^sha256:[0-9a-f]{64}$/);
-    assert.deepEqual(Object.keys(manifest.cases).sort(), ids(f['cases']).sort());
+    assert.deepEqual(Object.keys(manifest.cases).sort(), ids(f.cases).sort());
     assert.match(manifest.answerKeySha256, /^sha256:[0-9a-f]{64}$/);
   });
 });

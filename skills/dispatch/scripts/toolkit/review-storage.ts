@@ -1,3 +1,4 @@
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ToolError } from './output.ts';
@@ -14,7 +15,7 @@ export { reviewSlotsDirectory } from './review-state.ts';
 type RosterSlot = {
   slot: string;
   provider?: string;
-  model?: string | readonly string[];
+  model?: string | ReadonlyArray<string>;
   effort?: string;
   native?: boolean;
   reserve?: boolean;
@@ -29,7 +30,7 @@ export type SlotOutcome =
       slot: string;
       state: 'native';
       provider?: string;
-      model?: string | readonly string[];
+      model?: string | ReadonlyArray<string>;
       effort?: string;
       error?: string;
       cliFallback?: true;
@@ -38,17 +39,17 @@ export type SlotOutcome =
 type ReviewedFinding = {
   id: string;
   severity?: string;
-  sources?: string[];
+  sources?: Array<string>;
   recurrence?: { of: string };
   unresolved?: { of: string };
   origin?: string;
 };
-export type FindingsFile = { review?: string; findings?: ReviewedFinding[] };
-export type RoundFile = { round: number; generation: number; cap: number; roster: RosterSlot[] };
+export type FindingsFile = { review?: string; findings?: Array<ReviewedFinding> };
+export type RoundFile = { round: number; generation: number; cap: number; roster: Array<RosterSlot> };
 
 export type ReviewRound = RoundFile & {
   review: string;
-  slots: SlotOutcome[];
+  slots: Array<SlotOutcome>;
   findings: FindingsFile | null;
 };
 
@@ -56,31 +57,35 @@ export function readReviewJson<T>(file: string): T | null {
   try {
     return readStoredJson<T>(file);
   } catch (error) {
-    if (error instanceof SyntaxError) throw new ToolError(2, 'review-corrupt', `Malformed review JSON at ${file}`);
+    if (error instanceof SyntaxError) {
+      throw new ToolError(2, 'review-corrupt', `Malformed review JSON at ${file}`);
+    }
     throw error;
   }
 }
 
-export function entriesOrEmpty(directory: string): fs.Dirent[] {
+export function entriesOrEmpty(directory: string): Array<fs.Dirent> {
   try {
     return fs.readdirSync(directory, { withFileTypes: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return [];
+    }
     throw error;
   }
 }
 
-export const reviewDirectories = (directory: string, entries: typeof entriesOrEmpty): fs.Dirent[] =>
+export const reviewDirectories = (directory: string, entries: typeof entriesOrEmpty): Array<fs.Dirent> =>
   entries(directory).filter((entry) => entry.isDirectory());
 
-export const reviewSlotEntries = (directory: string, entries: typeof entriesOrEmpty): fs.Dirent[] =>
+export const reviewSlotEntries = (directory: string, entries: typeof entriesOrEmpty): Array<fs.Dirent> =>
   entries(directory)
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
     .sort((a, b) => a.name.localeCompare(b.name));
 
 /** Reads initialized rounds and their current-generation slot and findings files. */
-export function readReviews(session: string): ReviewRound[] {
-  const rounds: ReviewRound[] = [];
+export function readReviews(session: string): Array<ReviewRound> {
+  const rounds: Array<ReviewRound> = [];
   for (const reviewEntry of reviewDirectories(reviewRoot(session), entriesOrEmpty).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
@@ -88,14 +93,18 @@ export function readReviews(session: string): ReviewRound[] {
     for (const roundEntry of reviewDirectories(reviewRoot, entriesOrEmpty)) {
       const roundRoot = path.join(reviewRoot, roundEntry.name);
       const round = readReviewJson<RoundFile>(reviewRoundFile(roundRoot));
-      if (!round) continue;
+      if (!round) {
+        continue;
+      }
       const roster = Array.isArray(round.roster) ? round.roster : [];
       const rosterIds = new Set(roster.map((slot) => slot['slot']));
       const slotRoot = reviewSlotsDirectory(roundRoot, round.generation);
       const bySlot = new Map<string, SlotOutcome>();
       for (const slotEntry of reviewSlotEntries(slotRoot, entriesOrEmpty)) {
         const outcome = readReviewJson<SlotOutcome>(path.join(slotRoot, slotEntry.name));
-        if (outcome && rosterIds.has(outcome.slot)) bySlot.set(outcome.slot, outcome);
+        if (outcome && rosterIds.has(outcome.slot)) {
+          bySlot.set(outcome.slot, outcome);
+        }
       }
       const slots = roster.flatMap((slot) => {
         const outcome = bySlot.get(slot['slot']);

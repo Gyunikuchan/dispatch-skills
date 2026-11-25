@@ -4,7 +4,8 @@ import { test } from 'node:test';
 
 import { resolveEffectiveOpencodeLaunch } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import { opencode, prepareOpencode, PROXY_TRAP } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type {
   OpencodeMessage,
   OpencodeRead,
@@ -17,13 +18,14 @@ import type {
   Launch,
   ProcessResult,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
 
 const platform = {
   os: 'darwin',
   arch: 'arm64',
   wsl: false,
   bubblewrap: false,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
@@ -93,9 +95,12 @@ test('OpenCode bubblewrapped launch keeps private server invocation', async () =
   assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), ['opencode', '--standalone', 'run']);
 });
 
-function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): RunnerPorts & { launches: Launch[] } {
-  const launches: Launch[] = [];
-  const p: RunnerPorts & { launches: Launch[] } = {
+function ports(
+  results: Array<ProcessResult>,
+  prepare?: RunnerPorts['prepare'],
+): RunnerPorts & { launches: Array<Launch> } {
+  const launches: Array<Launch> = [];
+  const p: RunnerPorts & { launches: Array<Launch> } = {
     launches,
     process: {
       start: (launch) => {
@@ -118,7 +123,9 @@ function ports(results: ProcessResult[], prepare?: RunnerPorts['prepare']): Runn
     binary: 'opencode',
     nonce: () => 'n',
   };
-  if (prepare) p.prepare = prepare;
+  if (prepare) {
+    p.prepare = prepare;
+  }
   return p;
 }
 const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({
@@ -131,13 +138,10 @@ const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({
   timedOut: false,
   truncated: false,
 });
-const event = (type: string, part: Record<string, unknown>) =>
-  JSON.stringify({ type, timestamp: 0, sessionID: 'ses', part });
+const event = (type: string, part: JsonObject) => JSON.stringify({ type, timestamp: 0, sessionID: 'ses', part });
 const jsonText = (text: string, id = 'text-0') =>
   event('text', { id, sessionID: 'ses', messageID: 'msg', type: 'text', text });
-const jsonStep = (
-  tokens: Record<string, unknown> = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-) =>
+const jsonStep = (tokens: JsonObject = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }) =>
   event('step_finish', {
     id: 'step-finish-0',
     sessionID: 'ses',
@@ -183,7 +187,7 @@ test('a missing subscription classifies as auth, not empty-output', () => {
 });
 
 test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt', async () => {
-  const events: string[] = [];
+  const events: Array<string> = [];
   const prepare = {
     fetchModels: async (endpoint: string) => {
       events.push(`models ${endpoint}`);
@@ -231,36 +235,40 @@ test('a remote endpoint skips model preflight, GPU locking, and the proxy trap',
   assert.deepEqual(remote.kind === 'launch' ? remote.env : null, {});
 });
 
+const inspectEndpoints = async (command: 'config' | 'agents') =>
+  command === 'config'
+    ? [
+        {
+          type: 'document',
+          info: {
+            model: 'remote/model',
+            providers: { local: { settings: { baseURL: 'http://localhost:1234/v1' } } },
+          },
+        },
+        { type: 'document', info: { providers: { local: { settings: { baseURL: 'http://127.0.0.1:1234/v1' } } } } },
+      ]
+    : [
+        {
+          id: 'plan',
+          permissions: [
+            { action: '*', resource: '*', effect: 'allow' },
+            { action: 'edit', resource: '*', effect: 'ask' },
+          ],
+        },
+        {
+          id: 'explore',
+          permissions: [
+            { action: '*', resource: '*', effect: 'deny' },
+            { action: 'read', resource: '*', effect: 'allow' },
+          ],
+        },
+      ];
+
 test('effective config merges selected model endpoint and verifies agent denial', async () => {
-  const inspect = async (command: 'config' | 'agents') =>
-    command === 'config'
-      ? [
-          {
-            type: 'document',
-            info: {
-              model: 'remote/model',
-              providers: { local: { settings: { baseURL: 'http://localhost:1234/v1' } } },
-            },
-          },
-          { type: 'document', info: { providers: { local: { settings: { baseURL: 'http://127.0.0.1:1234/v1' } } } } },
-        ]
-      : [
-          {
-            id: 'plan',
-            permissions: [
-              { action: '*', resource: '*', effect: 'allow' },
-              { action: 'edit', resource: '*', effect: 'ask' },
-            ],
-          },
-          {
-            id: 'explore',
-            permissions: [
-              { action: '*', resource: '*', effect: 'deny' },
-              { action: 'read', resource: '*', effect: 'allow' },
-            ],
-          },
-        ];
-  const resolved = await resolveEffectiveOpencodeLaunch({ ...base, agent: null, model: 'local/qwen' }, inspect);
+  const resolved = await resolveEffectiveOpencodeLaunch(
+    { ...base, agent: null, model: 'local/qwen' },
+    inspectEndpoints,
+  );
   assert.equal(resolved.endpoint, 'http://127.0.0.1:1234/v1');
   assert.equal(resolved.agent, 'explore');
   assert.equal(resolved.readOnlyVerified, true);
@@ -354,11 +362,13 @@ test('opencode json text extraction', () => {
   });
 });
 
+const errorEvent = (error: JsonObject): string =>
+  JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error });
+
+const parseError = (error: JsonObject) => opencode.parse(result(errorEvent(error)), launchReq());
+
 test('opencode rate-limit event becomes capacity with its retry delay; quota wording stays quota', () => {
-  const errorEvent = (error: Record<string, unknown>): string =>
-    JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error });
-  const parseError = (error: Record<string, unknown>) => opencode.parse(result(errorEvent(error)), launchReq());
-  const cases: [Record<string, unknown>, number | undefined][] = [
+  const cases: Array<[JsonObject, number | undefined]> = [
     [
       {
         type: 'provider.rate-limit',
@@ -491,7 +501,7 @@ test('opencode large tool events keep usage', () => {
 });
 
 type UsageReader = (dbPath: string, sessionId: string, options: OpencodeReadOptions) => OpencodeRead;
-const readResult = (messages: OpencodeMessage[], truncated: OpencodeRead['truncated'] = null): OpencodeRead => ({
+const readResult = (messages: Array<OpencodeMessage>, truncated: OpencodeRead['truncated'] = null): OpencodeRead => ({
   messages,
   skipped: 0,
   truncated,
@@ -511,7 +521,7 @@ const sessionContext = (read: UsageReader) => ({
 });
 
 test('opencode sessionUsage sums DB rows for the session and descendants with per-model effort keys', () => {
-  const calls: { dbPath: string; sessionId: string; options: OpencodeReadOptions }[] = [];
+  const calls: Array<{ dbPath: string; sessionId: string; options: OpencodeReadOptions }> = [];
   const read: UsageReader = (dbPath, sessionId, options) => {
     calls.push({ dbPath, sessionId, options });
     return readResult([
@@ -601,8 +611,10 @@ test('opencode sessionUsage reports incomplete when DB attribution is unavailabl
     provenance: 'opencode.step.finish',
     inputSemantics: 'uncached' as const,
   };
-  const partial: OpencodeMessage[] = [{ depth: 0, createdMs: 150, model: 'p/m', effort: 'max', input: 99, output: 99 }];
-  const cases: [string, UsageReader][] = [
+  const partial: Array<OpencodeMessage> = [
+    { depth: 0, createdMs: 150, model: 'p/m', effort: 'max', input: 99, output: 99 },
+  ];
+  const cases: Array<[string, UsageReader]> = [
     [
       'read error',
       () => {

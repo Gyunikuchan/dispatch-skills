@@ -1,24 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
-import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import {
-  CONTINUE_PROMPT,
-  IDLE_TIMEOUT_MS,
   buildAttachmentBlock,
   findSensitiveMatch,
   formatSafetyPrompt,
   GUARDRAIL_HEADER,
   runDelegate,
-  type RunnerFs,
-  type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerFs, RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import {
   batchInvocation,
   killArgv,
@@ -30,7 +23,6 @@ import type {
   Launch,
   PlatformEnv,
   ProcessResult,
-  ProviderUsageContext,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = {
@@ -38,12 +30,12 @@ const posix: PlatformEnv = {
   arch: 'x64',
   wsl: false,
   bubblewrap: true,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
 };
-const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24000 };
+const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24_000 };
 const req: DelegateRequest = {
   promptPath: '/r/p.md',
   model: null,
@@ -91,10 +83,13 @@ function memFs(
   };
 }
 
+/** Placeholder until the fake process registers its real callback. */
+const noop = (): void => {};
+
 /** Manual clock: timers fire only when the test advances time. */
 function manualClock() {
   let now = 0;
-  const timers: { at: number; ms: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
   return {
     now: () => now,
     every: (ms: number, fn: () => void) => {
@@ -106,30 +101,37 @@ function manualClock() {
     },
     advance(ms: number) {
       now += ms;
-      for (const t of [...timers])
+      for (const t of timers.slice()) {
         while (t.live && t.at <= now) {
           t.at += t.ms;
           t.fn();
         }
+      }
     },
   };
 }
 
 function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.md': 'Review it' }) {
-  const launches: Launch[] = [];
-  const signals: string[] = [];
+  const launches: Array<Launch> = [];
+  const signals: Array<string> = [];
   const clock = manualClock();
-  let finish: (r: ProcessResult) => void = () => {};
-  let activity: () => void = () => {};
-  let line: (value: string, fragment?: boolean) => void = () => {};
+  let finish: (r: ProcessResult) => void = noop;
+  let activity: () => void = noop;
+  let line: (value: string, fragment?: boolean) => void = noop;
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
-        if (io.onActivity) activity = io.onActivity;
-        if (io.onLine) line = io.onLine;
-        if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
+        if (io.onActivity) {
+          activity = io.onActivity;
+        }
+        if (io.onLine) {
+          line = io.onLine;
+        }
+        if (launch.argv[0] === 'taskkill') {
+          return { pid: 99, done: Promise.resolve(ok()) };
+        }
         return {
           pid: 50,
           done: new Promise<ProcessResult>((resolve) => {
@@ -171,39 +173,10 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   };
 }
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-const makeNudgeSpec = (sessionId: string | null): any => ({
-  ...claude,
-  id: 'codex',
-  silentUntilExit: undefined,
-  attemptSession: () => sessionId,
-  parse: (out: ProcessResult) =>
-    out.stdout.includes('FINAL')
-      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
-      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
-  argv: (r: any) => ({
-    argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt],
-    stdin: null,
-    env: {},
-    cwd: r.cwd,
-  }),
-});
-
-const makeCapacitySpec = (retryAfterMs?: number): any => ({
-  ...makeNudgeSpec('sess1'),
-  parse: (out: ProcessResult) =>
-    out.stdout.includes('FINAL')
-      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
-      : {
-          status: 'fail' as const,
-          cls: 'capacity' as const,
-          detail: 'at capacity',
-          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-        },
-});
-
-const opencodeText = (text: string) => JSON.stringify({ type: 'text', sessionID: 'ses', part: { text } });
+const flush = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 
 function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<HostUsageFs> = {}): HostUsageFs {
   const find = (file: string): Buffer | undefined => {
@@ -220,7 +193,9 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
           const seg = rest.split('/')[0];
-          if (seg) names.add(seg);
+          if (seg) {
+            names.add(seg);
+          }
         }
       }
       return [...names];
@@ -231,21 +206,15 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
     },
     read: (file, maxBytes) => {
       const buf = find(file);
-      if (!buf) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      if (!buf) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
       return buf.subarray(0, maxBytes);
     },
     decompress: null,
     ...extra,
   };
 }
-
-const claudeEntry = (atMs: number, input: number, output: number, model = 'claude-haiku-5-5') =>
-  JSON.stringify({
-    type: 'assistant',
-    timestamp: new Date(atMs).toISOString(),
-    effort: 'low',
-    message: { id: `m_${atMs}`, model, usage: { input_tokens: input, output_tokens: output } },
-  });
 
 // T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
@@ -288,6 +257,8 @@ test('delegates-sensitive-file-guardrail: launched prompts prepend the guardrail
   assert.ok(prompt.endsWith('Review it'));
 });
 
+const unresolved = (f: string): string | null => f;
+
 test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked by realpath', () => {
   assert.equal(
     findSensitiveMatch('/repo/notes.txt', () => '/home/u/.ssh/id_rsa'),
@@ -301,11 +272,12 @@ test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked 
     findSensitiveMatch('/repo/my-token-service/app.ts', (f) => f),
     null,
   );
-  const none = (f: string): string | null => f;
-  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token'])
-    assert.ok(findSensitiveMatch('/repo/' + name, none), name);
-  for (const name of ['tokenizer.ts', 'secretary.md'])
-    assert.equal(findSensitiveMatch('/repo/' + name, none), null, name);
+  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token']) {
+    assert.ok(findSensitiveMatch('/repo/' + name, unresolved), name);
+  }
+  for (const name of ['tokenizer.ts', 'secretary.md']) {
+    assert.equal(findSensitiveMatch('/repo/' + name, unresolved), null, name);
+  }
 });
 
 test('denylist prose names every denied extension and the basename word rule', () => {
@@ -322,12 +294,14 @@ test('denylist prose names every denied extension and the basename word rule', (
   assert.match(prompt, /ASCII letters and digits/);
 });
 
+const inside = (path: string): string | null => path;
+
 test('session artifact word patterns are exempt', async () => {
   const session = '/sessions/20261101T0000Z-prose-token-diet';
   const file = `${session}/round-notes-token.md`;
-  const inside = (path: string): string | null => path;
-  for (const name of ['api_token.txt', 'client-secret.json', 'token', 'my-secrets.yml'])
+  for (const name of ['api_token.txt', 'client-secret.json', 'token', 'my-secrets.yml']) {
     assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), null, name);
+  }
 
   const fs = memFs({ [file]: 'artifact notes' });
   assert.deepEqual(buildAttachmentBlock([file], fs, () => 'N0NCE', undefined, { sessionRoot: session }).attachedFiles, [
@@ -344,9 +318,9 @@ test('session artifact word patterns are exempt', async () => {
 
 test('sensitive session-external patterns stay denied', () => {
   const session = '/sessions/s1';
-  const inside = (path: string): string | null => path;
-  for (const name of ['.env', '.env.local', 'deploy.pem', '.vault-token', 'credentials.json', 'service-account.json'])
+  for (const name of ['.env', '.env.local', 'deploy.pem', '.vault-token', 'credentials.json', 'service-account.json']) {
     assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), 'file', name);
+  }
   assert.equal(
     findSensitiveMatch(`${session}/notes-token.md`, () => '/repo/notes-token.md', { sessionRoot: session }),
     'file',
@@ -356,21 +330,22 @@ test('sensitive session-external patterns stay denied', () => {
     'file',
     'unresolvable path',
   );
-  const none = (path: string): string | null => path;
-  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml'])
-    assert.equal(findSensitiveMatch('/repo/' + name, none, { sessionRoot: session }), 'file', name);
+  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml']) {
+    assert.equal(findSensitiveMatch('/repo/' + name, unresolved, { sessionRoot: session }), 'file', name);
+  }
   assert.equal(
-    findSensitiveMatch('/sessions/s1-other/api_token.txt', none, { sessionRoot: session }),
+    findSensitiveMatch('/sessions/s1-other/api_token.txt', unresolved, { sessionRoot: session }),
     'file',
     'sibling prefix is not inside',
   );
-  assert.equal(findSensitiveMatch('/repo/tokenizer.ts', none, { sessionRoot: session }), null);
-  for (const name of ['api_token.txt', 'secret.yaml', 'config/my-secret.json'])
+  assert.equal(findSensitiveMatch('/repo/tokenizer.ts', unresolved, { sessionRoot: session }), null);
+  for (const name of ['api_token.txt', 'secret.yaml', 'config/my-secret.json']) {
     assert.equal(
       findSensitiveMatch(`${session}/.state/worktrees/T1/${name}`, inside, { sessionRoot: session }),
       'file',
       name,
     );
+  }
 });
 
 test('aliased session root exempts resolved artifacts', () => {
@@ -522,7 +497,7 @@ test('attachments respect per-file and total caps inside nonce DATA tags; sensit
 });
 
 test('oversize and Windows shim-unsafe prompts spill to the brief file', async () => {
-  assert.equal(mustSpill('x'.repeat(100001), posix, 'claude'), true);
+  assert.equal(mustSpill('x'.repeat(100_001), posix, 'claude'), true);
   assert.equal(mustSpill('short', posix, 'claude'), false);
   assert.equal(mustSpill('a\nb', posix, 'claude'), false);
   assert.equal(mustSpill('a\nb', windows, 'C:/bin/copilot.cmd'), true);
@@ -617,7 +592,7 @@ test('OpenCode Windows timeout waits for its owned taskkill process', async () =
 });
 
 test('batch launchers go through cmd.exe with escaped verbatim args, never a raw shell', () => {
-  const inv = batchInvocation('C:\\bin\\agy.cmd', ['--print', 'a & calc | x "q"'], 'cmd.exe');
+  const inv = batchInvocation(String.raw`C:\bin\agy.cmd`, ['--print', 'a & calc | x "q"'], 'cmd.exe');
   assert.deepEqual(inv.args.slice(0, 3), ['/d', '/s', '/c']);
   const line = inv.args[3] ?? '';
   assert.ok(!/[^^]&/.test(line) && !/[^^]\|/.test(line), line);
@@ -683,10 +658,10 @@ test('runDelegate records one invocation per launch attempt, including the effor
   const h = harness(posix);
   const spec = {
     ...claude,
-    parse: (out: ProcessResult, launch: { effort: string | null }) =>
+    parse: (out: ProcessResult, launch: Parameters<typeof claude.parse>[1]) =>
       launch.effort
         ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true }
-        : claude.parse(out, launch as never),
+        : claude.parse(out, launch),
   };
   const run = runDelegate(spec, { ...req, model: 'sonnet', effort: 'high' }, 'cli', h.ports);
   await flush();
@@ -734,9 +709,10 @@ test('runDelegate records one invocation per launch attempt, including the effor
   };
   const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', throwingHarness.ports).then(
     () => null,
-    (thrown: unknown) => thrown as { invocations?: unknown },
+    (error_: unknown) => error_,
   );
-  assert.deepEqual(error?.invocations, [
+  assert.ok(typeof error === 'object' && error !== null && 'invocations' in error);
+  assert.deepEqual(error.invocations, [
     { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: false, outcome: 'launch-failed' },
   ]);
 });

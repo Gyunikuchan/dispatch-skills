@@ -5,6 +5,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { listOf, numeric, optional, readJson, shape, text } from './helpers/json.ts';
 
 const scoped = sessionFixture({ memory: true });
 after(() => scoped.cleanup());
@@ -44,7 +45,10 @@ async function lint(name: string, source: string) {
   try {
     const exit = await main(['lint', 'run', f.artifact(name, source), '--session', f.session], f.deps);
     const output = f.output();
-    const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+    const result = readJson(
+      output.path!,
+      shape({ errors: listOf(shape({ code: text, message: text, line: optional(numeric) })) }),
+    );
     return { exit, output, result };
   } finally {
     f.cleanup();
@@ -70,9 +74,7 @@ describe('lint severity', () => {
     );
     assert.equal(result.exit, 4, result.output.summary);
     assert.equal(result.output.reason, 'lint-errors');
-    const issue = result.result.errors.find(
-      (issue: { code: string; message: string; line?: number }) => issue.code === 'context-commit',
-    );
+    const issue = result.result.errors.find((issue) => issue.code === 'context-commit');
     assert.ok(issue, JSON.stringify(result.result.errors));
     assert.equal(issue.line, 3);
     assert.match(issue.message, /7 to 64/);
@@ -116,7 +118,10 @@ describe('lint severity', () => {
       const file = f.artifact('linked.context.md', map);
       const exit = await main(['lint', 'run', file, '--session', f.session], f.deps);
       const output = f.output();
-      const result = JSON.parse(fs.readFileSync(output.path!, 'utf8'));
+      const result = readJson(
+        output.path!,
+        shape({ errors: listOf(shape({ code: text, message: text, line: optional(numeric) })) }),
+      );
       assert.equal(exit, 4);
       assert.ok(result.errors.some((issue: { code: string }) => issue.code === 'context-ref-missing'));
     } finally {

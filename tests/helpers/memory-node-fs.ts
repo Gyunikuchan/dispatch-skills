@@ -3,6 +3,13 @@ import path from 'node:path';
 import { fakePorts } from './fake-ports.ts';
 import { memoryRunFs } from './memory-run-fs.ts';
 
+type SyncMethod = Extract<keyof typeof fs, `${string}Sync`>;
+type WriteOptions = Parameters<typeof fs.writeFileSync>[2];
+
+function fail(code: string, file: string): never {
+  throw Object.assign(new Error(code + ': ' + file), { code });
+}
+
 /** Route contained logical fixtures through the existing memory filesystem. */
 export function memoryNodeFs(root: string): () => void {
   const paths = new Map<string, string>();
@@ -16,10 +23,14 @@ export function memoryNodeFs(root: string): () => void {
   };
   const base = key(root);
   const containment = new Map<string, boolean>();
-  const inside = (file: unknown): file is string => {
-    if (typeof file !== 'string') return false;
+  const inside = (file: fs.PathOrFileDescriptor | undefined): file is string => {
+    if (typeof file !== 'string') {
+      return false;
+    }
     const cached = containment.get(file);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      return cached;
+    }
     const relative = path.relative(base, key(file));
     const contained = relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
     containment.set(file, contained);
@@ -32,32 +43,43 @@ export function memoryNodeFs(root: string): () => void {
   const directories = new Set<string>([base]);
   const descriptors = new Map<number, string>();
   let next = -1;
-  const restores: (() => void)[] = [];
-  const fail = (code: string, file: string): never => {
-    throw Object.assign(new Error(code + ': ' + file), { code });
-  };
+  const restores: Array<() => void> = [];
   const bytes = (file: string) => Buffer.from(storage.readBase64(key(file)), 'base64');
-  const write = (file: string, data: string | Uint8Array, options?: any) => {
-    if (options?.flag?.includes('x') && storage.exists(key(file))) fail('EEXIST', file);
+  const write = (file: string, data: string | NodeJS.ArrayBufferView, options?: WriteOptions) => {
+    const flags = typeof options === 'object' ? options?.flag : undefined;
+    if (flags?.includes('x') && storage.exists(key(file))) {
+      fail('EEXIST', file);
+    }
     const encoding = typeof options === 'string' ? options : options?.encoding;
-    if (typeof data === 'string' && (!encoding || encoding === 'utf8' || encoding === 'utf-8'))
+    if (typeof data === 'string' && (!encoding || /^utf-?8$/.test(encoding))) {
       storage.writeAtomic(key(file), data);
-    else storage.writeBase64Atomic(key(file), Buffer.from(data as any, encoding).toString('base64'));
+    } else {
+      const buffer =
+        typeof data === 'string'
+          ? Buffer.from(data, encoding ?? undefined)
+          : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      storage.writeBase64Atomic(key(file), buffer.toString('base64'));
+    }
   };
-  const replace = (name: keyof typeof fs, handler: (original: any, ...args: any[]) => any) => {
+  const replace = <Name extends SyncMethod, Result>(
+    name: Name,
+    handler: (original: (typeof fs)[Name], ...args: Parameters<(typeof fs)[Name]>) => Result,
+  ) => {
     const original = fs[name];
     // Avoid node:test call-history capture for each logical filesystem operation.
-    const replacement = (...args: any[]) => handler(original, ...args);
+    const replacement = (...args: Parameters<(typeof fs)[Name]>) => handler(original, ...args);
     Object.defineProperty(fs, name, { ...Object.getOwnPropertyDescriptor(fs, name), value: replacement });
     restores.push(() =>
       Object.defineProperty(fs, name, { ...Object.getOwnPropertyDescriptor(fs, name), value: original }),
     );
-    return replacement as any;
+    return replacement;
   };
   replace('readFileSync', (real, file, options) => {
-    if (!inside(file)) return real(file, options);
+    if (!inside(file)) {
+      return real(file, options);
+    }
     const encoding = typeof options === 'string' ? options : options?.encoding;
-    return encoding === 'utf8' || encoding === 'utf-8'
+    return encoding && /^utf-?8$/.test(encoding)
       ? storage.readText(key(file))
       : encoding
         ? bytes(file).toString(encoding)
@@ -80,14 +102,20 @@ export function memoryNodeFs(root: string): () => void {
       : real(source, target),
   );
   replace('mkdirSync', (real, file, options) => {
-    if (!inside(file)) return real(file, options);
-    const result = storage.mkdir(key(file), { recursive: !!options?.recursive });
-    for (let dir = key(file); inside(dir); dir = path.dirname(dir)) directories.add(dir);
+    if (!inside(file)) {
+      return real(file, options);
+    }
+    const result = storage.mkdir(key(file), { recursive: typeof options === 'object' && !!options?.recursive });
+    for (let dir = key(file); inside(dir); dir = path.dirname(dir)) {
+      directories.add(dir);
+    }
     return result;
   });
   replace('existsSync', (real, file) => (inside(file) ? storage.exists(key(file)) : real(file)));
   replace('statSync', (real, file) => {
-    if (!inside(file)) return real(file);
+    if (!inside(file)) {
+      return real(file);
+    }
     const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file);
     return {
       size: entry.kind === 'file' ? bytes(file).length : 0,
@@ -97,30 +125,34 @@ export function memoryNodeFs(root: string): () => void {
       isSymbolicLink: () => entry.kind === 'symlink',
     };
   });
-  replace('lstatSync', (real, file, ...args) =>
-    inside(file) ? (fs.statSync as any)(file, ...args) : (real as any)(file, ...args),
-  );
-  const resolve = (real: any, file: string) =>
+  replace('lstatSync', (real, file, ...args) => (inside(file) ? fs.statSync(file, ...args) : real(file, ...args)));
+  const resolve = (real: (file: fs.PathLike) => string, file: fs.PathLike) =>
     inside(file) ? (storage.exists(key(file)) ? key(file) : fail('ENOENT', file)) : real(file);
   const native = fs.realpathSync.native;
   const realpath = replace('realpathSync', resolve);
-  realpath.native = ((file: string) => resolve(native, file)) as typeof native;
+  Object.assign(realpath, { native: (file: fs.PathLike) => resolve(native, file) });
   replace('readdirSync', (real, file, options) => {
-    if (!inside(file)) return real(file, options);
+    if (!inside(file)) {
+      return real(file, options);
+    }
     const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file);
-    if (entry.kind !== 'directory') fail('ENOTDIR', file);
+    if (entry.kind !== 'directory') {
+      fail('ENOTDIR', file);
+    }
     const names = [
       ...new Set([
-        ...storage.listFiles(key(file)).map((name) => name.split('/')[0]!),
-        ...[...directories]
-          .filter((dir) => dir !== key(file) && path.dirname(dir) === key(file))
-          .map((dir) => path.basename(dir)),
+        ...storage.listFiles(key(file)).map((name) => name.split('/')[0] ?? ''),
+        ...[...directories].flatMap((dir) =>
+          dir !== key(file) && path.dirname(dir) === key(file) ? [path.basename(dir)] : [],
+        ),
       ]),
     ].sort();
     const encoding = typeof options === 'string' ? options : options?.encoding;
     return names.map((name) => {
       const encoded = encoding === 'buffer' ? Buffer.from(name) : name;
-      if (!options?.withFileTypes) return encoded;
+      if (!options?.withFileTypes) {
+        return encoded;
+      }
       const kind = storage.inspectPath(path.join(key(file), name))?.kind;
       return {
         name: encoded,
@@ -137,56 +169,86 @@ export function memoryNodeFs(root: string): () => void {
     });
   });
   replace('renameSync', (real, source, target) => {
-    if (!inside(source) || !inside(target)) return real(source, target);
+    if (!inside(source) || !inside(target)) {
+      return real(source, target);
+    }
     storage.copyFileAtomic(key(source), key(target));
     storage.remove(key(source));
   });
   replace('unlinkSync', (real, file) => {
-    if (!inside(file)) return real(file);
+    if (!inside(file)) {
+      return real(file);
+    }
     const entry = storage.inspectPath(key(file)) ?? fail('ENOENT', file);
-    if (entry.kind === 'directory') fail('EISDIR', file);
+    if (entry.kind === 'directory') {
+      fail('EISDIR', file);
+    }
     storage.remove(key(file));
   });
   replace('rmSync', (real, file, options) => {
-    if (!inside(file)) return real(file, options);
+    if (!inside(file)) {
+      return real(file, options);
+    }
     const entry = storage.inspectPath(key(file));
     if (!entry) {
-      if (!options?.force) fail('ENOENT', file);
+      if (!options?.force) {
+        fail('ENOENT', file);
+      }
       return;
     }
     if (entry.kind === 'directory') {
-      if (!options?.recursive) fail('ERR_FS_EISDIR', file);
-      for (const name of fs.readdirSync(file)) fs.rmSync(path.join(file, name), options);
+      if (!options?.recursive) {
+        fail('ERR_FS_EISDIR', file);
+      }
+      for (const name of fs.readdirSync(file)) {
+        fs.rmSync(path.join(file, name), options);
+      }
       directories.delete(key(file));
     }
     storage.remove(key(file));
   });
   replace('openSync', (real, file, flags, mode) => {
-    if (!inside(file)) return real(file, flags, mode);
-    if (flags !== 'a' && flags !== 'wx') throw new Error('Unscripted virtual open flags ' + flags);
-    if (flags === 'wx' && storage.exists(key(file))) fail('EEXIST', file);
-    if (!storage.exists(key(file))) write(file, '');
+    if (!inside(file)) {
+      return real(file, flags, mode);
+    }
+    if (flags !== 'a' && flags !== 'wx') {
+      throw new Error('Unscripted virtual open flags ' + flags);
+    }
+    if (flags === 'wx' && storage.exists(key(file))) {
+      fail('EEXIST', file);
+    }
+    if (!storage.exists(key(file))) {
+      write(file, '');
+    }
     const fd = next--;
     descriptors.set(fd, key(file));
     return fd;
   });
   replace('writeSync', (real, fd, data, ...rest) => {
     const file = descriptors.get(fd);
-    if (!file) return real(fd, data, ...rest);
+    if (!file) {
+      return real(fd, data, ...rest);
+    }
     const value = Buffer.from(data);
     write(file, Buffer.concat([bytes(file), value]));
     return value.length;
   });
   replace('fsyncSync', (real, fd) => {
-    if (!descriptors.has(fd)) return real(fd);
+    if (!descriptors.has(fd)) {
+      return real(fd);
+    }
   });
   replace('closeSync', (real, fd) => {
-    if (!descriptors.delete(fd)) return real(fd);
+    if (!descriptors.delete(fd)) {
+      return real(fd);
+    }
   });
-  replace('truncateSync', (real, file, length) =>
+  replace('truncateSync', (real, file, length = 0) =>
     inside(file) ? storage.truncate(key(file), length) : real(file, length),
   );
   return () => {
-    for (const restore of restores.reverse()) restore();
+    for (const restore of restores.reverse()) {
+      restore();
+    }
   };
 }

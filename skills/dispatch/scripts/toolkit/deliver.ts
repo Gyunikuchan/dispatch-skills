@@ -1,11 +1,14 @@
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import { INTEGRATION_REVIEW } from './review-state.ts';
 import { SESSION_WORKTREES } from '../lib/session-paths.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult, CliDeps } from './cli.ts';
 import { git, gitOk, gitRaw, gitPaths, splitPaths, changedPaths, testedTree } from './git.ts';
+import { isRecord } from '../lib/config.ts';
+import { present, textValue } from './narrow.ts';
 import { currentRuntimeVerification, integrationRecord, pendingIntegration } from './integration-state.ts';
-import { terminalWorktrees, launches, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
+import { terminalWorktrees, launches, launchBase, candidateRef, abandonedRef, deliveredSourceRef } from './writers.ts';
 import { withPostFold } from './ledger.ts';
 import { readRequiredReason, readTextPayload } from './input.ts';
 import { ToolError, capSummary, result, refuse } from './output.ts';
@@ -16,11 +19,38 @@ import { loadRejections, applicableReviewIds } from './confirmations.ts';
 import { coverageState } from './coverage.ts';
 import { admission } from './findings.ts';
 
+type Destination = { path: string; branch: string };
+const isDestination = (value: unknown): value is Destination =>
+  isRecord(value) && typeof value['path'] === 'string' && typeof value['branch'] === 'string';
+function destinationOf(value: unknown) {
+  if (!isDestination(value)) {
+    throw new TypeError('Missing the delivery destination');
+  }
+  return value;
+}
+const matchesDestination = (value: unknown, dest: Destination) =>
+  isDestination(value) && value.path === dest.path && value.branch === dest.branch;
+
+function settledValue<T>(row: PromiseSettledResult<T>): T {
+  if (row.status === 'rejected') {
+    throw row.reason;
+  }
+  return row.value;
+}
+const blockedRecovery = (message: string): never =>
+  refuse(
+    'recovery-blocked',
+    message + '; preserve session refs and worktrees, inspect recovery evidence or start a new run',
+  );
+const isRegistered = (paths: Array<string>, cwd: string) => paths.some((p) => samePath(p, cwd));
+
 const locks = (env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({ GIT_OPTIONAL_LOCKS: '0', ...env });
 function tempIndexFile(session: string, name: string): string {
   const file = path.join(session, '.state', name);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (const f of [file, file + '.lock']) fs.rmSync(f, { force: true });
+  for (const f of [file, file + '.lock']) {
+    fs.rmSync(f, { force: true });
+  }
   return file;
 }
 // Paths of `subset` whose working-tree state equals `tree`, judged by Git through a session-owned temporary index.
@@ -29,9 +59,11 @@ async function pathsEqualTo(
   session: string,
   destPath: string,
   tree: string,
-  subset: string[],
+  subset: Array<string>,
 ): Promise<Set<string>> {
-  if (!subset.length) return new Set();
+  if (!subset.length) {
+    return new Set();
+  }
   const index = tempIndexFile(session, 'deliver-check-index'),
     env = { GIT_INDEX_FILE: index };
   try {
@@ -41,110 +73,120 @@ async function pathsEqualTo(
       others = await gitPaths(deps, destPath, ['ls-files', '--others', '-z'], locks(env));
     return new Set(subset.filter((p) => !differing.has(p) && !others.some((o) => o === p || o.startsWith(p + '/'))));
   } finally {
-    for (const f of [index, index + '.lock']) fs.rmSync(f, { force: true });
+    for (const f of [index, index + '.lock']) {
+      fs.rmSync(f, { force: true });
+    }
   }
 }
 export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'deliver takes no task');
-  if (ctx.values['commit'] !== undefined || ctx.values['message'] !== undefined) return commitDelivered(ctx);
+  if (ctx.args.length) {
+    throw new ToolError(1, 'invalid-input', 'deliver takes no task');
+  }
+  if (ctx.values['commit'] !== undefined || ctx.values['message'] !== undefined) {
+    return commitDelivered(ctx);
+  }
   return withPostFold(ctx.session, 'worktree deliver', ctx.deps, async (tx) => {
     const active = pendingIntegration(tx.fold);
-    if (active) refuse('integration-pending', active.data['task']);
+    if (active) {
+      refuse('integration-pending', textValue(active.data['task']));
+    }
     const opened = integrationRecord(tx.fold);
-    if (!opened) refuse('no-integration');
-    const cwd = path.resolve(ctx.session, opened.data['path']),
-      dest = opened.data['dest'] as { path: string; branch: string };
-    const read = (root: string, args: string[]) => gitOk(ctx.deps, root, args, { GIT_OPTIONAL_LOCKS: '0' });
-    const rawOut = (root: string, args: string[], env?: NodeJS.ProcessEnv, stdin?: string) =>
+    if (!opened) {
+      refuse('no-integration');
+    }
+    const cwd = path.resolve(ctx.session, textValue(opened.data['path'])),
+      dest = destinationOf(opened.data['dest']);
+    const read = (root: string, args: Array<string>) => gitOk(ctx.deps, root, args, { GIT_OPTIONAL_LOCKS: '0' });
+    const rawOut = (root: string, args: Array<string>, env?: NodeJS.ProcessEnv, stdin?: string) =>
       gitRaw(ctx.deps, root, args, locks(env), stdin);
-    const names = (root: string, args: string[], env?: NodeJS.ProcessEnv) => gitPaths(ctx.deps, root, args, locks(env));
-    const value = <T>(row: PromiseSettledResult<T>): T => {
-      if (row.status === 'rejected') throw row.reason;
-      return row.value;
-    };
-    const from = opened.data['base'] as string;
+    const names = (root: string, args: Array<string>, env?: NodeJS.ProcessEnv) =>
+      gitPaths(ctx.deps, root, args, locks(env));
+    const from = textValue(opened.data['base']);
     // Cleanup may have removed the integration worktree after a completed delivery; the retry then relies on recorded identities.
     const integrationPresent = fs.existsSync(cwd);
     const source = integrationPresent ? await read(cwd, ['rev-parse', 'HEAD']) : undefined;
     const ref = deliveredSourceRef(ctx.manifest.safeSessionId);
     const last = tx.fold.records.findLast(
-      (r) =>
-        r.kind === 'integrate' &&
-        r.data['phase'] === 'delivered' &&
-        r.data['dest'].path === dest.path &&
-        r.data['dest'].branch === dest.branch,
+      (r) => r.kind === 'integrate' && r.data['phase'] === 'delivered' && matchesDestination(r.data['dest'], dest),
     );
-    const blocked = (message: string): never =>
-      refuse(
-        'recovery-blocked',
-        message + '; preserve session refs and worktrees, inspect recovery evidence or start a new run',
-      );
     // Recursive raw diff: every delivered path is a leaf entry (blob, symlink or gitlink) or absent.
-    const entriesOf = async (root = cwd, target = source!) => {
+    const entriesOf = async (root: string, target: string) => {
       const tokens = splitPaths(
         await rawOut(root, ['diff', '--raw', '-z', '--no-renames', '--no-abbrev', from, target, '--']),
       );
-      const rows: { path: string; modes: [string, string]; sourceOid: string }[] = [];
+      const rows: Array<{ path: string; modes: [string, string]; sourceOid: string }> = [];
       for (let i = 0; i + 1 < tokens.length; i += 2) {
-        const meta = tokens[i]!.slice(1).split(' ');
-        rows.push({ path: tokens[i + 1]!, modes: [meta[0]!, meta[1]!], sourceOid: meta[3]! });
+        const [oldMode, newMode, , sourceOid] = present(tokens[i], 'raw diff metadata').slice(1).split(' ');
+        rows.push({
+          path: present(tokens[i + 1], 'raw diff path'),
+          modes: [present(oldMode, 'raw diff old mode'), present(newMode, 'raw diff new mode')],
+          sourceOid: present(sourceOid, 'raw diff object id'),
+        });
       }
       return rows;
     };
     if (last) {
-      const recorded = last.data['source'] as string;
-      if (source !== undefined && recorded !== source) blocked('Integration source changed after completed delivery');
+      const recorded = textValue(last.data['source']);
+      if (source !== undefined && recorded !== source) {
+        blockedRecovery('Integration source changed after completed delivery');
+      }
       return result({
         mode: 'uncommitted',
         dest,
-        from: last.data['from'],
+        from: textValue(last.data['from']),
         source: recorded,
         ref,
         paths: (await entriesOf(dest.path, recorded)).map((e) => e.path),
         delivered: false,
-        ...(last.data['noop'] ? { noop: true } : {}),
+        ...(last.data['noop'] && { noop: true }),
       });
     }
-    if (source === undefined)
+    if (source === undefined) {
       refuse('no-integration', 'Integration worktree is missing and no completed delivery is recorded');
+    }
     const checkSource = async () => {
       if (
         loadRejections(ctx.session, tx.fold, applicableReviewIds(ctx.manifest, tx.fold)).some(
           (state) => state.state !== 'confirmed',
         )
-      )
+      ) {
         refuse('review-confirmation-required');
+      }
       const [head, dirty, cached] = await Promise.allSettled([
         read(cwd, ['rev-parse', 'HEAD']),
         changedPaths(ctx.deps, cwd, 'HEAD'),
         names(cwd, ['diff', '--cached', '--name-only', '--no-renames', '-z', 'HEAD', '--']),
       ]);
-      if (value(head) !== source) blocked('Integration source changed during delivery');
-      if (value(dirty).length || value(cached).length) refuse('integration-dirty');
+      if (settledValue(head) !== source) {
+        blockedRecovery('Integration source changed during delivery');
+      }
+      if (settledValue(dirty).length || settledValue(cached).length) {
+        refuse('integration-dirty');
+      }
     };
     await checkSource();
     const noop =
       (await read(cwd, ['rev-parse', source + '^{tree}'])) === (await read(cwd, ['rev-parse', from + '^{tree}']));
-    const entries = await entriesOf(),
+    const entries = await entriesOf(cwd, source),
       paths = entries.map((e) => e.path);
     const started = tx.fold.records.findLast(
       (r) =>
-        r.kind === 'integrate' &&
-        r.data['phase'] === 'deliver-started' &&
-        r.data['dest'].path === dest.path &&
-        r.data['dest'].branch === dest.branch,
+        r.kind === 'integrate' && r.data['phase'] === 'deliver-started' && matchesDestination(r.data['dest'], dest),
     );
-    if (started && (started.data['source'] !== source || started.data['from'] !== from))
-      blocked('Unfinished delivery has a different source or caller base');
+    if (started && (started.data['source'] !== source || started.data['from'] !== from)) {
+      blockedRecovery('Unfinished delivery has a different source or caller base');
+    }
     // A started delivery recovers under existing rules; a new one needs settled coverage before any caller write.
     if (!started) {
-      if (!currentRuntimeVerification(tx.fold, opened.seq)) refuse('verification-required');
+      if (!currentRuntimeVerification(tx.fold, opened.seq)) {
+        refuse('verification-required');
+      }
       const applies = applicableReviewIds(ctx.manifest, tx.fold).get(INTEGRATION_REVIEW),
         c = coverageState(ctx.session, tx.fold, INTEGRATION_REVIEW, applies);
       // The message follows launch admission, which can stop a rerun for a user decision once the coverage round is used.
       const budget = c.open.length ? admission(ctx.session, tx.fold, INTEGRATION_REVIEW, 0, applies).budget : null,
         user = budget?.state === 'requires-coverage-decision';
-      if (c.decision === 'rerun' || c.decision === 'user')
+      if (c.decision === 'rerun' || c.decision === 'user') {
         refuse(
           'coverage-required',
           'Review coverage: ' +
@@ -153,21 +195,33 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
                 c.open.join(', ') +
                 (user
                   ? '; needs a user decision: accept reduced coverage' +
-                    (budget!.nextRound > budget!.ceiling ? '' : ' or grant one more coverage round')
+                    (budget.nextRound > budget.ceiling ? '' : ' or grant one more coverage round')
                   : '; rerun them')
               : 'round ' + c.incomplete + ' is incomplete'),
         );
+      }
     }
     const retained = await git(ctx.deps, cwd, ['rev-parse', '--verify', '--quiet', ref], { GIT_OPTIONAL_LOCKS: '0' });
-    if (retained.exit === 0 && retained.stdout.trim() !== source)
-      blocked('Delivered-source ref points to a different commit');
+    if (retained.exit === 0 && retained.stdout.trim() !== source) {
+      blockedRecovery('Delivered-source ref points to a different commit');
+    }
     const zero = '0'.repeat(source.length);
 
     // SECTION: path state against a tree, judged by Git through a session-owned temporary index
     const tempIndex = (name: string) => tempIndexFile(ctx.session, name);
-    const equalTo = (tree: string, subset: string[]) => pathsEqualTo(ctx.deps, ctx.session, dest.path, tree, subset);
+    const equalTo = (tree: string, subset: Array<string>) =>
+      pathsEqualTo(ctx.deps, ctx.session, dest.path, tree, subset);
 
     // SECTION: caller guard
+    const named = (blocked: Array<string>): never =>
+      refuse(
+        'caller-dirty',
+        'Caller paths overlap delivered paths: ' +
+          blocked.join(', ') +
+          '; restore with git restore --source=' +
+          ref +
+          ' -- <path>, or move or discard them',
+      );
     const checkCaller = async (resuming: boolean) => {
       const observed = await Promise.allSettled([
         git(ctx.deps, dest.path, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { GIT_OPTIONAL_LOCKS: '0' }),
@@ -175,11 +229,19 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
         names(dest.path, ['diff', '--cached', '--ita-visible-in-index', '--name-only', '--no-renames', '-z', '--']),
         git(ctx.deps, dest.path, ['config', '--bool', 'core.sparseCheckout']),
       ]);
-      const branch = value(observed[0]);
-      if (branch.exit || branch.stdout.trim() !== dest.branch || value(observed[1]) !== from) refuse('caller-moved');
-      if (value(observed[3]).stdout.trim() === 'true') refuse('unsupported-sparse');
-      if (entries.some((e) => e.modes.includes('160000'))) refuse('unsupported-entry');
-      if (value(observed[2]).length) refuse('caller-dirty');
+      const branch = settledValue(observed[0]);
+      if (branch.exit || branch.stdout.trim() !== dest.branch || settledValue(observed[1]) !== from) {
+        refuse('caller-moved');
+      }
+      if (settledValue(observed[3]).stdout.trim() === 'true') {
+        refuse('unsupported-sparse');
+      }
+      if (entries.some((e) => e.modes.includes('160000'))) {
+        refuse('unsupported-entry');
+      }
+      if (settledValue(observed[2]).length) {
+        refuse('caller-dirty');
+      }
       const dirty = [
         ...new Set([
           ...(await names(dest.path, ['diff', '--name-only', '--no-renames', '-z', 'HEAD', '--'])),
@@ -187,27 +249,28 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
           ...(await names(dest.path, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])),
         ]),
       ].filter((p) => paths.some((q) => overlaps(p, q)));
-      if (!dirty.length) return;
-      const named = (blocked: string[]): never =>
-        refuse(
-          'caller-dirty',
-          'Caller paths overlap delivered paths: ' +
-            blocked.join(', ') +
-            '; restore with git restore --source=' +
-            ref +
-            ' -- <path>, or move or discard them',
-        );
-      if (!resuming) named(dirty);
+      if (!dirty.length) {
+        return;
+      }
+      if (!resuming) {
+        named(dirty);
+      }
       // Resuming: an earlier attempt may have written some delivered paths; only exact delivered paths still at `from` or `source` are ours.
       const known = new Set(paths);
-      if (dirty.some((p) => !known.has(p))) named(dirty.filter((p) => !known.has(p)));
+      if (dirty.some((p) => !known.has(p))) {
+        named(dirty.filter((p) => !known.has(p)));
+      }
       const ours = new Set([...(await equalTo(from, dirty)), ...(await equalTo(source, dirty))]);
-      if (dirty.some((p) => !ours.has(p))) named(dirty.filter((p) => !ours.has(p)));
+      if (dirty.some((p) => !ours.has(p))) {
+        named(dirty.filter((p) => !ours.has(p)));
+      }
     };
 
     // SECTION: apply through Git's two-tree merge so bytes, modes, symlinks, deletions and dir/file swaps are Git's own
     const apply = async () => {
-      if (!paths.length) return;
+      if (!paths.length) {
+        return;
+      }
       const index = tempIndex('deliver-index'),
         env = { GIT_INDEX_FILE: index };
       try {
@@ -233,11 +296,15 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
           ...env,
         });
         if (merged.exit) {
-          if (/overwritten|not uptodate|untracked|Entry '/i.test(merged.stderr)) refuse('caller-dirty');
+          if (/overwritten|not uptodate|untracked|Entry '/i.test(merged.stderr)) {
+            refuse('caller-dirty');
+          }
           throw new ToolError(2, 'fault', merged.stderr || merged.stdout || 'Git read-tree failed');
         }
       } finally {
-        for (const f of [index, index + '.lock']) fs.rmSync(f, { force: true });
+        for (const f of [index, index + '.lock']) {
+          fs.rmSync(f, { force: true });
+        }
       }
     };
     const verifyApplied = async () => {
@@ -252,16 +319,21 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
         head !== from ||
         cached.length ||
         (await equalTo(source, paths)).size !== paths.length
-      )
+      ) {
         refuse('caller-dirty');
+      }
     };
 
     // SECTION: delivery sequence
     await checkCaller(!!started);
-    if (retained.exit !== 0) await gitOk(ctx.deps, cwd, ['update-ref', ref, source, zero]);
+    if (retained.exit !== 0) {
+      await gitOk(ctx.deps, cwd, ['update-ref', ref, source, zero]);
+    }
     await ctx.deps.hook?.('deliver:after-preserve');
     const data = { mode: 'uncommitted', dest, from, source };
-    if (!started) await tx.append({ kind: 'integrate', by: 'tool', data: { phase: 'deliver-started', ...data } });
+    if (!started) {
+      await tx.append({ kind: 'integrate', by: 'tool', data: { phase: 'deliver-started', ...data } });
+    }
     await ctx.deps.hook?.('deliver:after-started');
     await ctx.deps.hook?.('deliver:before-apply');
     await checkSource();
@@ -273,10 +345,10 @@ export async function deliver(ctx: HandlerContext): Promise<HandlerResult> {
     await tx.append({
       kind: 'integrate',
       by: 'tool',
-      data: { phase: 'delivered', ...data, ...(noop ? { noop: true } : {}) },
+      data: { phase: 'delivered', ...data, ...(noop && { noop: true }) },
     });
     await ctx.deps.hook?.('deliver:after-delivered');
-    return result({ ...data, ref, paths, delivered: true, ...(noop ? { noop: true } : {}) });
+    return result({ ...data, ref, paths, delivered: true, ...(noop && { noop: true }) });
   });
 }
 // SECTION: commit phase; one caller commit for a delivered increment, or a record of the user's own commit
@@ -284,12 +356,12 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
   const message = readTextPayload(ctx, { fileFlag: 'commit', inlineFlag: 'message', label: 'commit message' });
   return withPostFold(ctx.session, 'worktree deliver', ctx.deps, async (tx) => {
     const delivered = tx.fold.records.findLast((r) => r.kind === 'integrate' && r.data['phase'] === 'delivered');
-    if (!delivered) return refuse('not-delivered', 'No delivered record in this session');
-    const { dest, from, source } = delivered.data as {
-      dest: { path: string; branch: string };
-      from: string;
-      source: string;
-    };
+    if (!delivered) {
+      return refuse('not-delivered', 'No delivered record in this session');
+    }
+    const dest = destinationOf(delivered.data['dest']),
+      from = textValue(delivered.data['from']),
+      source = textValue(delivered.data['source']);
     const recorded = tx.fold.records.findLast(
       (r) =>
         r.kind === 'integrate' &&
@@ -297,48 +369,55 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
         r.data['phase'] === 'committed' &&
         r.data['source'] === source,
     );
-    if (recorded)
+    if (recorded) {
+      const recordedDiffering: unknown = recorded.data['differing'];
       return result({
-        commit: recorded.data['commit'],
+        commit: textValue(recorded.data['commit']),
         source,
         from,
         dest,
         committed: false,
         recordOnly: true,
-        ...(recorded.data['differing'] ? { differing: recorded.data['differing'] } : {}),
+        ...(Boolean(recordedDiffering) && { differing: recordedDiffering }),
       });
-    const run = (args: string[]) => git(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
-    const read = (args: string[]) => gitOk(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
-    const names = (args: string[]) => gitPaths(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
+    }
+    const run = (args: Array<string>) => git(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
+    const read = (args: Array<string>) => gitOk(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
+    const names = (args: Array<string>) => gitPaths(ctx.deps, dest.path, args, { GIT_OPTIONAL_LOCKS: '0' });
     const state = async () => {
       const branch = await run(['symbolic-ref', '--quiet', '--short', 'HEAD']);
       return { branch: branch.exit ? '' : branch.stdout.trim(), head: await read(['rev-parse', 'HEAD']) };
     };
     const indexTree = async () => {
       const out = await git(ctx.deps, dest.path, ['write-tree']);
-      if (out.exit)
+      if (out.exit) {
         refuse('staged-changes', 'Git cannot write the index tree: ' + capSummary(out.stderr || out.stdout));
+      }
       return out.stdout.trim();
     };
     const isAncestor = async (ancestor: string, descendant: string) => {
       const out = await run(['merge-base', '--is-ancestor', ancestor, descendant]);
-      if (out.exit > 1) throw new ToolError(2, 'fault', out.stderr || out.stdout || 'Git exited ' + out.exit);
+      if (out.exit > 1) {
+        throw new ToolError(2, 'fault', out.stderr || out.stdout || 'Git exited ' + out.exit);
+      }
       return out.exit === 0;
     };
     const paths = await names(['diff', '--name-only', '--no-renames', '-z', from, source, '--']);
     const known = new Set(paths),
       overlap = (p: string) => paths.some((q) => overlaps(p, q));
     const caller = await state();
-    if (caller.branch !== dest.branch)
+    if (caller.branch !== dest.branch) {
       refuse('caller-moved', 'Checked-out branch is not the delivered branch ' + dest.branch);
+    }
     let commit = caller.head,
       recordOnly = true,
-      differing: string[];
-    const warnings: string[] = [];
+      differing: Array<string>;
+    const warnings: Array<string> = [];
     if (caller.head !== from) {
       // SECTION: record-only; the user committed the delivered paths
-      if (!(await isAncestor(from, caller.head)))
+      if (!(await isAncestor(from, caller.head))) {
         refuse('head-not-descendant', 'HEAD does not descend from the delivery base ' + from);
+      }
       const dirty = [
         ...new Set([
           ...(await names(['diff', '--name-only', '--no-renames', '-z', 'HEAD', '--'])),
@@ -346,11 +425,12 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
           ...(await names(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])),
         ]),
       ].filter(overlap);
-      if (dirty.length)
+      if (dirty.length) {
         refuse(
           'delivered-uncommitted',
           'Delivered paths have uncommitted changes: ' + dirty.join(', ') + '; commit or discard them',
         );
+      }
       // Later user commits may change other paths; only paths that overlap the delivered paths count.
       differing = (await names(['diff', '--name-only', '--no-renames', '-z', source, caller.head, '--'])).filter(
         overlap,
@@ -361,25 +441,30 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
       const staged = await names(['diff', ...flags, 'HEAD', '--']),
         stagedVsSource = new Set(await names(['diff', ...flags, source, '--']));
       const stray = staged.filter((p) => !known.has(p) || stagedVsSource.has(p));
-      if (stray.length)
+      if (stray.length) {
         refuse(
           'staged-changes',
           'Staged changes block the commit: ' + stray.join(', ') + '; unstage or commit them first',
         );
+      }
       const equal = await pathsEqualTo(ctx.deps, ctx.session, dest.path, source, paths),
         changed = paths.filter((p) => !equal.has(p));
-      if (changed.length)
+      if (changed.length) {
         refuse(
           'delivered-content-changed',
           'Caller content differs from the delivered source at: ' + changed.join(', '),
         );
+      }
       const before = await indexTree();
       await ctx.deps.hook?.('deliver:before-commit');
       // NOTE: Git has no lock spanning read-tree and commit; the checks after the commit cover the remaining window.
       const now = await state();
-      if (now.branch !== caller.branch || now.head !== caller.head)
+      if (now.branch !== caller.branch || now.head !== caller.head) {
         refuse('caller-moved', 'Caller branch or HEAD changed before the commit');
-      if ((await indexTree()) !== before) refuse('staged-changes', 'The index changed before the commit');
+      }
+      if ((await indexTree()) !== before) {
+        refuse('staged-changes', 'The index changed before the commit');
+      }
       const empty = (await read(['rev-parse', source + '^{tree}'])) === (await read(['rev-parse', from + '^{tree}']));
       await gitOk(ctx.deps, dest.path, ['read-tree', source]);
       const made = await ctx.deps.run(['git', 'commit', '-q', ...(empty ? ['--allow-empty'] : []), '-F', '-'], {
@@ -397,10 +482,11 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
       const after = await state();
       commit = after.head;
       recordOnly = false;
-      if (after.branch !== dest.branch || !(await isAncestor(commit, 'refs/heads/' + dest.branch)))
+      if (after.branch !== dest.branch || !(await isAncestor(commit, 'refs/heads/' + dest.branch))) {
         refuse('caller-moved', 'Commit ' + commit + ' is not on branch ' + dest.branch + '; a hook moved the caller');
+      }
       const parents = (await read(['rev-list', '--parents', '-n', '1', commit])).split(' ').slice(1);
-      if (parents.length !== 1 || parents[0] !== from)
+      if (parents.length !== 1 || parents[0] !== from) {
         warnings.push(
           'Commit ' +
             commit +
@@ -410,6 +496,7 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
             from +
             '; another process committed in the caller',
         );
+      }
       const settled = await pathsEqualTo(ctx.deps, ctx.session, dest.path, source, paths);
       differing = [
         ...new Set([
@@ -418,11 +505,13 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
         ]),
       ];
     }
-    if (differing.length) warnings.push('Delivered source differs from the caller at: ' + differing.join(', '));
+    if (differing.length) {
+      warnings.push('Delivered source differs from the caller at: ' + differing.join(', '));
+    }
     await tx.append({
       kind: 'integrate',
       by: 'tool',
-      data: { phase: 'committed', commit, source, ...(differing.length ? { differing } : {}) },
+      data: { phase: 'committed', commit, source, ...(differing.length && { differing }) },
     });
     return result({
       commit,
@@ -431,18 +520,29 @@ async function commitDelivered(ctx: HandlerContext): Promise<HandlerResult> {
       dest,
       committed: true,
       recordOnly,
-      ...(differing.length ? { differing } : {}),
-      ...(warnings.length ? { warning: warnings.join('; ') } : {}),
+      ...(differing.length && { differing }),
+      ...(warnings.length && { warning: warnings.join('; ') }),
     });
   });
 }
 export async function close(ctx: HandlerContext): Promise<HandlerResult> {
   const why = readRequiredReason(ctx);
-  if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'close takes no task');
+  if (ctx.args.length) {
+    throw new ToolError(1, 'invalid-input', 'close takes no task');
+  }
   return withPostFold(ctx.session, 'worktree close', ctx.deps, async (tx) => {
     await tx.append({ kind: 'integrate', by: 'tool', data: { phase: 'closed', reason: why } });
     return result({ closed: true, reason: why });
   });
+}
+interface RemovalRefusal {
+  exit: number;
+  message: string;
+}
+interface RemoveExit {
+  exit: number;
+  stdout: string;
+  stderr: string;
 }
 async function rmWorktreeDir(dir: string, deps: CliDeps, attempts = 20, delayMs = 100): Promise<void> {
   for (let i = 0; i < attempts; i++) {
@@ -450,9 +550,13 @@ async function rmWorktreeDir(dir: string, deps: CliDeps, attempts = 20, delayMs 
       fs.rmSync(dir, { recursive: true, force: true });
       return;
     } catch (error: unknown) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const code = nodeErrorCode(error);
       if ((code === 'EPERM' || code === 'EBUSY') && i < attempts - 1) {
-        await (deps.sleep ? deps.sleep(delayMs) : new Promise((r) => setTimeout(r, delayMs)));
+        await (deps.sleep
+          ? deps.sleep(delayMs)
+          : new Promise((r) => {
+              setTimeout(r, delayMs);
+            }));
         continue;
       }
       throw error;
@@ -472,7 +576,9 @@ function hasPathEntry(file: string): boolean {
     fs.lstatSync(file);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return false;
+    }
     throw error;
   }
 }
@@ -489,60 +595,74 @@ async function worktreeControl(
   const worktrees = path.join(common, 'worktrees'),
     registeredLink = path.join(cwd, '.git'),
     linkFile = path.join(linkCwd, '.git'),
-    matches: string[] = [];
+    matches: Array<string> = [];
   for (const entry of fs.readdirSync(worktrees, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory()) {
+      continue;
+    }
     try {
       const admin = fs.realpathSync(path.join(worktrees, entry.name));
       const relative = path.relative(worktrees, admin);
-      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue;
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        continue;
+      }
       const commonText = fs.readFileSync(path.join(admin, 'commondir'), 'utf8').trim();
-      if (!samePath(path.resolve(admin, commonText), common)) continue;
+      if (!samePath(path.resolve(admin, commonText), common)) {
+        continue;
+      }
       const target = fs.readFileSync(path.join(admin, 'gitdir'), 'utf8').trim();
-      if (target && samePath(path.resolve(admin, target), registeredLink) && fs.existsSync(path.join(admin, 'HEAD')))
+      if (target && samePath(path.resolve(admin, target), registeredLink) && fs.existsSync(path.join(admin, 'HEAD'))) {
         matches.push(admin);
+      }
     } catch {
       continue;
     }
   }
-  if (matches.length !== 1)
+  const [admin] = matches;
+  if (matches.length !== 1 || admin === undefined) {
     throw Object.assign(new Error('Git worktree control metadata is missing or ambiguous'), {
       code: 'CONTROL_METADATA_UNVERIFIABLE',
     });
-  const admin = matches[0]!,
-    file = linkFile;
+  }
+  const file = linkFile;
   let link: string | undefined;
   try {
-    if (!fs.lstatSync(file).isFile())
+    if (!fs.lstatSync(file).isFile()) {
       throw Object.assign(new Error('Git worktree control link is not a regular file'), {
         code: 'CONTROL_METADATA_UNVERIFIABLE',
       });
+    }
     link = fs.readFileSync(file, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (nodeErrorCode(error) !== 'ENOENT') {
+      throw error;
+    }
   }
   if (link !== undefined) {
-    const match = /^gitdir:\s*(.+?)\s*$/m.exec(link);
-    if (!match || !samePath(path.resolve(linkCwd, match[1]!), admin))
+    const linked = /^gitdir:\s*(.+?)\s*$/m.exec(link)?.[1];
+    if (!linked || !samePath(path.resolve(linkCwd, linked), admin)) {
       throw Object.assign(new Error('Git worktree control link does not match registered metadata'), {
         code: 'CONTROL_METADATA_UNVERIFIABLE',
       });
+    }
   } else {
-    if (!restoreMissing)
+    if (!restoreMissing) {
       throw Object.assign(new Error('Recovery directory has no registered Git control link'), {
         code: 'CONTROL_METADATA_UNVERIFIABLE',
       });
-    link = 'gitdir: ' + path.relative(linkCwd, admin).replace(/\\/g, '/') + '\n';
+    }
+    link = 'gitdir: ' + path.relative(linkCwd, admin).replaceAll('\\', '/') + '\n';
     fs.writeFileSync(file, link, { flag: 'wx' });
   }
 }
 function probeWorktreeMove(cwd: string): void {
   const probe = recoverySibling(cwd);
-  if (hasPathEntry(probe))
+  if (hasPathEntry(probe)) {
     throw Object.assign(new Error('A cleanup recovery path already exists: ' + probe), {
       code: 'WORKTREE_RECOVERY_PATH_OCCUPIED',
       recoveryPath: probe,
     });
+  }
   // Keep a failed rename round trip at one deterministic sibling for retry discovery.
   fs.renameSync(cwd, probe);
   try {
@@ -565,7 +685,9 @@ function probeWorktreeMove(cwd: string): void {
   }
 }
 export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length) throw new ToolError(1, 'invalid-input', 'cleanup takes no task');
+  if (ctx.args.length) {
+    throw new ToolError(1, 'invalid-input', 'cleanup takes no task');
+  }
   return withPostFold(ctx.session, 'worktree cleanup', ctx.deps, async (tx) => {
     const root = ctx.manifest.repositoryRoot,
       boundary = path.resolve(ctx.session, SESSION_WORKTREES);
@@ -581,58 +703,64 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
         )
         .filter((v): v is string => !!v)
         .map((p) => path.resolve(p));
-    const registered = await listRegistered(),
-      isRegistered = (paths: string[], cwd: string) => paths.some((p) => samePath(p, cwd));
+    const registered = await listRegistered();
     const verifyRecovery = async (cwd: string, recovery: string): Promise<void> => {
-      if (!samePath(recovery, recoverySibling(cwd)))
+      if (!samePath(recovery, recoverySibling(cwd))) {
         throw Object.assign(new Error('Cleanup recovery path does not match its owned worktree'), {
           code: 'WORKTREE_RECOVERY_UNVERIFIABLE',
         });
+      }
       const stat = fs.lstatSync(recovery);
-      if (!stat.isDirectory() || stat.isSymbolicLink())
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
         throw Object.assign(new Error('Cleanup recovery path is not a regular directory'), {
           code: 'WORKTREE_RECOVERY_UNVERIFIABLE',
         });
+      }
       const parent = fs.realpathSync(path.dirname(recovery)),
         parentRelative = path.relative(physicalBoundary, parent);
-      if (parentRelative.startsWith('..') || path.isAbsolute(parentRelative))
+      if (parentRelative.startsWith('..') || path.isAbsolute(parentRelative)) {
         throw Object.assign(new Error('Cleanup recovery parent resolves outside the worktree boundary'), {
           code: 'WORKTREE_RECOVERY_OUTSIDE_BOUNDARY',
         });
+      }
       const real = fs.realpathSync(recovery),
         physical = path.relative(physicalBoundary, real);
-      if (!physical || physical.startsWith('..') || path.isAbsolute(physical))
+      if (!physical || physical.startsWith('..') || path.isAbsolute(physical)) {
         throw Object.assign(new Error('Cleanup recovery path resolves outside the worktree boundary'), {
           code: 'WORKTREE_RECOVERY_OUTSIDE_BOUNDARY',
         });
-      if (!isRegistered(registered, cwd))
+      }
+      if (!isRegistered(registered, cwd)) {
         throw Object.assign(new Error('Git no longer registers the worktree for this recovery path'), {
           code: 'WORKTREE_RECOVERY_UNREGISTERED',
         });
+      }
       await worktreeControl(root, cwd, ctx.deps, recovery, false);
       await gitOk(ctx.deps, recovery, ['rev-parse', 'HEAD']);
     };
     const opened = integrationRecord(tx.fold);
-    const tasks = [...new Set(tx.fold.records.filter((r) => r.kind === 'writer').map((r) => r.data['task'] as string))];
+    const tasks = [
+      ...new Set(tx.fold.records.filter((r) => r.kind === 'writer').map((r) => textValue(r.data['task']))),
+    ];
     const writers = tasks.flatMap((t) => launches(tx.fold, t));
     const owned = [
       ...new Set([
-        ...writers.map((w) => w.record.data['path'] as string),
-        ...(opened ? [opened.data['path'] as string] : []),
+        ...writers.map((w) => textValue(w.record.data['path'])),
+        ...(opened ? [textValue(opened.data['path'])] : []),
       ]),
     ];
-    const removed: string[] = [],
-      kept: {
+    const removed: Array<string> = [],
+      kept: Array<{
         path: string;
         reason: string;
-        paths?: string[];
+        paths?: Array<string>;
         code?: string;
         message?: string;
         recoveryPath?: string;
-      }[] = [],
-      ready: string[] = [],
-      missing: string[] = [],
-      deregistered: string[] = [];
+      }> = [],
+      ready: Array<string> = [],
+      missing: Array<string> = [],
+      deregistered: Array<string> = [];
     const failed = new Set<string>();
     const fail = (relative: string, reason: string, error: unknown) => {
       const row =
@@ -653,45 +781,51 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
             ? 'GIT_EXIT_' + row.exit
             : 'CLEANUP_FAILED';
       const detail = [row.message, row.stderr, row.stdout].find(
-        (value) => typeof value === 'string' && value.trim(),
-      ) as string | undefined;
+        (value): value is string => typeof value === 'string' && !!value.trim(),
+      );
       const recoveryPath =
         typeof row.recoveryPath === 'string'
-          ? path.relative(ctx.session, row.recoveryPath).replace(/\\/g, '/')
+          ? path.relative(ctx.session, row.recoveryPath).replaceAll('\\', '/')
           : undefined;
       const message = capSummary(
         'Close processes using this path or fix its permissions, then retry cleanup. ' +
           (detail ?? String(error)) +
           (recoveryPath ? ' Recovery path: ' + recoveryPath + '.' : ''),
       );
-      kept.push({ path: relative, reason, code, message, ...(recoveryPath ? { recoveryPath } : {}) });
+      kept.push({ path: relative, reason, code, message, ...(recoveryPath && { recoveryPath }) });
       failed.add(relative);
     };
     const observed: Record<string, { head: string }> = {};
-    const integrated = (w: (typeof writers)[number]) =>
-      !!w.finished &&
-      tx.fold.records.some(
-        (r) =>
-          r.kind === 'integrate' &&
-          r.seq > w.finished!.seq &&
-          r.data['phase'] === 'done' &&
-          r.data['task'] === w.record.data['task'],
+    const integrated = (w: (typeof writers)[number]) => {
+      const { finished } = w;
+      return (
+        !!finished &&
+        tx.fold.records.some(
+          (r) =>
+            r.kind === 'integrate' &&
+            r.seq > finished.seq &&
+            r.data['phase'] === 'done' &&
+            r.data['task'] === w.record.data['task'],
+        )
       );
+    };
     const delivered = tx.fold.records.findLast((r) => r.kind === 'integrate' && r.data['phase'] === 'delivered');
     const finishGone = async (relative: string, cwd: string): Promise<void> => {
-      let removeError: unknown;
+      let refusal: RemovalRefusal | undefined;
+      let thrown: unknown;
       try {
         let current = await listRegistered();
         if (isRegistered(current, cwd)) {
           try {
             const remove = await git(ctx.deps, root, ['worktree', 'remove', '--force', cwd]);
-            if (remove.exit)
-              removeError = {
+            if (remove.exit) {
+              refusal = {
                 exit: remove.exit,
                 message: remove.stderr || remove.stdout || 'Git refused to deregister the removed worktree',
               };
+            }
           } catch (error) {
-            removeError = error;
+            thrown = error;
           }
         }
         // Prune is global, so it would also delete admin metadata for a stranded recovery worktree.
@@ -706,15 +840,17 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           }
         }
         current = await listRegistered();
-        if (isRegistered(current, cwd))
+        if (isRegistered(current, cwd)) {
           fail(
             relative,
             'deregister-failed',
-            removeError ??
+            refusal ??
+              thrown ??
               Object.assign(new Error('Git still lists the worktree after its path was removed'), {
                 code: 'WORKTREE_STILL_REGISTERED',
               }),
           );
+        }
       } catch (error) {
         fail(relative, 'deregister-failed', error);
       }
@@ -726,8 +862,9 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
         !delivered ||
         writers.some((w) => !w.abandoned && !w.superseded && !w.finished) ||
         writers.some((w) => w.finished && !integrated(w))
-      )
+      ) {
         return false;
+      }
       let branch: { exit: number; stdout: string; stderr: string };
       try {
         branch = await git(ctx.deps, root, ['rev-parse', '--verify', '--quiet', 'refs/heads/' + opened.data['branch']]);
@@ -735,8 +872,12 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
         fail(relative, 'registration-check-failed', error);
         return false;
       }
-      if (branch.exit === 1) return true;
-      if (branch.exit === 0) return branch.stdout.trim() === delivered.data['source'];
+      if (branch.exit === 1) {
+        return true;
+      }
+      if (branch.exit === 0) {
+        return branch.stdout.trim() === delivered.data['source'];
+      }
       fail(relative, 'registration-check-failed', {
         exit: branch.exit,
         message: branch.stderr || branch.stdout || 'Could not verify the delivered integration branch',
@@ -770,10 +911,11 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       }
       if (recoveryExists) {
         try {
-          if (hasPathEntry(cwd))
+          if (hasPathEntry(cwd)) {
             throw Object.assign(new Error('Both the worktree path and its cleanup recovery path exist'), {
               code: 'WORKTREE_RECOVERY_PATH_CONFLICT',
             });
+          }
           await verifyRecovery(cwd, recovery);
           fs.renameSync(recovery, cwd);
         } catch (error) {
@@ -786,7 +928,9 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           continue;
         }
       }
-      if (!fs.existsSync(cwd)) continue;
+      if (!fs.existsSync(cwd)) {
+        continue;
+      }
       let real: string;
       try {
         real = fs.realpathSync(cwd);
@@ -818,8 +962,9 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           fail(relative, 'head-check-failed', error);
           continue;
         }
-      } else if (!fs.existsSync(path.join(cwd, '.git'))) deregistered.push(relative);
-      else
+      } else if (!fs.existsSync(path.join(cwd, '.git'))) {
+        deregistered.push(relative);
+      } else {
         fail(
           relative,
           'control-metadata-unverifiable',
@@ -827,6 +972,7 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
             code: 'WORKTREE_REGISTRATION_UNVERIFIABLE',
           }),
         );
+      }
     }
     const terminal = new Set(terminalWorktrees(tx.fold, observed));
     // Git cannot report a deregistered directory's state (e.g. after an interrupted removal), so only ledger-merged remnants are removed.
@@ -842,8 +988,10 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
               r.data['phase'] !== 'closed' &&
               r.data['phase'] !== 'committed',
           ) &&
-          terminalWorktrees(tx.fold, { [relative]: { head: delivered.data['source'] } }).includes(relative);
-      if (!merged) kept.push({ path: relative, reason: 'unpreserved' });
+          terminalWorktrees(tx.fold, { [relative]: { head: textValue(delivered.data['source']) } }).includes(relative);
+      if (!merged) {
+        kept.push({ path: relative, reason: 'unpreserved' });
+      }
       return merged;
     });
     for (const cwd of registered) {
@@ -853,17 +1001,25 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
         continue;
       }
       if (!fs.existsSync(cwd)) {
-        if (failed.has(relative)) continue;
-        if (terminal.has(relative)) missing.push(relative);
-        else {
+        if (failed.has(relative)) {
+          continue;
+        }
+        if (terminal.has(relative)) {
+          missing.push(relative);
+        } else {
           const safe = await missingIntegrationIsSafe(relative);
-          if (safe) missing.push(relative);
-          else if (!failed.has(relative)) kept.push({ path: relative, reason: 'non-terminal' });
+          if (safe) {
+            missing.push(relative);
+          } else if (!failed.has(relative)) {
+            kept.push({ path: relative, reason: 'non-terminal' });
+          }
         }
         continue;
       }
       if (!observed[relative]) {
-        if (!failed.has(relative)) kept.push({ path: relative, reason: 'unverified' });
+        if (!failed.has(relative)) {
+          kept.push({ path: relative, reason: 'unverified' });
+        }
         continue;
       }
       if (!terminal.has(relative)) {
@@ -872,7 +1028,7 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       }
       const writer = writers.findLast((w) => w.record.data['path'] === relative);
       // Merged work already lives in the integration branch or the caller, so its worktree needs no restoration.
-      if (writer ? integrated(writer) : !!delivered && observed[relative]!.head === delivered.data['source']) {
+      if (writer ? integrated(writer) : !!delivered && observed[relative].head === delivered.data['source']) {
         ready.push(relative);
         continue;
       }
@@ -884,18 +1040,23 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           '--exclude-standard',
           '-z',
         ]);
-        let snapshot = observed[relative]!.head;
+        let snapshot = observed[relative].head;
         if (writer) {
           const preserved = await git(ctx.deps, root, [
             'rev-parse',
             '--verify',
             '--quiet',
-            abandonedRef(ctx.manifest.safeSessionId, writer.record.data['task'], writer.launch),
+            abandonedRef(ctx.manifest.safeSessionId, textValue(writer.record.data['task']), writer.launch),
           ]);
-          if (writer.finished) snapshot = writer.finished.data['candidate'] as string;
-          else if (preserved.exit === 0) snapshot = preserved.stdout.trim();
-          else if (preserved.exit === 1) snapshot = writer.record.data['base'].commit;
-          else throw new ToolError(2, 'fault', preserved.stderr || preserved.stdout || 'Git exited ' + preserved.exit);
+          if (writer.finished) {
+            snapshot = textValue(writer.finished.data['candidate']);
+          } else if (preserved.exit === 0) {
+            snapshot = preserved.stdout.trim();
+          } else if (preserved.exit === 1) {
+            snapshot = textValue(launchBase(writer.record)['commit']);
+          } else {
+            throw new ToolError(2, 'fault', preserved.stderr || preserved.stdout || 'Git exited ' + preserved.exit);
+          }
         }
         const tree = await testedTree(ctx.deps, ctx.session, cwd),
           expected = await gitOk(ctx.deps, root, ['rev-parse', snapshot + '^{tree}']);
@@ -914,7 +1075,9 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
             tree,
           ]);
           kept.push({ path: relative, reason: 'unpreserved', paths: [...new Set([...differing, ...ignored])] });
-        } else ready.push(relative);
+        } else {
+          ready.push(relative);
+        }
       } catch (error) {
         fail(relative, 'preservation-check-failed', error);
         continue;
@@ -925,12 +1088,16 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       const cwd = path.resolve(ctx.session, relative);
       try {
         await rmWorktreeDir(cwd, ctx.deps);
-        if (fs.existsSync(cwd))
+        if (fs.existsSync(cwd)) {
           throw Object.assign(new Error('Worktree path remains after removal'), { code: 'WORKTREE_REMAINS' });
+        }
         removed.push(relative);
       } catch (error) {
-        if (!fs.existsSync(cwd)) removed.push(relative);
-        else fail(relative, 'removal-failed', error);
+        if (!fs.existsSync(cwd)) {
+          removed.push(relative);
+        } else {
+          fail(relative, 'removal-failed', error);
+        }
       }
     }
     for (const relative of missing) {
@@ -945,14 +1112,19 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       if (preservedWriter) {
         // Keep Git's recovery metadata registered until the preserved directory is gone.
         try {
-          if (process.platform === 'win32') probeWorktreeMove(cwd);
+          if (process.platform === 'win32') {
+            probeWorktreeMove(cwd);
+          }
           await rmWorktreeDir(cwd, ctx.deps);
-          if (fs.existsSync(cwd))
+          if (fs.existsSync(cwd)) {
             throw Object.assign(new Error('Worktree path remains after removal'), { code: 'WORKTREE_REMAINS' });
+          }
         } catch (error) {
           if (fs.existsSync(cwd)) {
             try {
-              if (isRegistered(await listRegistered(), cwd)) await worktreeControl(root, cwd, ctx.deps);
+              if (isRegistered(await listRegistered(), cwd)) {
+                await worktreeControl(root, cwd, ctx.deps);
+              }
             } catch (controlError) {
               fail(relative, 'control-metadata-unverifiable', controlError);
               continue;
@@ -999,15 +1171,14 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           continue;
         }
       } else {
-        let remove: { exit: number; stdout: string; stderr: string } = { exit: 0, stdout: '', stderr: '' },
-          removeError: unknown;
+        let remove: RemoveExit, removeError: unknown;
         try {
           remove = await git(ctx.deps, root, ['worktree', 'remove', '--force', cwd]);
         } catch (error) {
           removeError = error;
           remove = { exit: 1, stdout: '', stderr: String(error) };
         }
-        let after: string[];
+        let after: Array<string>;
         try {
           after = await listRegistered();
         } catch (error) {
@@ -1053,21 +1224,25 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
       await finishGone(relative, cwd);
     }
     for (const writer of writers) {
-      const relative = writer.record.data['path'] as string;
+      const relative = textValue(writer.record.data['path']);
       if (integrated(writer) && !kept.some((row) => row.path === relative)) {
         try {
           await gitOk(ctx.deps, root, [
             'update-ref',
             '-d',
-            candidateRef(ctx.manifest.safeSessionId, writer.record.data['task'], writer.launch),
+            candidateRef(ctx.manifest.safeSessionId, textValue(writer.record.data['task']), writer.launch),
           ]);
         } catch (error) {
           fail(relative, 'ref-release-failed', error);
         }
       }
     }
-    const openedPath = opened && path.resolve(ctx.session, opened.data['path']);
-    if (opened && (removed.includes(opened.data['path']) || !isRegistered(registered, openedPath!))) {
+    const openedPath = opened && textValue(opened.data['path']);
+    if (
+      opened &&
+      openedPath !== undefined &&
+      (removed.includes(openedPath) || !isRegistered(registered, path.resolve(ctx.session, openedPath)))
+    ) {
       if (delivered && !kept.some((k) => owned.includes(k.path))) {
         try {
           const branch = await git(ctx.deps, root, [
@@ -1078,17 +1253,18 @@ export async function cleanup(ctx: HandlerContext): Promise<HandlerResult> {
           ]);
           if (branch.exit === 0 && branch.stdout.trim() === delivered.data['source']) {
             try {
-              await gitOk(ctx.deps, root, ['branch', '-D', opened.data['branch']]);
+              await gitOk(ctx.deps, root, ['branch', '-D', textValue(opened.data['branch'])]);
             } catch (error) {
-              fail(opened.data['path'], 'ref-release-failed', error);
+              fail(openedPath, 'ref-release-failed', error);
             }
-          } else if (branch.exit !== 0 && branch.exit !== 1)
-            fail(opened.data['path'], 'ref-release-failed', {
+          } else if (branch.exit !== 0 && branch.exit !== 1) {
+            fail(openedPath, 'ref-release-failed', {
               exit: branch.exit,
               message: branch.stderr || branch.stdout || 'Could not verify the integration branch before cleanup',
             });
+          }
         } catch (error) {
-          fail(opened.data['path'], 'ref-release-failed', error);
+          fail(openedPath, 'ref-release-failed', error);
         }
       }
     }

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { defined } from './defined.ts';
 import { sectionRanges, structuralLines } from './markdown-structure.ts';
 
 const CONTEXT_SECTIONS = [
@@ -17,13 +18,13 @@ type ContextSection = (typeof CONTEXT_SECTIONS)[number];
 export const DEFAULT_MAP_BUDGET = 16_384;
 
 /** Research explorer inline reply size limit rendered into the explorer brief. */
-export const DEFAULT_RESEARCH_REPLY_LIMIT = 8_192;
+export const DEFAULT_RESEARCH_REPLY_LIMIT = 8192;
 
 type ParsedContextMap = {
   title: string | null;
   commit: string | null;
   tool: string | null;
-  sections: Record<ContextSection, string[]>;
+  sections: Record<ContextSection, Array<string>>;
 };
 
 type ContextLintIssue = {
@@ -35,8 +36,8 @@ type ContextLintIssue = {
 
 type ContextLintResult = {
   ok: boolean;
-  defects: ContextLintIssue[];
-  warnings: ContextLintIssue[];
+  defects: Array<ContextLintIssue>;
+  warnings: Array<ContextLintIssue>;
   map: ParsedContextMap;
 };
 
@@ -49,7 +50,7 @@ const REQUIRED_LINE_SECTIONS = new Set<ContextSection>(['Map', 'Flows', 'Invaria
 const OPTIONAL_SECTIONS = new Set<ContextSection>(['Conventions']);
 const REF_LINE = /^(.+):(\d+)(?:-(\d+))?$/;
 
-function entries(lines: ReturnType<typeof structuralLines>, section: ContextSection): ContextEntry[] {
+function entries(lines: ReturnType<typeof structuralLines>, section: ContextSection): Array<ContextEntry> {
   return sectionRanges(lines, `## ${section}`)
     .flatMap((range) => lines.slice(range.start + 1, range.end))
     .filter((entry) => entry.text.trim())
@@ -66,9 +67,17 @@ function isValidCommit(commit: string | null): commit is string {
 /** Parses the metadata and each section's entry texts. */
 function parseContextMap(source: string): ParsedContextMap {
   const lines = structuralLines(source);
-  const sections = Object.fromEntries(
-    CONTEXT_SECTIONS.map((section) => [section, entries(lines, section).map((entry) => entry.text)]),
-  ) as Record<ContextSection, string[]>;
+  const texts = (section: ContextSection) => entries(lines, section).map((entry) => entry.text);
+  const sections: ParsedContextMap['sections'] = {
+    Map: texts('Map'),
+    Flows: texts('Flows'),
+    Invariants: texts('Invariants'),
+    Coverage: texts('Coverage'),
+    Precedent: texts('Precedent'),
+    Conventions: texts('Conventions'),
+    Surprises: texts('Surprises'),
+    'Not covered': texts('Not covered'),
+  };
   const title =
     lines
       .map((entry) => /^#\s+Context map:\s*(.*?)\s*$/i.exec(entry.text)?.[1]?.trim() ?? null)
@@ -81,19 +90,22 @@ function parseContextMap(source: string): ParsedContextMap {
 function pathOnlyReference(value: string, allowBare = false): ContextReference | null {
   const ref = value.trim();
   const withLines = REF_LINE.exec(ref);
-  if (withLines)
+  if (withLines) {
     return {
-      path: withLines[1]!,
+      path: defined(withLines[1]),
       start: Number(withLines[2]),
       end: withLines[3] === undefined ? Number(withLines[2]) : Number(withLines[3]),
     };
-  if (allowBare || /[/.\\]/.test(ref) || /^[A-Za-z]:/.test(ref)) return { path: ref, start: null, end: null };
+  }
+  if (allowBare || /[/.\\]/.test(ref) || /^[A-Za-z]:/.test(ref)) {
+    return { path: ref, start: null, end: null };
+  }
   return null;
 }
 
-function inlineReferences(text: string, allowBare: boolean): ContextReference[] {
+function inlineReferences(text: string, allowBare: boolean): Array<ContextReference> {
   return [...text.matchAll(/`([^`]+)`/g)].flatMap((match) => {
-    const ref = pathOnlyReference(match[1]!, allowBare);
+    const ref = pathOnlyReference(defined(match[1]), allowBare);
     return ref ? [ref] : [];
   });
 }
@@ -105,8 +117,9 @@ export function safeRelativePath(value: string): boolean {
     path.isAbsolute(value) ||
     path.win32.isAbsolute(value) ||
     /^[A-Za-z]:/.test(value)
-  )
+  ) {
     return false;
+  }
   const normalized = path.posix.normalize(value);
   return (
     normalized !== '.' && normalized !== '..' && !normalized.startsWith('../') && !path.posix.isAbsolute(normalized)
@@ -114,7 +127,9 @@ export function safeRelativePath(value: string): boolean {
 }
 
 function lineCount(source: string): number {
-  if (!source) return 0;
+  if (!source) {
+    return 0;
+  }
   const breaks = source.match(/\n/g)?.length ?? 0;
   return source.endsWith('\n') ? breaks : breaks + 1;
 }
@@ -122,13 +137,15 @@ function lineCount(source: string): number {
 function quoteFrom(text: string): string | null {
   const quotes = [...text.matchAll(/"((?:\\.|[^"\\])*)"|“([^”]*)”/g)];
   const last = quotes.at(-1);
-  if (!last) return null;
-  return (last[1] ?? last[2] ?? '').replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  if (!last) {
+    return null;
+  }
+  return (last[1] ?? last[2] ?? '').replaceAll(String.raw`\"`, '"').replaceAll(String.raw`\\`, '\\');
 }
 
-const normalizeWhitespace = (value: string) => value.replace(/\s+/gu, ' ').trim();
+const normalizeWhitespace = (value: string) => value.replaceAll(/\s+/gu, ' ').trim();
 
-function sectionReferences(section: ContextSection, entry: string): ContextReference[] {
+function sectionReferences(section: ContextSection, entry: string): Array<ContextReference> {
   return inlineReferences(entry, section === 'Coverage' || section === 'Precedent');
 }
 
@@ -136,8 +153,8 @@ function sectionReferences(section: ContextSection, entry: string): ContextRefer
 export function lintContextMap(source: string, options: ContextLintOptions): ContextLintResult {
   const lines = structuralLines(source);
   const map = parseContextMap(source);
-  const defects: ContextLintIssue[] = [];
-  const warnings: ContextLintIssue[] = [];
+  const defects: Array<ContextLintIssue> = [];
+  const warnings: Array<ContextLintIssue> = [];
   const add = (severity: ContextLintIssue['severity'], code: string, line: number | null, message: string) => {
     (severity === 'defect' ? defects : warnings).push({ code, severity, line, message });
   };
@@ -147,7 +164,10 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
   }
   const fileCache = new Map<string, string | null>();
   const read = (ref: string): string | null => {
-    if (fileCache.has(ref)) return fileCache.get(ref)!;
+    const cached = fileCache.get(ref);
+    if (cached !== undefined) {
+      return cached;
+    }
     let content: string | null = null;
     try {
       content = options.readRepoFile(ref);
@@ -161,8 +181,9 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
   for (const section of CONTEXT_SECTIONS) {
     const sectionRangesForName = sectionRanges(lines, `## ${section}`);
     if (!sectionRangesForName.length) {
-      if (!OPTIONAL_SECTIONS.has(section))
+      if (!OPTIONAL_SECTIONS.has(section)) {
         add('warning', 'context-missing-section', null, `Context map has no ## ${section} section.`);
+      }
       continue;
     }
     for (const entry of entries(lines, section)) {
@@ -178,7 +199,7 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
           : 'repository path ref';
         add('warning', 'context-missing-ref', entry.line, `${section} entry needs a backticked ${requirement}.`);
       }
-      const checked: { ref: ContextReference; content: string | null; rangeValid: boolean }[] = [];
+      const checked: Array<{ ref: ContextReference; content: string | null; rangeValid: boolean }> = [];
       for (const ref of refs) {
         if (!safeRelativePath(ref.path)) {
           add(
@@ -237,7 +258,9 @@ export function lintContextMap(source: string, options: ContextLintOptions): Con
           continue;
         }
         const cited = checked.find((item) => item.ref.start !== null && item.rangeValid && item.content !== null);
-        if (!cited || cited.ref.start === null || cited.content === null) continue;
+        if (!cited || cited.ref.start === null || cited.content === null) {
+          continue;
+        }
         const end = cited.ref.end ?? cited.ref.start;
         const selected = cited.content
           .split(/\r?\n/)

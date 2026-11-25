@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { measureRuns, parsePairs } from '../../scripts/measure-runs.ts';
 import { toolkitRepo } from './helpers/toolkit-repo.ts';
+import { arrayOf, isString, narrow, objectWith } from './helpers/json.ts';
 
 test('diagnostics stay observational across CLI recovery and report completion', async () => {
   const f = await toolkitRepo();
@@ -19,12 +20,14 @@ test('diagnostics stay observational across CLI recovery and report completion',
         diagnostics: true,
         'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native' } }] } },
         'write-subagents': { codex: { low: { model: 'native', effort: 'low' } } },
-        'utility-subagents': { codex: { model: 'native', effort: 'low', 'context-limit': 300000 } },
+        'utility-subagents': { codex: { model: 'native', effort: 'low', 'context-limit': 300_000 } },
         phases: { ask: { targets: { low: 1 }, rounds: { low: 1 } } },
       }),
     );
     const env = { ...process.env };
-    for (const key of ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
+    for (const key of ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'NODE_OPTIONS', 'NODE_TEST_CONTEXT']) {
+      delete env[key];
+    }
     const entry = path.join(skill, 'scripts/dispatch.ts');
     // The host comes from `session init --host`; the fixture session predates it, so copy the recorded host over.
     const init = spawnSync(
@@ -40,7 +43,7 @@ test('diagnostics stay observational across CLI recovery and report completion',
       manifestFile,
       JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: declared }),
     );
-    const run = (args: string[], expected = 0) => {
+    const run = (args: Array<string>, expected = 0) => {
       const child = f.spawned(args, entry, env);
       assert.equal(child.status, expected, child.stderr + child.stdout);
       const lines = child.stdout.trim().split(/\r?\n/);
@@ -66,7 +69,7 @@ test('diagnostics stay observational across CLI recovery and report completion',
     );
     const answered = run(['ask', 'run', question, '--host', 'codex']);
     assert.deepEqual(
-      answered.value.answers.map((answer: { text: string }) => answer.text),
+      narrow(answered.value.answers, arrayOf(objectWith({ text: isString }))).map((answer) => answer.text),
       ['Retained native answer'],
     );
     assert.equal(fs.readFileSync(reply, 'utf8'), 'Retained native answer');
@@ -104,7 +107,8 @@ test('diagnostics stay observational across CLI recovery and report completion',
     const complete = run(['report', 'complete']);
     assert.ok(fs.existsSync(path.resolve(f.session, complete.value.path)));
     assert.equal('diagnostics' in complete.value, true);
-    assert.ok(complete.value.statuses.some((status: { criterion: string }) => status.criterion === 'contract'));
+    const statuses = narrow(complete.value.statuses, arrayOf(objectWith({ criterion: isString })));
+    assert.ok(statuses.some((status) => status.criterion === 'contract'));
     const pairs = parsePairs({
       pairs: [
         {

@@ -1,3 +1,5 @@
+import { admission } from '../../skills/dispatch/scripts/toolkit/findings.ts';
+import { isRecord } from '../../skills/dispatch/scripts/lib/config.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,8 +8,20 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { toolkitRepo as createToolkitRepo, planSource, setupTestSkill } from './helpers/toolkit-repo.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { checkoutReportsFor } from '../../skills/dispatch/scripts/toolkit/findings.ts';
 import { CLEAN } from '../helpers/e2e.ts';
+import {
+  arrayOf,
+  defined,
+  isBoolean,
+  isNumber,
+  isString,
+  maybe,
+  narrow,
+  nullable,
+  objectWith,
+  text,
+} from './helpers/json.ts';
+import type { Guard } from './helpers/json.ts';
 import crypto from 'node:crypto';
 
 const source = planSource
@@ -31,6 +45,136 @@ const MUST_FINDING = {
   ],
 };
 
+const RepoChangeEntryGuard = objectWith({ cwd: isString, paths: arrayOf(isString) });
+const PendingSlotGuard = objectWith({ slot: isString, replyPath: isString });
+const SlotRosterGuard = objectWith({ slot: isString, reserve: maybe(isBoolean) });
+const RoundFileGuard = objectWith({
+  scope: isString,
+  roster: arrayOf(SlotRosterGuard),
+  target: objectWith({ base: isString, head: isString }),
+  coverage: maybe(isString),
+  coverageUse: maybe(isString),
+  generation: maybe(isNumber),
+  pins: maybe(nullable(isString)),
+  level: maybe(isString),
+});
+const FindingGuard = objectWith({
+  id: isString,
+  defect: isString,
+  category: maybe(isString),
+  locus: maybe(isString),
+  severity: maybe(isString),
+  impact: maybe(isString),
+  trigger: maybe(isString),
+  unresolved: maybe(objectWith({ of: isString })),
+  recurrence: maybe(objectWith({ of: isString })),
+});
+const FailedSlotGuard = objectWith({
+  slot: isString,
+  cls: maybe(isString),
+});
+const FindingsFileGuard = objectWith({
+  review: maybe(isString),
+  asOfSeq: maybe(isNumber),
+  findings: arrayOf(FindingGuard),
+  failed: arrayOf(FailedSlotGuard),
+  escalations: maybe(arrayOf(objectWith({ key: isString }))),
+  confirmations: maybe(arrayOf(objectWith({ sourceSlot: isString }))),
+  units: maybe(arrayOf(objectWith({ unit: isString, findings: arrayOf(isString) }))),
+});
+const CheckoutReportGuard = objectWith({
+  asOfSeq: maybe(isNumber),
+  repositoryChanges: maybe(arrayOf(RepoChangeEntryGuard)),
+});
+const AttemptGuard = objectWith({ slot: isString, seq: isNumber, wholeTarget: isBoolean });
+const CreatedGuard = objectWith({ path: isString });
+const PendingSlotDetailGuard = objectWith({
+  slot: isString,
+  replyPath: isString,
+  promptPath: maybe(isString),
+  attempt: maybe(isString),
+});
+const PendingRunGuard = objectWith({
+  cliWave: maybe(isString),
+  review: maybe(isString),
+  pending: arrayOf(PendingSlotDetailGuard),
+});
+const RepositoryCheckGuard = objectWith({
+  state: isString,
+  reason: maybe(isString),
+});
+const ReviewResultGuard = objectWith({
+  path: maybe(isString),
+  review: maybe(isString),
+  round: maybe(isNumber),
+  repositoryChanges: maybe(arrayOf(RepoChangeEntryGuard)),
+  repositoryCheck: maybe(RepositoryCheckGuard),
+});
+const StatusShowGuard = objectWith({
+  openRepositoryChanges: maybe(arrayOf(isRecord)),
+});
+
+function createdPath(result: { value: unknown }): string {
+  return narrow(result.value, CreatedGuard).path;
+}
+
+function pendingRun(result: { value: unknown }) {
+  return narrow(result.value, PendingRunGuard);
+}
+
+function reviewResult(result: { value: unknown }) {
+  return narrow(result.value, ReviewResultGuard);
+}
+
+function statusChanges(result: { value: unknown }) {
+  return narrow(result.value, StatusShowGuard).openRepositoryChanges;
+}
+
+function readJson<T>(filePath: string, guard: Guard<T>): T {
+  const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  return narrow(parsed, guard);
+}
+
+function denied(): never {
+  throw Object.assign(new Error('denied'), { code: 'EACCES' });
+}
+
+function saveJson(file: string, value: unknown): void {
+  fs.writeFileSync(file, JSON.stringify(value));
+}
+
+function repositoryPaths(value: unknown): Array<string> {
+  assert.ok(Array.isArray(value));
+  const entries: Array<unknown> = value;
+  return entries.flatMap((entry) => {
+    assert.ok(isRecord(entry) && Array.isArray(entry['paths']));
+    const paths: Array<unknown> = entry['paths'];
+    return paths.map((file) => {
+      assert.ok(typeof file === 'string');
+      return file;
+    });
+  });
+}
+
+function openChanges(value: unknown) {
+  assert.ok(Array.isArray(value));
+  const rows: Array<unknown> = value;
+  return rows.map((row) => {
+    assert.ok(isRecord(row));
+    const { review, round, reportSeq, rerunPending, repositoryChanges, repositoryCheck } = row;
+    assert.equal(typeof review, 'string');
+    assert.equal(typeof round, 'number');
+    return {
+      review,
+      round,
+      reportSeq,
+      rerunPending,
+      repositoryChanges,
+      repositoryCheck: isRecord(repositoryCheck) ? { state: repositoryCheck['state'] } : undefined,
+    };
+  });
+}
+
 async function toolkitRepo(...args: Parameters<typeof createToolkitRepo>) {
   const fixture = await createToolkitRepo(...args);
   const { deps } = fixture;
@@ -52,10 +196,12 @@ async function coverageRepo(rounds: number) {
   f.deps.orchestrator = null;
   const failing = new Set<string>(),
     replies = new Map<string, object>(),
-    calls: { provider: string; prompt: string }[] = [];
+    calls: Array<{ provider: string; prompt: string }> = [];
   f.deps.delegate = async (provider, request) => {
     calls.push({ provider, prompt: fs.readFileSync(request.promptPath, 'utf8') });
-    if (failing.has(provider)) return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+    if (failing.has(provider)) {
+      return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+    }
     return {
       outcome: { status: 'ok', text: JSON.stringify(replies.get(provider) ?? CLEAN), resume: null, sessionId: null },
       invocations: [],
@@ -65,23 +211,18 @@ async function coverageRepo(rounds: number) {
   await f.approve();
   const made = await f.run(['worktree', 'create', 'T1']);
   assert.equal(made.exit, 0, JSON.stringify(made.output));
-  fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'first\n');
+  fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'first\n');
   assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
   assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
   const review = () => f.run(['review', 'run', 'integration', '--kind', 'code']);
   const dir = (n: number) => path.join(f.session, '.state/reviews/code-integration/round-' + n);
-  const round = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'round.json'), 'utf8'));
-  const findings = (n: number) => JSON.parse(fs.readFileSync(path.join(dir(n), 'findings.json'), 'utf8'));
-  const attempts = (n: number) =>
-    JSON.parse(fs.readFileSync(path.join(dir(n), 'gen-1/attempts.json'), 'utf8')) as {
-      slot: string;
-      seq: number;
-      wholeTarget: boolean;
-    }[];
+  const round = (n: number) => readJson(path.join(dir(n), 'round.json'), RoundFileGuard);
+  const findings = (n: number) => readJson(path.join(dir(n), 'findings.json'), FindingsFileGuard);
+  const attempts = (n: number) => readJson(path.join(dir(n), 'gen-1/attempts.json'), arrayOf(AttemptGuard));
   const targets = (n: number) =>
     round(n)
-      .roster.filter((slot: { reserve: boolean }) => !slot.reserve)
-      .map((slot: { slot: string }) => slot.slot)
+      .roster.filter((slot) => !slot.reserve)
+      .map((slot) => slot.slot)
       .sort();
   const accept = (id: string) =>
     appendRecord(
@@ -110,7 +251,9 @@ test('native-first round runs native beside the cli wave', async () => {
     f.deps.orchestrator = { platform: 'claude', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { claude: true, agy: true };
     f.deps.delegate = async (provider, request) => {
-      if (provider !== 'agy') throw new Error('native-first launch must not call ' + provider);
+      if (provider !== 'agy') {
+        throw new Error('native-first launch must not call ' + provider);
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'mixed change\n');
@@ -118,13 +261,15 @@ test('native-first round runs native beside the cli wave', async () => {
       f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
-    assert.equal(launched.value.cliWave, 'pending');
-    assert.equal(launched.value.pending.length, 1);
-    assert.equal(launched.value.pending[0].slot, 'claude[0]');
+    assert.equal(pendingRun(launched).cliWave, 'pending');
+    assert.equal(pendingRun(launched).pending.length, 1);
+    assert.equal(defined(pendingRun(launched).pending[0]).slot, 'claude[0]');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    assert.equal(waved.value.cliWave, 'done');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    assert.equal(pendingRun(waved).cliWave, 'done');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0);
   } finally {
@@ -159,7 +304,7 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
     const first = await run();
     assert.equal(first.output.reason, 'native-pending');
     fs.writeFileSync(
-      first.value.pending[0].replyPath,
+      defined(pendingRun(first).pending[0]).replyPath,
       JSON.stringify({
         status: 'FINDINGS',
         findings: [
@@ -176,7 +321,7 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
     );
     const finding = await run();
     assert.equal(finding.exit, 0);
-    const saved = JSON.parse(fs.readFileSync(finding.value.path, 'utf8'));
+    const saved = JSON.parse(fs.readFileSync(text(reviewResult(finding).path), 'utf8'));
     await appendRecord(
       f.session,
       {
@@ -193,10 +338,10 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
     );
     const second = await run();
     assert.equal(second.output.reason, 'native-pending');
-    const oldPrompt = fs.readFileSync(second.value.pending[0].promptPath, 'utf8'),
+    const oldPrompt = fs.readFileSync(text(pendingRun(second).pending[0]?.promptPath), 'utf8'),
       oldId = /Request ID: `([^`]+)`/.exec(oldPrompt)![1]!;
     fs.writeFileSync(
-      second.value.pending[0].replyPath,
+      defined(pendingRun(second).pending[0]).replyPath,
       JSON.stringify({
         status: 'CLEAN',
         findings: [],
@@ -206,12 +351,15 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'new captured change\n');
     const moved = await run();
     assert.equal(moved.output.reason, 'native-pending');
-    const freshPrompt = fs.readFileSync(moved.value.pending[0].promptPath, 'utf8'),
+    const freshPrompt = fs.readFileSync(text(pendingRun(moved).pending[0]?.promptPath), 'utf8'),
       freshId = /Request ID: `([^`]+)`/.exec(freshPrompt)![1]!;
     assert.notEqual(freshId, oldId);
-    assert.equal(fs.existsSync(path.join(path.dirname(finding.value.path), '../round-2/findings.json')), false);
+    assert.equal(
+      fs.existsSync(path.join(path.dirname(text(reviewResult(finding).path)), '../round-2/findings.json')),
+      false,
+    );
     fs.writeFileSync(
-      moved.value.pending[0].replyPath,
+      defined(pendingRun(moved).pending[0]).replyPath,
       JSON.stringify({
         status: 'CLEAN',
         findings: [],
@@ -222,7 +370,10 @@ test('pending MUST rejection keeps captured Git confirmation identity across nat
     );
     const confirmed = await run();
     assert.equal(confirmed.exit, 0, JSON.stringify(confirmed));
-    assert.equal(JSON.parse(fs.readFileSync(confirmed.value.path, 'utf8')).confirmations[0].responder.native, true);
+    assert.equal(
+      JSON.parse(fs.readFileSync(text(reviewResult(confirmed).path), 'utf8')).confirmations[0].responder.native,
+      true,
+    );
     assert.equal((await run()).output.reason, 'round-cap');
   } finally {
     f.cleanup();
@@ -242,7 +393,7 @@ test('unchanged target with a pending MUST rejection runs a confirmation-only ro
     f.deps.liveness = { claude: true, agy: true };
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'first captured change\n');
     let phase: 'finding' | 'confirmation' = 'finding';
-    const launched: string[] = [];
+    const launched: Array<string> = [];
     f.deps.delegate = async (provider, request) => {
       launched.push(provider);
       if (phase === 'finding') {
@@ -289,13 +440,11 @@ test('unchanged target with a pending MUST rejection runs a confirmation-only ro
       f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const first = await run();
     assert.equal(first.exit, 0, JSON.stringify(first));
-    const review = first.value.review as string;
+    const review = text(reviewResult(first).review);
     const dir = path.join(f.session, '.state/reviews', review);
-    const firstRound = JSON.parse(fs.readFileSync(path.join(dir, 'round-1', 'round.json'), 'utf8'));
+    const firstRound = readJson(path.join(dir, 'round-1', 'round.json'), RoundFileGuard);
     assert.deepEqual(
-      firstRound.roster
-        .filter((slot: { reserve: boolean }) => !slot.reserve)
-        .map((slot: { slot: string }) => slot.slot),
+      firstRound.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
       ['claude[0]', 'agy[0]'],
     );
     await appendRecord(
@@ -316,18 +465,19 @@ test('unchanged target with a pending MUST rejection runs a confirmation-only ro
     launched.length = 0;
     const second = await run();
     assert.equal(second.exit, 0, JSON.stringify(second));
-    const round = JSON.parse(fs.readFileSync(path.join(dir, 'round-2', 'round.json'), 'utf8'));
+    const round = readJson(path.join(dir, 'round-2', 'round.json'), RoundFileGuard);
     assert.match(round.scope, /^Re-review round 2 \(confirmation-only\) — comparison: [a-f0-9]{40}\.\.[a-f0-9]{40}$/);
     assert.deepEqual(
-      round.roster.filter((slot: { reserve: boolean }) => !slot.reserve).map((slot: { slot: string }) => slot.slot),
+      round.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
       ['claude[0]'],
     );
     assert.deepEqual(launched, ['claude']);
     const prompt = fs.readFileSync(path.join(dir, 'round-2', 'gen-1', 'prompts', 'claude[0].md'), 'utf8');
     assert.ok(prompt.includes('- Target Revision: ' + round.target.base + '..' + round.target.head), prompt);
-    const findings = JSON.parse(fs.readFileSync(path.join(dir, 'round-2', 'findings.json'), 'utf8'));
-    assert.equal(findings.confirmations.length, 1);
-    assert.equal(findings.confirmations[0].sourceSlot, 'claude[0]');
+    const findings = readJson(path.join(dir, 'round-2', 'findings.json'), FindingsFileGuard);
+    const confirmations = defined(findings.confirmations, 'confirmations');
+    assert.equal(confirmations.length, 1);
+    assert.equal(confirmations[0]!.sourceSlot, 'claude[0]');
     assert.match(second.output.summary, /round 2\/2/);
     assert.equal((await run()).output.reason, 'round-cap');
   } finally {
@@ -366,13 +516,14 @@ test('toolkit worktree review excludes unignored session state and preserves com
         'codex',
       ]);
       assert.equal(result.exit, expected, JSON.stringify(result.output));
-      for (const key of ['v', 'run', 'reply', 'await', 'at'])
+      for (const key of ['v', 'run', 'reply', 'await', 'at']) {
         assert.equal(Object.hasOwn(result.output, key), false, key);
+      }
       return result;
     };
     const pending = await run(4);
     assert.equal(pending.output.reason, 'native-pending');
-    assert.equal(pending.value.pending.length, 1);
+    assert.equal(pendingRun(pending).pending.length, 1);
     const slug =
       'code-worktree-' +
       crypto
@@ -381,9 +532,11 @@ test('toolkit worktree review excludes unignored session state and preserves com
         .digest('hex');
     const metadata = path.join(f.session, '.state/reviews', slug, 'round-1/round.json');
     const before = JSON.parse(fs.readFileSync(metadata, 'utf8'));
-    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(pending).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const clean = await run(0);
-    assert.deepEqual(JSON.parse(fs.readFileSync(clean.value.path, 'utf8')).findings, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(text(reviewResult(clean).path), 'utf8')).findings, []);
     const after = JSON.parse(fs.readFileSync(metadata, 'utf8'));
     assert.equal(after.target.head, before.target.head);
     const changed = f.git(['diff', '--name-only', before.target.base + '..' + before.target.head]).split(/\r?\n/);
@@ -485,7 +638,7 @@ test('toolkit code review reports missing evidence without admission gates and t
     });
     f.deps.liveness = { claude: true };
     f.deps.orchestrator = null;
-    const prompts: string[] = [];
+    const prompts: Array<string> = [];
     f.deps.delegate = async (_provider, request) => {
       prompts.push(fs.readFileSync(request.promptPath, 'utf8'));
       return {
@@ -506,7 +659,7 @@ test('toolkit code review reports missing evidence without admission gates and t
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0, JSON.stringify(made.output));
       assert.equal((await f.run(['brief', 'render', 'T1'])).exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), text);
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), text);
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       return foldLedger(f.session).records.findLast((row) => row.kind === 'writer' && row.data['phase'] === 'finished')!
         .data['candidate'];
@@ -516,37 +669,36 @@ test('toolkit code review reports missing evidence without admission gates and t
     const review = async (target = 'T1') => {
       const r = await f.run(['review', 'run', target, '--kind', 'code']);
       assert.equal(r.exit, 0, JSON.stringify(r.output));
-      return JSON.parse(fs.readFileSync(r.value.path, 'utf8'));
+      return readJson(text(reviewResult(r).path), FindingsFileGuard);
     };
     const first = await review();
     assert.equal(first.findings.length, 1);
-    const gap = first.findings[0];
+    const gap = first.findings[0]!;
     assert.deepEqual(
-      first.units.map((unit: any) => [unit.unit, unit.findings]),
+      defined(first.units, 'units').map((unit) => [unit.unit, unit.findings]),
       [['work.plan.md', [gap.id]]],
     );
     assert.match(gap.defect, /missing-red: T1 SC1; Tests touched: no/);
     assert.equal(gap.category, 'testing');
-    assert.match(gap.locus, /work.plan.md:L\d+$/);
-    const metadata = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews/code-T1/round-1/round.json'), 'utf8'),
-    );
+    assert.match(defined(gap.locus, 'locus'), /work.plan.md:L\d+$/);
+    const metadata = readJson(path.join(f.session, '.state/reviews/code-T1/round-1/round.json'), RoundFileGuard);
     assert.equal(metadata.target.head, head);
     assert.ok(prompts[0]!.includes('comparison: ' + metadata.target.base + '..' + head));
     const unchanged = await review();
-    assert.deepEqual(unchanged.findings[0].unresolved, { of: gap.id });
-    assert.equal(unchanged.escalations.length, 0);
+    assert.deepEqual(unchanged.findings[0]!.unresolved, { of: gap.id });
+    assert.equal(defined(unchanged.escalations, 'escalations').length, 0);
     await f.level('high');
     const next = await launch('second\n');
     const third = await review();
-    assert.equal(third.escalations[0].key, 'missing-red:code-T1:T1:SC1:R3:g1');
+    assert.equal(defined(third.escalations, 'escalations')[0]!.key, 'missing-red:code-T1:T1:SC1:R3:g1');
     assert.ok(prompts.at(-1)!.includes('comparison: ' + head + '..' + next));
     assert.ok(prompts.at(-1)!.includes('src/file.ts'));
     const integrated = await review('integration');
     assert.equal(integrated.findings.length, 1);
     assert.ok(prompts.at(-1)!.includes('Integrated tasks: T1'));
-    const integrationTarget = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews/code-integration/round-1/round.json'), 'utf8'),
+    const integrationTarget = readJson(
+      path.join(f.session, '.state/reviews/code-integration/round-1/round.json'),
+      RoundFileGuard,
     ).target;
     assert.ok(prompts.at(-1)!.includes('comparison: ' + integrationTarget.base + '..' + integrationTarget.head));
     let moved = false;
@@ -613,7 +765,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
       const submit = async (task: string, file: string) => {
         const made = await f.run(['worktree', 'create', task]);
         assert.equal(made.exit, 0, JSON.stringify(made.output));
-        fs.writeFileSync(path.resolve(f.session, made.value.path, file), 'changed\n');
+        fs.writeFileSync(path.resolve(f.session, createdPath(made), file), 'changed\n');
         assert.equal((await f.run(['worktree', 'submit', task])).exit, 0);
         assert.equal((await f.run(['worktree', 'integrate', task])).exit, 0);
       };
@@ -621,7 +773,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
       const review = async () => {
         const r = await f.run(['review', 'run', 'integration', '--kind', 'code']);
         assert.equal(r.exit, 0, JSON.stringify(r.output));
-        return JSON.parse(fs.readFileSync(r.value.path, 'utf8'));
+        return readJson(text(reviewResult(r).path), FindingsFileGuard);
       };
       const first = await review();
       await appendRecord(
@@ -631,7 +783,7 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
           key: 'accepted',
           by: 'orchestrator',
           data: {
-            subject: 'review:code-integration:' + first.findings[0].id,
+            subject: 'review:code-integration:' + first.findings[0]!.id,
             ruling: 'accepted',
             rationale: 'Fix accepted',
           },
@@ -648,23 +800,29 @@ test('toolkit code review scopes integration recurrence and gaps to committed ow
         fs.writeFileSync(path.join(f.integration, 'tests/file.test.ts'), 'untracked test\n');
       }
       const second = await review(),
-        finding = second.findings.find((finding: any) => finding.id === 'R2-F001');
+        finding = defined(
+          second.findings.find((row) => row.id === 'R2-F001'),
+          'R2-F001',
+        );
       if (fixOwner) {
-        assert.deepEqual(finding.recurrence, { of: first.findings[0].id });
-        assert.equal(second.escalations.filter((row: any) => row.key.startsWith('recurrence:')).length, 1);
+        assert.deepEqual(finding.recurrence, { of: first.findings[0]!.id });
+        assert.equal(
+          defined(second.escalations, 'escalations').filter((row) => row.key.startsWith('recurrence:')).length,
+          1,
+        );
         fs.mkdirSync(path.join(f.session, '.state/briefs'), { recursive: true });
         fs.writeFileSync(
           path.join(f.session, '.state/briefs/T1-1.report.md'),
           '## Observed RED failures\nSC1 failed before the fix\n',
         );
-        assert.equal(
-          (await review()).findings.filter((finding: any) => finding.defect.startsWith('missing-red:')).length,
-          0,
-        );
+        assert.equal((await review()).findings.filter((row) => row.defect.startsWith('missing-red:')).length, 0);
       } else {
-        assert.deepEqual(finding.unresolved, { of: first.findings[0].id });
-        assert.equal(second.escalations.length, 0);
-        const gap = second.findings.find((finding: any) => finding.id === 'R2-RED01');
+        assert.deepEqual(finding.unresolved, { of: first.findings[0]!.id });
+        assert.equal(defined(second.escalations, 'escalations').length, 0);
+        const gap = defined(
+          second.findings.find((row) => row.id === 'R2-RED01'),
+          'R2-RED01',
+        );
         assert.ok(gap.unresolved);
         assert.deepEqual([gap.severity, gap.impact, gap.trigger], ['SHOULD', 'degrades', 'realistic']);
         assert.match(gap.defect, /Tests touched: no$/);
@@ -698,19 +856,21 @@ test('rejected missing-red ruling settles later rounds after the target moves', 
     const launch = async (text: string) => {
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0, JSON.stringify(made.output));
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), text);
-      assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
-      assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), text);
+      for (const action of ['submit', 'integrate']) {
+        const done = await f.run(['worktree', action, 'T1']);
+        assert.equal(done.exit, 0, JSON.stringify(done.output));
+      }
     };
     const review = async () => {
       const result = await f.run(['review', 'run', 'T1', '--kind', 'code']);
       assert.equal(result.exit, 0, JSON.stringify(result.output));
-      return JSON.parse(fs.readFileSync(result.value.path, 'utf8'));
+      return readJson(text(reviewResult(result).path), FindingsFileGuard);
     };
     await launch('first\n');
     const first = await review();
     assert.ok(first?.findings, JSON.stringify(first));
-    const gap = first.findings.find((finding: any) => finding.defect.startsWith('missing-red: T1 SC1;'));
+    const gap = first.findings.find((finding) => finding.defect.startsWith('missing-red: T1 SC1;'));
     assert.ok(gap, JSON.stringify(first));
     await appendRecord(
       f.session,
@@ -719,7 +879,7 @@ test('rejected missing-red ruling settles later rounds after the target moves', 
         key: 'reject-missing-red',
         by: 'orchestrator',
         data: {
-          subject: 'review:' + first.review + ':' + gap.id,
+          subject: 'review:' + defined(first.review, 'first.review') + ':' + gap.id,
           ruling: 'rejected',
           rationale: 'The wrapper exit proves the test failed before the fix',
         },
@@ -729,21 +889,21 @@ test('rejected missing-red ruling settles later rounds after the target moves', 
     await launch('second\n');
     const second = await review();
     assert.equal(
-      second.findings.some((finding: any) => finding.defect.startsWith('missing-red: T1 SC1;')),
+      second.findings.some((finding) => finding.defect.startsWith('missing-red: T1 SC1;')),
       false,
     );
     assert.equal(
-      second.escalations.some((row: any) => row.key.startsWith('missing-red:')),
+      defined(second.escalations, 'second.escalations').some((row) => row.key.startsWith('missing-red:')),
       false,
     );
     await launch('third\n');
     const third = await review();
     assert.equal(
-      third.findings.some((finding: any) => finding.defect.startsWith('missing-red: T1 SC1;')),
+      third.findings.some((finding) => finding.defect.startsWith('missing-red: T1 SC1;')),
       false,
     );
     assert.equal(
-      third.escalations.some((row: any) => row.key.startsWith('missing-red:')),
+      defined(third.escalations, 'third.escalations').some((row) => row.key.startsWith('missing-red:')),
       false,
     );
   } finally {
@@ -773,7 +933,7 @@ test('wrapper RED exit suppresses missing-red without a report section', async (
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0, JSON.stringify(made.output));
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'changed\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'changed\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const launch = foldLedger(f.session).records.findLast(
       (row) => row.kind === 'writer' && row.data['phase'] === 'finished',
@@ -783,13 +943,13 @@ test('wrapper RED exit suppresses missing-red without a report section', async (
     fs.writeFileSync(path.join(redDir, 'SC1.exit'), JSON.stringify({ status: 1, signal: null, error: null }) + '\n');
     const result = await f.run(['review', 'run', 'T1', '--kind', 'code']);
     assert.equal(result.exit, 0, JSON.stringify(result.output));
-    const findings = JSON.parse(fs.readFileSync(result.value.path, 'utf8'));
+    const findings = readJson(text(reviewResult(result).path), FindingsFileGuard);
     assert.equal(
-      findings.findings.some((finding: any) => finding.defect.startsWith('missing-red: T1 SC1;')),
+      findings.findings.some((finding) => finding.defect.startsWith('missing-red: T1 SC1;')),
       false,
     );
     assert.equal(
-      findings.escalations.some((row: any) => row.key.startsWith('missing-red:')),
+      defined(findings.escalations, 'findings.escalations').some((row) => row.key.startsWith('missing-red:')),
       false,
     );
   } finally {
@@ -861,7 +1021,7 @@ test('open slot rerun selects whole-target scope and leaves narrowing unchanged 
     const first = await t.review();
     assert.equal(first.exit, 0, JSON.stringify(first.output));
     assert.deepEqual(
-      t.findings(1).failed.map((reply: { slot: string }) => reply.slot),
+      t.findings(1).failed.map((reply) => reply.slot),
       ['claude[0]'],
     );
     t.failing.clear();
@@ -922,7 +1082,7 @@ test('coverage round follows an all-failed narrowed round at whole-target scope'
     assert.equal(second.exit, 0, JSON.stringify(second.output));
     assert.match(t.round(2).scope, /^Re-review round 2 \(narrowed\)/);
     assert.deepEqual(
-      t.findings(2).failed.map((reply: { slot: string }) => reply.slot),
+      t.findings(2).failed.map((reply) => reply.slot),
       [narrowed],
     );
     t.failing.clear();
@@ -945,7 +1105,7 @@ test('coverage round past the cap counts an all-failed open-only round as used a
     assert.equal(used.exit, 0, JSON.stringify(used.output));
     assert.equal(t.round(2).coverageUse, 'free');
     assert.deepEqual(t.targets(2), ['claude[0]', 'codex[0]']);
-    assert.equal(used.value.round, 2);
+    assert.equal(reviewResult(used).round, 2);
     assert.equal(t.findings(2).failed.length, 2);
     const stopped = await t.review();
     assert.equal(stopped.output.reason, 'coverage-decision');
@@ -998,7 +1158,9 @@ test('coverage round accepted MUST past a used coverage round runs the full rost
 test('coverage round full-roster all-failed reuses its number and keeps every failure through retry and native resume', async () => {
   const t = await coverageRepo(1);
   try {
-    for (const provider of PROVIDERS) t.failing.add(provider);
+    for (const provider of PROVIDERS) {
+      t.failing.add(provider);
+    }
     assert.equal((await t.review()).output.reason, 'review-failed');
     assert.equal(t.attempts(1).length, 3);
     assert.deepEqual(
@@ -1015,16 +1177,16 @@ test('coverage round full-roster all-failed reuses its number and keeps every fa
     t.f.deps.orchestrator = { platform: 'claude', model: 'native' } as typeof t.f.deps.orchestrator;
     const launched = await t.review();
     assert.equal(launched.output.reason, 'native-pending');
-    assert.equal(launched.value.cliWave, 'pending');
+    assert.equal(pendingRun(launched).cliWave, 'pending');
     assert.equal(t.attempts(1).length, 6);
     const pending = await t.review();
     assert.equal(pending.output.reason, 'native-pending');
-    assert.equal(pending.value.cliWave, 'done');
+    assert.equal(pendingRun(pending).cliWave, 'done');
     assert.equal(t.attempts(1).length, 8);
-    fs.writeFileSync(pending.value.pending[0].replyPath, JSON.stringify(CLEAN));
+    fs.writeFileSync(defined(pendingRun(pending).pending[0]).replyPath, JSON.stringify(CLEAN));
     const resumed = await t.review();
     assert.equal(resumed.exit, 0, JSON.stringify(resumed.output));
-    assert.equal(resumed.value.round, 1);
+    assert.equal(reviewResult(resumed).round, 1);
     assert.equal(t.findings(1).failed.length, 2);
     assert.equal(t.attempts(1).length, 10);
     assert.ok(t.attempts(1).every((entry) => entry.wholeTarget && Number.isSafeInteger(entry.seq)));
@@ -1050,7 +1212,7 @@ test('repository changes list a tracked edit and rename made during a native rou
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0, JSON.stringify(made.output));
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
@@ -1059,22 +1221,22 @@ test('repository changes list a tracked edit and rename made during a native rou
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'native edit during round\n');
     f.git(['mv', 'src/file.ts', 'src/renamed.ts']);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(Array.isArray(done.value.repositoryChanges), 'result lists repositoryChanges');
-    const listed = done.value.repositoryChanges.flatMap((entry: { paths: string[] }) => entry.paths);
+    assert.ok(Array.isArray(reviewResult(done).repositoryChanges), 'result lists repositoryChanges');
+    const listed = new Set(repositoryPaths(reviewResult(done).repositoryChanges));
     assert.ok(
-      listed.includes('src/file.ts') && listed.includes('src/renamed.ts'),
-      'tracked edit and rename are listed: ' + JSON.stringify(done.value.repositoryChanges),
+      listed.has('src/file.ts') && listed.has('src/renamed.ts'),
+      'tracked edit and rename are listed: ' + JSON.stringify(reviewResult(done).repositoryChanges),
     );
-    const persisted = JSON.parse(fs.readFileSync(done.value.path, 'utf8'));
-    assert.deepEqual(persisted.repositoryChanges, done.value.repositoryChanges);
+    const persisted = JSON.parse(fs.readFileSync(text(reviewResult(done).path), 'utf8'));
+    assert.deepEqual(persisted.repositoryChanges, reviewResult(done).repositoryChanges);
     const status = await f.run(['status', 'show']);
-    assert.ok(Array.isArray(status.value.openRepositoryChanges));
-    assert.ok(
-      status.value.openRepositoryChanges.some((entry: { review: string }) => entry.review === done.value.review),
-    );
+    assert.ok(Array.isArray(statusChanges(status)));
+    assert.ok(openChanges(statusChanges(status)).some((entry) => entry.review === text(reviewResult(done).review)));
   } finally {
     f.cleanup();
   }
@@ -1097,7 +1259,7 @@ test('repository changes skip ignored and session files while listing untracked 
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
@@ -1109,17 +1271,19 @@ test('repository changes skip ignored and session files while listing untracked 
     fs.mkdirSync(path.join(f.root, 'src', 'newdir'), { recursive: true });
     fs.writeFileSync(path.join(f.root, 'src', 'newdir', 'inner.ts'), 'untracked inner\n');
     fs.rmSync(path.join(f.root, 'src/file.ts'));
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = done.value.repositoryChanges.flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/new-untracked.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/newdir/inner.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(!listed.includes('ignored'), JSON.stringify(done.value.repositoryChanges));
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges);
+    assert.ok(listed.includes('src/new-untracked.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.includes('src/newdir/inner.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(!listed.includes('ignored'), JSON.stringify(reviewResult(done).repositoryChanges));
     assert.ok(
       !listed.some((p: string) => p.includes('untracked-session')),
-      JSON.stringify(done.value.repositoryChanges),
+      JSON.stringify(reviewResult(done).repositoryChanges),
     );
   } finally {
     f.cleanup();
@@ -1143,7 +1307,7 @@ test('repository changes report an unavailable check and keep replies when the t
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    const worktreePath = path.resolve(f.session, made.value.path);
+    const worktreePath = path.resolve(f.session, createdPath(made));
     fs.writeFileSync(path.join(worktreePath, 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
@@ -1151,15 +1315,14 @@ test('repository changes report an unavailable check and keep replies when the t
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.rmSync(worktreePath, { recursive: true, force: true });
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(
-      done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable',
-      JSON.stringify(done.value),
-    );
-    assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value));
-    const persisted = JSON.parse(fs.readFileSync(done.value.path, 'utf8'));
+    assert.ok(reviewResult(done).repositoryCheck?.state === 'unavailable', JSON.stringify(done.value));
+    assert.ok(!reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const persisted = JSON.parse(fs.readFileSync(text(reviewResult(done).path), 'utf8'));
     assert.equal(persisted.repositoryCheck.state, 'unavailable');
   } finally {
     f.cleanup();
@@ -1184,14 +1347,17 @@ test('cli-only rounds run no repository check and carry no baseline', async () =
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'edit without native\n');
       const done = await f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      assert.ok(!('repositoryChanges' in done.value), JSON.stringify(done.value));
-      assert.ok(!('repositoryCheck' in done.value), JSON.stringify(done.value));
-      assert.ok(!('openRepositoryChanges' in (await f.run(['status', 'show'])).value), 'no open report');
+      assert.ok(!('repositoryChanges' in narrow(done.value, isRecord)), JSON.stringify(done.value));
+      assert.ok(!('repositoryCheck' in narrow(done.value, isRecord)), JSON.stringify(done.value));
+      assert.ok(
+        !('openRepositoryChanges' in narrow((await f.run(['status', 'show'])).value, isRecord)),
+        'no open report',
+      );
     } finally {
       f.cleanup();
     }
@@ -1213,7 +1379,7 @@ test('cli-only rounds run no repository check and carry no baseline', async () =
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       // A spec edit during fan-out supersedes the in-flight round to gen-2;
       // with no native voice no baseline exists to carry, so gen-2 runs no check.
@@ -1229,21 +1395,17 @@ test('cli-only rounds run no repository check and carry no baseline', async () =
       assert.equal(first.output.reason, 'target-moved', JSON.stringify(first.output));
       const reviewDirs = fs.readdirSync(path.join(f.session, '.state/reviews'));
       assert.equal(reviewDirs.length, 1);
-      const review = reviewDirs[0] as string;
+      const review = defined(reviewDirs[0], 'reviewDir');
       assert.ok(
         !fs.existsSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-2/checkout-baseline.json')),
         'a cli-only supersede carries no baseline',
       );
       const second = await run();
       assert.equal(second.exit, 0, JSON.stringify(second.output));
-      assert.ok(!second.value.repositoryChanges, JSON.stringify(second.value));
-      assert.ok(!second.value.repositoryCheck, JSON.stringify(second.value));
+      assert.ok(!reviewResult(second).repositoryChanges, JSON.stringify(second.value));
+      assert.ok(!reviewResult(second).repositoryCheck, JSON.stringify(second.value));
       const status = await f.run(['status', 'show']);
-      assert.deepEqual(
-        status.value.openRepositoryChanges ?? [],
-        [],
-        JSON.stringify(status.value.openRepositoryChanges),
-      );
+      assert.deepEqual(statusChanges(status) ?? [], [], JSON.stringify(statusChanges(status)));
     } finally {
       f.cleanup();
     }
@@ -1267,7 +1429,7 @@ test('repository changes list a mode change and an assume-unchanged edit', async
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     fs.writeFileSync(path.join(f.root, 'src/mode.sh'), 'echo hi\n');
     fs.writeFileSync(path.join(f.root, 'src/staged.ts'), 'staged base\n');
@@ -1285,14 +1447,16 @@ test('repository changes list a mode change and an assume-unchanged edit', async
     fs.writeFileSync(path.join(f.root, 'src/staged.ts'), 'staged new content\n');
     f.git(['add', 'src/staged.ts']);
     fs.writeFileSync(path.join(f.root, 'src/staged.ts'), 'staged base\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/mode.sh'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/untracked-mode.sh'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/staged.ts'), JSON.stringify(done.value.repositoryChanges));
+    const listed = new Set(repositoryPaths(reviewResult(done).repositoryChanges ?? []));
+    assert.ok(listed.has('src/mode.sh'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.has('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.has('src/untracked-mode.sh'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.has('src/staged.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
   } finally {
     f.cleanup();
   }
@@ -1315,27 +1479,25 @@ test('repository changes close with a keep note and admit one rerun round at the
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'rerun edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review;
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
     const checkout = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
     );
     let status = await f.run(['status', 'show']);
-    assert.ok(
-      status.value.openRepositoryChanges.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-    );
+    assert.ok(openChanges(statusChanges(status)).some((entry) => entry.review === review && entry.round === 1));
     await appendRecord(
       f.session,
       {
@@ -1348,18 +1510,18 @@ test('repository changes close with a keep note and admit one rerun round at the
       f.deps,
     );
     status = await f.run(['status', 'show']);
-    const open = status.value.openRepositoryChanges.find(
-      (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-    );
-    assert.ok(open && open.rerunPending === true, JSON.stringify(status.value.openRepositoryChanges));
+    const open = openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1);
+    assert.ok(open && open.rerunPending === true, JSON.stringify(statusChanges(status)));
     const rerunLaunched = await run();
     assert.equal(rerunLaunched.output.reason, 'native-pending', JSON.stringify(rerunLaunched.output));
     const rerunWaved = await run();
     assert.equal(rerunWaved.output.reason, 'native-pending');
-    for (const slot of rerunWaved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(rerunWaved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const rerunDone = await run();
     assert.equal(rerunDone.exit, 0, JSON.stringify(rerunDone.output));
-    assert.equal(rerunDone.value.round, 2);
+    assert.equal(reviewResult(rerunDone).round, 2);
     await appendRecord(
       f.session,
       {
@@ -1372,9 +1534,7 @@ test('repository changes close with a keep note and admit one rerun round at the
     );
     status = await f.run(['status', 'show']);
     assert.ok(
-      !status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
       JSON.stringify(status.value),
     );
   } finally {
@@ -1399,7 +1559,7 @@ test('repository changes detect a second edit of an already dirty path', async (
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'first dirty edit\n');
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
@@ -1407,12 +1567,14 @@ test('repository changes detect a second edit of an already dirty path', async (
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'second dirty edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(done.value.repositoryChanges, 'second edit is listed');
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges ?? []);
+    assert.ok(listed.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(reviewResult(done).repositoryChanges, 'second edit is listed');
   } finally {
     f.cleanup();
   }
@@ -1436,7 +1598,7 @@ test('repository changes list task worktree and nested integration changes from 
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       assert.equal((await f.run(['worktree', 'integrate', 'T1'])).exit, 0);
       const run = () =>
@@ -1445,14 +1607,16 @@ test('repository changes list task worktree and nested integration changes from 
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(f.integration, 'src/file.ts'), 'integration edit during round\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-      const entry = done.value.repositoryChanges.find(
-        (row: { cwd: string }) => path.resolve(row.cwd) === path.resolve(f.integration),
+      assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+      const entry = narrow(reviewResult(done).repositoryChanges, arrayOf(RepoChangeEntryGuard)).find(
+        (row) => path.resolve(row.cwd) === path.resolve(f.integration),
       );
-      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
     } finally {
       f.cleanup();
     }
@@ -1474,7 +1638,7 @@ test('repository changes list task worktree and nested integration changes from 
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      const worktree = path.resolve(f.session, made.value.path);
+      const worktree = path.resolve(f.session, createdPath(made));
       fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
@@ -1482,13 +1646,15 @@ test('repository changes list task worktree and nested integration changes from 
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'worktree edit during round\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      const entry = (done.value.repositoryChanges ?? []).find(
-        (row: { cwd: string }) => path.resolve(row.cwd) === worktree,
+      const entry = narrow(reviewResult(done).repositoryChanges ?? [], arrayOf(RepoChangeEntryGuard)).find(
+        (row) => path.resolve(row.cwd) === worktree,
       );
-      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+      assert.ok(entry && entry.paths.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
     } finally {
       f.cleanup();
     }
@@ -1509,35 +1675,35 @@ test('repository changes keep review-failed and name paths for an all-failed rou
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     const failed = await run();
     assert.equal(failed.output.reason, 'review-failed', JSON.stringify(failed.output));
     assert.match(failed.output.summary, /src\/file\.ts/);
     const reviewDirs = fs.readdirSync(path.join(f.session, '.state/reviews'));
     assert.ok(reviewDirs.length > 0);
     const reviewName = reviewDirs[0]!;
-    const report = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', reviewName, 'round-1/gen-1/checkout-report.json'), 'utf8'),
+    const report = readJson(
+      path.join(f.session, '.state/reviews', reviewName, 'round-1/gen-1/checkout-report.json'),
+      CheckoutReportGuard,
     );
     assert.ok(
-      (report.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths).includes('src/file.ts'),
+      (report.repositoryChanges ?? []).flatMap((entry) => entry.paths).includes('src/file.ts'),
       JSON.stringify(report),
     );
-    const reviewDir = path.join(f.session, '.state/reviews', failed.output.message ? 'unknown' : 'unknown');
-    void reviewDir;
     const status = await f.run(['status', 'show']);
-    const open = (status.value.openRepositoryChanges ?? []).flatMap(
-      (row: { repositoryChanges?: { paths: string[] }[] }) =>
-        (row.repositoryChanges ?? []).flatMap((entry) => entry.paths),
+    const open = openChanges(statusChanges(status) ?? []).flatMap((row) =>
+      repositoryPaths(row.repositoryChanges ?? []),
     );
-    assert.ok(open.includes('src/file.ts'), JSON.stringify(status.value.openRepositoryChanges));
+    assert.ok(open.includes('src/file.ts'), JSON.stringify(statusChanges(status)));
   } finally {
     f.cleanup();
   }
@@ -1561,15 +1727,17 @@ test('repository changes report unavailable when baseline capture fails and keep
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      const worktree = path.resolve(f.session, made.value.path);
+      const worktree = path.resolve(f.session, createdPath(made));
       fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
-      if (mode === 'missing-worktree') fs.rmSync(worktree, { recursive: true, force: true });
+      if (mode === 'missing-worktree') {
+        fs.rmSync(worktree, { recursive: true, force: true });
+      }
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal((await run()).output.reason, 'native-pending');
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
-      const review = waved.value.review as string;
+      const review = text(reviewResult(waved).review);
       if (mode === 'corrupt-baseline') {
         fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'edit before corrupt baseline\n');
         fs.writeFileSync(
@@ -1577,14 +1745,13 @@ test('repository changes report unavailable when baseline capture fails and keep
           'null',
         );
       }
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output) + ' ' + mode);
-      assert.ok(
-        done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable',
-        JSON.stringify(done.value) + ' ' + mode,
-      );
-      assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value) + ' ' + mode);
+      assert.ok(reviewResult(done).repositoryCheck?.state === 'unavailable', JSON.stringify(done.value) + ' ' + mode);
+      assert.ok(!reviewResult(done).repositoryChanges, JSON.stringify(done.value) + ' ' + mode);
     } finally {
       f.cleanup();
     }
@@ -1604,19 +1771,24 @@ test('repository changes return target-moved when the review target itself chang
     f.deps.orchestrator = { platform: 'claude', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { claude: true, agy: true };
     f.deps.delegate = async (provider) => {
-      if (provider !== 'agy') throw new Error('CLI wave must only run agy');
+      if (provider !== 'agy') {
+        throw new Error('CLI wave must only run agy');
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'worktree base\n');
     const run = (hook?: (point: string) => void | Promise<void>) =>
-      f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low'], hook as never);
+      f.run(['review', 'run', 'worktree', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low'], hook);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const moved = await run(async (point) => {
-      if (point === 'review:after-pending')
+      if (point === 'review:after-pending') {
         fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'target edit during finalization\n');
+      }
     });
     assert.equal(moved.output.reason, 'target-moved', JSON.stringify(moved.output));
   } finally {
@@ -1646,12 +1818,14 @@ test('repository changes list a moved HEAD diff in a plan review including both 
     assert.equal(waved.output.reason, 'native-pending');
     f.git(['mv', 'src/file.ts', 'src/renamed.ts']);
     f.git(['commit', '-qm', 'rename']);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
-    assert.ok(listed.includes('src/renamed.ts'), JSON.stringify(done.value.repositoryChanges));
+    const listed = new Set(repositoryPaths(reviewResult(done).repositoryChanges ?? []));
+    assert.ok(listed.has('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
+    assert.ok(listed.has('src/renamed.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
   } finally {
     f.cleanup();
   }
@@ -1674,26 +1848,28 @@ test('repository changes stay open after an interruption between findings and th
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'interrupted change\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    fs.rmSync(done.output.path, { force: true });
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    fs.rmSync(defined(done.output.path, 'done.output.path'), { force: true });
     const status = await f.run(['status', 'show']);
     assert.ok(
-      status.value.openRepositoryChanges.some((entry: { review: string }) => entry.review === done.value.review),
+      openChanges(statusChanges(status)).some((entry) => entry.review === text(reviewResult(done).review)),
       'interrupted change stays open',
     );
     const checkout = JSON.parse(
       fs.readFileSync(
-        path.join(f.session, '.state/reviews', done.value.review, 'round-1/gen-1/checkout-report.json'),
+        path.join(f.session, '.state/reviews', text(reviewResult(done).review), 'round-1/gen-1/checkout-report.json'),
         'utf8',
       ),
     );
@@ -1702,14 +1878,14 @@ test('repository changes stay open after an interruption between findings and th
       {
         kind: 'note',
         by: 'orchestrator',
-        key: `repository-changes:${done.value.review}:1:${checkout.asOfSeq}`,
+        key: `repository-changes:${text(reviewResult(done).review)}:1:${checkout.asOfSeq}`,
         data: { text: 'explained' },
       },
       f.deps,
     );
     const closed = await f.run(['status', 'show']);
     assert.ok(
-      !closed.value.openRepositoryChanges?.some((entry: { review: string }) => entry.review === done.value.review),
+      !openChanges(statusChanges(closed) ?? []).some((entry) => entry.review === text(reviewResult(done).review)),
       JSON.stringify(closed.value),
     );
   } finally {
@@ -1734,7 +1910,7 @@ test('repository changes stay open after an interrupted failed check until a clo
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    const worktree = path.resolve(f.session, made.value.path);
+    const worktree = path.resolve(f.session, createdPath(made));
     fs.writeFileSync(path.join(worktree, 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
@@ -1742,14 +1918,16 @@ test('repository changes stay open after an interrupted failed check until a clo
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.rmSync(worktree, { recursive: true, force: true });
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryCheck, JSON.stringify(done.value));
-    fs.rmSync(done.output.path, { force: true });
+    assert.ok(reviewResult(done).repositoryCheck, JSON.stringify(done.value));
+    fs.rmSync(defined(done.output.path, 'done.output.path'), { force: true });
     const status = await f.run(['status', 'show']);
     assert.ok(
-      status.value.openRepositoryChanges.some((entry: { repositoryCheck?: unknown }) => !!entry.repositoryCheck),
+      openChanges(statusChanges(status)).some((entry) => !!entry.repositoryCheck),
       JSON.stringify(status.value),
     );
   } finally {
@@ -1774,17 +1952,19 @@ test('repository changes keep rerunPending through an interrupted rerun round', 
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'rerun interrupt edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const review = done.value.review;
+    const review = text(reviewResult(done).review);
     const checkout = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
     );
@@ -1803,23 +1983,22 @@ test('repository changes keep rerunPending through an interrupted rerun round', 
     assert.equal(launched.output.reason, 'native-pending');
     let status = await f.run(['status', 'show']);
     assert.ok(
-      status.value.openRepositoryChanges.some(
-        (entry: { review: string; round: number; rerunPending?: boolean }) =>
-          entry.review === review && entry.round === 1 && entry.rerunPending === true,
+      openChanges(statusChanges(status)).some(
+        (entry) => entry.review === review && entry.round === 1 && entry.rerunPending === true,
       ),
       JSON.stringify(status.value),
     );
     const waved2 = await run();
     assert.equal(waved2.output.reason, 'native-pending');
-    for (const slot of waved2.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved2).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const redone = await run();
     assert.equal(redone.exit, 0, JSON.stringify(redone.output));
-    assert.equal(redone.value.round, 2);
+    assert.equal(reviewResult(redone).round, 2);
     status = await f.run(['status', 'show']);
     assert.ok(
-      !status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
       JSON.stringify(status.value),
     );
   } finally {
@@ -1857,7 +2036,7 @@ test('repository changes refuse a rerun at the ceiling but keep the report open'
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const completeRound = async (edit: string, reply: unknown = CLEAN) => {
@@ -1865,10 +2044,12 @@ test('repository changes refuse a rerun at the ceiling but keep the report open'
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(f.root, 'src/file.ts'), edit);
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(reply));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(reply));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      return done.value;
+      return narrow(done.value, objectWith({ review: isString, round: isNumber }));
     };
     const first = await completeRound('ceiling edit one\n');
     const firstCheckout = JSON.parse(
@@ -1940,9 +2121,8 @@ test('repository changes refuse a rerun at the ceiling but keep the report open'
     assert.equal(refused.output.reason, 'review-ceiling', JSON.stringify(refused.output));
     const status = await f.run(['status', 'show']);
     assert.ok(
-      status.value.openRepositoryChanges.some(
-        (entry: { review: string; round: number; rerunPending?: boolean }) =>
-          entry.review === third.review && entry.round === 3 && entry.rerunPending === true,
+      openChanges(statusChanges(status)).some(
+        (entry) => entry.review === third.review && entry.round === 3 && entry.rerunPending === true,
       ),
       JSON.stringify(status.value),
     );
@@ -1964,29 +2144,34 @@ test('repository changes rerun a mixed round at whole-target scope and settle la
     f.deps.orchestrator = { platform: 'claude', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { claude: true, agy: true };
     f.deps.delegate = async (provider) => {
-      if (provider !== 'agy') throw new Error('CLI wave must only run agy');
+      if (provider !== 'agy') {
+        throw new Error('CLI wave must only run agy');
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     await f.level('low');
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'mixed rerun edit\n');
-    for (const slot of waved.value.pending) {
-      if (slot.slot.startsWith('claude')) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of narrow(pendingRun(waved).pending, arrayOf(PendingSlotGuard))) {
+      if (slot.slot.startsWith('claude')) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
     }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review;
-    const checkout = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
+    const checkout = readJson(
+      path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'),
+      CheckoutReportGuard,
     );
     await appendRecord(
       f.session,
@@ -1994,7 +2179,7 @@ test('repository changes rerun a mixed round at whole-target scope and settle la
         kind: 'note',
         by: 'user',
         quote: 'rerun mixed',
-        key: `repository-rerun:${review}:1:${checkout.asOfSeq}`,
+        key: `repository-rerun:${review}:1:${defined(checkout.asOfSeq, 'checkout.asOfSeq')}`,
         data: { text: 'rerun' },
       },
       f.deps,
@@ -2002,28 +2187,26 @@ test('repository changes rerun a mixed round at whole-target scope and settle la
     assert.equal((await run()).output.reason, 'native-pending');
     const waved2 = await run();
     assert.equal(waved2.output.reason, 'native-pending');
-    const round2 = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), 'utf8'),
-    );
+    const round2 = readJson(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), RoundFileGuard);
     assert.ok(round2.scope.startsWith('Full review'), round2.scope);
     assert.deepEqual(
       round2.roster
-        .filter((slot: { reserve: boolean }) => !slot.reserve)
-        .map((slot: { slot: string }) => slot.slot)
+        .filter((slot) => !slot.reserve)
+        .map((slot) => slot.slot)
         .sort(),
       ['agy[0]', 'claude[0]'],
     );
-    for (const slot of waved2.value.pending) {
-      if (slot.slot.startsWith('claude')) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of narrow(pendingRun(waved2).pending, arrayOf(PendingSlotGuard))) {
+      if (slot.slot.startsWith('claude')) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
     }
     const redone = await run();
     assert.equal(redone.exit, 0, JSON.stringify(redone.output));
-    assert.equal(redone.value.round, 2);
+    assert.equal(reviewResult(redone).round, 2);
     const status = await f.run(['status', 'show']);
     assert.ok(
-      !status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
       JSON.stringify(status.value),
     );
   } finally {
@@ -2047,20 +2230,22 @@ test('repository changes list edits from a native-only round', async () => {
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () =>
       f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low', '--host', 'codex']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
-    assert.equal(launched.value.pending.length, 1);
-    assert.ok(!('cliWave' in launched.value));
+    assert.equal(pendingRun(launched).pending.length, 1);
+    assert.ok(!('cliWave' in narrow(launched.value, isRecord)));
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'native-only edit\n');
-    for (const slot of launched.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(launched).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges ?? []);
+    assert.ok(listed.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
   } finally {
     f.cleanup();
   }
@@ -2071,7 +2256,7 @@ test('repository changes report unavailable for a dirty submodule re-edit with i
   try {
     const subSrc = fs.mkdtempSync(path.join(os.tmpdir(), 'submod-src-'));
     try {
-      const gitSrc = (args: string[]) => {
+      const gitSrc = (args: Array<string>) => {
         const r = spawnSync('git', args, { cwd: subSrc, encoding: 'utf8' });
         assert.equal(r.status, 0, r.stderr);
       };
@@ -2107,22 +2292,21 @@ test('repository changes report unavailable for a dirty submodule re-edit with i
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal((await run()).output.reason, 'native-pending');
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(f.root, 'submod', 'file.txt'), 'dirty after\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      assert.ok(
-        done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable',
-        JSON.stringify(done.value),
-      );
-      assert.match(done.value.repositoryCheck.reason, /Dirty submodule/);
-      assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value));
+      assert.ok(reviewResult(done).repositoryCheck?.state === 'unavailable', JSON.stringify(done.value));
+      assert.match(defined(reviewResult(done).repositoryCheck?.reason), /Dirty submodule/);
+      assert.ok(!reviewResult(done).repositoryChanges, JSON.stringify(done.value));
     } finally {
       fs.rmSync(subSrc, { recursive: true, force: true });
     }
@@ -2131,48 +2315,46 @@ test('repository changes report unavailable for a dirty submodule re-edit with i
   }
 });
 
-test('repository changes report unavailable when checkout reads fail', async () => {
+test('repository changes report unavailable when checkout reads fail', async (t) => {
   const patches = [
     {
       name: 'stat',
       patch: (target: string) => {
         const orig = fs.lstatSync;
-        (fs as unknown as { lstatSync: unknown }).lstatSync = (p: unknown, ...rest: unknown[]) => {
+        const stat = t.mock.method(fs, 'lstatSync', (...args: Parameters<typeof orig>) => {
+          const [p] = args;
           if (typeof p === 'string' && path.resolve(p) === target) {
-            const error = new Error('denied') as NodeJS.ErrnoException;
-            error.code = 'EACCES';
-            throw error;
+            denied();
           }
-          return (orig as (...args: unknown[]) => unknown)(p, ...rest);
-        };
-        return () => {
-          (fs as unknown as { lstatSync: unknown }).lstatSync = orig;
-        };
+          return orig(...args);
+        });
+        return () => stat.mock.restore();
       },
     },
     {
       name: 'read',
       patch: (target: string) => {
-        const denied = (): never => {
-          const error = new Error('denied') as NodeJS.ErrnoException;
-          error.code = 'EACCES';
-          throw error;
-        };
         const orig = fs.readFileSync;
         const origOpen = fs.openSync;
-        (fs as unknown as { readFileSync: unknown }).readFileSync = (p: unknown, ...rest: unknown[]) => {
-          if (typeof p === 'string' && path.resolve(p) === target) denied();
-          return (orig as (...args: unknown[]) => unknown)(p, ...rest);
-        };
+        const read = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof orig>) => {
+          const [p] = args;
+          if (typeof p === 'string' && path.resolve(p) === target) {
+            denied();
+          }
+          return orig(...args);
+        });
         // Content fingerprints stream through openSync: fail the open too, so a
         // read failure still surfaces as an unavailable check.
-        (fs as unknown as { openSync: unknown }).openSync = (p: unknown, ...rest: unknown[]) => {
-          if (typeof p === 'string' && path.resolve(p) === target) denied();
-          return (origOpen as unknown as (...args: unknown[]) => unknown)(p, ...rest);
-        };
+        const open = t.mock.method(fs, 'openSync', (...args: Parameters<typeof origOpen>) => {
+          const [p] = args;
+          if (typeof p === 'string' && path.resolve(p) === target) {
+            denied();
+          }
+          return origOpen(...args);
+        });
         return () => {
-          (fs as unknown as { readFileSync: unknown }).readFileSync = orig;
-          (fs as unknown as { openSync: unknown }).openSync = origOpen;
+          open.mock.restore();
+          read.mock.restore();
         };
       },
     },
@@ -2181,22 +2363,23 @@ test('repository changes report unavailable when checkout reads fail', async () 
       patch: (target: string) => {
         const origLstat = fs.lstatSync;
         const origLink = fs.readlinkSync;
-        (fs as unknown as { lstatSync: unknown }).lstatSync = (p: unknown, ...rest: unknown[]) => {
-          if (typeof p === 'string' && path.resolve(p) === target)
-            return { isSymbolicLink: () => true, isDirectory: () => false, mode: 0 } as unknown as fs.Stats;
-          return (origLstat as (...args: unknown[]) => unknown)(p, ...rest);
-        };
-        (fs as unknown as { readlinkSync: unknown }).readlinkSync = (p: unknown, ...rest: unknown[]) => {
+        const stat = t.mock.method(fs, 'lstatSync', (...args: Parameters<typeof origLstat>) => {
+          const [p] = args;
           if (typeof p === 'string' && path.resolve(p) === target) {
-            const error = new Error('denied') as NodeJS.ErrnoException;
-            error.code = 'EACCES';
-            throw error;
+            return { isSymbolicLink: (): true => true, isDirectory: (): false => false, mode: 0 };
           }
-          return (origLink as (...args: unknown[]) => unknown)(p, ...rest);
-        };
+          return origLstat(...args);
+        });
+        const link = t.mock.method(fs, 'readlinkSync', (...args: Parameters<typeof origLink>) => {
+          const [p] = args;
+          if (typeof p === 'string' && path.resolve(p) === target) {
+            denied();
+          }
+          return origLink(...args);
+        });
         return () => {
-          (fs as unknown as { lstatSync: unknown }).lstatSync = origLstat;
-          (fs as unknown as { readlinkSync: unknown }).readlinkSync = origLink;
+          link.mock.restore();
+          stat.mock.restore();
         };
       },
     },
@@ -2218,7 +2401,7 @@ test('repository changes report unavailable when checkout reads fail', async () 
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal((await run()).output.reason, 'native-pending');
@@ -2226,7 +2409,9 @@ test('repository changes report unavailable when checkout reads fail', async () 
       assert.equal(waved.output.reason, 'native-pending');
       const target = path.join(f.root, 'src/file.ts');
       fs.writeFileSync(target, 'edit for ' + mode.name + '\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const restore = mode.patch(target);
       let done;
       try {
@@ -2236,7 +2421,7 @@ test('repository changes report unavailable when checkout reads fail', async () 
       }
       assert.equal(done.exit, 0, JSON.stringify(done.output) + ' ' + mode.name);
       assert.ok(
-        done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable',
+        reviewResult(done).repositoryCheck?.state === 'unavailable',
         JSON.stringify(done.value) + ' ' + mode.name,
       );
     } finally {
@@ -2262,12 +2447,12 @@ test('repository changes carry the baseline across a superseded round', async ()
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
-    const review = launched.value.review as string;
+    const review = text(reviewResult(launched).review);
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'edit before supersede\n');
     fs.appendFileSync(path.join(f.root, 'work.spec.md'), '\nSupersede trigger\n');
     const superseded = await run();
@@ -2278,16 +2463,20 @@ test('repository changes carry the baseline across a superseded round', async ()
     const gen2Path = path.join(f.session, '.state/reviews', review, 'round-1/gen-2/checkout-baseline.json');
     assert.ok(fs.existsSync(gen2Path), 'carried baseline exists');
     assert.deepEqual(JSON.parse(fs.readFileSync(gen2Path, 'utf8')), gen1);
-    for (const slot of superseded.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(superseded).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending', JSON.stringify(waved.output));
-    for (const slot of waved.value.pending) {
-      if (!fs.existsSync(slot.replyPath)) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      if (!fs.existsSync(slot.replyPath)) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
     }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
-    assert.ok(listed.includes('src/file.ts'), JSON.stringify(done.value.repositoryChanges));
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges ?? []);
+    assert.ok(listed.includes('src/file.ts'), JSON.stringify(reviewResult(done).repositoryChanges));
   } finally {
     f.cleanup();
   }
@@ -2307,12 +2496,12 @@ test('repository changes carry the baseline across a superseded round', async ()
     await g.approve();
     const made = await g.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(g.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(g.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await g.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => g.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
-    const review = launched.value.review as string;
+    const review = text(reviewResult(launched).review);
     fs.rmSync(path.join(g.session, '.state/reviews', review, 'round-1/gen-1/checkout-baseline.json'));
     fs.appendFileSync(path.join(g.root, 'work.spec.md'), '\nSupersede trigger\n');
     const superseded = await run();
@@ -2326,19 +2515,23 @@ test('repository changes carry the baseline across a superseded round', async ()
       'a predecessor that launched a native voice but lost its baseline carries unavailable: ' + JSON.stringify(gen2),
     );
     assert.match(gen2.reason, /missing after native launch/);
-    for (const slot of superseded.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(superseded).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending', JSON.stringify(waved.output));
-    for (const slot of waved.value.pending) {
-      if (!fs.existsSync(slot.replyPath)) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      if (!fs.existsSync(slot.replyPath)) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
     }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
     assert.ok(
-      done.value.repositoryCheck && done.value.repositoryCheck.state === 'unavailable',
+      reviewResult(done).repositoryCheck?.state === 'unavailable',
       'a lost baseline reports unavailable instead of clean: ' + JSON.stringify(done.value),
     );
-    assert.ok(!done.value.repositoryChanges, JSON.stringify(done.value));
+    assert.ok(!reviewResult(done).repositoryChanges, JSON.stringify(done.value));
   } finally {
     g.cleanup();
   }
@@ -2361,18 +2554,20 @@ test('reused round number keeps a later report open and admits a whole-target re
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'rerun edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review as string;
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
     const roundDir = path.join(f.session, '.state/reviews', review, 'round-1');
     const firstCheckout = JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/checkout-report.json'), 'utf8'));
     await appendRecord(
@@ -2390,10 +2585,8 @@ test('reused round number keeps a later report open and admits a whole-target re
     )!.seq;
     let status = await f.run(['status', 'show']);
     assert.ok(
-      !status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'the acknowledged report stays closed: ' + JSON.stringify(status.value.openRepositoryChanges),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'the acknowledged report stays closed: ' + JSON.stringify(statusChanges(status)),
     );
     // A later report under the reused round number stays open. The rerun note
     // names the later report, so its suffix matches the later identity.
@@ -2416,26 +2609,18 @@ test('reused round number keeps a later report open and admits a whole-target re
       f.deps,
     );
     status = await f.run(['status', 'show']);
-    const open = status.value.openRepositoryChanges.find(
-      (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-    );
+    const open = openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1);
     assert.ok(
       open && open.rerunPending === true,
-      'a later report under a reused number stays open with rerunPending: ' +
-        JSON.stringify(status.value.openRepositoryChanges),
+      'a later report under a reused number stays open with rerunPending: ' + JSON.stringify(statusChanges(status)),
     );
     const rerun = await run();
     assert.equal(rerun.output.reason, 'native-pending', JSON.stringify(rerun.output));
-    assert.equal(rerun.value.round, 2, 'the rerun grant admits round 2 above the cap');
-    const round2 = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), 'utf8'),
-    );
-    assert.ok(
-      (round2.scope as string).startsWith('Full review'),
-      'a rerun runs at whole-target scope: ' + round2.scope,
-    );
+    assert.equal(reviewResult(rerun).round, 2, 'the rerun grant admits round 2 above the cap');
+    const round2 = readJson(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), RoundFileGuard);
+    assert.ok(round2.scope.startsWith('Full review'), 'a rerun runs at whole-target scope: ' + round2.scope);
     assert.deepEqual(
-      round2.roster.filter((slot: { reserve: boolean }) => !slot.reserve).map((slot: { slot: string }) => slot.slot),
+      round2.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
       ['claude[0]'],
     );
   } finally {
@@ -2457,18 +2642,20 @@ test('reused round number keeps a later report open and admits a whole-target re
     await g.approve();
     const made = await g.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(g.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(g.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await g.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => g.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(g.root, 'src/file.ts'), 'rerun edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review as string;
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
     const roundDir = path.join(g.session, '.state/reviews', review, 'round-1');
     const firstCheckout = JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/checkout-report.json'), 'utf8'));
     await appendRecord(
@@ -2492,12 +2679,10 @@ test('reused round number keeps a later report open and admits a whole-target re
       JSON.stringify({ repositoryChanges: [{ cwd: g.root, paths: ['src/file.ts'] }], asOfSeq: closeSeq }),
     );
     let status = await g.run(['status', 'show']);
-    const open = status.value.openRepositoryChanges.find(
-      (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-    );
+    const open = openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1);
     assert.ok(
       open && open.rerunPending !== true,
-      'an equal-seq later report stays open: ' + JSON.stringify(status.value.openRepositoryChanges),
+      'an equal-seq later report stays open: ' + JSON.stringify(statusChanges(status)),
     );
     await appendRecord(
       g.session,
@@ -2512,14 +2697,12 @@ test('reused round number keeps a later report open and admits a whole-target re
     );
     status = await g.run(['status', 'show']);
     assert.equal(
-      status.value.openRepositoryChanges.find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      )?.rerunPending,
+      openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1)?.rerunPending,
       true,
     );
     const rerun = await run();
     assert.equal(rerun.output.reason, 'native-pending', JSON.stringify(rerun.output));
-    assert.equal(rerun.value.round, 2, 'the equal-seq report admits the rerun grant');
+    assert.equal(reviewResult(rerun).round, 2, 'the equal-seq report admits the rerun grant');
   } finally {
     g.cleanup();
   }
@@ -2539,15 +2722,17 @@ test('retry after all-failed uses no host CLI and keeps the first report until a
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    const review = waved.value.review as string;
+    const review = text(reviewResult(waved).review);
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     assert.equal((await run()).output.reason, 'review-failed');
     // Restore the changed path, then retry: the new compare is clean,
     // but the first unacknowledged report must stay open.
@@ -2557,17 +2742,13 @@ test('retry after all-failed uses no host CLI and keeps the first report until a
     const kept = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
     );
-    assert.ok(
-      (kept.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths).includes('src/file.ts'),
-    );
+    assert.ok(repositoryPaths(kept.repositoryChanges ?? []).includes('src/file.ts'));
     const retryStatus = await f.run(['status', 'show']);
     assert.ok(
-      (retryStatus.value.openRepositoryChanges ?? [])
-        .flatMap((row: { repositoryChanges?: { paths: string[] }[] }) =>
-          (row.repositoryChanges ?? []).flatMap((entry) => entry.paths),
-        )
+      openChanges(statusChanges(retryStatus) ?? [])
+        .flatMap((row) => repositoryPaths(row.repositoryChanges ?? []))
         .includes('src/file.ts'),
-      'the first report survives a clean retry: ' + JSON.stringify(retryStatus.value.openRepositoryChanges),
+      'the first report survives a clean retry: ' + JSON.stringify(statusChanges(retryStatus)),
     );
     // Recover the CLI: the failed native slot still must not use it
     // (REQ-3: the host CLI never runs for the host provider), so the
@@ -2581,10 +2762,8 @@ test('retry after all-failed uses no host CLI and keeps the first report until a
     assert.equal(done.output.reason, 'review-failed', 'no host CLI on retry: ' + JSON.stringify(done.output));
     let status = await f.run(['status', 'show']);
     assert.ok(
-      (status.value.openRepositoryChanges ?? []).some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'the failed report stays open after a clean success: ' + JSON.stringify(status.value.openRepositoryChanges),
+      openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'the failed report stays open after a clean success: ' + JSON.stringify(statusChanges(status)),
     );
     await appendRecord(
       f.session,
@@ -2598,10 +2777,8 @@ test('retry after all-failed uses no host CLI and keeps the first report until a
     );
     status = await f.run(['status', 'show']);
     assert.ok(
-      !(status.value.openRepositoryChanges ?? []).some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'a closing note clears the retained report: ' + JSON.stringify(status.value.openRepositoryChanges),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'a closing note clears the retained report: ' + JSON.stringify(statusChanges(status)),
     );
   } finally {
     f.cleanup();
@@ -2622,15 +2799,17 @@ test('quoted rerun for an all-failed report starts a fresh whole-target round', 
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    const review = waved.value.review as string;
+    const review = text(reviewResult(waved).review);
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     assert.equal((await run()).output.reason, 'review-failed');
     const failedCheckout = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
@@ -2652,26 +2831,19 @@ test('quoted rerun for an all-failed report starts a fresh whole-target round', 
       'native-pending',
       'the rerun note starts a fresh round: ' + JSON.stringify(rerun.output),
     );
-    assert.equal(rerun.value.round, 2);
-    const round2 = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), 'utf8'),
-    );
-    assert.ok(
-      (round2.scope as string).startsWith('Full review'),
-      'a rerun runs at whole-target scope: ' + round2.scope,
-    );
+    assert.equal(reviewResult(rerun).round, 2);
+    const round2 = readJson(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), RoundFileGuard);
+    assert.ok(round2.scope.startsWith('Full review'), 'a rerun runs at whole-target scope: ' + round2.scope);
     assert.deepEqual(
-      round2.roster.filter((slot: { reserve: boolean }) => !slot.reserve).map((slot: { slot: string }) => slot.slot),
+      round2.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
       ['claude[0]'],
     );
     // The failed report stays open with rerunPending until the rerun completes.
     let status = await f.run(['status', 'show']);
-    const open = status.value.openRepositoryChanges.find(
-      (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-    );
+    const open = openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1);
     assert.ok(
       open && open.rerunPending === true,
-      'the failed report waits for its rerun: ' + JSON.stringify(status.value.openRepositoryChanges),
+      'the failed report waits for its rerun: ' + JSON.stringify(statusChanges(status)),
     );
     f.deps.delegate = async () => ({
       outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null },
@@ -2679,15 +2851,15 @@ test('quoted rerun for an all-failed report starts a fresh whole-target round', 
     });
     const waved2 = await run();
     assert.equal(waved2.output.reason, 'native-pending');
-    for (const slot of waved2.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved2).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const finished = await run();
     assert.equal(finished.exit, 0, JSON.stringify(finished.output));
     status = await f.run(['status', 'show']);
     assert.ok(
-      !(status.value.openRepositoryChanges ?? []).some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'the failed report clears once its rerun finalizes: ' + JSON.stringify(status.value.openRepositoryChanges),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'the failed report clears once its rerun finalizes: ' + JSON.stringify(statusChanges(status)),
     );
   } finally {
     f.cleanup();
@@ -2711,28 +2883,28 @@ test('one per-report note closes a report from normal finalization', async () =>
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'finalized edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review as string;
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
     const roundDir = path.join(f.session, '.state/reviews', review, 'round-1');
     const checkout = JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/checkout-report.json'), 'utf8'));
-    const finalized = JSON.parse(fs.readFileSync(done.value.path, 'utf8'));
+    const finalized = JSON.parse(fs.readFileSync(text(reviewResult(done).path), 'utf8'));
     assert.equal(finalized.asOfSeq, checkout.asOfSeq, 'the finalized findings copy carries the report identity');
     let status = await f.run(['status', 'show']);
     assert.ok(
-      status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'the finalized report starts open: ' + JSON.stringify(status.value.openRepositoryChanges),
+      openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'the finalized report starts open: ' + JSON.stringify(statusChanges(status)),
     );
     await appendRecord(
       f.session,
@@ -2746,10 +2918,8 @@ test('one per-report note closes a report from normal finalization', async () =>
     );
     status = await f.run(['status', 'show']);
     assert.ok(
-      !status.value.openRepositoryChanges?.some(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-      ),
-      'one per-report note closes the finalized report: ' + JSON.stringify(status.value.openRepositoryChanges),
+      !openChanges(statusChanges(status) ?? []).some((entry) => entry.review === review && entry.round === 1),
+      'one per-report note closes the finalized report: ' + JSON.stringify(statusChanges(status)),
     );
   } finally {
     f.cleanup();
@@ -2773,18 +2943,20 @@ test('a suffixed rerun decision admits the next round above the cap', async () =
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'rerun edit\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    assert.ok(done.value.repositoryChanges, JSON.stringify(done.value));
-    const review = done.value.review as string;
+    assert.ok(reviewResult(done).repositoryChanges, JSON.stringify(done.value));
+    const review = text(reviewResult(done).review);
     const checkout = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
     );
@@ -2800,12 +2972,10 @@ test('a suffixed rerun decision admits the next round above the cap', async () =
       f.deps,
     );
     const status = await f.run(['status', 'show']);
-    const open = status.value.openRepositoryChanges.find(
-      (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
-    );
+    const open = openChanges(statusChanges(status)).find((entry) => entry.review === review && entry.round === 1);
     assert.ok(
       open && open.rerunPending === true,
-      'the suffixed rerun decision binds the current report: ' + JSON.stringify(status.value.openRepositoryChanges),
+      'the suffixed rerun decision binds the current report: ' + JSON.stringify(statusChanges(status)),
     );
     const rerun = await run();
     assert.equal(
@@ -2813,7 +2983,7 @@ test('a suffixed rerun decision admits the next round above the cap', async () =
       'native-pending',
       'the suffixed rerun decision admits round 2 above the cap: ' + JSON.stringify(rerun.output),
     );
-    assert.equal(rerun.value.round, 2);
+    assert.equal(reviewResult(rerun).round, 2);
   } finally {
     f.cleanup();
   }
@@ -2833,15 +3003,17 @@ test('a suffixed rerun decision restarts an all-failed round at whole-target sco
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    const review = waved.value.review as string;
+    const review = text(reviewResult(waved).review);
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     assert.equal((await run()).output.reason, 'review-failed');
     const checkout = JSON.parse(
       fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-1/gen-1/checkout-report.json'), 'utf8'),
@@ -2863,16 +3035,11 @@ test('a suffixed rerun decision restarts an all-failed round at whole-target sco
       'native-pending',
       'the suffixed rerun note starts a fresh round: ' + JSON.stringify(rerun.output),
     );
-    assert.equal(rerun.value.round, 2);
-    const round2 = JSON.parse(
-      fs.readFileSync(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), 'utf8'),
-    );
-    assert.ok(
-      (round2.scope as string).startsWith('Full review'),
-      'a suffixed rerun runs at whole-target scope: ' + round2.scope,
-    );
+    assert.equal(reviewResult(rerun).round, 2);
+    const round2 = readJson(path.join(f.session, '.state/reviews', review, 'round-2/round.json'), RoundFileGuard);
+    assert.ok(round2.scope.startsWith('Full review'), 'a suffixed rerun runs at whole-target scope: ' + round2.scope);
     assert.deepEqual(
-      round2.roster.filter((slot: { reserve: boolean }) => !slot.reserve).map((slot: { slot: string }) => slot.slot),
+      round2.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot),
       ['claude[0]'],
     );
   } finally {
@@ -2897,20 +3064,22 @@ test('repository changes list a changed root path named __proto__', async () => 
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, '__proto__'), 'proto edit during round\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges ?? []);
     assert.ok(
       listed.includes('__proto__'),
-      'the adversarial path is listed: ' + JSON.stringify(done.value.repositoryChanges),
+      'the adversarial path is listed: ' + JSON.stringify(reviewResult(done).repositoryChanges),
     );
   } finally {
     f.cleanup();
@@ -2934,7 +3103,7 @@ test('repository changes hash a multi-chunk file without a full-file read', asyn
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     // A file larger than one hash chunk exists before launch; only one byte
     // beyond the first chunk changes during the round.
@@ -2947,13 +3116,15 @@ test('repository changes hash a multi-chunk file without a full-file read', asyn
     const bytes = fs.readFileSync(big);
     bytes[100 * 1024] = 'y'.charCodeAt(0);
     fs.writeFileSync(big, bytes);
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+    }
     const done = await run();
     assert.equal(done.exit, 0, JSON.stringify(done.output));
-    const listed = (done.value.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths);
+    const listed = repositoryPaths(reviewResult(done).repositoryChanges ?? []);
     assert.ok(
       listed.includes('src/big.bin'),
-      'the change beyond the first chunk is listed: ' + JSON.stringify(done.value.repositoryChanges),
+      'the change beyond the first chunk is listed: ' + JSON.stringify(reviewResult(done).repositoryChanges),
     );
   } finally {
     f.cleanup();
@@ -2988,7 +3159,7 @@ test('checkout reports gate sequences on content and order generations numerical
       { kind: 'note', by: 'orchestrator', key: `repository-changes:${review}:1:2`, data: { text: 'explained mid' } },
       f.deps,
     );
-    const reported = async () => (await f.run(['status', 'show'])).value.openRepositoryChanges ?? [];
+    const reported = async () => openChanges(statusChanges(await f.run(['status', 'show'])) ?? []);
     assert.deepEqual(await reported(), [], 'the acknowledged report stays closed');
     // A clean later generation must not inflate the sequence past the note.
     fs.writeFileSync(path.join(roundDir, 'gen-10/checkout-report.json'), JSON.stringify({ asOfSeq: 999 }));
@@ -3005,10 +3176,11 @@ test('checkout reports gate sequences on content and order generations numerical
     );
     const open = await reported();
     assert.equal(open.length, 1, JSON.stringify(open));
-    assert.deepEqual((open[0].repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths).sort(), [
-      'late-path',
-      'new-path',
-    ]);
+    assert.ok(open[0]);
+    assert.deepEqual(
+      repositoryPaths(open[0].repositoryChanges ?? []).sort((left, right) => left.localeCompare(right)),
+      ['late-path', 'new-path'],
+    );
   } finally {
     f.cleanup();
   }
@@ -3023,7 +3195,7 @@ test('two separately closed reports in one reused round stay closed', async () =
     const roundDir = path.join(f.session, '.state/reviews', review, 'round-1');
     fs.mkdirSync(path.join(roundDir, 'gen-1'), { recursive: true });
     fs.mkdirSync(path.join(roundDir, 'gen-2'), { recursive: true });
-    const reported = async () => (await f.run(['status', 'show'])).value.openRepositoryChanges ?? [];
+    const reported = async () => openChanges(statusChanges(await f.run(['status', 'show'])) ?? []);
     const seqA = foldLedger(f.session).lastSeq;
     fs.writeFileSync(
       path.join(roundDir, 'gen-1/checkout-report.json'),
@@ -3031,6 +3203,7 @@ test('two separately closed reports in one reused round stay closed', async () =
     );
     let open = await reported();
     assert.equal(open.length, 1, JSON.stringify(open));
+    assert.ok(open[0]);
     assert.equal(open[0].reportSeq, seqA);
     await appendRecord(
       f.session,
@@ -3050,10 +3223,8 @@ test('two separately closed reports in one reused round stay closed', async () =
     );
     open = await reported();
     assert.equal(open.length, 1, JSON.stringify(open));
-    assert.deepEqual(
-      (open[0].repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths),
-      ['b-path'],
-    );
+    assert.ok(open[0]);
+    assert.deepEqual(repositoryPaths(open[0].repositoryChanges ?? []), ['b-path']);
     await appendRecord(
       f.session,
       {
@@ -3098,12 +3269,13 @@ test('later changed paths merge with the finalized findings report', async () =>
         budget: { asOfSeq: seqB },
       }),
     );
-    const open = (await f.run(['status', 'show'])).value.openRepositoryChanges ?? [];
+    const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []);
     assert.equal(open.length, 1, JSON.stringify(open));
-    assert.deepEqual((open[0].repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths).sort(), [
-      'a-path',
-      'b-path',
-    ]);
+    assert.ok(open[0]);
+    assert.deepEqual(
+      repositoryPaths(open[0].repositoryChanges ?? []).sort((left, right) => left.localeCompare(right)),
+      ['a-path', 'b-path'],
+    );
   } finally {
     f.cleanup();
   }
@@ -3115,9 +3287,7 @@ test('later unavailable checks merge with earlier changed paths', async () => {
     await f.level('low');
     await f.approve();
     const reported = async (review: string) =>
-      ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string }) => entry.review === review,
-      );
+      openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find((entry) => entry.review === review);
     // A finalized unavailable check keeps the earlier attempt paths.
     const first = 'demo-merge-check';
     const firstDir = path.join(f.session, '.state/reviews', first, 'round-1');
@@ -3143,10 +3313,7 @@ test('later unavailable checks merge with earlier changed paths', async () => {
     );
     let open = await reported(first);
     assert.ok(open, 'the merged report stays open');
-    assert.deepEqual(
-      (open.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths),
-      ['a-path'],
-    );
+    assert.deepEqual(repositoryPaths(open.repositoryChanges ?? []), ['a-path']);
     assert.equal(open.repositoryCheck?.state, 'unavailable');
     // An earlier unavailable attempt survives a later finalized path report.
     const second = 'demo-merge-check2';
@@ -3173,10 +3340,7 @@ test('later unavailable checks merge with earlier changed paths', async () => {
     );
     open = await reported(second);
     assert.ok(open, 'the merged report stays open');
-    assert.deepEqual(
-      (open.repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths),
-      ['b-path'],
-    );
+    assert.deepEqual(repositoryPaths(open.repositoryChanges ?? []), ['b-path']);
     assert.equal(open.repositoryCheck?.state, 'unavailable');
   } finally {
     f.cleanup();
@@ -3201,12 +3365,13 @@ test('two failed generations with different paths both stay open', async () => {
       path.join(roundDir, 'gen-2/checkout-report.json'),
       JSON.stringify({ repositoryChanges: [{ cwd: 'c', paths: ['b-path'] }], asOfSeq: seq + 1 }),
     );
-    const open = (await f.run(['status', 'show'])).value.openRepositoryChanges ?? [];
+    const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []);
     assert.equal(open.length, 1, JSON.stringify(open));
-    assert.deepEqual((open[0].repositoryChanges ?? []).flatMap((entry: { paths: string[] }) => entry.paths).sort(), [
-      'a-path',
-      'b-path',
-    ]);
+    assert.ok(open[0]);
+    assert.deepEqual(
+      repositoryPaths(open[0].repositoryChanges ?? []).sort((left, right) => left.localeCompare(right)),
+      ['a-path', 'b-path'],
+    );
   } finally {
     f.cleanup();
   }
@@ -3214,7 +3379,6 @@ test('two failed generations with different paths both stay open', async () => {
 
 test('quoted and stale rerun notes bind only the open report', async () => {
   {
-    const { admission } = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
     const f = await toolkitRepo();
     try {
       f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {
@@ -3231,20 +3395,22 @@ test('quoted and stale rerun notes bind only the open report', async () => {
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal((await run()).output.reason, 'native-pending');
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'covered edit\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      const review = done.value.review as string;
+      const review = text(reviewResult(done).review);
       const roundDir = path.join(f.session, '.state/reviews', review, 'round-1');
-      const checkout = JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/checkout-report.json'), 'utf8'));
-      const seqA = checkout.asOfSeq as number;
+      const checkout = readJson(path.join(roundDir, 'gen-1/checkout-report.json'), CheckoutReportGuard);
+      const seqA = defined(checkout.asOfSeq, 'checkout.asOfSeq');
       // A later generation reports again under the reused round number.
       await f.level('low');
       const seqB = foldLedger(f.session).lastSeq;
@@ -3275,8 +3441,8 @@ test('quoted and stale rerun notes bind only the open report', async () => {
         },
         f.deps,
       );
-      const open = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(open, 'the remaining report stays open');
       assert.equal(open.reportSeq, seqA, 'the open entry binds the remaining report: ' + JSON.stringify(open));
@@ -3298,13 +3464,12 @@ test('quoted and stale rerun notes bind only the open report', async () => {
         'native-pending',
         'the quoted rerun starts round 2: ' + JSON.stringify(rerun.output),
       );
-      assert.equal(rerun.value.round, 2);
+      assert.equal(reviewResult(rerun).round, 2);
     } finally {
       f.cleanup();
     }
   }
   {
-    const { admission } = await import('../../skills/dispatch/scripts/toolkit/findings.ts');
     const f = await toolkitRepo();
     try {
       f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {
@@ -3321,20 +3486,22 @@ test('quoted and stale rerun notes bind only the open report', async () => {
       await f.approve();
       const made = await f.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
-      fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+      fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
       const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
       assert.equal((await run()).output.reason, 'native-pending');
       const waved = await run();
       assert.equal(waved.output.reason, 'native-pending');
       fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'covered edit\n');
-      for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
+      }
       const done = await run();
       assert.equal(done.exit, 0, JSON.stringify(done.output));
-      const review = done.value.review as string;
+      const review = text(reviewResult(done).review);
       const roundDir = path.join(f.session, '.state/reviews', review, 'round-1');
-      const checkout = JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/checkout-report.json'), 'utf8'));
-      const seqA = checkout.asOfSeq as number;
+      const checkout = readJson(path.join(roundDir, 'gen-1/checkout-report.json'), CheckoutReportGuard);
+      const seqA = defined(checkout.asOfSeq, 'checkout.asOfSeq');
       await f.level('low');
       const seqB = foldLedger(f.session).lastSeq;
       assert.ok(seqB > seqA, 'the later report carries a distinct later identity');
@@ -3364,8 +3531,8 @@ test('quoted and stale rerun notes bind only the open report', async () => {
         },
         f.deps,
       );
-      const open = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(open, 'the remaining report stays open');
       assert.equal(open.reportSeq, seqA, 'the open entry binds the remaining report: ' + JSON.stringify(open));
@@ -3406,30 +3573,34 @@ test('a host change past a pending reserve finalizes with a reply a fallback and
     });
     f.deps.orchestrator = { platform: 'claude', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { claude: true, agy: true, codex: true, copilot: true };
-    const launches: { provider: string; targetSlot: string | undefined }[] = [];
+    const launches: Array<{ provider: string; targetSlot: string | undefined }> = [];
     f.deps.delegate = async (provider, request) => {
       launches.push({ provider, targetSlot: (request as { targetSlot?: string }).targetSlot });
-      if (provider === 'copilot')
+      if (provider === 'copilot') {
         return { outcome: { status: 'fail', cls: 'config', detail: 'unsupported' }, invocations: [] };
-      if (provider === 'codex') return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+      }
+      if (provider === 'codex') {
+        return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     await f.level('low');
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
-    const reservePending = (launched.value.pending as { slot: string; attempt: string }[]).find(
-      (slot) => slot.slot === 'codex[0]',
-    );
+    const reservePending = narrow(
+      pendingRun(launched).pending,
+      arrayOf(objectWith({ slot: isString, attempt: isString })),
+    ).find((slot) => slot.slot === 'codex[0]');
     assert.equal(
       reservePending !== undefined,
       true,
-      'codex fails into the host reserve: ' + JSON.stringify(launched.value.pending),
+      'codex fails into the host reserve: ' + JSON.stringify(pendingRun(launched).pending),
     );
     assert.ok(
       reservePending!.attempt.startsWith('claude[0]#'),
@@ -3456,9 +3627,9 @@ test('a host change past a pending reserve finalizes with a reply a fallback and
       0,
       'every saved outcome returns, so the round finalizes: ' + JSON.stringify(resumed.output),
     );
-    const finalized = JSON.parse(fs.readFileSync(resumed.value.path, 'utf8'));
+    const finalized = readJson(text(reviewResult(resumed).path), FindingsFileGuard);
     assert.deepEqual(
-      (finalized.failed as { slot: string }[]).map((entry) => entry.slot),
+      finalized.failed.map((entry) => entry.slot),
       ['copilot[0]'],
       'the reply, the reserve fallback and the failure all reach finalization: ' + JSON.stringify(finalized.failed),
     );
@@ -3485,26 +3656,31 @@ test('an interrupted cli voice resumes with its saved reserve after a host chang
     });
     f.deps.orchestrator = { platform: 'claude', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { claude: true, agy: true, codex: true, copilot: true };
-    const launches: string[] = [];
+    const launches: Array<string> = [];
     f.deps.delegate = async (provider) => {
       launches.push(provider);
-      if (provider === 'copilot')
+      if (provider === 'copilot') {
         return { outcome: { status: 'fail', cls: 'config', detail: 'unsupported' }, invocations: [] };
-      if (provider === 'codex') return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+      }
+      if (provider === 'codex') {
+        return { outcome: { status: 'fail', cls: 'auth', detail: 'denied' }, invocations: [] };
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     await f.level('low');
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending');
     assert.ok(
-      (launched.value.pending as { slot: string }[]).some((slot) => slot.slot === 'codex[0]'),
-      'codex holds the host reserve: ' + JSON.stringify(launched.value.pending),
+      narrow(pendingRun(launched).pending, arrayOf(objectWith({ slot: isString }))).some(
+        (slot) => slot.slot === 'codex[0]',
+      ),
+      'codex holds the host reserve: ' + JSON.stringify(pendingRun(launched).pending),
     );
     // The wave is interrupted before the copilot voice settles: its save is
     // lost while agy stays done and codex keeps its pending host reserve.
@@ -3519,9 +3695,9 @@ test('an interrupted cli voice resumes with its saved reserve after a host chang
       0,
       'the round finalizes instead of dropping the interrupted voice: ' + JSON.stringify(resumed.output),
     );
-    const finalized = JSON.parse(fs.readFileSync(resumed.value.path, 'utf8'));
+    const finalized = readJson(text(reviewResult(resumed).path), FindingsFileGuard);
     assert.deepEqual(
-      (finalized.failed as { slot: string }[]).map((entry) => entry.slot),
+      finalized.failed.map((entry) => entry.slot),
       ['copilot[0]'],
       'the interrupted voice reaches finalization: ' + JSON.stringify(finalized.failed),
     );
@@ -3549,18 +3725,19 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
     // plain cli wave with no native voice.
     f.deps.orchestrator = { platform: 'opencode', model: null } as typeof f.deps.orchestrator;
     f.deps.liveness = { agy: true, codex: true, copilot: true };
-    const launches: string[] = [];
+    const launches: Array<string> = [];
     f.deps.delegate = async (provider) => {
       launches.push(provider);
-      if (provider === 'copilot')
+      if (provider === 'copilot') {
         return { outcome: { status: 'fail', cls: 'config', detail: 'unsupported' }, invocations: [] };
+      }
       return { outcome: { status: 'ok', text: JSON.stringify(CLEAN), resume: null, sessionId: null }, invocations: [] };
     };
     await f.level('low');
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     const first = await run();
@@ -3583,10 +3760,10 @@ test('a partial cli-only round resumed on a new host keeps every voice', async (
       0,
       'the resumed round finalizes instead of dropping voices: ' + JSON.stringify(resumed.output),
     );
-    const finalized = JSON.parse(fs.readFileSync(resumed.value.path, 'utf8'));
+    const finalized = readJson(text(reviewResult(resumed).path), FindingsFileGuard);
     assert.deepEqual(launches.sort(), ['codex', 'copilot'], 'only the unsaved voices run again');
     assert.deepEqual(
-      finalized.failed.map(({ slot, cls }: { slot: string; cls: string }) => ({ slot, cls })),
+      finalized.failed.map(({ slot, cls }) => ({ slot, cls })),
       [{ slot: 'copilot[0]', cls: 'config' }],
       'the mocked Copilot refusal reaches finalization',
     );
@@ -3673,8 +3850,8 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         },
         f.deps,
       );
-      const open = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(open, 'the remaining report stays open');
       assert.equal(open.reportSeq, seqA, 'the open entry binds the remaining report: ' + JSON.stringify(open));
@@ -3693,8 +3870,8 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         },
         f.deps,
       );
-      const closed = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).filter(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const closed = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).filter(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.deepEqual(closed, [], 'a changes note closes the remaining report: ' + JSON.stringify(closed));
     } finally {
@@ -3763,8 +3940,8 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         path.join(round2Dir, 'findings.json'),
         JSON.stringify({ review, round: 2, findings: [], clusters: [], failed: [] }),
       );
-      const open = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(open, 'the earlier report stays open after the later rerun satisfies');
       assert.equal(open.reportSeq, seqA, 'the open entry binds the remaining report: ' + JSON.stringify(open));
@@ -3786,8 +3963,8 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         },
         f.deps,
       );
-      const reopened = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const reopened = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(reopened, 'the remaining report stays open past the executable window');
       assert.equal(
@@ -3805,8 +3982,8 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         },
         f.deps,
       );
-      const closed = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).filter(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const closed = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).filter(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.deepEqual(closed, [], 'a changes note closes the remaining report: ' + JSON.stringify(closed));
     } finally {
@@ -3874,13 +4051,13 @@ test('sibling reports stay open with correct rerun bindings', async () => {
         path.join(round2Dir, 'findings.json'),
         JSON.stringify({ review, round: 2, findings: [], clusters: [], failed: [] }),
       );
-      const open = ((await f.run(['status', 'show'])).value.openRepositoryChanges ?? []).find(
-        (entry: { review: string; round: number }) => entry.review === review && entry.round === 1,
+      const open = openChanges(statusChanges(await f.run(['status', 'show'])) ?? []).find(
+        (entry) => entry.review === review && entry.round === 1,
       );
       assert.ok(
         open,
         'the earlier report stays open after the later rerun satisfies: ' +
-          JSON.stringify((await f.run(['status', 'show'])).value.openRepositoryChanges),
+          JSON.stringify(statusChanges(await f.run(['status', 'show']))),
       );
       assert.equal(open.reportSeq, seqA, 'the open entry binds the earlier report: ' + JSON.stringify(open));
       assert.equal(
@@ -3894,7 +4071,7 @@ test('sibling reports stay open with correct rerun bindings', async () => {
   }
 });
 
-test('an all-failed round surfaces a checkout write failure instead of a quiet review-failed', async () => {
+test('an all-failed round surfaces a checkout write failure instead of a quiet review-failed', async (t) => {
   const f = await toolkitRepo();
   try {
     f.deps.skillRoot = setupTestSkill(f.deps, f.session, 'checkout-skill', {
@@ -3908,31 +4085,30 @@ test('an all-failed round surfaces a checkout write failure instead of a quiet r
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
     const run = () => f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low']);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
     fs.writeFileSync(path.join(f.root, 'src/file.ts'), 'change before all-failed\n');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     // A persistence failure must stay explicit: the thrown review-failed names
     // the unwritten report instead of implying durable repository evidence.
     const realWrite = fs.writeFileSync;
-    const descriptor = (value: unknown) => ({ ...Object.getOwnPropertyDescriptor(fs, 'writeFileSync'), value });
-    Object.defineProperty(
-      fs,
-      'writeFileSync',
-      descriptor((...args: any[]) => {
-        if (String(args[0]).includes('checkout-report')) throw new Error('injected checkout-report write failure');
-        return (realWrite as (...inner: any[]) => unknown)(...args);
-      }),
-    );
+    const write = t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof realWrite>) => {
+      if (String(args[0]).includes('checkout-report')) {
+        throw new Error('injected checkout-report write failure');
+      }
+      realWrite(...args);
+    });
     let failed;
     try {
       failed = await run();
     } finally {
-      Object.defineProperty(fs, 'writeFileSync', descriptor(realWrite));
+      write.mock.restore();
     }
     assert.equal(failed.output.reason, 'review-failed', JSON.stringify(failed.output));
     assert.match(failed.output.summary, /checkout report unavailable/, JSON.stringify(failed.output));
@@ -3973,14 +4149,16 @@ test('an all-failed round keeps an ignored failure report visible', async () => 
     await f.approve();
     const made = await f.run(['worktree', 'create', 'T1']);
     assert.equal(made.exit, 0);
-    fs.writeFileSync(path.resolve(f.session, made.value.path, 'src/file.ts'), 'candidate\n');
+    fs.writeFileSync(path.resolve(f.session, createdPath(made), 'src/file.ts'), 'candidate\n');
     assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
-    const run = (extra: string[] = []) =>
+    const run = (extra: Array<string> = []) =>
       f.run(['review', 'run', 'T1', '--kind', 'code', '--spec', 'work.spec.md', '--level', 'low', ...extra]);
     assert.equal((await run()).output.reason, 'native-pending');
     const waved = await run();
     assert.equal(waved.output.reason, 'native-pending');
-    for (const slot of waved.value.pending) fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    for (const slot of pendingRun(waved).pending) {
+      fs.writeFileSync(slot.replyPath, 'INVALID REPORT');
+    }
     // A report that matches no saved attempt is ignored, but the all-failed
     // result still names it so the caller sees where its report went.
     const failed = await run(['--native-failed', 'stale[0]#m9=voice gone']);
@@ -4018,7 +4196,7 @@ test('inter-round diff holds governed text from real Git', async () => {
     );
     const second = await run();
     assert.equal(second.exit, 0, JSON.stringify(second.output));
-    const roundDir = path.join(path.dirname(path.dirname(second.value.path)), 'round-2');
+    const roundDir = path.join(path.dirname(path.dirname(text(reviewResult(second).path))), 'round-2');
     const diff = fs.readFileSync(path.join(roundDir, 'inter-round.diff'), 'utf8');
     assert.match(diff, /^\+- Purpose: implements behavior with a guard\.$/m);
     assert.doesNotMatch(diff, /Review Findings & Resolutions|Budget \(/);
@@ -4058,7 +4236,16 @@ export async function stoppedIntegrationReview(historicalRounds = 0) {
     const resume = async () => {
       const status = await f.run(['status', 'show', '--resume']);
       assert.equal(status.exit, 0, JSON.stringify(status.output));
-      return status.value;
+      return narrow(
+        status.value,
+        objectWith({
+          next: isString,
+          reason: isString,
+          cleanup: isString,
+          round: maybe(isString),
+          evidence: maybe(isString),
+        }),
+      );
     };
     const args = ['review', 'run', 'integration', '--kind', 'code', '--level', 'low', '--pins', '(claude,agy)'];
     const run = () => f.run(args);
@@ -4078,13 +4265,12 @@ export async function stoppedIntegrationReview(historicalRounds = 0) {
         native: provider === 'claude',
         reserve: false,
       }));
-      const save = (file: string, value: unknown) => fs.writeFileSync(file, JSON.stringify(value));
       // Seed history for the byte replay. The active round below uses the actual review workflow.
       for (let round = 1; round <= historicalRounds; round++) {
         const dir = path.join(f.session, '.state/reviews/code-integration/round-' + round);
         const slots = path.join(dir, 'gen-1/slots');
         fs.mkdirSync(slots, { recursive: true });
-        save(path.join(dir, 'round.json'), {
+        saveJson(path.join(dir, 'round.json'), {
           round,
           generation: 1,
           cap: historicalRounds + 2,
@@ -4099,20 +4285,21 @@ export async function stoppedIntegrationReview(historicalRounds = 0) {
           turnTarget: 8,
           rulingSnapshot: '[]',
         });
-        save(path.join(dir, 'findings.json'), { review: 'code-integration', round, failed: [], findings: [] });
-        save(path.join(dir, 'gen-1/checkout-report.json'), {
+        saveJson(path.join(dir, 'findings.json'), { review: 'code-integration', round, failed: [], findings: [] });
+        saveJson(path.join(dir, 'gen-1/checkout-report.json'), {
           asOfSeq: fold.lastSeq,
           repositoryChanges: [{ cwd: f.integration, paths: ['docs/review-observation.md'] }],
         });
-        for (const { slot } of roster)
-          save(path.join(slots, slot + '.json'), { slot, state: 'done', text: JSON.stringify(CLEAN) });
+        for (const { slot } of roster) {
+          saveJson(path.join(slots, slot + '.json'), { slot, state: 'done', text: JSON.stringify(CLEAN) });
+        }
       }
     }
     const launched = await run();
     assert.equal(launched.output.reason, 'native-pending', JSON.stringify(launched.output));
     const stopped = await run();
     assert.equal(stopped.output.reason, 'native-pending', JSON.stringify(stopped.output));
-    assert.equal(stopped.value.cliWave, 'done');
+    assert.equal(pendingRun(stopped).cliWave, 'done');
     assert.equal(cliCalls, 1);
     return { f, head, resume, run, stopped, cliCalls: () => cliCalls };
   } catch (error) {
@@ -4128,17 +4315,20 @@ test('implementation review recovery reuses saved work', async () => {
     assert.equal(view.next, 'inspect');
     assert.equal(view.reason, 'native-pending');
     assert.equal(view.cleanup, 'checkpoint');
-    const read = (file: string) => JSON.parse(fs.readFileSync(path.join(f.session, file), 'utf8'));
-    const before = read(view.round);
+    const roundFile = defined(view.round, 'view.round');
+    const before = readJson(path.join(f.session, roundFile), RoundFileGuard);
     assert.equal(before.pins, '(claude,agy)');
     assert.equal(before.level, 'low');
-    const slot = read(view.evidence);
-    assert.equal(slot.attempt, stopped.value.pending[0].attempt);
-    assert.equal(slot.replyPath, stopped.value.pending[0].replyPath);
+    const slot = readJson(
+      path.join(f.session, defined(view.evidence, 'view.evidence')),
+      objectWith({ attempt: isString, replyPath: isString }),
+    );
+    assert.equal(slot.attempt, defined(pendingRun(stopped).pending[0]).attempt);
+    assert.equal(slot.replyPath, defined(pendingRun(stopped).pending[0]).replyPath);
 
     const compatible = await run();
     assert.equal(compatible.output.reason, 'native-pending');
-    assert.equal(compatible.value.pending[0].attempt, slot.attempt);
+    assert.equal(defined(pendingRun(compatible).pending[0]).attempt, slot.attempt);
     assert.equal(cliCalls(), 1);
 
     fs.writeFileSync(path.join(f.integration, 'src/file.ts'), 'repaired\n');
@@ -4147,16 +4337,16 @@ test('implementation review recovery reuses saved work', async () => {
     assert.deepEqual(moved, { next: 'review', reason: 'target-moved', round: view.round, cleanup: 'checkpoint' });
     const recaptured = await run();
     assert.equal(recaptured.output.reason, 'native-pending', JSON.stringify(recaptured.output));
-    const after = read(view.round);
-    assert.equal(after.generation, before.generation + 1);
+    const after = readJson(path.join(f.session, roundFile), RoundFileGuard);
+    assert.equal(after.generation, defined(before.generation, 'before.generation') + 1);
     assert.equal(after.target.head, head());
-    assert.notEqual(recaptured.value.pending[0].attempt, slot.attempt);
+    assert.notEqual(defined(pendingRun(recaptured).pending[0]).attempt, slot.attempt);
     assert.equal(cliCalls(), 1);
 
     const wave = await run();
     assert.equal(wave.output.reason, 'native-pending');
-    assert.equal(wave.value.cliWave, 'done');
-    fs.writeFileSync(wave.value.pending[0].replyPath, JSON.stringify(CLEAN));
+    assert.equal(pendingRun(wave).cliWave, 'done');
+    fs.writeFileSync(defined(pendingRun(wave).pending[0]).replyPath, JSON.stringify(CLEAN));
     const complete = await run();
     assert.equal(complete.exit, 0, JSON.stringify(complete.output));
     assert.equal(cliCalls(), 2);

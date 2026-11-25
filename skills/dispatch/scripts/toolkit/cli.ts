@@ -4,10 +4,12 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { parseArgs } from 'node:util';
+import type { ParseArgsConfig } from 'node:util';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { currentPlatform, orchestratorFor, type Orchestrator } from '../lib/platform.ts';
+import { currentPlatform, orchestratorFor } from '../lib/platform.ts';
+import type { Orchestrator } from '../lib/platform.ts';
 import { createNodeDiscovery } from '../providers/discovery.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
 import { runDelegate, sandboxBlocked } from '../providers/runner.ts';
@@ -26,8 +28,11 @@ import { renderFixReviewLiteBrief } from './fix-review-lite.ts';
 import { create, submit, abandon } from './writers.ts';
 import { integrate, continueIntegration, commit, abort } from './integrate.ts';
 import { deliver, close, cleanup } from './deliver.ts';
-import { readManifest, recordHost, type Manifest } from '../lib/session.ts';
-import { stripBom } from '../lib/fs-ext.ts';
+import { readManifest, recordHost } from '../lib/session.ts';
+import type { Manifest } from '../lib/session.ts';
+import { nodeErrorCode, stripBom } from '../lib/fs-ext.ts';
+import { isRecord } from '../lib/config.ts';
+import { present } from './narrow.ts';
 import { ACTION_CONTRACTS, ACTION_FLAGS } from './contracts.ts';
 import { lintArtifact } from './lint.ts';
 import {
@@ -38,15 +43,18 @@ import {
   foldLedger,
   latest,
   queryLedger,
-  type Fold,
 } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { readJsonPayload } from './input.ts';
 import { isHintExcludedAction, stepHint } from './hints.ts';
-import { capSummary, summaryWithItems, ToolError, writeResult, type HandlerResult, type ToolResult } from './output.ts';
+import { capSummary, summaryWithItems, ToolError, writeResult } from './output.ts';
+import type { HandlerResult, ToolResult } from './output.ts';
 import { doctorReport, doctorReportWithProbe } from './doctor.ts';
-import { nodeProbeSpawn, type ProbeDeps } from '../providers/probe.ts';
+import { nodeProbeSpawn } from '../providers/probe.ts';
+import type { ProbeDeps } from '../providers/probe.ts';
 import { resumeStatus, statusReport } from './status.ts';
-import { reviewDirectory, type RecoverySelection } from './review-state.ts';
+import { reviewDirectory } from './review-state.ts';
+import type { RecoverySelection } from './review-state.ts';
 import type { GitDeps } from './git.ts';
 import { askRun } from './ask.ts';
 import { reviewRun } from './review.ts';
@@ -84,26 +92,36 @@ const toolkitFlags: ParseArgsConfig['options'] = Object.fromEntries(
   ]),
 );
 
-function checkExclusiveFlags(flags: readonly string[], values: HandlerContext['values'], action: string): void {
+function checkExclusiveFlags(flags: ReadonlyArray<string>, values: HandlerContext['values'], action: string): void {
   for (const flag of flags) {
-    const actions = ACTION_FLAGS.get(flag)!;
-    if (values[flag] === undefined || actions.includes(action)) continue;
+    if (values[flag] === undefined) {
+      continue;
+    }
+    const actions = present(ACTION_FLAGS.get(flag), 'actions for --' + flag);
+    if (actions.includes(action)) {
+      continue;
+    }
     const ordered = flag === 'pins' || flag === 'native-failed' ? actions.toReversed() : actions;
     const last = ordered.at(-1);
     const label = ordered.length === 1 ? last : `${ordered.slice(0, -1).join(', ')} and ${last}`;
     const message = `--${flag} is only for ${label}`;
-    if (flag === 'test-cleanup') throw new Error(message);
+    if (flag === 'test-cleanup') {
+      throw new Error(message);
+    }
     throw new ToolError(1, 'invalid-input', message);
   }
 }
 
 function parseNativeFailure(entry: string | boolean): NativeFailure {
-  if (typeof entry !== 'string') throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+  if (typeof entry !== 'string') {
+    throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+  }
   const separator = entry.indexOf('=');
   const attempt = entry.slice(0, separator).trim();
   const rawReason = entry.slice(separator + 1).trim();
-  if (separator <= 0 || !attempt || !rawReason)
+  if (separator <= 0 || !attempt || !rawReason) {
     throw new ToolError(1, 'invalid-input', '--native-failed must be <attempt>=<reason>');
+  }
   const { isBlocked, raw } = parseBlockedReply(rawReason);
   const { reason, reasonHash } = failureReasonEvidence(raw);
   return { attempt, reason: isBlocked ? `${BLOCKED_MARKER} ${reason}` : reason, reasonHash };
@@ -113,9 +131,9 @@ export type { HandlerResult } from './output.ts';
 export type HandlerContext = {
   session: string;
   manifest: Manifest;
-  args: string[];
-  nativeFailures?: readonly NativeFailure[];
-  values: Record<string, string | boolean | (string | boolean)[] | undefined>;
+  args: Array<string>;
+  nativeFailures?: ReadonlyArray<NativeFailure>;
+  values: Record<string, string | boolean | Array<string | boolean> | undefined>;
   deps: CliDeps;
 };
 export type CliDeps = {
@@ -127,9 +145,9 @@ export type CliDeps = {
     ref: unknown,
     actual: Omit<RecoverySelection, 'targetHash'> & { target: { base: string; head: string } },
     subject: string,
-  ) => ((replies: readonly { slot: string; state: string }[]) => void) | undefined;
+  ) => ((replies: ReadonlyArray<{ slot: string; state: string }>) => void) | undefined;
   delegate: (provider: ProviderId, request: DelegateRequest, mode: ModeId) => Promise<RunResult>;
-  modes: (provider: ProviderId) => readonly ModeId[];
+  modes: (provider: ProviderId) => ReadonlyArray<ModeId>;
   orchestrator: Orchestrator | null;
   liveness: Readonly<Record<string, boolean>>;
   sandboxSupported?: Readonly<Record<string, boolean>>;
@@ -147,6 +165,11 @@ export type CliDeps = {
   writeResult?: typeof writeResult;
 };
 
+const clock = (): number => Date.now();
+
+const carriesInvocations = (error: unknown): error is Pick<RunResult, 'invocations'> =>
+  typeof error === 'object' && error !== null && 'invocations' in error && Array.isArray(error.invocations);
+
 export function nodeDeps(): CliDeps {
   const platform = currentPlatform();
   const discovery = createNodeDiscovery(SPECS, platform);
@@ -155,27 +178,30 @@ export function nodeDeps(): CliDeps {
       .filter((mode) => discovery.resolve(provider, mode.id).status === 'path')
       .map((mode) => mode.id);
   const runnerFs = nodeRunnerFs;
-  const clock = () => Date.now();
   return {
     probe: { spawn: nodeProbeSpawn, platform, discovery, exists: fs.existsSync, cwd: process.cwd(), now: clock },
     modes,
     orchestrator: null,
     readStdin: () => fs.readFileSync(0, 'utf8'),
     liveness: Object.fromEntries(
-      Object.keys(SPECS).map((provider) => [provider, modes(provider as ProviderId).length > 0]),
+      Object.keys(SPECS)
+        .filter(isProviderId)
+        .map((provider) => [provider, modes(provider).length > 0]),
     ),
     sandboxSupported: Object.fromEntries(
       Object.entries(SPECS).map(([provider, spec]) => [provider, !sandboxBlocked(spec, true, platform)]),
     ),
     async delegate(provider, request, mode) {
       // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
-      const steps: LifecycleStep[] = [];
+      const steps: Array<LifecycleStep> = [];
       let attached = false;
       const attach = (rows: RunResult['invocations']) => {
         const first = rows[0];
         if (!attached && first) {
           attached = true;
-          if (steps.length) first.lifecycleSteps = [...steps, ...(first.lifecycleSteps ?? [])];
+          if (steps.length) {
+            first.lifecycleSteps = [...steps, ...(first.lifecycleSteps ?? [])];
+          }
         }
         return rows;
       };
@@ -183,7 +209,9 @@ export function nodeDeps(): CliDeps {
         attach([row]);
         try {
           request.onInvocation?.(row);
-        } catch {}
+        } catch {
+          // An observer failure must not change the delegate outcome.
+        }
       };
       const failedLaunch = (cls: 'not-found' | 'config' | 'timeout', detail: string): RunResult => {
         const row: RunResult['invocations'][number] = {
@@ -198,7 +226,9 @@ export function nodeDeps(): CliDeps {
         return { outcome: { status: 'fail', cls, detail }, invocations: [row] };
       };
       const binary = discovery.resolve(provider, mode).path;
-      if (!binary) return failedLaunch('not-found', provider + ': missing ' + mode);
+      if (!binary) {
+        return failedLaunch('not-found', provider + ': missing ' + mode);
+      }
       const deadline = Date.now() + request.timeoutMs;
       let resolved = request;
       // A blocked sandbox skips introspection so the runner gate refuses before any process starts.
@@ -221,13 +251,14 @@ export function nodeDeps(): CliDeps {
             detail,
           );
         }
-        if (resolved.readOnlyBestEffort)
+        if (resolved.readOnlyBestEffort) {
           process.stderr.write('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
+        }
       }
       resolved = {
         ...resolved,
         timeoutMs: Math.max(1, deadline - Date.now()),
-        ...(request.onInvocation ? { onInvocation: notify } : {}),
+        ...(request.onInvocation && { onInvocation: notify }),
       };
       try {
         const run = await runDelegate(SPECS[provider], resolved, mode, {
@@ -245,23 +276,24 @@ export function nodeDeps(): CliDeps {
               return () => clearInterval(timer);
             },
           },
-          ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}),
+          ...(provider === 'opencode' && { prepare: createOpencodePreparePorts(deadline) }),
         });
         attach(run.invocations);
         return run;
       } catch (error) {
-        attach((error as Partial<RunResult>).invocations ?? []);
+        attach(carriesInvocations(error) ? error.invocations : []);
         throw error;
       }
     },
     run: (argv, options) =>
       new Promise((resolve, reject) => {
         // cmd.exe must receive the plan command without Node's argument quoting.
-        const child = spawn(argv[0]!, argv.slice(1), {
+        const command = present(argv[0], 'command');
+        const child = spawn(command, argv.slice(1), {
           cwd: options.cwd,
           env: { ...process.env, ...options.env },
           windowsHide: true,
-          windowsVerbatimArguments: process.platform === 'win32' && argv[0]!.toLowerCase() === 'cmd.exe',
+          windowsVerbatimArguments: process.platform === 'win32' && command.toLowerCase() === 'cmd.exe',
           stdio: 'pipe',
         });
         let stdout = '';
@@ -277,7 +309,9 @@ export function nodeDeps(): CliDeps {
         child.on('error', reject);
         child.on('close', (exit) => resolve({ exit: exit ?? 1, stdout, stderr }));
         child.stdin.on('error', (error) => {
-          if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(error);
+          if (nodeErrorCode(error) !== 'EPIPE') {
+            reject(error);
+          }
         });
         child.stdin.end(options.stdin);
       }),
@@ -286,7 +320,10 @@ export function nodeDeps(): CliDeps {
     },
     env: process.env,
     clock,
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
     pid: process.pid,
     host: os.hostname(),
     isAlive: (pid) => {
@@ -294,20 +331,33 @@ export function nodeDeps(): CliDeps {
         process.kill(pid, 0);
         return true;
       } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'EPERM';
+        return nodeErrorCode(error) === 'EPERM';
       }
     },
     skillRoot: fileURLToPath(new URL('../..', import.meta.url)),
   };
 }
 
-function readLintEditFields(ctx: HandlerContext) {
+type LintEditFields = { class: string; affects: Array<string>; rationale: string; diffRef: string; before?: string };
+
+const isLintEditFields = (value: unknown): value is LintEditFields =>
+  isRecord(value) &&
+  typeof value['class'] === 'string' &&
+  Array.isArray(value['affects']) &&
+  value['affects'].every((item) => typeof item === 'string') &&
+  typeof value['rationale'] === 'string' &&
+  typeof value['diffRef'] === 'string' &&
+  (value['before'] === undefined || typeof value['before'] === 'string');
+
+function readLintEditFields(ctx: HandlerContext): LintEditFields | undefined {
   const input = readJsonPayload(ctx, { fileFlag: 'edit', inlineFlag: 'json', optional: true, label: '--edit fields' });
-  if (input === undefined) return undefined;
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!isRecord(input)) {
     throw new ToolError(1, 'invalid-input', '--edit fields must be a JSON object');
   }
-  const fields = input as Record<string, unknown>;
+  const fields = input;
   const allowed = ['class', 'affects', 'rationale', 'diffRef', 'before'];
   const unknownKey = Object.keys(fields).find((key) => !allowed.includes(key));
   if (unknownKey !== undefined) {
@@ -328,13 +378,23 @@ function readLintEditFields(ctx: HandlerContext) {
       data: { before: placeholder, ...fields, artifact: 'plan', after: placeholder },
     });
   } catch (error) {
-    if (error instanceof ToolError) throw new ToolError(1, 'invalid-input', error.message);
+    if (error instanceof ToolError) {
+      throw new ToolError(1, 'invalid-input', error.message);
+    }
     throw error;
   }
-  return fields as { class: string; affects: string[]; rationale: string; diffRef: string; before?: string };
+  // validateRecord already refused a wrong shape; this carries that proof into the type.
+  if (!isLintEditFields(fields)) {
+    throw new ToolError(1, 'invalid-input', '--edit fields are invalid');
+  }
+  return fields;
 }
 
-const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResult>> = {
+interface HandlerTable {
+  readonly [action: string]: (context: HandlerContext) => Promise<HandlerResult>;
+}
+
+const handlers: HandlerTable = {
   'ask run': askRun,
   'review run': reviewRun,
   'report render': reportRender,
@@ -357,18 +417,22 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   'worktree abandon': abandon,
   'check run': checkRun,
   'ledger append': async ({ session, manifest, args, values, deps }) => {
-    if (args.length !== 1)
+    const [source] = args;
+    if (args.length !== 1 || source === undefined) {
       throw new ToolError(
         1,
         'invalid-input',
         'ledger append takes one record file or -: ledger append <record.json|-> --session <session>',
       );
-    const stdin = args[0] === '-';
-    if (values['cleanup'] !== undefined && !stdin) throw new ToolError(1, 'invalid-input', '--cleanup requires stdin');
-    const file = stdin ? '' : path.resolve(args[0]!);
+    }
+    const stdin = source === '-';
+    if (values['cleanup'] !== undefined && !stdin) {
+      throw new ToolError(1, 'invalid-input', '--cleanup requires stdin');
+    }
+    const file = stdin ? '' : path.resolve(source);
     let text: string;
     try {
-      text = stdin ? deps.readStdin!() : fs.readFileSync(file, 'utf8');
+      text = stdin ? present(deps.readStdin, 'stdin reader')() : fs.readFileSync(file, 'utf8');
     } catch {
       throw new ToolError(
         1,
@@ -384,7 +448,7 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
         1,
         'invalid-input',
         (stdin ? 'Records from stdin are not valid JSON: ' : 'Record file ' + file + ' is not valid JSON: ') +
-          (error as SyntaxError).message,
+          (error instanceof Error ? error.message : String(error)),
       );
     }
     if (values['cleanup'] !== undefined) {
@@ -405,44 +469,60 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
         postFold = fold;
         const reviews = new Set<string>();
         for (const item of Array.isArray(input) ? input : [input]) {
-          if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-          const record = item as Record<string, unknown>;
+          if (!isRecord(item)) {
+            continue;
+          }
+          const record = item;
           const data = record['data'];
-          if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+          if (!isRecord(data)) {
+            continue;
+          }
           // A bind that follows a review renders the rounds its refreshes skipped; a bind before any review leaves the artifact alone.
           if (record['kind'] === 'bind') {
             for (const kind of ['plan', 'design'] as const) {
-              const relative = (data as Record<string, unknown>)[kind];
-              if (typeof relative !== 'string') continue;
+              const relative = data[kind];
+              if (typeof relative !== 'string') {
+                continue;
+              }
               const review = reviewId(kind, path.resolve(manifest.repositoryRoot, relative));
-              if (fs.existsSync(reviewDirectory(session, review))) reviews.add(review);
+              if (fs.existsSync(reviewDirectory(session, review))) {
+                reviews.add(review);
+              }
             }
             continue;
           }
-          if (record['kind'] !== 'ruling') continue;
-          const subject = (data as Record<string, unknown>)['subject'];
+          if (record['kind'] !== 'ruling') {
+            continue;
+          }
+          const subject = data['subject'];
           const review = typeof subject === 'string' ? rulingReview(subject) : null;
-          if (review) reviews.add(review);
+          if (review) {
+            reviews.add(review);
+          }
         }
         for (const review of reviews) {
           findingsSection = refreshFindingsSection(session, manifest, review, (reason) => {
             findingsSectionReason = reason;
           });
-          if (findingsSection !== 'skipped') findingsSectionReason = undefined;
+          if (findingsSection !== 'skipped') {
+            findingsSectionReason = undefined;
+          }
         }
       },
     });
     const value = {
       ...appended,
-      ...(findingsSection ? { findingsSection, ...(findingsSectionReason ? { findingsSectionReason } : {}) } : {}),
+      ...(Boolean(findingsSection) && { findingsSection, ...(findingsSectionReason && { findingsSectionReason }) }),
     };
     const summary = Array.isArray(input)
       ? appended.count + ' records (last seq ' + appended.seq + (appended.deduped ? ', all deduped' : '') + ')'
       : 'seq ' + value.seq + (value.deduped ? ' deduped' : ' appended');
-    return { ok: true, value, summary, exit: 0, ...(postFold ? { postFold } : {}) };
+    return { ok: true, value, summary, exit: 0, ...(postFold && { postFold }) };
   },
   'ledger query': async ({ session, values, args }) => {
-    if (args.length) throw new ToolError(1, 'invalid-input', 'query takes only filters');
+    if (args.length) {
+      throw new ToolError(1, 'invalid-input', 'query takes only filters');
+    }
     const fold = foldLedger(session);
     const value = queryLedger(fold, { kind: values['kind'], key: values['key'], since: values['since'] });
     return {
@@ -454,7 +534,9 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
     };
   },
   'doctor run': async ({ session, manifest, values, args, deps }) => {
-    if (args.length) throw new ToolError(1, 'invalid-input', 'doctor takes only options');
+    if (args.length) {
+      throw new ToolError(1, 'invalid-input', 'doctor takes only options');
+    }
     const fold = values['level'] === undefined ? foldLedger(session) : undefined;
     const host = orchestratorFor(manifest.host, (name) => deps.env[name])?.platform ?? null;
     const reportArgs = [
@@ -474,13 +556,15 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
       value,
       summary: JSON.stringify(value),
       exit: 0,
-      ...(value.reason ? { reason: value.reason } : {}),
-      ...(fold ? { postFold: fold } : {}),
+      ...(value.reason && { reason: value.reason }),
+      ...(fold && { postFold: fold }),
     };
   },
   'status show': async (ctx) => {
     const { session, manifest, args, deps } = ctx;
-    if (args.length) throw new ToolError(1, 'invalid-input', 'status takes no arguments');
+    if (args.length) {
+      throw new ToolError(1, 'invalid-input', 'status takes no arguments');
+    }
     if (ctx.values['resume']) {
       const result = await resumeStatus(ctx);
       return { ok: true, ...result, summary: JSON.stringify(result.value), exit: 0 };
@@ -491,14 +575,17 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
   },
   'lint run': async (ctx) => {
     const { args, manifest, session, deps } = ctx;
-    if (args.length !== 1)
+    const [target] = args;
+    if (args.length !== 1 || target === undefined) {
       throw new ToolError(
         1,
         'invalid-input',
-        'lint run takes one artifact path. Usage: ' + ACTION_CONTRACTS['lint run']!.arguments,
+        'lint run takes one artifact path. Usage: ' +
+          present(ACTION_CONTRACTS['lint run'], 'lint run contract').arguments,
       );
+    }
     const editFields = readLintEditFields(ctx);
-    const artifactPath = path.resolve(args[0]!);
+    const artifactPath = path.resolve(target);
     const checked = editFields
       ? await appendLintEdit(session, artifactPath, editFields, deps)
       : { value: lintArtifact(artifactPath, { repositoryRoot: manifest.repositoryRoot }) };
@@ -524,14 +611,14 @@ const handlers: Record<string, (context: HandlerContext) => Promise<HandlerResul
         items,
       ),
       exit: ok ? 0 : 4,
-      ...(ok ? {} : { reason: 'lint-errors' }),
+      ...(!ok && { reason: 'lint-errors' }),
     };
   },
 };
 
 export const TOOL_ACTIONS = Object.keys(handlers);
 
-export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<number> {
+export async function main(argv: Array<string>, deps: CliDeps = nodeDeps()): Promise<number> {
   const print = (result: ToolResult) => {
     const { exit, ...output } = result;
     // Refusals name the toolkit.md section to read; argv (not parsed positionals) keeps a parse failure on a valid action pointed at its section.
@@ -541,10 +628,10 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
         : handlers[(argv[0] ?? '') + ' ' + (argv[1] ?? '')]
           ? argv[0] + ' ' + argv[1]
           : 'call table';
-    deps.stdout(JSON.stringify({ ...output, summary: capSummary(output.summary), ...(help ? { help } : {}) }) + '\n');
+    deps.stdout(JSON.stringify({ ...output, summary: capSummary(output.summary), ...(help && { help }) }) + '\n');
     return exit;
   };
-  let nativeFailures: readonly NativeFailure[] = [];
+  let nativeFailures: ReadonlyArray<NativeFailure> = [];
   let parsed: ReturnType<typeof parseArgs>;
   let session: string;
   let manifest: Manifest;
@@ -562,22 +649,30 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     [tool = '', action = ''] = parsed.positionals;
     const fullAction = tool + ' ' + action;
     checkExclusiveFlags(earlyExclusiveFlags, parsed.values, fullAction);
-    if (!handlers[fullAction]) throw new Error('Unknown tool or action');
+    if (!handlers[fullAction]) {
+      throw new Error('Unknown tool or action');
+    }
     checkExclusiveFlags(exclusiveFlags, parsed.values, fullAction);
     const reports = parsed.values['native-failed'];
     if (reports !== undefined) {
       nativeFailures = (Array.isArray(reports) ? reports : [reports]).map(parseNativeFailure);
       delete parsed.values['native-failed'];
     }
-    if (typeof parsed.values['session'] !== 'string') throw new Error('Missing --session');
+    if (typeof parsed.values['session'] !== 'string') {
+      throw new Error('Missing --session');
+    }
     session = path.resolve(parsed.values['session']);
     manifest = readManifest(session);
-    const hostSensitive = ACTION_FLAGS.get('host')!.includes(fullAction);
+    const hostSensitive = present(ACTION_FLAGS.get('host'), 'actions for --host').includes(fullAction);
     const hostRaw = parsed.values['host'];
     if (hostSensitive) {
-      if (typeof hostRaw !== 'string') throw new Error('Missing --host');
+      if (typeof hostRaw !== 'string') {
+        throw new Error('Missing --host');
+      }
       const normalized = normalizeProvider(hostRaw);
-      if (!isProviderId(normalized)) throw new Error(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
+      if (!isProviderId(normalized)) {
+        throw new Error(`Unknown --host; use ${Object.keys(SPECS).join(', ')}`);
+      }
       recordHost(session, normalized);
       manifest = { ...manifest, host: normalized };
     } else if (hostRaw !== undefined) {
@@ -586,8 +681,9 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       );
     }
   } catch (error) {
-    if (error instanceof ToolError)
+    if (error instanceof ToolError) {
       return print({ ok: false, summary: error.message, path: null, reason: error.reason, exit: error.exit });
+    }
     return print({
       ok: false,
       summary: error instanceof Error ? error.message : String(error),
@@ -610,7 +706,8 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
     tool === 'report' || tool === 'diagnostics' ? undefined : observeTool(session, tool, action, kind, deps);
   let outcome: HandlerResult;
   try {
-    outcome = await (deps.handler ?? handlers[tool + ' ' + action]!)({
+    const handler = present(deps.handler ?? handlers[tool + ' ' + action], 'handler');
+    outcome = await handler({
       session,
       manifest,
       args: parsed.positionals.slice(2),
@@ -633,9 +730,11 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   }
   const resumeRef = observation?.finish(outcome);
   if (resumeRef && tool === 'status' && action === 'show' && parsed.values['resume']) {
-    const value = { ...(outcome.value as object), resumeRef };
+    const value = typeof outcome.value === 'object' ? { ...outcome.value, resumeRef } : { resumeRef };
     const summary = JSON.stringify(value);
-    if (Buffer.byteLength(summary) <= 2048) outcome = { ...outcome, value, summary };
+    if (Buffer.byteLength(summary) <= 2048) {
+      outcome = { ...outcome, value, summary };
+    }
   }
   try {
     const resultPath = (deps.writeResult ?? writeResult)(session, tool, action, outcome.value);
@@ -663,8 +762,8 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
       summary: outcome.summary,
       path: resultPath,
       exit: outcome.exit,
-      ...(reason ? { reason } : {}),
-      ...(hint ? { hint } : {}),
+      ...(reason && { reason }),
+      ...(hint && { hint }),
     });
   } catch (error) {
     return print({
@@ -677,5 +776,6 @@ export async function main(argv: string[], deps: CliDeps = nodeDeps()): Promise<
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   process.exitCode = await main(process.argv.slice(2));
+}

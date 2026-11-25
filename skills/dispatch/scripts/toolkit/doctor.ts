@@ -3,25 +3,17 @@ import path from 'node:path';
 import { CONFIG_CANDIDATES, HINT, loadConfig, validateConfig } from '../lib/config.ts';
 import { checkIntegrity } from '../lib/integrity.ts';
 import { pricingProblems } from '../lib/pricing.ts';
-import { launchLine, type ProviderKey } from '../lib/platform.ts';
+import { launchLine } from '../lib/platform.ts';
+import type { ProviderKey } from '../lib/platform.ts';
 import { SPECS, isProviderId } from '../providers/index.ts';
-import { probeProviders, type ProbeDeps } from '../providers/probe.ts';
-import {
-  normalizeProvider,
-  resolveLevel,
-  resolveRoster,
-  resolveSubagent,
-  resolveUtility,
-  type LevelMap,
-  type ReadDelegate,
-  type ResolvedSubagent,
-  type ResolvedUtility,
-  type SubagentEntry,
-  type UtilityEntry,
-} from '../policy/roster.ts';
-import { foldLedger, latest, type Fold } from './ledger.ts';
+import { probeProviders } from '../providers/probe.ts';
+import type { ProbeDeps } from '../providers/probe.ts';
+import { normalizeProvider, resolveLevel, resolveRoster, resolveSubagent, resolveUtility } from '../policy/roster.ts';
+import type { ReadDelegate, ResolvedSubagent, ResolvedUtility } from '../policy/roster.ts';
+import { foldLedger, latest } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { ToolError } from './output.ts';
-import { LEVELS, type Level } from './types.ts';
+import { isLevel, isReadDelegateTable, isUtilityTable, isWriterTable, present } from './narrow.ts';
 
 const withLaunch = <T extends ResolvedSubagent>(platform: string, entry: T): T & { launchAs: string } => ({
   ...entry,
@@ -37,48 +29,58 @@ function readDoctor(
   sandboxSupported?: Readonly<Record<string, boolean>>,
   fold?: Fold,
 ) {
-  if (requested !== undefined && !LEVELS.includes(requested as Level)) {
+  if (requested !== undefined && !isLevel(requested)) {
     throw new ToolError(1, 'invalid-input', 'level must be low, medium, high, xhigh or max');
   }
-  const level = (requested ?? latest(fold ?? foldLedger(session), 'level')?.data['level'] ?? 'medium') as Level;
+  const recorded: unknown = requested ?? latest(fold ?? foldLedger(session), 'level')?.data['level'];
+  const level = isLevel(recorded) ? recorded : 'medium';
   const integrity = checkIntegrity(skillRoot);
   let configPath =
     CONFIG_CANDIDATES.map((name) => path.join(skillRoot, name)).find((file) => fs.existsSync(file)) ?? null;
-  let problems: string[] = [],
-    warnings: string[] = [];
+  let problems: Array<string>;
+  let warnings: Array<string> = [];
   const writers: Record<string, ResolvedSubagent & { launchAs: string }> = {};
   const utility: Record<string, ResolvedUtility & { launchAs: string }> = {};
-  let sandboxRemoved: string[] = [],
+  let sandboxRemoved: Array<string> = [],
     writeConcurrency = 1;
-  let readDelegates: Record<string, ReadDelegate> = {};
+  let readDelegates: Readonly<Record<string, ReadDelegate>> = {};
   try {
     const loaded = loadConfig(skillRoot);
     configPath = loaded.path;
     problems = validateConfig(loaded.config);
     warnings = pricingProblems(loaded.config['pricing']);
     if (!problems.length) {
-      writeConcurrency = (loaded.config['write-concurrency'] as number) ?? 1;
-      const writerTable = (loaded.config['write-subagents'] ?? {}) as Record<string, LevelMap<SubagentEntry>>;
-      for (const [platform, levels] of Object.entries(writerTable)) {
+      const concurrency = loaded.config['write-concurrency'];
+      writeConcurrency = typeof concurrency === 'number' ? concurrency : 1;
+      const writerSection = loaded.config['write-subagents'];
+      for (const [platform, levels] of Object.entries(isWriterTable(writerSection) ? writerSection : {})) {
         const canonical = normalizeProvider(platform);
-        writers[canonical] = withLaunch(canonical, resolveSubagent(resolveLevel(levels, level)!));
+        writers[canonical] = withLaunch(
+          canonical,
+          resolveSubagent(present(resolveLevel(levels, level), 'write-subagents.' + platform + ' level entry')),
+        );
       }
+      const utilitySection = loaded.config['utility-subagents'];
       for (const [platform, entry] of Object.entries(
-        resolveUtility((loaded.config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>),
-      ))
+        resolveUtility(isUtilityTable(utilitySection) ? utilitySection : {}),
+      )) {
         utility[platform] = withLaunch(platform, entry);
-      if (host && !utility[normalizeProvider(host)])
+      }
+      if (host && !utility[normalizeProvider(host)]) {
         problems.push(`Missing required entry "utility-subagents.${host}" (${HINT}).`);
-      if (host && !writers[normalizeProvider(host)])
+      }
+      if (host && !writers[normalizeProvider(host)]) {
         problems.push(`Missing required entry "write-subagents.${host}" (${HINT}).`);
-      readDelegates = loaded.config['read-delegates'] as Record<string, ReadDelegate>;
+      }
+      const readSection: unknown = loaded.config['read-delegates'];
+      readDelegates = present(isReadDelegateTable(readSection) ? readSection : undefined, 'read-delegates table');
       sandboxRemoved =
         resolveRoster({
           level,
           readDelegates,
           orchestrator: host ? { platform: host } : null,
-          ...(liveness ? { liveness } : {}),
-          ...(sandboxSupported ? { sandboxSupported } : {}),
+          ...(liveness && { liveness }),
+          ...(sandboxSupported && { sandboxSupported }),
         }).underfill?.sandboxUnsupported ?? [];
     }
   } catch (error) {
@@ -87,7 +89,7 @@ function readDoctor(
   const reason = integrity.status === 'drift' ? 'integrity-drift' : problems.length ? 'config-invalid' : undefined;
   const report = {
     ok: reason === undefined,
-    ...(reason ? { reason } : {}),
+    ...(reason && { reason }),
     host: { platform: host, source: host ? 'declared' : 'none' },
     integrity,
     config: { path: configPath, problems, warnings },
@@ -123,7 +125,9 @@ export async function doctorReportWithProbe(
   probeDeps?: ProbeDeps,
 ) {
   const { report, readDelegates } = readDoctor(session, skillRoot, requested, host, liveness, sandboxSupported, fold);
-  if (report.config.problems.length) return report;
+  if (report.config.problems.length) {
+    return report;
+  }
   const targets = Object.entries(readDelegates).flatMap(([key, delegate]) => {
     const provider = normalizeProvider(key);
     return isProviderId(provider)
@@ -131,5 +135,5 @@ export async function doctorReportWithProbe(
       : [];
   });
   const probe = await probeProviders(targets, probeDeps);
-  return { ...report, ...probe, ...(probe.probeSummary.failed ? { ok: false, reason: 'probe-failed' } : {}) };
+  return { ...report, ...probe, ...(probe.probeSummary.failed && { ok: false, reason: 'probe-failed' }) };
 }

@@ -33,4 +33,4 @@ type QuotaDecision = {
   observedAt?: number;
   expiresAt?: number;
 };
-export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: number; decisions: QuotaDecision[] };
+export type QuotaSnapshot = { schemaVersion: 1; policyVersion: 1; decidedAt: number; decisions: Array<QuotaDecision> };

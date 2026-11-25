@@ -67,7 +67,7 @@ export type CopilotEvidence = {
   tokenCoverage: ResponseCoverage;
   lineageCoverage: ResponseCoverage;
   actorCoverage: ResponseCoverage;
-  billing: { coverage: ResponseCoverage; totalNanoAiu?: number; statuses?: string[]; multipliers?: number[] };
+  billing: { coverage: ResponseCoverage; totalNanoAiu?: number; statuses?: Array<string>; multipliers?: Array<number> };
 };
 export type CopilotActor = BandedCounters & {
   turns?: number;
@@ -92,11 +92,11 @@ export type DelegateResponse = {
 export type DiagnosticModelUsage = Counters & { bands?: Bands; turns?: number; toolCalls?: number; toolTurns?: number };
 export type DiagnosticUsage = Counters & {
   copilot?: CopilotEvidence;
-  actors?: CopilotActor[];
+  actors?: Array<CopilotActor>;
   scope: 'invocation' | 'turn-delta' | 'session-cumulative';
   provenance: string;
   inputSemantics: 'includes-cache' | 'uncached';
-  actualModels?: string[];
+  actualModels?: Array<string>;
   models?: Record<string, DiagnosticModelUsage>;
   actualEffort?: string | null;
   reasoningInOutput?: boolean;
@@ -159,8 +159,8 @@ export type HostNote = (typeof HOST_NOTES)[number];
 export type HostNotes = Partial<Record<HostRole, Partial<Record<HostNote, number>>>>;
 export type HostUsageFacts = {
   platform: string | null;
-  rows: HostUsageRow[];
-  responses?: HostResponseAggregate[];
+  rows: Array<HostUsageRow>;
+  responses?: Array<HostResponseAggregate>;
   userTurns?: number;
   userTurnsByStage?: Partial<Record<HostStage, number>>;
   subagentCount?: number;
@@ -178,8 +178,8 @@ export type HostUsageQuery = {
   endMs: number;
   home: string;
   env: (name: string) => string | undefined;
-  stages: readonly Milestone[];
-  phases?: readonly PhaseMilestone[];
+  stages: ReadonlyArray<Milestone>;
+  phases?: ReadonlyArray<PhaseMilestone>;
   budget: ReadBudget;
 };
 export type DelegateQuery = {
@@ -197,15 +197,15 @@ export type DelegateQuery = {
   budget: ReadBudget;
 };
 export type HostUsageFs = {
-  list(dir: string): string[];
+  list(dir: string): Array<string>;
   stat(file: string): { size: number; mtimeMs: number } | null;
   read(file: string, maxBytes: number): Buffer;
   decompress: ((data: Buffer, maxBytes: number) => Buffer) | null;
-  sqliteGenMetadata?: (file: string) => readonly Uint8Array[] | null;
+  sqliteGenMetadata?: (file: string) => ReadonlyArray<Uint8Array> | null;
   opencodeMessages?: typeof readOpencodeMessages;
 };
 export type HostUsageResult = {
-  rows: (UsageRow & { stage: HostStage })[];
+  rows: Array<UsageRow & { stage: HostStage }>;
   response?: { basis: HostResponseBasis; limited?: true };
   userTurns?: number;
   userTurnsByStage?: Partial<Record<HostStage, number>>;
@@ -213,7 +213,7 @@ export type HostUsageResult = {
   notes?: HostNotes;
 };
 export type HostUsageAdapter = {
-  sessionEnv: readonly string[];
+  sessionEnv: ReadonlyArray<string>;
   read(
     query: HostUsageQuery,
     fs: HostUsageFs,
@@ -225,7 +225,9 @@ export function addCounters<T extends Counters>(total: T, part: Counters): T {
   total.input += part.input;
   total.output += part.output;
   for (const key of OPTIONAL_COUNTER_KEYS) {
-    if (total[key] !== undefined || part[key] !== undefined) total[key] = (total[key] ?? 0) + (part[key] ?? 0);
+    if (total[key] !== undefined || part[key] !== undefined) {
+      total[key] = (total[key] ?? 0) + (part[key] ?? 0);
+    }
   }
   return total;
 }
@@ -235,13 +237,26 @@ export const tokenTotal = (u: Counters): number => u.input + (u.cacheRead ?? 0) 
 export const usageKey = (model: string | null | undefined, effort: string | null | undefined): string =>
   `${model ?? ''}#${effort ?? ''}`;
 
+export interface ModelMap<V> {
+  [key: string]: V;
+}
+
+/** A prototype-free map, so a model named like an `Object.prototype` member stays an ordinary key. */
+export function emptyModelMap<V>(): ModelMap<V> {
+  const map: ModelMap<V> = {};
+  Object.setPrototypeOf(map, null);
+  return map;
+}
+
 export function splitUsageKey(key: string): { model: string; effort: string | undefined } {
   const at = key.indexOf('#');
   return at < 0 ? { model: key, effort: undefined } : { model: key.slice(0, at), effort: key.slice(at + 1) };
 }
 
-export function mergeCopilot(parts: readonly (CopilotEvidence | undefined)[]): CopilotEvidence | undefined {
-  if (!parts.some(Boolean)) return undefined;
+export function mergeCopilot(parts: ReadonlyArray<CopilotEvidence | undefined>): CopilotEvidence | undefined {
+  if (!parts.some(Boolean)) {
+    return undefined;
+  }
   const coverage = (key: 'tokenCoverage' | 'lineageCoverage' | 'actorCoverage'): ResponseCoverage =>
     parts.every((p) => p?.[key] === 'complete')
       ? 'complete'
@@ -249,8 +264,8 @@ export function mergeCopilot(parts: readonly (CopilotEvidence | undefined)[]): C
         ? 'unknown'
         : 'partial';
   const billing = parts.map((p) => p?.billing);
-  const measured = billing.filter((b) => b?.totalNanoAiu !== undefined);
-  const total = measured.reduce((s, b) => s + b!.totalNanoAiu!, 0);
+  const measured = billing.flatMap((b) => (b?.totalNanoAiu === undefined ? [] : [b.totalNanoAiu]));
+  const total = measured.reduce((sum, nanoAiu) => sum + nanoAiu, 0);
   const allStatuses = [...new Set(billing.flatMap((b) => b?.statuses ?? []))];
   const allMultipliers = [...new Set(billing.flatMap((b) => b?.multipliers ?? []))];
   const statuses = allStatuses.slice(0, 8),
@@ -269,9 +284,9 @@ export function mergeCopilot(parts: readonly (CopilotEvidence | undefined)[]): C
           : measured.length
             ? 'partial'
             : 'unknown',
-      ...(measured.length && Number.isSafeInteger(total) ? { totalNanoAiu: total } : {}),
-      ...(statuses.length ? { statuses } : {}),
-      ...(multipliers.length ? { multipliers } : {}),
+      ...(measured.length && Number.isSafeInteger(total) && { totalNanoAiu: total }),
+      ...(statuses.length && { statuses }),
+      ...(multipliers.length && { multipliers }),
     },
   };
 }

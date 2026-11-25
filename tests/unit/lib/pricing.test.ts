@@ -5,20 +5,20 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { parseJsonc } from '../../../skills/dispatch/scripts/lib/config.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
 import {
   formatCost,
   loadPricing,
   pricingProblems,
   resolvePricing,
   sumCost,
-  type Cost,
-  type Pricer,
 } from '../../../skills/dispatch/scripts/lib/pricing.ts';
+import type { Cost, Pricer } from '../../../skills/dispatch/scripts/lib/pricing.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../skills/dispatch/', import.meta.url));
 const TABLE_FILE = path.join(SKILL_ROOT, 'references', 'pricing.json');
 const tableText = fs.readFileSync(TABLE_FILE, 'utf8');
-const table = JSON.parse(tableText) as { models: Record<string, unknown> };
+const table: { models: JsonObject } = JSON.parse(tableText);
 
 // Serves only the shipped table so a maintainer's local config never leaks into a test.
 const readShipped =
@@ -35,7 +35,7 @@ const near = (actual: number, expected: number, message?: string) =>
   assert.ok(Math.abs(actual - expected) <= 1e-12, `${message ?? ''} ${actual} vs ${expected}`);
 const perMillion = (tokens: number, rate: number) => (tokens * rate) / 1_000_000;
 const ZERO = { rates: { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } };
-const custom = (models: Record<string, unknown>): Pricer => {
+const custom = (models: unknown): Pricer => {
   const pricer = resolvePricing({ asOf: '2026-01-01', source: ['test'], models }, undefined);
   assert.ok(pricer);
   return pricer;
@@ -279,7 +279,7 @@ test('cost pricing leaves a unit unpriced when a nonzero counter has no rate', (
     none: { rates: { input: 1, output: 1 } },
     read: { rates: { input: 1, output: 1, cacheRead: 1 } },
   });
-  const cases: [string, Cost][] = [
+  const cases: Array<[string, Cost]> = [
     ['unsplit write with one TTL rate', only5m.price('one', { input: 0, output: 0, cacheWrite: 1000 })],
     [
       'split 1h write without the 1h rate',
@@ -315,11 +315,12 @@ test('cost pricing adds reasoning at the output rate only when the unit counts i
   const banded = pricer.price(haiku, { ...usage, bands: { le100k: usage } }, false);
   near(banded.low, perMillion(1500, 0.5));
   const bare = custom({ 'gemini-4-hydrogen': { rates: { input: 3, output: 15, cacheRead: 0.15 } } });
-  near(bare.price('gemini-4-hydrogen', { input: 0, output: 100000, reasoning: 100000 }, false).low, 3.0);
+  near(bare.price('gemini-4-hydrogen', { input: 0, output: 100_000, reasoning: 100_000 }, false).low, 3.0);
 });
 
 test('cost pricing never throws and keeps finite non-negative ordered costs for hostile counters', () => {
-  const pricer = shipped();
+  // Method-parameter bivariance lets malformed counters reach the pricer without a cast.
+  const untrusted: { price(model: string, usage: unknown): Cost } = shipped();
   const hostile = [
     { input: -5, output: Number.NaN },
     { input: Number.POSITIVE_INFINITY, output: 1 },
@@ -327,10 +328,10 @@ test('cost pricing never throws and keeps finite non-negative ordered costs for 
     { input: '5', output: null, bands: { le100k: 'x', gt272k: null, bogus: { input: 1, output: 1 } } },
     {},
     { input: 1, output: 1, bands: {} },
-  ] as unknown as Parameters<Pricer['price']>[1][];
+  ];
   for (const usage of hostile) {
     for (const model of ['claude-haiku-5-5', 'gpt-6.1-sol', 'nope']) {
-      const cost = pricer.price(model, usage);
+      const cost = untrusted.price(model, usage);
       assert.ok(
         Number.isFinite(cost.low) && Number.isFinite(cost.high) && cost.low >= 0 && cost.low <= cost.high,
         `${model} ${JSON.stringify(usage)}`,
@@ -406,9 +407,9 @@ const rates = (input: number, output: number, cacheRead: number, cacheWrite5m?: 
   input,
   output,
   cacheRead,
-  ...(cacheWrite5m === undefined ? {} : { cacheWrite5m, cacheWrite1h }),
+  ...(!(cacheWrite5m === undefined) && { cacheWrite5m, cacheWrite1h }),
 });
-const tier = (abovePromptTokens: number, r: object) => ({ tiers: [{ abovePromptTokens, rates: r }] });
+const tier = (abovePromptTokens: number, r: ReturnType<typeof rates>) => ({ tiers: [{ abovePromptTokens, rates: r }] });
 const EXPECTED = {
   'claude-fable-5-2': { rates: rates(8, 40, 0.2, 10, 16) },
   'claude-mythos-5-2': { rates: rates(8, 40, 0.2, 10, 16) },
@@ -440,7 +441,7 @@ const EXPECTED = {
 };
 
 test('shipped rate table holds the recorded official rates per model and no unconfirmed model', () => {
-  const file = JSON.parse(tableText) as Record<string, unknown>;
+  const file: { asOf?: unknown; source?: unknown } = JSON.parse(tableText);
   assert.equal(file['asOf'], '2026-11-19');
   assert.ok(
     Array.isArray(file['source']) &&
@@ -464,7 +465,8 @@ test('shipped rate table prices every confirmed model in the sample config', () 
   const pricer = shipped();
 
   const sample = parseJsonc(fs.readFileSync(path.join(SKILL_ROOT, 'config.sample.jsonc'), 'utf8'));
-  const override = (sample as Record<string, unknown>)['pricing'];
+  assert.ok(typeof sample === 'object' && sample !== null && !Array.isArray(sample));
+  const override = sample['pricing'];
   assert.deepEqual(pricingProblems(override), []);
   assert.equal(
     resolvePricing(JSON.parse(tableText), override)?.price('lmstudio/qwen3.8-27b-ridge', { input: 1000, output: 1000 })
@@ -473,14 +475,19 @@ test('shipped rate table prices every confirmed model in the sample config', () 
   );
   const models = new Set<string>();
   const walk = (value: unknown): void => {
-    if (Array.isArray(value)) value.forEach(walk);
-    else if (value && typeof value === 'object') {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+    } else if (value && typeof value === 'object') {
       for (const [key, item] of Object.entries(value)) {
-        if (key === 'model')
+        if (key === 'model') {
           [item].flat().forEach((model) => {
-            if (typeof model === 'string') models.add(model);
+            if (typeof model === 'string') {
+              models.add(model);
+            }
           });
-        else walk(item);
+        } else {
+          walk(item);
+        }
       }
     }
   };
@@ -493,19 +500,24 @@ test('shipped rate table prices every confirmed model in the sample config', () 
   }
 });
 
+const only =
+  (text: string | null | Error) =>
+  (file: string): string | null => {
+    if (!file.endsWith('pricing.json')) {
+      return null;
+    }
+    if (text instanceof Error) {
+      throw text;
+    }
+    return text;
+  };
+
 test('shipped rate table yields no pricer when it is unreadable, unparsable or invalid', () => {
-  const only =
-    (text: string | null | Error) =>
-    (file: string): string | null => {
-      if (!file.endsWith('pricing.json')) return null;
-      if (text instanceof Error) throw text;
-      return text;
-    };
   assert.equal(loadPricing('/skill', only(null)), undefined);
   assert.equal(loadPricing('/skill', only(new Error('EACCES'))), undefined);
   assert.equal(loadPricing('/skill', only('{ not json')), undefined);
-  const valid = JSON.parse(tableText) as Record<string, unknown>;
-  const invalid: unknown[] = [
+  const valid: JsonObject = JSON.parse(tableText);
+  const invalid: Array<unknown> = [
     null,
     [],
     { ...valid, asOf: 'yesterday' },
@@ -555,7 +567,7 @@ test('pricing override replaces a shipped rate, adds ids and keeps absent ids on
 
 test('pricing override entries that are malformed are skipped and named by key and reason', () => {
   const OK = { rates: { input: 1, output: 1 } };
-  const bad: Record<string, [unknown, RegExp]> = {
+  const bad = {
     notEntry: [5, /^pricing\.notEntry: not an object$/],
     unknownKey: [{ ...OK, extra: 1 }, /^pricing\.unknownKey: unknown key extra$/],
     noInput: [{ rates: { output: 1 } }, /^pricing\.noInput: rates\.input missing$/],
@@ -635,7 +647,7 @@ test('pricing override entries that are malformed are skipped and named by key a
       },
       /^pricing\.periodTierKeys: periods\[0\]\.tiers\[0\]\.rates keys differ from rates$/,
     ],
-  };
+  } satisfies Record<string, [unknown, RegExp]>;
   const good = {
     'house-model': {
       ...OK,
@@ -675,7 +687,9 @@ test('pricing override falls back to the shipped table when the config is missin
   assert.equal(shipped('[1, 2]').price('claude-opus-5-5', usage).low, 4);
   assert.equal(shipped(JSON.stringify({ pricing: 'cheap' })).price('claude-opus-5-5', usage).low, 4);
   const unreadable = loadPricing('/skill', (file) => {
-    if (file.endsWith('pricing.json')) return tableText;
+    if (file.endsWith('pricing.json')) {
+      return tableText;
+    }
     throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
   });
   assert.equal(unreadable?.price('claude-opus-5-5', usage).low, 4);

@@ -11,6 +11,7 @@ import { initSession } from '../../skills/dispatch/scripts/lib/session.ts';
 import { publishQuotaFailure, readQuotaState, reprobeQuota } from '../../skills/dispatch/scripts/lib/quota-store.ts';
 import { H, quotaSnapshot } from '../../skills/dispatch/scripts/policy/quota.ts';
 import type { QuotaKey } from '../../skills/dispatch/scripts/toolkit/types.ts';
+import { isBoolean, isNumber, isString, narrow, objectWith } from './helpers/json.ts';
 
 const execute = promisify(execFile);
 const key: QuotaKey = { provider: 'codex', model: null, mode: 'cli' };
@@ -29,7 +30,7 @@ function setup() {
     now: new Date('2026-10-19T00:00:00Z'),
   }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
-  const capture = (keys: QuotaKey[] = [key], clock = now) => {
+  const capture = (keys: Array<QuotaKey> = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);
     return { ...state, snapshot: quotaSnapshot(keys, state.generations, state.observations, clock) };
   };
@@ -40,7 +41,8 @@ function setup() {
       windowsHide: true,
       env: { ...process.env, NODE_OPTIONS: '', NODE_TEST_CONTEXT: '' },
     });
-    return JSON.parse(result.stdout) as ReturnType<typeof readQuotaState> & { generation: string; skipped: boolean };
+    const reply: unknown = JSON.parse(result.stdout);
+    return reply;
   };
   const cli = async (provider: string, mode: string, session = sessionDir) => {
     try {
@@ -51,7 +53,7 @@ function setup() {
       );
       return { exit: 0, stdout: result.stdout, stderr: result.stderr };
     } catch (error) {
-      const result = error as { code: number; stdout: string; stderr: string };
+      const result = narrow(error, objectWith({ code: isNumber, stdout: isString, stderr: isString }));
       return { exit: result.code, stdout: result.stdout, stderr: result.stderr };
     }
   };
@@ -94,7 +96,7 @@ describe('quota state survives sessions and reprobe races', () => {
         'const s=store.readQuotaState(x.options,[x.key],x.now); console.log(JSON.stringify(policy.quotaSnapshot([x.key],s.generations,s.observations,x.now).decisions[0]));',
         { options: f.options, key, now: now + 1 },
       );
-      assert.equal(state.skipped, true);
+      assert.equal(narrow(state, objectWith({ skipped: isBoolean })).skipped, true);
       const other = initSession({
         repositoryRoot: f.repo,
         sessionId: crypto.randomUUID(),
@@ -123,7 +125,7 @@ describe('quota state survives sessions and reprobe races', () => {
         [now + 10, now + 20].map((at) => f.subprocess(publish, { options: f.options, key, generation, at })),
       );
       assert.equal(
-        coalesced.every((result) => !(result as unknown as { published: boolean }).published),
+        coalesced.every((result) => !narrow(result, objectWith({ published: isBoolean })).published),
         true,
       );
       assert.equal(f.capture([key], now + 30).snapshot.decisions[0]!.expiresAt, now + H);
@@ -161,7 +163,7 @@ describe('quota state survives sessions and reprobe races', () => {
         ),
       );
       const active = f.capture().generations[0]!.generation;
-      assert.ok(results.some((result) => result.generation === active));
+      assert.ok(results.some((result) => narrow(result, objectWith({ generation: isString })).generation === active));
       assert.notEqual(active, old);
       assert.equal(publishQuotaFailure(f.options, key, old, now + 1).warning, undefined);
       assert.equal(f.capture([key], now + 1).snapshot.decisions[0]!.skipped, false);

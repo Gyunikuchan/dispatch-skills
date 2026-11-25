@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import * as prefixed from 'node:child_process';
+import { spawnSync as namedSpawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -10,15 +10,22 @@ import { TEMP_ROOT_MARKER } from '../helpers/isolated-temp.ts';
 
 const require = createRequire(import.meta.url);
 
+const isLauncher = (value: unknown): value is (command: string, args: Array<string>) => void =>
+  typeof value === 'function';
+
 test('every child_process launcher throws a rule-naming error outside tests/e2e/', () => {
-  const shared = require('child_process') as Record<string, (...args: unknown[]) => unknown>;
+  const shared: unknown = require('node:child_process');
+  assert.ok(typeof shared === 'object' && shared !== null);
+  const launchers = new Map<string, unknown>(Object.entries(shared));
   for (const name of BLOCKED_LAUNCHERS) {
+    const launcher = launchers.get(name);
+    assert.ok(isLauncher(launcher), name);
     assert.throws(
-      () => shared[name]?.('node', ['-v']),
+      () => launcher('node', ['-v']),
       (error: unknown) => error instanceof Error && error.message.startsWith(SPAWN_RULE),
     );
   }
-  assert.throws(() => prefixed.spawnSync('node', ['-v']), /tiers 1-5 spawn no processes/);
+  assert.throws(() => namedSpawnSync('node', ['-v']), /tiers 1-5 spawn no processes/);
 });
 
 test('each test process gets its own temp dir inside the run temp root', () => {

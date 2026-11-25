@@ -20,6 +20,8 @@ import { sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/d
 import { sessionFixture } from '../toolkit/helpers/session.ts';
 import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
 import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
+import { currentPlatform } from '../../../skills/dispatch/scripts/lib/platform.ts';
+import { delegateRequest } from '../../helpers/delegate-request.ts';
 
 test('Copilot provider collection uses proven session identity', () => {
   const fs = memoryFs({
@@ -46,7 +48,7 @@ test('Copilot provider collection uses proven session identity', () => {
       arch: 'x64',
       wsl: false,
       bubblewrap: true,
-      argvLimit: 10000,
+      argvLimit: 10_000,
       home: '/home',
       path: [],
       pathExt: [],
@@ -54,7 +56,7 @@ test('Copilot provider collection uses proven session identity', () => {
     env: { COPILOT_AGENT_SESSION_ID: 'inherited' },
     launchStartMs: 0,
     launchEndMs: 2000,
-    transcripts: { fs, budget: { remaining: 10000 } },
+    transcripts: { fs, budget: { remaining: 10_000 } },
   };
   assert.equal(copilot.sessionUsage!('Session ID: proven', context)?.usage, undefined);
   assert.deepEqual(fs.reads, []);
@@ -64,12 +66,13 @@ test('Copilot provider collection uses proven session identity', () => {
   assert.deepEqual(result?.usage?.actualModels, ['custom/model']);
 });
 
-const rawFixtures: Record<string, { cliVersion: string; stdout: string }> = {
-  codex: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8')),
-  claude: JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-claude.json', import.meta.url), 'utf8')),
-};
-const fixture = (provider: string): { cliVersion: string; stdout: string } => {
-  const base = rawFixtures[provider]!;
+type RawFixture = { cliVersion: string; stdout: string };
+const rawFixtures = new Map<string, RawFixture>([
+  ['codex', JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8'))],
+  ['claude', JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-claude.json', import.meta.url), 'utf8'))],
+]);
+const fixture = (provider: string) => {
+  const base = rawFixtures.get(provider)!;
   return { cliVersion: base.cliVersion, stdout: base.stdout };
 };
 
@@ -77,12 +80,12 @@ test('Codex completed turn maps token usage to uncached input', () => {
   const f = fixture('codex'),
     result = codex.usage!(f.stdout);
   assert.deepEqual(result, {
-    input: 54559,
+    input: 54_559,
     output: 1468,
     scope: 'invocation',
     provenance: 'codex.turn.completed',
     inputSemantics: 'uncached',
-    cacheRead: 221056,
+    cacheRead: 221_056,
     cacheWrite: 0,
     reasoning: 70,
   });
@@ -94,9 +97,11 @@ test('repeated completed summaries never add counters', () => {
 });
 
 test('malformed or truncated structured output is unavailable', () => {
-  for (const p of [codex, claude])
-    for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}'])
+  for (const p of [codex, claude]) {
+    for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}']) {
       assert.equal(p.usage!(raw), undefined);
+    }
+  }
 });
 
 test('Claude whole-tree thinking counters remain separate and reject unsafe sums', () => {
@@ -154,8 +159,9 @@ test('agy usage maps the print JSON usage block to uncached counters', () => {
     provenance: 'agy.usage',
     inputSemantics: 'uncached',
   });
-  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}'])
+  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}']) {
     assert.equal(agy.usage?.(raw), undefined);
+  }
 });
 
 const opencodeProbe = fs.readFileSync(new URL('./fixtures/opencode-format-json.jsonl', import.meta.url), 'utf8');
@@ -209,8 +215,8 @@ test('codex sums distinct turns with uncached input', () => {
   assert.equal(equalTurns?.output, 20);
 });
 
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
+function encodeVarint(val: number | bigint): Array<number> {
+  const bytes: Array<number> = [];
   let n = BigInt(val);
   while (n > 0x7fn) {
     bytes.push(Number((n & 0x7fn) | 0x80n));
@@ -219,10 +225,10 @@ function encodeVarint(val: number | bigint): number[] {
   bytes.push(Number(n & 0x7fn));
   return bytes;
 }
-function encodeTag(fieldNum: number, wireType: number): number[] {
+function encodeTag(fieldNum: number, wireType: number): Array<number> {
   return encodeVarint((fieldNum << 3) | wireType);
 }
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
+function encodeLengthDelimited(fieldNum: number, content: Uint8Array | Array<number> | string): Array<number> {
   const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
   return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
 }
@@ -236,14 +242,26 @@ function buildGenMetadataBlob(options: {
   lastStepIndex?: number;
   unknownField?: boolean;
 }): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  const tag1Fields: Array<number> = [];
+  const counters: Array<number> = [];
+  if (options.input !== undefined) {
+    counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
+  }
+  if (options.output !== undefined) {
+    counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
+  }
+  if (options.cacheRead !== undefined) {
+    counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
+  }
+  if (options.reasoning !== undefined) {
+    counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
+  }
+  if (counters.length > 0) {
+    tag1Fields.push(...encodeLengthDelimited(4, counters));
+  }
+  if (options.modelSlug !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
+  }
   if (options.lastStepIndex !== undefined) {
     const kv = [
       ...encodeLengthDelimited(1, 'last_step_index'),
@@ -251,12 +269,25 @@ function buildGenMetadataBlob(options: {
     ];
     tag1Fields.push(...encodeLengthDelimited(20, kv));
   }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  if (options.displayName !== undefined) {
+    tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
+  }
   if (options.unknownField) {
     tag1Fields.push(...encodeTag(99, 1), 1, 2, 3, 4, 5, 6, 7, 8);
   }
   return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
+
+const makePlatform = (home: string): PlatformEnv => ({
+  os: currentPlatform().os,
+  arch: 'x64',
+  wsl: false,
+  bubblewrap: false,
+  argvLimit: 100_000,
+  home,
+  path: [],
+  pathExt: [],
+});
 
 test('agy model and effort normalization and gen_metadata attribution', () => {
   // 1. normalizeAgyModelEffort
@@ -377,17 +408,6 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
     insert1.run(0, turn0);
     insert1.run(1, turn1);
     db1.close();
-
-    const makePlatform = (home: string): PlatformEnv => ({
-      os: process.platform as PlatformEnv['os'],
-      arch: 'x64',
-      wsl: false,
-      bubblewrap: false,
-      argvLimit: 100000,
-      home,
-      path: [],
-      pathExt: [],
-    });
 
     const stdout1 = JSON.stringify({
       conversation_id: conv1Id,
@@ -532,11 +552,11 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
 
 test('delegate session id extraction across providers and agy budget skip', () => {
   const platform: PlatformEnv = {
-    os: process.platform as PlatformEnv['os'],
+    os: currentPlatform().os,
     arch: 'x64',
     wsl: false,
     bubblewrap: false,
-    argvLimit: 100000,
+    argvLimit: 100_000,
     home: '/home',
     path: [],
     pathExt: [],
@@ -678,11 +698,11 @@ test('delegate session id extraction across providers and agy budget skip', () =
 
 test('agy fallback models omits models map on mismatched sums or undecodable model row', () => {
   const platform: PlatformEnv = {
-    os: process.platform as PlatformEnv['os'],
+    os: currentPlatform().os,
     arch: 'x64',
     wsl: false,
     bubblewrap: false,
-    argvLimit: 100000,
+    argvLimit: 100_000,
     home: '/home',
     path: [],
     pathExt: [],
@@ -722,11 +742,11 @@ test('agy fallback models omits models map on mismatched sums or undecodable mod
 test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeTool -> sanitizeFacts without leaking session data', async () => {
   const claudeFile = '/home/.claude/projects/-repo/c-wrapup-1.jsonl';
   const platform: PlatformEnv = {
-    os: process.platform as PlatformEnv['os'],
+    os: currentPlatform().os,
     arch: 'x64',
     wsl: false,
     bubblewrap: false,
-    argvLimit: 100000,
+    argvLimit: 100_000,
     home: '/home',
     path: [],
     pathExt: [],
@@ -790,29 +810,20 @@ test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeToo
           launched: true,
           outcome: 'ok',
           wrapUp: true,
-          ...(sessionRead?.usage ? { usage: sessionRead.usage } : {}),
-          ...(sessionRead?.responses ? { responses: sessionRead.responses } : {}),
+          ...(sessionRead?.usage && { usage: sessionRead.usage }),
+          ...(sessionRead?.responses && { responses: sessionRead.responses }),
         },
       ],
     });
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-    await observer.deps.delegate('claude', { logPath: path.join(f.session, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate(
+      'claude',
+      delegateRequest({ logPath: path.join(f.session, 'logs', 'claude[0].log') }),
+      'cli',
+    );
     observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
 
-    const facts = sanitizeFacts(
-      sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete'),
-    ) as unknown as {
-      invocations: Array<{
-        wrapUp?: boolean;
-        usage?: {
-          turns?: number;
-          toolCalls?: number;
-          toolTurns?: number;
-          models?: Record<string, { turns?: number; toolCalls?: number; toolTurns?: number }>;
-        };
-        responses?: Array<{ toolCalls?: number; toolTurns?: number }>;
-      }>;
-    };
+    const facts = sanitizeFacts(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete'));
     const inv = facts.invocations[0]!;
     assert.equal(inv.wrapUp, true);
     assert.deepEqual([inv.usage?.turns, inv.usage?.toolCalls, inv.usage?.toolTurns], [2, 1, 1]);

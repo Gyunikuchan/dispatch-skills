@@ -1,12 +1,13 @@
+import { withLockFile } from '../../../skills/dispatch/scripts/toolkit/lock.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { parseJson, shape, text } from './helpers/json.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 test('fan-out claim creates parents refuses a live owner and reclaims a dead owner', async () => {
-  const { withLockFile } = await import('../../../skills/dispatch/scripts/toolkit/lock.ts');
   const f = sessionFixture({ memory: true });
   try {
     const file = path.join(f.session, '.state', 'reviews', 'plan', 'claim');
@@ -45,7 +46,7 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
     assert.equal(await run(), 3);
     assert.equal(
       f.sleeps.reduce((a, b) => a + b, 0),
-      10000,
+      10_000,
     );
     assert.match(f.output().summary, /99/);
     f.deps.isAlive = () => false;
@@ -55,9 +56,9 @@ test('session lock waits refuses reclaims and releases on failure', async () => 
       .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
       .trim()
       .split('\n')
-      .map((x) => JSON.parse(x));
-    assert.equal(records[0].kind, 'note');
-    assert.equal(records[0].by, 'tool');
+      .map((x) => parseJson(x, shape({ kind: text, by: text })));
+    assert.equal(records[0]?.kind, 'note');
+    assert.equal(records[0]?.by, 'tool');
     assert.equal(records.length, 2);
     fs.writeFileSync(input, '{"kind":"bad"}');
     assert.equal(await run(), 1);

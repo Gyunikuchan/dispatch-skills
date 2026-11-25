@@ -1,11 +1,12 @@
+import { opencode } from '../../../../skills/dispatch/scripts/lib/usage/opencode.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
-import {
-  opencodeDbPath,
-  type OpencodeMessage,
-  type OpencodeRead,
-  type OpencodeReadOptions,
+import { opencodeDbPath } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
+import type {
+  OpencodeMessage,
+  OpencodeRead,
+  OpencodeReadOptions,
 } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import type { HostUsageFs } from '../../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { memoryFs, query } from './helpers/memory-fs.ts';
@@ -262,9 +263,8 @@ test('opencode host usage reports no records only when no valid message remains'
 });
 
 test('opencode usage row fields carry time, depth and reasoning semantics', async () => {
-  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
   const result = opencode.read(
-    { ...input, sessionId: 'ses_host-1', budget: { remaining: 10000 } },
+    { ...input, sessionId: 'ses_host-1', budget: { remaining: 10_000 } },
     port(() => ({
       messages: [message(0, 2500, 'm0', null, 10, 5), message(2, 4000, 'm2', 'high', 3, 1)],
       skipped: 0,
@@ -281,7 +281,6 @@ test('opencode usage row fields carry time, depth and reasoning semantics', asyn
 });
 
 test('opencode extracts unified turns, user turns by stage, and tool calls when present', async () => {
-  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
   const result = opencode.read(
     {
       ...input,
@@ -290,7 +289,7 @@ test('opencode extracts unified turns, user turns by stage, and tool calls when 
         { stage: 'spec', atMs: 0 },
         { stage: 'plan', atMs: 3000 },
       ],
-      budget: { remaining: 10000 },
+      budget: { remaining: 10_000 },
     },
     port(() => ({
       messages: [
@@ -314,9 +313,8 @@ test('opencode extracts unified turns, user turns by stage, and tool calls when 
 });
 
 test('opencode omits userTurns when userTurnsTruncated is true while preserving assistant turns', async () => {
-  const { opencode } = await import('../../../../skills/dispatch/scripts/lib/usage/opencode.ts');
   const result = opencode.read(
-    { ...input, sessionId: 'ses_host-1', budget: { remaining: 10000 } },
+    { ...input, sessionId: 'ses_host-1', budget: { remaining: 10_000 } },
     port(() => ({
       messages: [message(0, 2500, 'm0', null, 10, 5)],
       userTurnsTruncated: true,

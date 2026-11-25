@@ -11,6 +11,7 @@ import type {
 import type { LifecycleStep } from '../../providers/types.ts';
 import type { FailureClass } from '../types.ts';
 import type { RecoverySelection } from '../review-state.ts';
+import type { JsonObject } from '../../lib/integrity.ts';
 import type { ReviewKind } from './types.ts';
 
 export const PHASE_NAMES = [
@@ -25,14 +26,14 @@ export const PHASE_NAMES = [
 ] as const;
 
 /** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
-type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly string[] };
+type Escalation = { kind: 'regression' | 'deadlock'; ids: ReadonlyArray<string> };
 
 /** Review phases carry the review machine's convergence result (findings re-raised across rounds, any escalation) and the resolved round `cap`. */
 export type Phase = {
   key: string;
   name: (typeof PHASE_NAMES)[number];
   outcome?: string;
-  reraised?: readonly string[];
+  reraised?: ReadonlyArray<string>;
   escalation?: Escalation;
   cap?: number;
 };
@@ -53,7 +54,7 @@ export type ModelUsage = DiagnosticModelUsage;
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
 export type Usage = ModelUsage & {
   copilot?: CopilotEvidence;
-  actors?: CopilotActor[];
+  actors?: Array<CopilotActor>;
   models?: Record<string, ModelUsage>;
   reasoningInOutput?: boolean;
 };
@@ -88,20 +89,24 @@ export type DelegateResponseFacts = DelegateResponse & { stage: ResponseStage; a
 
 type InvocationResponses = {
   usageSource?: UsageSource | undefined;
-  coverage?: readonly CoverageReason[] | undefined;
-  responses?: readonly DelegateResponseFacts[] | undefined;
+  coverage?: ReadonlyArray<CoverageReason> | undefined;
+  responses?: ReadonlyArray<DelegateResponseFacts> | undefined;
 };
 
 export const isSessionDelegate = (invocation: InvocationResponses): boolean =>
   invocation.usageSource !== 'stdout' && !invocation.coverage?.includes('transcript unavailable');
 
+const isObservedResponse = (
+  response: DelegateResponseFacts,
+): response is DelegateResponseFacts & { observed: number } =>
+  response.coverage === 'complete' && response.observed !== undefined;
+
 export function completeDelegateResponses(invocation: InvocationResponses) {
-  if (!isSessionDelegate(invocation)) return undefined;
+  if (!isSessionDelegate(invocation)) {
+    return undefined;
+  }
   const delegates = invocation.responses?.filter((response) => response.role === 'delegate');
-  return delegates?.length &&
-    delegates.every((response) => response.coverage === 'complete' && response.observed !== undefined)
-    ? (delegates as (DelegateResponseFacts & { observed: number })[])
-    : undefined;
+  return delegates?.length && delegates.every(isObservedResponse) ? delegates : undefined;
 }
 
 export type InvocationFacts = {
@@ -119,13 +124,13 @@ export type InvocationFacts = {
   outcome: string;
   usage?: Usage;
   usageSource?: UsageSource;
-  reportedModels?: string[];
+  reportedModels?: Array<string>;
   reportedModelAmbiguous?: true;
-  coverage?: CoverageReason[];
-  responses?: DelegateResponseFacts[];
+  coverage?: Array<CoverageReason>;
+  responses?: Array<DelegateResponseFacts>;
   superseded?: true;
   slot?: string;
-  lifecycleSteps?: LifecycleStep[];
+  lifecycleSteps?: Array<LifecycleStep>;
   nudge?: true;
   wrapUp?: true;
   routingOutcome?: string;
@@ -147,7 +152,7 @@ export type ReviewFacts = {
   accepted: number;
   rejected: number;
   recurring?: number;
-  reraised?: readonly string[];
+  reraised?: ReadonlyArray<string>;
   escalation?: Escalation;
   cap?: number;
 };
@@ -156,7 +161,7 @@ export type ReviewFacts = {
 export type RoundWorkload = {
   review: string;
   round: number;
-  calls?: { total: number; phases: { key: string; count: number }[] };
+  calls?: { total: number; phases: Array<{ key: string; count: number }> };
   hostTokens?: number;
   hostTurns?: number;
   reviewerTurns?: number;
@@ -183,31 +188,42 @@ export type SlotYieldFacts = {
   tokens?: number;
   measured: number;
   launched: number;
-  attempts?: SlotYieldAttempt[];
+  attempts?: Array<SlotYieldAttempt>;
   priorLaunches?: number;
   /** Findings whose origin is `fix-induced`; present only when nonzero. */
   fixInduced?: number;
 };
 /** Adds one responder's yield to another's; absent tokens stay absent. */
 export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
-  for (const severity of ['MUST', 'SHOULD', 'CONSIDER'] as const) current.raised[severity] += row.raised[severity];
-  for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const)
+  for (const severity of ['MUST', 'SHOULD', 'CONSIDER'] as const) {
+    current.raised[severity] += row.raised[severity];
+  }
+  for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const) {
     current[key] += row[key];
-  if (row.tokens !== undefined) current.tokens = (current.tokens ?? 0) + row.tokens;
-  if (row.attempts?.length) current.attempts = [...(current.attempts ?? []), ...row.attempts];
-  if (row.priorLaunches) current.priorLaunches = (current.priorLaunches ?? 0) + row.priorLaunches;
-  if (row.fixInduced) current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
+  }
+  if (row.tokens !== undefined) {
+    current.tokens = (current.tokens ?? 0) + row.tokens;
+  }
+  if (row.attempts?.length) {
+    current.attempts = [...(current.attempts ?? []), ...row.attempts];
+  }
+  if (row.priorLaunches) {
+    current.priorLaunches = (current.priorLaunches ?? 0) + row.priorLaunches;
+  }
+  if (row.fixInduced) {
+    current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
+  }
 }
 export type RecoveryExecution = { ref: string; reused?: number; launched?: number; unresolved?: number };
 
 export type RunFacts = {
   recoverySelection?: RecoverySelection;
   recoveryExecution?: RecoveryExecution;
-  recoverySelections?: (RecoverySelection & { ref: string })[];
-  recoveryExecutions?: RecoveryExecution[];
+  recoverySelections?: Array<RecoverySelection & { ref: string }>;
+  recoveryExecutions?: Array<RecoveryExecution>;
   hostUsage?: HostUsageFacts;
   startedAt?: string;
-  hosts?: string[];
+  hosts?: Array<string>;
   timingScope?: 'tool-calls';
   capture?: { state: 'opened' | 'completed'; start: number; end?: number; storageFailed?: number };
   retroState?: 'missing' | 'unreadable' | 'malformed' | 'invalid' | 'empty' | 'collected';
@@ -219,8 +235,8 @@ export type RunFacts = {
     incomplete?: number;
     storageFailed?: number;
   };
-  provenance?: { version?: string; build?: string; config?: Record<string, unknown> }[];
-  rejectedTools?: { tool: string; action: string; cls: string }[];
+  provenance?: Array<{ version?: string; build?: string; config?: JsonObject }>;
+  rejectedTools?: Array<{ tool: string; action: string; cls: string }>;
   relaunches?: number;
   version?: string;
   build?: string;
@@ -230,20 +246,20 @@ export type RunFacts = {
   verb?: string;
   level?: string;
   pins?: string;
-  config?: Record<string, unknown>;
+  config?: JsonObject;
   outcome?: string;
   /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
   fault?: { effectId?: string; cls: string; hostWaitMs?: number; waitBy?: 'user' | 'host'; driverMs?: number };
-  phases: PhaseFacts[];
-  invocations: InvocationFacts[];
-  reviews: ReviewFacts[];
-  slotYield?: SlotYieldFacts[];
-  roundTiming?: {
+  phases: Array<PhaseFacts>;
+  invocations: Array<InvocationFacts>;
+  reviews: Array<ReviewFacts>;
+  slotYield?: Array<SlotYieldFacts>;
+  roundTiming?: Array<{
     review: string;
     round: number;
-    slots: { slot: string; attempts: { startMs?: number; endMs?: number; surface?: 'cli' | 'native' }[] }[];
-  }[];
-  roundWorkload?: RoundWorkload[];
+    slots: Array<{ slot: string; attempts: Array<{ startMs?: number; endMs?: number; surface?: 'cli' | 'native' }> }>;
+  }>;
+  roundWorkload?: Array<RoundWorkload>;
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
 };
@@ -277,7 +293,7 @@ export const DIAGNOSTIC_LIMITS = {
   instructionBytes: 1640,
 } as const;
 
-const files = (dir: string, names: readonly string[], ext: string) => names.map((name) => `${dir}/${name}${ext}`);
+const files = (dir: string, names: ReadonlyArray<string>, ext: string) => names.map((name) => `${dir}/${name}${ext}`);
 
 /** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
 // oxfmt-ignore
@@ -295,8 +311,8 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   "scripts/package.json",
   ...files("scripts/policy", ["cascade","quota","roster"], ".ts"),
   ...files("scripts/providers", ["agy","claude","codex","copilot","discovery","index","node-process","opencode-runtime","opencode","probe","process-policy","response","runner","session-usage","types"], ".ts"),
-  ...files("scripts/toolkit", ["artifacts","ask","brief","check","cli","confirmations","contracts","coverage","deliver","diagnostics-capture","diagnostics","doctor","evidence","fanout","findings","fix-review-lite","git","hints","input","integrate","integration-state","integration","ledger","lint","lock","output","plan-view","prompts","records","red","report","review-capture","review-checkout","review-findings","review-fix","review-identity","review-notices","review-state","review-storage","review","status","types","walkthrough","writers"], ".ts"),
-  ...files("scripts/toolkit/domain", ["blocker","citations","context","criterion-id","design","diagnostics-gates","diagnostics-heuristics","diagnostics-render","diagnostics-types","diagnostics","document-lint","fix-review-lite","markdown-structure","plan-graph","plan-lint","plan-parse","plan","prompt","report","sanitize","severity","spec","stable-value","types"], ".ts"),
+  ...files("scripts/toolkit", ["artifacts","ask","brief","check","cli","confirmations","contracts","coverage","deliver","diagnostics-capture","diagnostics","doctor","evidence","fanout","findings","fix-review-lite","git","hints","input","integrate","integration-state","integration","ledger","lint","lock","narrow","output","plan-view","prompts","records","red","report","review-capture","review-checkout","review-findings","review-fix","review-identity","review-notices","review-state","review-storage","review","status","types","walkthrough","writers"], ".ts"),
+  ...files("scripts/toolkit/domain", ["blocker","citations","context","criterion-id","defined","design","diagnostics-gates","diagnostics-heuristics","diagnostics-render","diagnostics-types","diagnostics","document-lint","fix-review-lite","markdown-structure","plan-graph","plan-lint","plan-parse","plan","prompt","report","sanitize","severity","spec","stable-value","types"], ".ts"),
   ...files("scripts/toolkit/fanout", ["native","state","voice","wave"], ".ts"),
   // END GENERATED: diagnostic components
 ]);

@@ -3,6 +3,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
+import { arrayOf, isString, narrow, objectWith } from './helpers/json.ts';
 import { foldLedger, currentHashes } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 
 const twoTasks = planSource
@@ -21,13 +22,16 @@ const rows = (r: Repo, phase: string) =>
 async function candidate(r: Repo, task = 'T1', text = 'writer\n') {
   const made = await r.run(['worktree', 'create', task]);
   assert.equal(made.exit, 0);
-  fs.writeFileSync(path.join(r.session, made.value.path, 'src/file.ts'), text);
+  const { path: wtPath } = narrow(made.value, objectWith({ path: isString }));
+  fs.writeFileSync(path.join(r.session, wtPath, 'src/file.ts'), text);
   const submitted = await r.run(['worktree', 'submit', task]);
   assert.equal(submitted.exit, 0);
-  return submitted.value.candidate as string;
+  return narrow(submitted.value, objectWith({ candidate: isString })).candidate;
 }
 const crash = (point: string) => (at: string) => {
-  if (at === point) throw new Error('simulated crash');
+  if (at === point) {
+    throw new Error('simulated crash');
+  }
 };
 describe('toolkit integration', () => {
   it('gates picks and reconciles a completed pick once', async () => {
@@ -81,7 +85,7 @@ describe('toolkit integration', () => {
       const conflict = await r.run(['worktree', 'integrate', 'T1']);
       assert.equal(conflict.exit, 0);
       assert.equal(conflict.output.reason, 'conflict');
-      assert.deepEqual(conflict.value.paths, ['src/file.ts']);
+      assert.deepEqual(narrow(conflict.value, objectWith({ paths: arrayOf(isString) })).paths, ['src/file.ts']);
       assert.equal((await r.run(['worktree', 'integrate', 'T1'])).output.reason, 'conflict');
       assert.equal((await r.run(['worktree', 'continue', 'T1'])).output.reason, 'unresolved-conflict');
       fs.writeFileSync(path.join(r.integration, 'src/file.ts'), 'resolved\n');
@@ -89,11 +93,12 @@ describe('toolkit integration', () => {
       const before = r.git(['write-tree'], r.integration),
         beforeHead = r.git(['rev-parse', 'HEAD'], r.integration),
         ledger = fs.readFileSync(path.join(r.session, 'ledger.jsonl'), 'utf8');
-      for (const action of ['continue', 'abort'])
+      for (const action of ['continue', 'abort']) {
         assert.equal(
           (await r.run(['worktree', action, 'T2', ...(action === 'abort' ? ['--reason', 'wrong'] : [])])).output.reason,
           'wrong-task',
         );
+      }
       assert.equal(r.git(['write-tree'], r.integration), before);
       assert.equal(fs.readFileSync(path.join(r.session, 'ledger.jsonl'), 'utf8'), ledger);
       assert.equal(r.git(['rev-parse', 'HEAD'], r.integration), beforeHead);
@@ -167,8 +172,9 @@ describe('toolkit integration', () => {
       assert.equal((await r.run(['worktree', 'abort', 'T1', '--reason', 'again'])).output.reason, 'no-candidate');
       const made = await r.run(['worktree', 'create', 'T1']);
       assert.equal(made.exit, 0);
+      const { path: wtPath } = narrow(made.value, objectWith({ path: isString }));
       assert.equal(
-        r.git(['rev-parse', 'HEAD'], path.join(r.session, made.value.path)),
+        r.git(['rev-parse', 'HEAD'], path.join(r.session, wtPath)),
         r.git(['rev-parse', 'HEAD'], r.integration),
       );
     } finally {
@@ -205,11 +211,12 @@ describe('toolkit integration', () => {
       r.git(['commit', '--allow-empty', '-m', 'fix(dispatch): other'], r.integration);
       assert.equal((await r.run(['worktree', 'commit', '--reason', 'other'])).output.reason, 'no-changes');
       assert.equal(rows(r, 'fix').length, 1);
-      for (const action of ['commit', 'abort'])
+      for (const action of ['commit', 'abort']) {
         assert.equal(
           (await r.run(['worktree', action, ...(action === 'abort' ? ['T1'] : [])])).output.reason,
           'invalid-input',
         );
+      }
     } finally {
       r.cleanup();
     }

@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { hasErrorCode, isRecord } from './config.ts';
+
 const MANIFEST = 'manifest.json';
 const SLUG_MAX = 40;
 const CHAT_ID_ENV_VARS = [
@@ -47,9 +49,13 @@ export type Manifest = {
 export function findRepoRoot(start: string, exists: (file: string) => boolean = fs.existsSync): string | null {
   let dir = path.resolve(start);
   for (;;) {
-    if (exists(path.join(dir, '.git'))) return dir;
+    if (exists(path.join(dir, '.git'))) {
+      return dir;
+    }
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) {
+      return null;
+    }
     dir = parent;
   }
 }
@@ -68,21 +74,23 @@ function safeTitle(value: string): string {
   const title = value
     .normalize('NFKD')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '')
     .slice(0, SLUG_MAX)
-    .replace(/-+$/g, '');
+    .replaceAll(/-+$/g, '');
   return title || 'session';
 }
 
 /** `<YYYYMMDDTHHMMZ>-<title>`. */
 export const folderName = (now: Date, title: string): string =>
-  `${now.toISOString().slice(0, 16).replace(/[-:]/g, '')}Z-${safeTitle(title)}`;
+  `${now.toISOString().slice(0, 16).replaceAll(/[-:]/g, '')}Z-${safeTitle(title)}`;
 
 export function platformSessionId(env: (name: string) => string | undefined): string | null {
   for (const name of CHAT_ID_ENV_VARS) {
     const value = env(name)?.trim();
-    if (value) return value;
+    if (value) {
+      return value;
+    }
   }
   return null;
 }
@@ -103,12 +111,24 @@ function isRealDirectory(dir: string): boolean {
 
 function ensureDir(dir: string): string {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (!isRealDirectory(dir)) throw new Error(`Unsafe session directory: ${dir}`);
+  if (!isRealDirectory(dir)) {
+    throw new Error(`Unsafe session directory: ${dir}`);
+  }
   return fs.realpathSync(dir);
 }
 
 const workspaceSessionRoot = (repositoryRoot: string): string =>
   ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
+
+// Validates the identity fields only; the writer owns the rest of the shape.
+const isOwnManifest = (value: unknown, name: string): value is Manifest =>
+  isRecord(value) &&
+  value['schemaVersion'] === 1 &&
+  value['folderName'] === name &&
+  FOLDER_NAME.test(name) &&
+  typeof value['sessionId'] === 'string' &&
+  value['safeSessionId'] === safePathId(value['sessionId']) &&
+  typeof value['repositoryRoot'] === 'string';
 
 export function readManifest(dir: string): Manifest {
   const file = path.join(dir, MANIFEST);
@@ -118,20 +138,10 @@ export function readManifest(dir: string): Manifest {
   } catch {
     throw new Error(`Session manifest is missing or invalid: ${file}`);
   }
-  const manifest = value as Partial<Manifest> | null;
-  const name = path.basename(path.resolve(dir));
-  if (
-    !manifest ||
-    manifest.schemaVersion !== 1 ||
-    manifest.folderName !== name ||
-    !FOLDER_NAME.test(name) ||
-    typeof manifest.sessionId !== 'string' ||
-    manifest.safeSessionId !== safePathId(manifest.sessionId) ||
-    typeof manifest.repositoryRoot !== 'string'
-  ) {
+  if (!isOwnManifest(value, path.basename(path.resolve(dir)))) {
     throw new Error(`Session manifest has an unsupported or unsafe identity: ${file}`);
   }
-  return manifest as Manifest;
+  return value;
 }
 
 function writeManifest(dir: string, manifest: Manifest): void {
@@ -145,17 +155,17 @@ function writeManifest(dir: string, manifest: Manifest): void {
   }
 }
 
-export class AmbiguousSessionIdentity extends Error {
-  readonly candidates: string[];
+export class AmbiguousSessionIdentityError extends Error {
+  readonly candidates: Array<string>;
 
-  constructor(sessionId: string, matches: string[]) {
+  constructor(sessionId: string, matches: Array<string>) {
     super(`Ambiguous session identity ${sessionId}`);
     this.candidates = matches.map((dir) => path.basename(dir)).sort();
   }
 }
 
 function matchingSession(root: string, sessionId: string, repo: string): string | undefined {
-  let names: string[];
+  let names: Array<string>;
   try {
     names = fs.readdirSync(root);
   } catch {
@@ -172,7 +182,9 @@ function matchingSession(root: string, sessionId: string, repo: string): string 
         return false;
       }
     });
-  if (found.length > 1) throw new AmbiguousSessionIdentity(sessionId, found);
+  if (found.length > 1) {
+    throw new AmbiguousSessionIdentityError(sessionId, found);
+  }
   return found[0];
 }
 
@@ -185,28 +197,36 @@ export function recordHost(sessionDir: string, host: string): void {
 
 type InitOptions = { repositoryRoot: string; sessionId: string; sessionTitle: string; now: Date; waitMs?: number };
 
+type SessionLocation = { path: string; reused: boolean };
+
 /**
  * Finds or creates the chat's session folder. A published folder for the same identity is reactivated;
  * creation is collision-safe: an exclusive claim directory serialises creators, and a same-minute name
  * collision with another identity takes a numeric title suffix.
  */
-export function initSession(options: InitOptions): { path: string; reused: boolean } {
+export function initSession(options: InitOptions): SessionLocation {
   const repo = canonicalRepositoryRoot(options.repositoryRoot);
   const root = workspaceSessionRoot(options.repositoryRoot);
   const found = matchingSession(root, options.sessionId, repo);
-  if (found !== undefined) return { path: fs.realpathSync(found), reused: true };
+  if (found !== undefined) {
+    return { path: fs.realpathSync(found), reused: true };
+  }
   const claim = path.join(root, `.claim-${safePathId(options.sessionId)}`);
   try {
     fs.mkdirSync(claim, { mode: 0o700 });
   } catch (error) {
-    if ((error as { code?: unknown }).code !== 'EEXIST') throw error;
+    if (!hasErrorCode(error, 'EEXIST')) {
+      throw error;
+    }
     // Another creator holds the claim: reuse its folder once published, or retry after it releases.
     const appeared = waitForClaim(root, options.sessionId, repo, claim, options.waitMs ?? CLAIM_WAIT_MS);
     return appeared !== null ? { path: appeared, reused: true } : initSession(options);
   }
   try {
     const raced = matchingSession(root, options.sessionId, repo);
-    if (raced !== undefined) return { path: fs.realpathSync(raced), reused: true };
+    if (raced !== undefined) {
+      return { path: fs.realpathSync(raced), reused: true };
+    }
     const baseTitle = safeTitle(options.sessionTitle);
     const baseName = folderName(options.now, baseTitle);
     for (let n = 0; ; n++) {
@@ -215,7 +235,9 @@ export function initSession(options: InitOptions): { path: string; reused: boole
       try {
         fs.mkdirSync(dir, { mode: 0o700 });
       } catch (error) {
-        if ((error as { code?: unknown }).code === 'EEXIST') continue;
+        if (hasErrorCode(error, 'EEXIST')) {
+          continue;
+        }
         throw error;
       }
       const instant = options.now.toISOString();
@@ -250,10 +272,15 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     const found = matchingSession(root, sessionId, repo);
-    if (found !== undefined) return fs.realpathSync(found);
-    if (!fs.existsSync(claim)) return null;
-    if (Date.now() >= deadline)
+    if (found !== undefined) {
+      return fs.realpathSync(found);
+    }
+    if (!fs.existsSync(claim)) {
+      return null;
+    }
+    if (Date.now() >= deadline) {
       throw new Error(`Session initialization is still claimed at ${claim}; inspect the path and retry.`);
+    }
     Atomics.wait(pause, 0, 0, 10);
   }
 }
@@ -261,10 +288,12 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
 /** Validates that a session belongs to the repository workspace root and sits under `.scratch/dispatch-skills`. */
 export function reactivateSession(sessionDir: string, repositoryRoot: string): string {
   const manifest = readManifest(sessionDir);
-  if (manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot))
+  if (manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot)) {
     throw new Error(`Session belongs to a different repository: ${sessionDir}`);
+  }
   const expected = path.join(workspaceSessionRoot(repositoryRoot), manifest.folderName);
-  if (!samePath(sessionDir, expected))
+  if (!samePath(sessionDir, expected)) {
     throw new Error(`Session directory is outside the workspace session root: ${sessionDir}`);
+  }
   return fs.realpathSync(sessionDir);
 }

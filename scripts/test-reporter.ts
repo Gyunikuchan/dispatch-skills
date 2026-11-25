@@ -7,13 +7,37 @@ import path from 'node:path';
 export const FILE_BUDGET_MS = 1000;
 const SLOW_FILE_LIMIT = 5;
 
-type Data = Record<string, unknown>;
+// Every `node --test` payload field read here; each stays unvalidated until narrowed at its use.
+interface Data {
+  name?: unknown;
+  file?: unknown;
+  line?: unknown;
+  column?: unknown;
+  nesting?: unknown;
+  duration_ms?: unknown;
+  details?: unknown;
+  counts?: unknown;
+  type?: unknown;
+  error?: unknown;
+  cause?: unknown;
+  message?: unknown;
+  stack?: unknown;
+  failureType?: unknown;
+  tests?: unknown;
+  topLevel?: unknown;
+  passed?: unknown;
+  pass?: unknown;
+  failed?: unknown;
+  fail?: unknown;
+  skipped?: unknown;
+  todo?: unknown;
+}
 export interface ReporterEvent {
   type: string;
   data?: Data;
 }
 export interface ReporterOptions {
-  stderr?: { write(text: string): unknown };
+  stderr?: { write(text: string): void };
   exit?: (code: number) => void;
   projectRoot?: string;
 }
@@ -24,41 +48,52 @@ export function formatDuration(ms = 0): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
 }
 
-const rel = (file: string, root: string) => path.relative(root, file).replace(/\\/g, '/');
+const rel = (file: string, root: string) => path.relative(root, file).replaceAll('\\', '/');
+
+const isData = (value: unknown): value is Data => typeof value === 'object' && value !== null;
 
 function record(value: unknown): Data {
-  return typeof value === 'object' && value !== null ? (value as Data) : {};
+  return isData(value) ? value : {};
 }
 
 export function formatFailure(data: Data, projectRoot = process.cwd(), expand = true): string {
   const name = typeof data['name'] === 'string' ? data['name'] : 'unnamed test';
   let location = typeof data['file'] === 'string' ? rel(data['file'], projectRoot) : '';
-  if (data['line'] !== undefined)
+  if (data['line'] !== undefined) {
     location += `:${String(data['line'])}${data['column'] !== undefined ? `:${String(data['column'])}` : ''}`;
+  }
   const lines = [`✖ ${name}`];
-  if (location) lines.push(`  Location: ${location}`);
+  if (location) {
+    lines.push(`  Location: ${location}`);
+  }
   if (expand) {
     const error = record(record(data['details'])['error'] ?? data['error']);
     const cause = record(error['cause']);
-    if (typeof cause['message'] === 'string') lines.push(`  ${String(cause['stack'] ?? cause['message'])}`);
-    else if (typeof error['stack'] === 'string') lines.push(`  ${error['stack']}`);
-    else if (typeof error['message'] === 'string') lines.push(`  Error: ${error['message']}`);
+    if (typeof cause['message'] === 'string') {
+      lines.push(`  ${String(cause['stack'] ?? cause['message'])}`);
+    } else if (typeof error['stack'] === 'string') {
+      lines.push(`  ${error['stack']}`);
+    } else if (typeof error['message'] === 'string') {
+      lines.push(`  Error: ${error['message']}`);
+    }
   }
   return `${lines.join('\n')}\n`;
 }
 
 export function isE2eFile(file: string): boolean {
-  return file.replace(/\\/g, '/').includes('/tests/e2e/');
+  return file.replaceAll('\\', '/').includes('/tests/e2e/');
 }
 
-export function slowFiles(fileDurations: ReadonlyMap<string, number>): {
-  slowest: [string, number][];
-  overBudget: string[];
-} {
+export interface SlowFiles {
+  slowest: Array<[string, number]>;
+  overBudget: Array<string>;
+}
+
+export function slowFiles(fileDurations: ReadonlyMap<string, number>): SlowFiles {
   const slowest = [...fileDurations].sort((a, b) => b[1] - a[1]).slice(0, SLOW_FILE_LIMIT);
-  const overBudget = [...fileDurations]
-    .filter(([file, ms]) => ms > FILE_BUDGET_MS && !isE2eFile(file))
-    .map(([file]) => file);
+  const overBudget = [...fileDurations].flatMap(([file, ms]) =>
+    ms > FILE_BUDGET_MS && !isE2eFile(file) ? [file] : [],
+  );
   return { slowest, overBudget };
 }
 
@@ -81,7 +116,7 @@ export default async function* quietReporter(
   let skipped = 0;
   let todo = 0;
   let durationMs = 0;
-  const failures: Data[] = [];
+  const failures: Array<Data> = [];
   const emptyFiles = new Set<string>();
   const files = new Set<string>();
   const fileDurations = new Map<string, number>();
@@ -89,7 +124,9 @@ export default async function* quietReporter(
   for await (const { type, data = {} } of source) {
     const file = typeof data['file'] === 'string' ? data['file'] : undefined;
     const details = record(data['details']);
-    if (file) files.add(file);
+    if (file) {
+      files.add(file);
+    }
     // NOTE: a file's top-level tests run serially, so their summed durations approximate its wall time.
     if ((type === 'test:pass' || type === 'test:fail') && file && (data['nesting'] ?? 0) === 0) {
       fileDurations.set(
@@ -106,13 +143,17 @@ export default async function* quietReporter(
       const subtests =
         details['type'] === 'suite' &&
         (error['failureType'] === 'subtestsFailed' || error['message'] === '1 subtest failed');
-      if (!subtests) failures.push(data);
+      if (!subtests) {
+        failures.push(data);
+      }
     }
     if (type === 'test:summary') {
       const counts = record(data['counts']);
-      if (file && counts['tests'] === 0) emptyFiles.add(file);
+      if (file && counts['tests'] === 0) {
+        emptyFiles.add(file);
+      }
       if (counts['topLevel'] !== undefined || file === undefined) {
-        const pick = (...keys: string[]) =>
+        const pick = (...keys: Array<keyof Data>) =>
           keys.map((key) => counts[key]).find((value): value is number => typeof value === 'number');
         passed = pick('passed', 'pass') ?? passed;
         failed = pick('failed', 'fail') ?? failed;
@@ -120,28 +161,34 @@ export default async function* quietReporter(
         skipped = pick('skipped') ?? skipped;
         todo = pick('todo') ?? todo;
       }
-      if (typeof data['duration_ms'] === 'number') durationMs = Math.max(durationMs, data['duration_ms']);
+      if (typeof data['duration_ms'] === 'number') {
+        durationMs = Math.max(durationMs, data['duration_ms']);
+      }
     }
   }
 
   const fileCount = files.size ? ` across ${files.size} file(s)` : '';
   if (failures.length) {
     yield '\n--- Test Failures ---\n\n';
-    for (const [index, failure] of failures.entries()) yield `${formatFailure(failure, root, index === 0)}\n`;
+    for (const [index, failure] of failures.entries()) {
+      yield `${formatFailure(failure, root, index === 0)}\n`;
+    }
     yield `✖ ${failed || failures.length} of ${total} test(s) failed (${passed} passed, ${formatDuration(durationMs)}${fileCount})\n`;
   } else if (!emptyFiles.size) {
     yield `✔ All ${total || passed} test(s) passed (${formatDuration(durationMs)}${fileCount}${skipped ? `, ${skipped} skipped` : ''}${todo ? `, ${todo} todo` : ''})\n`;
   }
-  if (emptyFiles.size)
+  if (emptyFiles.size) {
     stderr.write(
       `✖ Selected no tests: ${[...emptyFiles]
         .map((file) => rel(file, root))
         .sort()
         .join(', ')}\n`,
     );
+  }
   const { slowest, overBudget } = slowFiles(fileDurations);
-  if (slowest.length)
+  if (slowest.length) {
     yield `  Slowest files: ${slowest.map(([file, ms]) => `${rel(file, root)} ${formatDuration(ms)}`).join(', ')}\n`;
+  }
   const failedRun = failures.length > 0 || emptyFiles.size > 0 || failed > 0;
   if (overBudget.length) {
     yield (
@@ -150,5 +197,7 @@ export default async function* quietReporter(
     );
   }
   // NOTE: the per-file budget is a hint. It fails only with a test failure; a passing run warns.
-  if (failedRun) exit(1);
+  if (failedRun) {
+    exit(1);
+  }
 }

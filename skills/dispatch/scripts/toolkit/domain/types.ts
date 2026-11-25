@@ -22,7 +22,7 @@ export type Finding = {
   locus: string;
   defect: string;
   requiredChange: string;
-  sources: readonly SlotId[];
+  sources: ReadonlyArray<SlotId>;
   scope: FindingScope;
   dupOf?: FindingId;
   /** Sanitized reviewer tag kept when the category is `uncategorized`. */
@@ -46,14 +46,14 @@ export type ChangeAction = 'NEW' | 'MODIFY' | 'DELETE' | 'GENERATED';
 type PlanCommand = { command: string };
 
 export type PlanCriterion = {
-  satisfies?: readonly string[];
+  satisfies?: ReadonlyArray<string>;
   id: string;
   title: string;
   line: number;
-  changes: readonly string[];
+  changes: ReadonlyArray<string>;
   /** Declared `Tests:` paths, a subset of `changes`; RED capture and brief rendering use these. */
-  tests: readonly string[];
-  verify: readonly PlanCommand[];
+  tests: ReadonlyArray<string>;
+  verify: ReadonlyArray<PlanCommand>;
   evidence: EvidenceClass | null;
   preExisting: boolean | null;
   redException: string | null;
@@ -70,20 +70,20 @@ export type PlanTask = {
   id: string;
   title: string;
   summary: string;
-  behaviour: readonly string[];
+  behaviour: ReadonlyArray<string>;
   /** Task-specific instructions for its writer; absent in older serialized plans. */
-  constraints?: readonly string[];
+  constraints?: ReadonlyArray<string>;
   line: number;
-  prerequisites: readonly string[];
-  criteria: readonly string[];
-  paths: readonly string[];
-  generated: readonly { path: string; inputs: readonly string[] }[];
+  prerequisites: ReadonlyArray<string>;
+  criteria: ReadonlyArray<string>;
+  paths: ReadonlyArray<string>;
+  generated: ReadonlyArray<{ path: string; inputs: ReadonlyArray<string> }>;
   /** `Overlap: <path> — <reason>` justifications for paths shared with an unordered task. */
-  overlaps: readonly { path: string; reason: string }[];
+  overlaps: ReadonlyArray<{ path: string; reason: string }>;
 };
 
 /** A write path shared by tasks with no transitive `Requires` path between them and no `Overlap:` justification. */
-export type PlanWarning = { kind: 'overlap'; tasks: readonly string[]; path: string };
+export type PlanWarning = { kind: 'overlap'; tasks: ReadonlyArray<string>; path: string };
 
 export type Glance = { what: string; how: string; visuals: string };
 
@@ -91,20 +91,20 @@ export type ParsedPlan = {
   title: string | null;
   box: Readonly<Record<string, string>>;
   glance: Glance | null;
-  keyDecisions: readonly string[];
-  criteria: readonly PlanCriterion[];
+  keyDecisions: ReadonlyArray<string>;
+  criteria: ReadonlyArray<PlanCriterion>;
   /** Plan-ordered task graph; `changes` is its flattened aggregate. */
-  tasks: readonly PlanTask[];
-  changes: readonly PlanChange[];
-  verification: { automated: readonly string[]; none: string | null; manual: readonly string[] };
+  tasks: ReadonlyArray<PlanTask>;
+  changes: ReadonlyArray<PlanChange>;
+  verification: { automated: ReadonlyArray<string>; none: string | null; manual: ReadonlyArray<string> };
   /** Plan-level test entry points that criteria verify through. */
-  seams: readonly string[];
-  warnings: readonly PlanWarning[];
+  seams: ReadonlyArray<string>;
+  warnings: ReadonlyArray<PlanWarning>;
   traceability: Readonly<Record<string, string>> | null;
   /** Source with only `## Review Findings & Resolutions` excluded; the caller hashes it. */
   governedText: string;
   /** Criterion IDs plus review finding IDs recorded in the plan, sorted and unique. */
-  planIds: readonly string[];
+  planIds: ReadonlyArray<string>;
   /** Source from the start through the `## Task Map` section: the context every task writer shares. */
   sharedContext: string;
 };
@@ -115,20 +115,20 @@ export type DesignIncrement = {
   id: string;
   priority: number;
   summary: string;
-  behaviour: readonly string[];
-  prerequisites: readonly string[];
-  paths: readonly string[];
+  behaviour: ReadonlyArray<string>;
+  prerequisites: ReadonlyArray<string>;
+  paths: ReadonlyArray<string>;
 };
 export type IncrementState = 'complete' | 'active' | 'ready' | 'blocked' | 'invalidated';
 export type ExecutionStatusRow = { id: string; state: IncrementState; nextAction: string };
 
 export type ParsedDesign = {
-  approachRequirements?: readonly string[];
+  approachRequirements?: ReadonlyArray<string>;
   title: string | null;
   box: Readonly<Record<string, string>>;
-  increments: readonly DesignIncrement[];
+  increments: ReadonlyArray<DesignIncrement>;
   details: Readonly<Record<string, Readonly<Record<string, string>>>>;
-  executionStatus: { rows: readonly ExecutionStatusRow[]; nextAction: string | null } | null;
+  executionStatus: { rows: ReadonlyArray<ExecutionStatusRow>; nextAction: string | null } | null;
   /** Source without `## Execution Status` and `## Review Findings & Resolutions`; the caller hashes it. */
   governedText: string;
 };
@@ -139,7 +139,7 @@ export type RosterSlot = {
   slot: SlotId;
   provider: string;
   index: number;
-  model?: string | readonly string[];
+  model?: string | ReadonlyArray<string>;
   effort?: string;
   sandbox?: boolean;
   native: boolean;

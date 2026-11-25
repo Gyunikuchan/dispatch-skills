@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { main, type HandlerContext } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import type { HandlerContext } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { askRun } from '../../../skills/dispatch/scripts/toolkit/ask.ts';
 import {
   renderExplorerBrief,
@@ -12,15 +13,16 @@ import {
 import { deliver } from '../../../skills/dispatch/scripts/toolkit/deliver.ts';
 import { readJsonPayload, readTextPayload } from '../../../skills/dispatch/scripts/toolkit/input.ts';
 import { commit } from '../../../skills/dispatch/scripts/toolkit/integrate.ts';
-import { appendRecord, currentHashes, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { checks as checkPlan, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { flag, narrow, shape, text } from './helpers/json.ts';
 
 function makeContext(
   f: ReturnType<typeof sessionFixture>,
-  args: string[],
+  args: Array<string>,
   values: HandlerContext['values'] = {},
 ): HandlerContext {
   return {
@@ -32,7 +34,7 @@ function makeContext(
   };
 }
 
-function assertInvalidInput(fn: () => unknown): void {
+function assertInvalidInput<T>(fn: () => T): void {
   assert.throws(fn, (error: unknown) => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.exit, 1);
@@ -41,7 +43,7 @@ function assertInvalidInput(fn: () => unknown): void {
   });
 }
 
-async function assertInvalidInputAsync(fn: () => Promise<unknown>): Promise<void> {
+async function assertInvalidInputAsync<T>(fn: () => Promise<T>): Promise<void> {
   await assert.rejects(fn, (error: unknown) => {
     assert.ok(error instanceof ToolError);
     assert.equal(error.exit, 1);
@@ -267,8 +269,8 @@ describe('unified payload input reader and handlers', () => {
       );
       assert.equal(expInline.ok, true);
       assert.equal(
-        fs.readFileSync((expStdin.value as { briefPath: string }).briefPath, 'utf8'),
-        fs.readFileSync((expInline.value as { briefPath: string }).briefPath, 'utf8'),
+        fs.readFileSync(narrow(expStdin.value, shape({ briefPath: text })).briefPath, 'utf8'),
+        fs.readFileSync(narrow(expInline.value, shape({ briefPath: text })).briefPath, 'utf8'),
       );
       await assertInvalidInputAsync(() => renderExplorerBrief(makeContext(f, ['-'], { json: '{}' })));
       await assertInvalidInputAsync(() => renderExplorerBrief(makeContext(f, [], { json: '[]' })));
@@ -288,8 +290,8 @@ describe('unified payload input reader and handlers', () => {
       );
       assert.equal(verInline.ok, true);
       assert.equal(
-        fs.readFileSync((verStdin.value as { briefPath: string }).briefPath, 'utf8'),
-        fs.readFileSync((verInline.value as { briefPath: string }).briefPath, 'utf8'),
+        fs.readFileSync(narrow(verStdin.value, shape({ briefPath: text })).briefPath, 'utf8'),
+        fs.readFileSync(narrow(verInline.value, shape({ briefPath: text })).briefPath, 'utf8'),
       );
 
       // test-cleanup via --json, stdin -, and co-required --base + --integration-path
@@ -304,8 +306,8 @@ describe('unified payload input reader and handlers', () => {
       assert.equal(cleanJson.ok, true);
       assert.equal(cleanDirect.ok, true);
       assert.equal(
-        fs.readFileSync((cleanJson.value as { briefPath: string }).briefPath, 'utf8'),
-        fs.readFileSync((cleanDirect.value as { briefPath: string }).briefPath, 'utf8'),
+        fs.readFileSync(narrow(cleanJson.value, shape({ briefPath: text })).briefPath, 'utf8'),
+        fs.readFileSync(narrow(cleanDirect.value, shape({ briefPath: text })).briefPath, 'utf8'),
       );
       await assertInvalidInputAsync(() => renderTestCleanupBrief(makeContext(f, [], { base })));
       await assertInvalidInputAsync(() =>
@@ -403,15 +405,19 @@ describe('unified payload input reader and handlers', () => {
       let head = from;
       f.deps.run = async (argv) => {
         const args = argv.slice(1);
-        if (args[0] === 'rev-parse')
+        if (args[0] === 'rev-parse') {
           return { exit: 0, stdout: args[1] === 'HEAD' ? head : args[1] === 'HEAD^' ? from : tree, stderr: '' };
-        if (args[0] === 'diff') return { exit: 0, stdout: 'tests/step.ts\0', stderr: '' };
+        }
+        if (args[0] === 'diff') {
+          return { exit: 0, stdout: 'tests/step.ts\0', stderr: '' };
+        }
         if (args[0] === 'commit') {
           head = to;
           return { exit: 0, stdout: '', stderr: '' };
         }
-        if (args[0] === 'ls-files' || args[0] === 'add' || args[0] === 'log')
+        if (args[0] === 'ls-files' || args[0] === 'add' || args[0] === 'log') {
           return { exit: 0, stdout: '', stderr: '' };
+        }
         throw new Error('Unexpected Git call: ' + JSON.stringify(argv));
       };
 
@@ -421,7 +427,10 @@ describe('unified payload input reader and handlers', () => {
       );
       assert.equal(inlineFix.ok, true);
       assert.equal(
-        foldLedger(f.session).records.findLast((r) => r.data['phase'] === 'fix')?.data['reviewFix'].review,
+        narrow(
+          foldLedger(f.session).records.findLast((r) => r.data['phase'] === 'fix')?.data['reviewFix'],
+          shape({ review: text }),
+        ).review,
         'code-integration',
       );
 
@@ -494,16 +503,32 @@ describe('unified payload input reader and handlers', () => {
 
       let head = from;
       let base = from;
-      const recordedMessages: string[] = [];
+      const recordedMessages: Array<string> = [];
       f.deps.run = async (argv, options) => {
         const args = argv.slice(1);
-        if (args[0] === 'symbolic-ref') return { exit: 0, stdout: 'main\n', stderr: '' };
-        if (args[0] === 'rev-parse') return { exit: 0, stdout: args[1] === 'HEAD' ? head : 'tree', stderr: '' };
-        if (args[0] === 'diff') return { exit: 0, stdout: '', stderr: '' };
-        if (args[0] === 'ls-files' || args[0] === 'read-tree' || args[0] === 'update-index' || args[0] === 'merge-base')
+        if (args[0] === 'symbolic-ref') {
+          return { exit: 0, stdout: 'main\n', stderr: '' };
+        }
+        if (args[0] === 'rev-parse') {
+          return { exit: 0, stdout: args[1] === 'HEAD' ? head : 'tree', stderr: '' };
+        }
+        if (args[0] === 'diff') {
           return { exit: 0, stdout: '', stderr: '' };
-        if (args[0] === 'rev-list') return { exit: 0, stdout: `${head} ${base}\n`, stderr: '' };
-        if (args[0] === 'write-tree') return { exit: 0, stdout: 'idxtree\n', stderr: '' };
+        }
+        if (
+          args[0] === 'ls-files' ||
+          args[0] === 'read-tree' ||
+          args[0] === 'update-index' ||
+          args[0] === 'merge-base'
+        ) {
+          return { exit: 0, stdout: '', stderr: '' };
+        }
+        if (args[0] === 'rev-list') {
+          return { exit: 0, stdout: `${head} ${base}\n`, stderr: '' };
+        }
+        if (args[0] === 'write-tree') {
+          return { exit: 0, stdout: 'idxtree\n', stderr: '' };
+        }
         if (args[0] === 'commit') {
           recordedMessages.push(options.stdin ?? '');
           base = head;
@@ -515,7 +540,7 @@ describe('unified payload input reader and handlers', () => {
 
       const msgResult = await deliver(makeContext(f, [], { message: 'feat: deliver via inline message' }));
       assert.equal(msgResult.ok, true);
-      assert.equal((msgResult.value as { committed: boolean; commit: string }).committed, true);
+      assert.equal(narrow(msgResult.value, shape({ committed: flag, commit: text })).committed, true);
       assert.equal(recordedMessages[0], 'feat: deliver via inline message');
 
       // Reset to a fresh delivered record to test --commit - with BOM stripping.

@@ -2,38 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
+import { CONTEXT_MAP, fixture } from '../../helpers/review-fixture.ts';
+import { narrow, numeric, shape, text } from './helpers/json.ts';
 
 // SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
-type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
-const PLAN_REVIEW = 'plan-work.plan';
-const ceilingId = (review: string, ceiling: number) => 'ceiling:' + review + ':' + ceiling;
-const addRecord = (f: ReviewFixture, record: object) => appendRecord(f.session, record, f.deps);
-const openCeiling = (f: ReviewFixture, review: string, ceiling: number) =>
-  addRecord(f, {
-    kind: 'escalation',
-    by: 'tool',
-    key: ceilingId(review, ceiling),
-    data: { id: ceilingId(review, ceiling), state: 'open', summary: 'ceiling ' + ceiling + ' reached' },
-  });
-const resolveCeiling = (
-  f: ReviewFixture,
-  review: string,
-  ceiling: number,
-  summary: string,
-  options: { by?: string; quote?: string; key?: string } = {},
-) =>
-  addRecord(f, {
-    kind: 'escalation',
-    by: options.by ?? 'user',
-    quote: options.quote ?? 'User decision',
-    key: options.key ?? ceilingId(review, ceiling) + ':resolved',
-    data: { id: ceilingId(review, ceiling), state: 'resolved', summary },
-  });
 
 test('plan and design review launch without a sibling context map', async () => {
   const f = await fixture();
@@ -42,15 +15,17 @@ test('plan and design review launch without a sibling context map', async () => 
     const plan = await f.call('plan', orphan);
     assert.equal(plan.exit, 0, JSON.stringify(plan));
     assert.equal(f.launches.length, 2);
-    for (const launch of f.launches)
+    for (const launch of f.launches) {
       assert.doesNotMatch(fs.readFileSync(launch.request.promptPath, 'utf8'), /Context Map/);
+    }
 
     const design = f.artifact('orphan.design.md', '# Design\n## Boundaries\nSingle writer.\n');
     const designReview = await f.call('design', design);
     assert.equal(designReview.exit, 0, JSON.stringify(designReview));
     assert.equal(f.launches.length, 4);
-    for (const launch of f.launches.slice(2))
+    for (const launch of f.launches.slice(2)) {
       assert.doesNotMatch(fs.readFileSync(launch.request.promptPath, 'utf8'), /Context Map/);
+    }
   } finally {
     f.cleanup();
   }
@@ -106,7 +81,7 @@ test('plan and design reviewers read governed text without findings history', as
     const prompt = fs.readFileSync(f.launches[0]!.request.promptPath, 'utf8');
     assert.ok(prompt.includes(inputPath));
     assert.ok(prompt.includes('- Plan: ' + inputPath));
-    assert.equal(f.read(1, 'round.json').target, artifactHash('plan', original));
+    assert.equal(narrow(f.read(1, 'round.json'), shape({ target: text })).target, artifactHash('plan', original));
     assert.equal(path.basename(f.directory), 'plan-work.plan');
     assert.equal(fs.readFileSync(path.join(f.directory, 'round-1', 'target.snapshot.md'), 'utf8'), original);
 
@@ -159,7 +134,9 @@ test('resumed round reuses the same input path and bytes', async () => {
     const hookPoint = 'review:after-pending';
     const wrapped = f.deps.hook;
     f.deps.hook = (point: string) => {
-      if (point === hookPoint) return wrapped(point);
+      if (point === hookPoint) {
+        return wrapped(point);
+      }
     };
     assert.equal((await f.call()).exit, 2);
     const inputPath = path.join(f.directory, 'round-1.input.md');
@@ -171,7 +148,7 @@ test('resumed round reuses the same input path and bytes', async () => {
     const result = await f.call();
     assert.equal(result.exit, 0, JSON.stringify(result.output));
     assert.equal(fs.readFileSync(inputPath, 'utf8'), before);
-    assert.equal(f.read(1, 'round.json').generation, 1);
+    assert.equal(narrow(f.read(1, 'round.json'), shape({ generation: numeric })).generation, 1);
     assert.ok(f.launches.length >= callsBefore);
     const prompt = fs.readFileSync(f.launches.at(-1)!.request.promptPath, 'utf8');
     assert.ok(prompt.includes(inputPath));

@@ -6,7 +6,7 @@ import type { ModeId, PlatformEnv, ProviderId, ProviderSpec } from './types.ts';
 
 export type DiscoveryFs = {
   /** Directory entry names; [] when missing. */
-  list(dir: string): readonly string[];
+  list(dir: string): ReadonlyArray<string>;
   exists(file: string): boolean;
   /** Launchable regular file (POSIX execute bit; Windows: exists). */
   executable(file: string): boolean;
@@ -25,13 +25,13 @@ const sep = (env: PlatformEnv): string => (env.os === 'win32' ? '\\' : '/');
 function globMatch(pattern: string, name: string): boolean {
   const source = pattern
     .split('*')
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/g, String.raw`\$&`))
     .join('.*');
   return new RegExp(`^${source}$`, 'i').test(name);
 }
 
 /** Expands `*` segments against the fs table; sorted descending so the newest version-suffixed dir wins. */
-export function expandCandidate(candidate: string, fs: DiscoveryFs): string[] {
+export function expandCandidate(candidate: string, fs: DiscoveryFs): Array<string> {
   const parts = candidate.split(/[/\\]/);
   const joiner = candidate.includes('\\') ? '\\' : '/';
   let prefixes = [parts[0] ?? ''];
@@ -52,14 +52,14 @@ export function expandCandidate(candidate: string, fs: DiscoveryFs): string[] {
 }
 
 /** A bare name resolves through PATH (and PATHEXT on Windows when it has no extension). */
-function onPath(name: string, env: PlatformEnv): string[] {
+function onPath(name: string, env: PlatformEnv): Array<string> {
   const exts = env.os === 'win32' && !/\.[a-z0-9]+$/i.test(name) ? env.pathExt.map((ext) => ext.toLowerCase()) : [''];
   return env.path.flatMap((dir) => exts.map((ext) => `${dir}${sep(env)}${name}${ext}`));
 }
 
 export type Discovery = {
   resolve(provider: ProviderId, mode: ModeId): Resolution;
-  doctor(): DoctorRow[];
+  doctor(): Array<DoctorRow>;
   /** Probes performed so far (each candidate path at most once per invocation). */
   readonly probes: number;
 };
@@ -74,7 +74,9 @@ export function createDiscovery(
   let probes = 0;
   const probe = (file: string): 'exec' | 'present' | 'absent' => {
     const known = probed.get(file);
-    if (known) return known;
+    if (known) {
+      return known;
+    }
     probes++;
     const state = !fs.exists(file) ? 'absent' : fs.executable(file) ? 'exec' : 'present';
     probed.set(file, state);
@@ -83,7 +85,9 @@ export function createDiscovery(
   const resolve = (provider: ProviderId, mode: ModeId): Resolution => {
     const key = `${provider}:${mode}`;
     const hit = cache.get(key);
-    if (hit) return hit;
+    if (hit) {
+      return hit;
+    }
     const spec = specs[provider].modes.find((entry) => entry.id === mode);
     let unlaunchable: string | null = null;
     let found: Resolution | null = null;
@@ -95,9 +99,13 @@ export function createDiscovery(
           found = { status: 'path', path: file };
           break;
         }
-        if (state === 'present') unlaunchable ??= file;
+        if (state === 'present') {
+          unlaunchable ??= file;
+        }
       }
-      if (found) break;
+      if (found) {
+        break;
+      }
     }
     const result: Resolution =
       found ?? (unlaunchable ? { status: 'unlaunchable', path: unlaunchable } : { status: 'missing', path: null });
@@ -107,9 +115,11 @@ export function createDiscovery(
   return {
     resolve,
     doctor: () =>
-      (Object.keys(specs) as ProviderId[]).flatMap((provider) =>
-        specs[provider].modes.map((mode): DoctorRow => ({ provider, mode: mode.id, ...resolve(provider, mode.id) })),
-      ),
+      Object.keys(specs)
+        .filter((key): key is ProviderId => Object.hasOwn(specs, key))
+        .flatMap((provider) =>
+          specs[provider].modes.map((mode): DoctorRow => ({ provider, mode: mode.id, ...resolve(provider, mode.id) })),
+        ),
     get probes() {
       return probes;
     },

@@ -4,27 +4,19 @@ import path from 'node:path';
 import { loadConfig, loadReadCommands } from '../lib/config.ts';
 import { readManifest } from '../lib/session.ts';
 import { H } from '../policy/quota.ts';
-import {
-  parsePins,
-  resolveRoster,
-  nativeFirstRoute,
-  normalizeProvider,
-  type Pins,
-  type Roster,
-  type ReadDelegate,
-  type PhasePolicy,
-  type Underfill,
-} from '../policy/roster.ts';
+import { parsePins, resolveRoster, nativeFirstRoute, normalizeProvider } from '../policy/roster.ts';
+import type { Pins, Roster, Underfill } from '../policy/roster.ts';
+import { isPhaseTable, isReadDelegateTable, present } from './narrow.ts';
 import { claudeHostSandboxed } from '../lib/platform.ts';
 import type { CliDeps } from './cli.ts';
 import type { RosterSlot } from './domain/types.ts';
-import type { DiagnosticEvent } from './domain/diagnostics.ts';
 import { ToolError } from './output.ts';
 import type { Level } from './types.ts';
 import {
   atomic,
   mergeBlocked,
   normalizeNative,
+  parseSavedOutcome,
   persistDeferredMarker,
   readState,
   savedOrphanTargets,
@@ -32,12 +24,8 @@ import {
   slotFiles,
   throwRejected,
   writeState,
-  type BlockedAttempt,
-  type Emit,
-  type FanOutInput,
-  type FanoutState,
-  type SlotOutcome,
 } from './fanout/state.ts';
+import type { BlockedAttempt, Emit, FanOutInput, FanoutState, SlotOutcome } from './fanout/state.ts';
 import { cliVoice, VOICE_DEADLINE_MS } from './fanout/voice.ts';
 import {
   attemptOf,
@@ -58,9 +46,22 @@ export {
   type Validation,
 } from './fanout/state.ts';
 
+const isSlotList = (slots: FanOutInput['slots']): slots is ReadonlyArray<RosterSlot> => Array.isArray(slots);
+const slotList = (slots: FanOutInput['slots']) => (isSlotList(slots) ? slots : [...slots.targets, ...slots.reserves]);
+
+const uniq = (list: Array<string>, attempt: string): void => {
+  if (!list.includes(attempt)) {
+    list.push(attempt);
+  }
+};
+
 export function parsePinsFlag(raw: unknown): Pins | null {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw !== 'string') throw new ToolError(1, 'invalid-input', '--pins must be a string');
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (typeof raw !== 'string') {
+    throw new ToolError(1, 'invalid-input', '--pins must be a string');
+  }
   try {
     return parsePins(raw);
   } catch (error) {
@@ -73,10 +74,13 @@ export function resolveSlots(
   level: Level,
   deps: CliDeps,
   pins?: Pins | null,
-): Roster & { nativeFirstProviders: string[] } {
+): Roster & { nativeFirstProviders: Array<string> } {
   const { config } = loadConfig(deps.skillRoot);
-  const phases = config['phases'] as Record<string, PhasePolicy>;
-  const readDelegates = config['read-delegates'] as Record<string, ReadDelegate>;
+  const phases: unknown = config['phases'];
+  const readDelegates: unknown = config['read-delegates'];
+  if (!isReadDelegateTable(readDelegates)) {
+    throw new ToolError(1, 'invalid-input', 'Config read-delegates must be a table');
+  }
   let roster: Roster;
   try {
     roster = resolveRoster({
@@ -84,26 +88,34 @@ export function resolveSlots(
       readDelegates,
       orchestrator: deps.orchestrator,
       liveness: deps.liveness,
-      ...(deps.sandboxSupported ? { sandboxSupported: deps.sandboxSupported } : {}),
-      ...(pins ? { pins } : {}),
-      ...(kind === 'ask' ? {} : { policy: phases[kind === 'code' ? 'code-review' : 'plan-review'] }),
+      ...(deps.sandboxSupported && { sandboxSupported: deps.sandboxSupported }),
+      ...(pins && { pins }),
+      ...(!(kind === 'ask') && {
+        policy: present(isPhaseTable(phases) ? phases : undefined, 'config phases')[
+          kind === 'code' ? 'code-review' : 'plan-review'
+        ],
+      }),
     });
   } catch (error) {
     throw new ToolError(1, 'invalid-input', error instanceof Error ? error.message : String(error));
   }
   const seen = new Set<string>();
-  const nativeFirstProviders: string[] = [];
+  const nativeFirstProviders: Array<string> = [];
   for (const key of Object.keys(readDelegates)) {
     const normalized = normalizeProvider(key);
-    if (seen.has(normalized)) continue;
+    if (seen.has(normalized)) {
+      continue;
+    }
     seen.add(normalized);
-    if (nativeFirstRoute(key, readDelegates, deps.orchestrator)) nativeFirstProviders.push(normalized);
+    if (nativeFirstRoute(key, readDelegates, deps.orchestrator)) {
+      nativeFirstProviders.push(normalized);
+    }
   }
   return { ...roster, nativeFirstProviders };
 }
 
 /** True when any target or reserve slot runs a non-native, non-native-first CLI provider. */
-export function hasCliSlot(roster: Roster & { nativeFirstProviders: readonly string[] }): boolean {
+export function hasCliSlot(roster: Roster & { nativeFirstProviders: ReadonlyArray<string> }): boolean {
   return [...roster.targets, ...roster.reserves].some(
     (slot) => !slot.native && !isNativeFirstProvider(slot.provider, roster.nativeFirstProviders),
   );
@@ -112,7 +124,7 @@ export function hasCliSlot(roster: Roster & { nativeFirstProviders: readonly str
 /** Refuse CLI fan-out before state writes when a Claude host runs inside Claude Code's sandbox. */
 export function assertHostNotSandboxed(
   deps: Pick<CliDeps, 'orchestrator' | 'env'>,
-  roster: Roster & { nativeFirstProviders: readonly string[] },
+  roster: Roster & { nativeFirstProviders: ReadonlyArray<string> },
   hasNativeFailed: boolean,
 ): void {
   if (
@@ -130,40 +142,42 @@ export function assertHostNotSandboxed(
 
 export function underfillNote(roster: { underfill?: Underfill }): string {
   const u = roster.underfill;
-  if (!u) return '';
+  if (!u) {
+    return '';
+  }
   return `; underfill ${u.resolved}/${u.configured} targets, host ${u.host ?? 'undetected'}, excluded native-only: ${u.excluded.join(', ') || 'none'}${u.sandboxUnsupported?.length ? `, sandbox unsupported: ${u.sandboxUnsupported.join(', ')}` : ''}`;
 }
 
 export function nativePendingNote(count: number, wave: 'pending' | 'done' | undefined): string {
   const noun = count === 1 ? 'native slot pending' : 'native slots pending';
-  if (wave === 'pending') return `${count} ${noun}; launch them now, then rerun this call to start the CLI wave`;
+  if (wave === 'pending') {
+    return `${count} ${noun}; launch them now, then rerun this call to start the CLI wave`;
+  }
   return `${count} ${noun}; wait for every retained handle to finish or be reported, launch any slot without a handle, then rerun to consume`;
 }
 
-export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOutcome[]> {
+export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<Array<SlotOutcome>> {
   const ordinals = new Map<string, number>();
   const emit: Emit = (slot, event) => {
-    if (!deps.diagnostics) return;
+    if (!deps.diagnostics) {
+      return;
+    }
     try {
+      const model = typeof slot.model === 'string' ? slot.model : slot.model?.[0];
       deps.diagnostics({
         ...event,
         subject: input.dir,
         slot: slot.slot,
         provider: slot.provider,
-        ...(slot.effort !== undefined ? { effort: slot.effort } : {}),
-        model:
-          typeof slot.model === 'string'
-            ? slot.model
-            : Array.isArray(slot.model)
-              ? (slot.model[0] ?? undefined)
-              : undefined,
+        ...(slot.effort !== undefined && { effort: slot.effort }),
+        ...(model !== undefined && { model }),
         attempt: ordinals.get(slot.slot) ?? 0,
-      } as DiagnosticEvent);
-    } catch {}
+      });
+    } catch {
+      // Diagnostics never alter routing.
+    }
   };
-  const all = Array.isArray(input.slots)
-    ? (input.slots as readonly RosterSlot[])
-    : [...(input.slots as Roster).targets, ...(input.slots as Roster).reserves];
+  const all = slotList(input.slots);
   const targets = all.filter((slot) => !slot.reserve);
   const firstReserve = all.find((slot) => slot.reserve);
   const nativeFirstProviders = input.nativeFirstProviders ?? [];
@@ -175,8 +189,9 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   const deadline = deps.clock() + VOICE_DEADLINE_MS;
   const readCommands = loadReadCommands(deps.skillRoot);
   const rerun = fs.existsSync(path.join(input.dir, 'logs'));
-  for (const dir of ['prompts', 'slots', 'replies', 'logs'])
+  for (const dir of ['prompts', 'slots', 'replies', 'logs']) {
     fs.mkdirSync(path.join(input.dir, dir), { recursive: true });
+  }
   const files = slotFiles(
     input.dir,
     (slot, outcome) => input.onFailed?.(slot, outcome),
@@ -209,7 +224,9 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // Synchronous claim before any async launch: check and claim stay adjacent
   // with no await between, so concurrent cascades cannot double-claim.
   const claimReserve = (logical: string): void => {
-    if (reserveOwner === logical) return;
+    if (reserveOwner === logical) {
+      return;
+    }
     reserveOwner = logical;
     patchState({ reserveUsedBy: logical });
   };
@@ -220,13 +237,17 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // round that never needed one. It never affects routing: only nativeFirst
   // selects the wave path.
   const markNativeLaunched = (): void => {
-    if (state.nativeLaunched === true) return;
+    if (state.nativeLaunched === true) {
+      return;
+    }
     patchState({ nativeLaunched: true });
   };
   const finishCliWave = (): void => {
     state = { ...readState(input.dir), cliWaveDone: true };
     // Preserve reserveUsedBy from in-memory owner.
-    if (reserveOwner !== undefined) state.reserveUsedBy = reserveOwner;
+    if (reserveOwner !== undefined) {
+      state.reserveUsedBy = reserveOwner;
+    }
     writeState(input.dir, state);
   };
   const native = nativeVoice(input, {
@@ -242,7 +263,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
     ownerOfReserve: () => reserveOwner,
     voiceCLI: runCliVoice,
   });
-  if (useNativeWave)
+  if (useNativeWave) {
     return runNativeWave(input, {
       targets,
       nativeFirstProviders,
@@ -255,6 +276,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       patchState,
       finishCliWave,
     });
+  }
   const {
     baseTextOf,
     createNativeOnly,
@@ -273,7 +295,7 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // CLI-only path: the roster has no native-first target. Keeps today's immediate
   // CLI with persistent reserve; reserve substitutes stay here too (no wave is
   // advertised for them) and are consumed via their physical route.
-  const savedBlocked = new Map<string, BlockedAttempt[]>();
+  const savedBlocked = new Map<string, Array<BlockedAttempt>>();
   const savedOutcomes = new Map<string, SlotOutcome>();
   const matchedReportAttempts = new Set<string>();
   const prepassDone = new Set<string>();
@@ -282,12 +304,12 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // marker precedes its CLI inside fallbackToCli, so batching changes
   // timing but not durable transition ordering. Reserve claims stay
   // synchronous claimReserve calls before any launch.
-  const deferredFallbacks: Promise<void>[] = [];
+  const deferredFallbacks: Array<Promise<void>> = [];
   const deferFallback = (
     slot: RosterSlot,
     native: Extract<SlotOutcome, { state: 'native' }>,
     reason: string,
-    extra?: BlockedAttempt[],
+    extra?: Array<BlockedAttempt>,
   ): void => {
     deferredFallbacks.push(
       (async () => {
@@ -299,8 +321,10 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   };
   for (const slot of targets) {
     const saved = readSaved(slot.slot);
-    if (saved?.blocked?.length) savedBlocked.set(slot.slot, saved.blocked);
-    const nativeSaved = saved?.state === 'native' ? (saved as Extract<SlotOutcome, { state: 'native' }>) : undefined;
+    if (saved?.blocked?.length) {
+      savedBlocked.set(slot.slot, saved.blocked);
+    }
+    const nativeSaved = saved?.state === 'native' ? saved : undefined;
     // Same physical-route gate as the wave and consume paths: a missing physical fails closed instead of consuming under saved provider.
     // Route validity follows the current providers and opt-outs: a saved
     // native whose physical provider is still native-first consumes here, so
@@ -431,14 +455,16 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
   // Report unmatched attempts as ignored. Matched reports were consumed above,
   // even when the saved file no longer holds the native attempt.
   for (const report of nativeFailures) {
-    if (matchedReportAttempts.has(report.attempt)) continue;
+    if (matchedReportAttempts.has(report.attempt)) {
+      continue;
+    }
     const matched = targets.some((slot) => {
       const saved = readSaved(slot.slot);
-      return (
-        saved?.state === 'native' && (saved as Extract<SlotOutcome, { state: 'native' }>).attempt === report.attempt
-      );
+      return saved?.state === 'native' && saved.attempt === report.attempt;
     });
-    if (!matched) input.onIgnoredReport?.(report.attempt);
+    if (!matched) {
+      input.onIgnoredReport?.(report.attempt);
+    }
   }
   const results = await Promise.allSettled(
     targets.map(async (slot) => {
@@ -455,13 +481,14 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
       // was already saved and returned above via prepassDone.
       if (slot.native) {
         const created = createNativeOnly(slot);
-        const withBlocked = savedBlocked.get(slot.slot)?.length
-          ? ({ ...created, blocked: savedBlocked.get(slot.slot) } as SlotOutcome)
-          : (created as SlotOutcome);
+        const blockedBefore = savedBlocked.get(slot.slot);
+        const withBlocked = blockedBefore?.length ? { ...created, blocked: blockedBefore } : created;
         if (withBlocked.state === 'native') {
           try {
             fs.appendFileSync(withBlocked.promptPath, '');
-          } catch {}
+          } catch {
+            // The prompt already exists; this append only touches it.
+          }
         }
         // Native-only keeps its prompt: createNativeOnly already appended.
         atomic(fileOfLogical(slot.slot), withBlocked);
@@ -483,31 +510,30 @@ export async function fanOut(input: FanOutInput, deps: CliDeps): Promise<SlotOut
             const blockedReserve = mergeBlocked(savedBlocked.get(slot.slot), launched.blocked);
             return blockedReserve.length ? { ...launched, blocked: blockedReserve } : launched;
           }
-          if (launched) outcome = launched;
+          if (launched) {
+            outcome = launched;
+          }
         }
       }
       const blocked = mergeBlocked(savedBlocked.get(slot.slot), outcome.blocked);
-      if (blocked.length) outcome = { ...outcome, blocked };
+      if (blocked.length) {
+        outcome = { ...outcome, blocked };
+      }
       return saveLogical(slot, outcome);
     }),
   );
   throwRejected(results);
-  return results.map((result) => (result as PromiseFulfilledResult<SlotOutcome>).value);
+  return results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
 }
 
 // Shared completeness for every caller: a launchable native returns at once
 // with matched orphan markers saved and every unconsumed ignore forwarded;
 // with no launchable the deferred wave runs once and retries ignores there.
-export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise<SlotOutcome[]> {
-  const uniq = (list: string[], attempt: string): void => {
-    if (!list.includes(attempt)) list.push(attempt);
-  };
-  const firstIgnored: string[] = [];
+export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise<Array<SlotOutcome>> {
+  const firstIgnored: Array<string> = [];
   const first = await fanOut({ ...input, onIgnoredReport: (attempt) => uniq(firstIgnored, attempt) }, deps);
   const have = new Set(first.map((outcome) => outcome.slot));
-  const rostered = Array.isArray(input.slots)
-    ? (input.slots as readonly RosterSlot[])
-    : [...(input.slots as Roster).targets, ...(input.slots as Roster).reserves];
+  const rostered = slotList(input.slots);
   const targeted = new Set(rostered.filter((slot) => !slot.reserve).map((slot) => slot.slot));
   const extra = savedOrphanTargets(input.dir).filter((slot) => !have.has(slot.slot) && !targeted.has(slot.slot));
   const launchable = first.filter(
@@ -521,26 +547,30 @@ export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise
     // other native replies stay unread: only pre-marked orphans run, through a
     // call that lists just them, so no other reply is read or consumed.
     const consumed = new Set<string>();
-    const marked: RosterSlot[] = [];
+    const marked: Array<RosterSlot> = [];
     for (const orphan of extra) {
       let saved: SlotOutcome | undefined;
       try {
         saved = normalizeNative(
-          JSON.parse(fs.readFileSync(path.join(input.dir, 'slots', orphan.slot + '.json'), 'utf8')) as SlotOutcome,
+          parseSavedOutcome(fs.readFileSync(path.join(input.dir, 'slots', orphan.slot + '.json'), 'utf8')),
         );
       } catch {
         continue;
       }
-      if (saved?.state !== 'native') continue;
+      if (saved?.state !== 'native') {
+        continue;
+      }
       if ((saved as { cliFallback?: true }).cliFallback) {
         marked.push(orphan);
         continue;
       }
-      const native = saved as Extract<SlotOutcome, { state: 'native' }>;
+      const native = saved;
       const report = (input.nativeFailures ?? []).find(
         (entry) => entry.attempt === native.attempt && firstIgnored.includes(entry.attempt),
       );
-      if (!report) continue;
+      if (!report) {
+        continue;
+      }
       persistDeferredMarker(
         path.join(input.dir, 'slots', orphan.slot + '.json'),
         native,
@@ -549,7 +579,11 @@ export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise
       );
       consumed.add(report.attempt);
     }
-    for (const attempt of firstIgnored) if (!consumed.has(attempt)) input.onIgnoredReport?.(attempt);
+    for (const attempt of firstIgnored) {
+      if (!consumed.has(attempt)) {
+        input.onIgnoredReport?.(attempt);
+      }
+    }
     if (marked.length) {
       const resumed = await fanOut({ ...input, slots: marked, nativeFailures: [] }, deps);
       return [...first, ...resumed];
@@ -557,18 +591,22 @@ export async function fanOutComplete(input: FanOutInput, deps: CliDeps): Promise
     return first;
   }
   if (!extra.length && !rostered.some((slot) => !slot.reserve && !have.has(slot.slot))) {
-    for (const attempt of firstIgnored) input.onIgnoredReport?.(attempt);
+    for (const attempt of firstIgnored) {
+      input.onIgnoredReport?.(attempt);
+    }
     return first;
   }
-  const slots = Array.isArray(input.slots)
-    ? [...(input.slots as readonly RosterSlot[]), ...extra]
-    : { ...(input.slots as Roster), targets: [...(input.slots as Roster).targets, ...extra] };
+  const slots = isSlotList(input.slots)
+    ? [...input.slots, ...extra]
+    : { ...input.slots, targets: [...input.slots.targets, ...extra] };
   const retry = (input.nativeFailures ?? []).filter((report) => firstIgnored.includes(report.attempt));
-  const secondIgnored: string[] = [];
+  const secondIgnored: Array<string> = [];
   const second = await fanOut(
     { ...input, slots, nativeFailures: retry, onIgnoredReport: (attempt) => uniq(secondIgnored, attempt) },
     deps,
   );
-  for (const attempt of secondIgnored) input.onIgnoredReport?.(attempt);
+  for (const attempt of secondIgnored) {
+    input.onIgnoredReport?.(attempt);
+  }
   return second;
 }

@@ -1,46 +1,19 @@
+import { useMemoryAtomicWrite } from './helpers/session.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
-import { governedPlanText } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
-import { governedDesignText } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
+import { CLEAN, CONTEXT_MAP, fixture } from '../../helpers/review-fixture.ts';
+import { anything, listOf, narrow, readJson, shape, text } from './helpers/json.ts';
 
 // SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
-type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
-const PLAN_REVIEW = 'plan-work.plan';
-const ceilingId = (review: string, ceiling: number) => 'ceiling:' + review + ':' + ceiling;
-const addRecord = (f: ReviewFixture, record: object) => appendRecord(f.session, record, f.deps);
-const openCeiling = (f: ReviewFixture, review: string, ceiling: number) =>
-  addRecord(f, {
-    kind: 'escalation',
-    by: 'tool',
-    key: ceilingId(review, ceiling),
-    data: { id: ceilingId(review, ceiling), state: 'open', summary: 'ceiling ' + ceiling + ' reached' },
-  });
-const resolveCeiling = (
-  f: ReviewFixture,
-  review: string,
-  ceiling: number,
-  summary: string,
-  options: { by?: string; quote?: string; key?: string } = {},
-) =>
-  addRecord(f, {
-    kind: 'escalation',
-    by: options.by ?? 'user',
-    quote: options.quote ?? 'User decision',
-    key: options.key ?? ceilingId(review, ceiling) + ':resolved',
-    data: { id: ceilingId(review, ceiling), state: 'resolved', summary },
-  });
 
 test('plan and design review rounds update the bound findings section', async () => {
   const f = await fixture();
-  const writeAtomic = nodeLinkFs.writeAtomic;
-  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
+  const restoreWrite = useMemoryAtomicWrite();
   try {
     const design = f.artifact(
       'strategy.design.md',
@@ -54,19 +27,23 @@ test('plan and design review rounds update the bound findings section', async ()
     ] as const) {
       const first = await f.call(kind, target);
       assert.equal(first.exit, 0, JSON.stringify(first));
-      assert.equal(first.value.findingsSection, 'updated', JSON.stringify(first.value));
+      assert.equal(
+        narrow(first.value, shape({ findingsSection: text })).findingsSection,
+        'updated',
+        JSON.stringify(first.value),
+      );
       assert.match(fs.readFileSync(target, 'utf8'), new RegExp(`Round 1 \\(${review}\\): 1 findings`));
 
       fs.appendFileSync(target, '\n## Follow-up\nChanged for round two.\n');
       const second = await f.call(kind, target);
       assert.equal(second.exit, 0, JSON.stringify(second));
-      assert.equal(second.value.findingsSection, 'updated');
+      assert.equal(narrow(second.value, shape({ findingsSection: text })).findingsSection, 'updated');
       const source = fs.readFileSync(target, 'utf8');
       assert.match(source, new RegExp(`Round 1 \\(${review}\\): 1 findings`));
       assert.match(source, new RegExp(`Round 2 \\(${review}\\): 1 findings`));
     }
   } finally {
-    nodeLinkFs.writeAtomic = writeAtomic;
+    restoreWrite();
     f.cleanup();
   }
 });
@@ -78,17 +55,17 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     f.config(true);
     f.deps.liveness = {};
     f.deps.orchestrator = { platform: 'codex', model: 'native' } as typeof f.deps.orchestrator;
-    const calls: { argv: string[]; env: NodeJS.ProcessEnv | undefined }[] = [];
+    const calls: Array<{ argv: Array<string>; env: NodeJS.ProcessEnv | undefined }> = [];
     let tree = 'tree-one',
       feature = 'feature-id',
       missing = false,
       unrelated = false,
-      heads: string[] = [],
+      heads: Array<string> = [],
       head = 'head-id';
     f.deps.run = async (argv, options) => {
       calls.push({ argv, env: options.env });
       const op = argv[1];
-      if (op === 'rev-parse')
+      if (op === 'rev-parse') {
         return {
           exit: missing || argv.at(-1) === 'T1^{commit}' ? 1 : 0,
           stdout:
@@ -99,7 +76,10 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
                 : 'main-id',
           stderr: 'unknown revision',
         };
-      if (op === 'merge-base') return { exit: unrelated ? 1 : 0, stdout: 'ancestor-id', stderr: 'no common ancestor' };
+      }
+      if (op === 'merge-base') {
+        return { exit: unrelated ? 1 : 0, stdout: 'ancestor-id', stderr: 'no common ancestor' };
+      }
       return {
         exit: 0,
         stdout:
@@ -132,10 +112,13 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     const finish = async (result: Awaited<ReturnType<typeof call>>, kind: string, target: string, spec?: string) => {
       assert.equal(result.exit, 4);
       assert.equal(result.output.reason, 'native-pending');
-      for (const slot of result.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+      for (const slot of narrow(result.value, shape({ pending: listOf(shape({ replyPath: text })) })).pending) {
+        fs.writeFileSync(slot.replyPath, CLEAN);
+      }
       const done = await call(kind, target, spec);
       assert.equal(done.exit, 0, JSON.stringify(done));
-      assert.deepEqual(JSON.parse(fs.readFileSync(done.value.path, 'utf8')).findings, []);
+      const donePath = narrow(done.value, shape({ path: text })).path;
+      assert.deepEqual(readJson(donePath, shape({ findings: listOf(anything) })).findings, []);
       return done;
     };
     const design = f.artifact('strategy.design.md', '# Strategy\n## Boundaries\nA boundary.\n');
@@ -184,8 +167,9 @@ test('standalone review targets accept spec overrides and stable Git snapshots',
     head = 'moved-head';
     assert.equal((await call('code', 'worktree')).output.reason, 'target-moved');
     head = 'head-id';
-    for (const target of ['feat/x', 'feat-x', 'main..feature', 'main'])
+    for (const target of ['feat/x', 'feat-x', 'main..feature', 'main']) {
       assert.equal((await call('code', target)).output.reason, 'native-pending');
+    }
     feature = 'moved-feature';
     assert.equal((await call('code', 'main..feature')).output.reason, 'native-pending');
     const rangeDir = fs
@@ -268,12 +252,16 @@ test('standalone Git reviews survive invalid or missing bound plans', async () =
       stderr: '',
     });
     for (const state of ['invalid', 'missing']) {
-      if (state === 'invalid') fs.writeFileSync(f.plan, '# Broken plan\n');
-      else fs.unlinkSync(f.plan);
+      if (state === 'invalid') {
+        fs.writeFileSync(f.plan, '# Broken plan\n');
+      } else {
+        fs.unlinkSync(f.plan);
+      }
       for (const target of ['worktree', 'main..feature', 'main']) {
         const result = await f.call('code', target);
         assert.equal(result.exit, 0, state + ' ' + target + ' ' + result.output.summary);
-        assert.deepEqual(JSON.parse(fs.readFileSync(result.value.path, 'utf8')).findings, []);
+        const resultPath = narrow(result.value, shape({ path: text })).path;
+        assert.deepEqual(readJson(resultPath, shape({ findings: listOf(anything) })).findings, []);
       }
     }
   } finally {
@@ -375,7 +363,7 @@ test('review native-pending summary lists distinct summaryLaunch items within 10
       f.deps,
     );
     const output = f.output();
-    const value = JSON.parse(fs.readFileSync(output.path!, 'utf8')) as { pending: unknown[] };
+    const value = readJson(output.path!, shape({ pending: listOf(anything) }));
     assert.equal(exit, 4);
     assert.equal(output.reason, 'native-pending');
     assert.equal(value.pending.length, 7);

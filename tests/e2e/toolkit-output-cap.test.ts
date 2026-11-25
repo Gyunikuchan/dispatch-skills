@@ -6,6 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { describe, test } from 'node:test';
 import { stripGeneratedMarkers } from '../../skills/dispatch/scripts/toolkit/contracts.ts';
 import { toolkitRepo, planSource } from './helpers/toolkit-repo.ts';
+import { isRecord } from '../../skills/dispatch/scripts/lib/config.ts';
+import { arrayOf, isNumber, isString, maybe, narrow, objectWith, text } from './helpers/json.ts';
 
 describe('summary byte cap', () => {
   test('preserves all conflict paths exceeding the summary cap in the result file', async () => {
@@ -21,8 +23,9 @@ describe('summary byte cap', () => {
       await f.level();
       const created = await f.run(['worktree', 'create', 'T1']);
       assert.equal(created.exit, 0, JSON.stringify(created));
+      const { path: wtPath } = narrow(created.value, objectWith({ path: isString }));
       for (const p of paths) {
-        fs.writeFileSync(path.resolve(f.session, created.value.path, p), 'writer\n');
+        fs.writeFileSync(path.resolve(f.session, wtPath, p), 'writer\n');
         fs.writeFileSync(path.join(f.integration, p), 'integration\n');
       }
       assert.equal((await f.run(['worktree', 'submit', 'T1'])).exit, 0);
@@ -30,7 +33,7 @@ describe('summary byte cap', () => {
       const result = await f.concurrent(['worktree', 'integrate', 'T1']);
       assert.equal(result.exit, 0);
       assert.equal(result.output.reason, 'conflict');
-      assert.deepEqual([...result.value.paths].sort(), paths.sort());
+      assert.deepEqual([...narrow(result.value, objectWith({ paths: arrayOf(isString) })).paths].sort(), paths.sort());
     } finally {
       f.cleanup();
     }
@@ -53,9 +56,11 @@ describe('summary byte cap', () => {
         .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
         .trim()
         .split('\n')
-        .map((line) => JSON.parse(line));
+        .map((line) => narrow(JSON.parse(line), objectWith({ seq: isNumber, data: maybe(isRecord) })));
       assert.deepEqual(
-        results.map((r) => rows.find((row) => row.seq === r.value.seq).data.text),
+        results.map(
+          (r) => rows.find((row) => row.seq === narrow(r.value, objectWith({ seq: isNumber })).seq)?.data?.['text'],
+        ),
         ['first', 'second'],
       );
     } finally {
@@ -81,9 +86,14 @@ describe('summary byte cap', () => {
       const r = await f.concurrent(['check', 'run']);
       assert.equal(r.exit, 0, JSON.stringify(r));
       assert.equal(r.output.ok, true, JSON.stringify(r));
-      assert.equal(r.value.checks.length, 6);
-      for (const check of r.value.checks.filter((c: any) => c.criterion !== 'contract'))
-        assert.ok(fs.statSync(check.logPath).size >= 200000);
+      const { checks } = narrow(
+        r.value,
+        objectWith({ checks: arrayOf(objectWith({ criterion: isString, logPath: maybe(isString) })) }),
+      );
+      assert.equal(checks.length, 6);
+      for (const check of checks.filter((c) => c.criterion !== 'contract')) {
+        assert.ok(fs.statSync(text(check.logPath)).size >= 200_000);
+      }
     } finally {
       f.cleanup();
     }
@@ -95,12 +105,14 @@ describe('help command', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'help-'));
     const entry = path.resolve('skills/dispatch/scripts/dispatch.ts');
     const env = { ...process.env };
-    for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
+    for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT']) {
+      delete env[key];
+    }
     try {
       const ok = spawnSync(process.execPath, [entry, 'help', 'lint', 'run'], { cwd: dir, env, encoding: 'utf8' });
       const text = stripGeneratedMarkers(
         fs.readFileSync(path.resolve('skills/dispatch/references/toolkit.md'), 'utf8'),
-      ).replace(/\r\n/g, '\n');
+      ).replaceAll('\r\n', '\n');
       const expected = ('### lint run\n' + text.split('\n### lint run\n')[1]!.split(/\n#{1,3} /)[0]!).trimEnd() + '\n';
       assert.equal(ok.status, 0, ok.stderr);
       assert.equal(ok.stdout, expected);
@@ -122,7 +134,9 @@ describe('help command', () => {
         fs.cpSync(path.resolve('skills/dispatch'), path.join(dir, 'dispatch'), { recursive: true });
         const entry = path.join(dir, 'dispatch', 'scripts', 'dispatch.ts');
         const env = { ...process.env };
-        for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT']) delete env[key];
+        for (const key of ['NODE_OPTIONS', 'NODE_TEST_CONTEXT']) {
+          delete env[key];
+        }
         const result = spawnSync(process.execPath, [entry, 'help', 'call', 'table'], {
           cwd: dir,
           env,

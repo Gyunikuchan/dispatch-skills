@@ -4,28 +4,21 @@ import type { HandlerContext, HandlerResult } from './cli.ts';
 import { currentSnapshot, foldLedger, gate, latest, withLedger } from './ledger.ts';
 import { parsePlan, selectTaskBrief } from './domain/plan.ts';
 import { structuralLines } from './domain/markdown-structure.ts';
-import { qualityCriteria, type QualityConsumer } from './domain/prompt.ts';
+import { qualityCriteria } from './domain/prompt.ts';
+import type { QualityConsumer } from './domain/prompt.ts';
 import { DEFAULT_MAP_BUDGET, DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
 import { checks } from './plan-view.ts';
 import { launches } from './writers.ts';
 import { capSummary, clipBytes, ToolError } from './output.ts';
 import { readJsonPayload } from './input.ts';
-import { loadConfig, validateConfig } from '../lib/config.ts';
+import { isRecord, loadConfig, validateConfig } from '../lib/config.ts';
+import { isLevel, isUtilityTable, isWriterTable, present, textValue } from './narrow.ts';
 import { launchLine, summaryLaunch } from '../lib/platform.ts';
-import {
-  normalizeProvider,
-  resolveLevel,
-  resolveSubagent,
-  resolveUtility,
-  type LevelMap,
-  type ResolvedSubagent,
-  type ResolvedUtility,
-  type SubagentEntry,
-  type UtilityEntry,
-} from '../policy/roster.ts';
+import { normalizeProvider, resolveLevel, resolveSubagent, resolveUtility } from '../policy/roster.ts';
+import type { ResolvedSubagent, ResolvedUtility } from '../policy/roster.ts';
 import type { Level } from './types.ts';
 
-type LaunchValues = { model: string[] | null; effort: string | null; launchAs: string | null };
+type LaunchValues = { model: Array<string> | null; effort: string | null; launchAs: string | null };
 
 const launchValues = (resolved: ResolvedSubagent | ResolvedUtility | undefined, normalized: string): LaunchValues =>
   resolved
@@ -45,9 +38,13 @@ export function briefSummary(
 ): string {
   let launch = host && values.model ? `${summaryLaunch(host, values.model, values.effort)}; ` : '';
   const absolute = `${prefix}: ${launch}${file} (${bytes} bytes)`;
-  if (!suffix) return capSummary(absolute);
+  if (!suffix) {
+    return capSummary(absolute);
+  }
   const { tail, shortPath } = suffix;
-  if (Buffer.byteLength(absolute + tail) <= 1024) return absolute + tail;
+  if (Buffer.byteLength(absolute + tail) <= 1024) {
+    return absolute + tail;
+  }
 
   const ending = `session-relative ${shortPath} (${bytes} bytes)${tail}`;
   const headBudget = 1024 - Buffer.byteLength(ending);
@@ -62,11 +59,16 @@ export function briefSummary(
 /** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 function writerLaunchValues(skillRoot: string, host: string | undefined, level: Level): LaunchValues {
   try {
-    if (!host) return { model: null, effort: null, launchAs: null };
+    if (!host) {
+      return { model: null, effort: null, launchAs: null };
+    }
     const normalized = normalizeProvider(host);
     const { config } = loadConfig(skillRoot);
-    if (validateConfig(config).length) return { model: null, effort: null, launchAs: null };
-    const writerTable = config['write-subagents'] as Record<string, LevelMap<SubagentEntry>> | undefined;
+    if (validateConfig(config).length) {
+      return { model: null, effort: null, launchAs: null };
+    }
+    const section = config['write-subagents'];
+    const writerTable = isWriterTable(section) ? section : undefined;
     const key = writerTable
       ? Object.keys(writerTable).find((candidate) => normalizeProvider(candidate) === normalized)
       : undefined;
@@ -80,10 +82,15 @@ function writerLaunchValues(skillRoot: string, host: string | undefined, level: 
 /** Explorer, test-cleanup and writer utility entry; null when the host or config does not resolve. */
 export function resolveHostUtility(skillRoot: string, host: string | undefined): ResolvedUtility | undefined {
   try {
-    if (!host) return undefined;
+    if (!host) {
+      return undefined;
+    }
     const { config } = loadConfig(skillRoot);
-    if (validateConfig(config).length) return undefined;
-    const utility = resolveUtility((config['utility-subagents'] ?? {}) as Record<string, UtilityEntry>);
+    if (validateConfig(config).length) {
+      return undefined;
+    }
+    const section = config['utility-subagents'];
+    const utility = resolveUtility(isUtilityTable(section) ? section : {});
     return utility[normalizeProvider(host)];
   } catch {
     return undefined;
@@ -138,13 +145,15 @@ const CAPTURE_BOOTSTRAP = [
   "try { stdoutFd=fs.openSync(stdoutPath,'w');stderrFd=fs.openSync(stderrPath,'w');try { result=spawnSync(data.command,{cwd:data.cwd,shell:true,stdio:['ignore',stdoutFd,stderrFd]}); } catch(error) { result={status:null,signal:null,error}; } }",
   'finally { try { if(stdoutFd!==undefined)fs.closeSync(stdoutFd); } finally { if(stderrFd!==undefined)fs.closeSync(stderrFd); } }',
   "const replay=(file,target)=>{const fd=fs.openSync(file,'r');try {const chunk=Buffer.alloc(65536);let size;while((size=fs.readSync(fd,chunk,0,chunk.length,null))>0){let offset=0;while(offset<size)offset+=fs.writeSync(target,chunk,offset,size-offset);}} finally {fs.closeSync(fd);}};",
-  "fs.writeFileSync(path.join(data.logDir,data.criterion+'.exit'),JSON.stringify({status:result.status??null,signal:result.signal??null,error:result.error?String(result.error.message??result.error):null})+'\\n');",
+  String.raw`fs.writeFileSync(path.join(data.logDir,data.criterion+'.exit'),JSON.stringify({status:result.status??null,signal:result.signal??null,error:result.error?String(result.error.message??result.error):null})+'\n');`,
   'replay(stdoutPath,1);replay(stderrPath,2);',
   'if(result.error)process.stderr.write(String(result.error.message??result.error));',
   'process.exitCode=result.status??1;',
 ].join('');
 
-const CAPTURE_SHELL_META = new Set('!#$&()*;<>?[]\\^{|}~%'.split('').concat(String.fromCharCode(96)));
+const CAPTURE_SHELL_META = new Set(String.raw`!#$&()*;<>?[]\^{|}~%`.split('').concat(String.fromCharCode(96)));
+// ASCII controls only (U+0000-U+001F, U+007F): `\p{Cc}` minus the C1 block.
+const ASCII_CONTROL = /(?![\u0080-\u009f])\p{Cc}/u;
 
 function safeCapturePath(value: string): boolean {
   if (
@@ -157,13 +166,14 @@ function safeCapturePath(value: string): boolean {
     value.startsWith('~') ||
     path.posix.normalize(value) !== value ||
     value.split('/').some((part) => !part || part === '.' || part === '..') ||
-    /[\x00-\x1f\x7f]/.test(value) ||
+    ASCII_CONTROL.test(value) ||
     value.includes('"') ||
     value.includes("'") ||
     value.includes(String.fromCharCode(96))
-  )
+  ) {
     return false;
-  return ![...value].some((character) => CAPTURE_SHELL_META.has(character));
+  }
+  return !Array.from(value).some((character) => CAPTURE_SHELL_META.has(character));
 }
 
 function quoteCapturePath(value: string): string {
@@ -171,7 +181,7 @@ function quoteCapturePath(value: string): string {
 }
 
 function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: string, redLogDir: string): string {
-  const lines: string[] = [];
+  const lines: Array<string> = [];
   const capturePath = path.join(redLogDir, 'capture.cjs');
   let written = false;
   for (const criterion of selected.criteria) {
@@ -181,8 +191,9 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
       criterion.evidence !== 'red' ||
       !criterion.red ||
       criterion.redException
-    )
+    ) {
       continue;
+    }
     const testFiles = [...new Set(criterion.tests)];
     const unsafe = testFiles.find((file) => !safeCapturePath(file));
     if (unsafe !== undefined) {
@@ -218,8 +229,9 @@ function renderRedCapture(selected: SelectedTaskBrief, task: string, worktree: s
       process.platform === 'win32' && /^[A-Za-z]:/.test(capturePath) ? capturePath.slice(2) : capturePath;
     const safe =
       path.isAbsolute(capturePath) &&
-      !/[\x00-\x1f\x7f"':]/.test(shellPath) &&
-      ![...shellPath].some(
+      !ASCII_CONTROL.test(shellPath) &&
+      !/["':]/.test(shellPath) &&
+      !Array.from(shellPath).some(
         (character) => !(process.platform === 'win32' && character === '\\') && CAPTURE_SHELL_META.has(character),
       );
     const wrapper = safe
@@ -245,21 +257,28 @@ function explorerText(skillRoot: string, platform: string | undefined): string {
 
 /** Shared `{{slot}}` substitution; an unknown slot name refuses instead of emitting raw braces. */
 export function fillSlots(label: string, text: string, slots: Record<string, string>): string {
-  return text.replace(/\{\{(\w+)\}\}/g, (_, name: string) => {
-    if (!Object.hasOwn(slots, name)) throw new Error(`Unknown ${label} brief slot ${name}`);
-    return slots[name]!;
+  return text.replaceAll(/\{\{(\w+)\}\}/g, (_, name: string) => {
+    if (!Object.hasOwn(slots, name)) {
+      throw new Error(`Unknown ${label} brief slot ${name}`);
+    }
+    return String(slots[name]);
   });
 }
 
 export function assertFilled(label: string, text: string): void {
-  if (/\{\{\w+\}\}/.test(text)) throw new ToolError(2, 'fault', `Unfilled ${label} brief placeholder`);
-  if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text))
+  if (/\{\{\w+\}\}/.test(text)) {
+    throw new ToolError(2, 'fault', `Unfilled ${label} brief placeholder`);
+  }
+  if (/\[[^\]]+\]\((?![a-zA-Z][a-zA-Z0-9+.-]*:)(?![#<])[^)]+\)/.test(text)) {
     throw new ToolError(2, 'fault', `Rendered ${label} brief contains a relative link`);
+  }
 }
 
 export function nextBriefPath(directory: string, base: string): string {
   let index = 1;
-  while (fs.existsSync(path.join(directory, `${base}-${index}.md`))) index++;
+  while (fs.existsSync(path.join(directory, `${base}-${index}.md`))) {
+    index++;
+  }
   return path.join(directory, `${base}-${index}.md`);
 }
 
@@ -294,21 +313,23 @@ function publishUtilityBrief(
 /** Validates a parsed brief values object; an unknown, missing or blank value refuses before anything is written. */
 function validateValues<const Req extends string, const Opt extends string = never>(
   parsed: unknown,
-  required: readonly Req[],
-  optional: readonly Opt[] = [],
+  required: ReadonlyArray<Req>,
+  optional: ReadonlyArray<Opt> = [],
 ): Record<Req, string> & Partial<Record<Opt, string>> {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+  if (!isRecord(parsed)) {
     throw new ToolError(1, 'invalid-input', 'Values payload must hold a JSON object');
-  const record = parsed as Record<string, unknown>;
+  }
   const allowed = new Set<string>([...required, ...optional]);
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) throw new ToolError(1, 'invalid-input', 'Unknown value ' + key);
+  for (const key of Object.keys(parsed)) {
+    if (!allowed.has(key)) {
+      throw new ToolError(1, 'invalid-input', 'Unknown value ' + key);
+    }
   }
   const out: Record<string, string> = {};
   for (const key of [...required, ...optional]) {
-    const value = record[key];
+    const value = parsed[key];
     if (value === undefined) {
-      if ((required as readonly string[]).includes(key)) {
+      if ((required as ReadonlyArray<string>).includes(key)) {
         throw new ToolError(1, 'invalid-input', 'Missing value ' + key);
       }
       continue;
@@ -324,48 +345,65 @@ function validateValues<const Req extends string, const Opt extends string = nev
       throw new ToolError(1, 'invalid-input', 'Malformed value ' + key);
     }
   }
-  return out as Record<Req, string> & Partial<Record<Opt, string>>;
+  // The loop above refused every missing or malformed value; this only carries that proof into the type.
+  const isComplete = (values: typeof out): values is typeof out & Record<Req, string> & Partial<Record<Opt, string>> =>
+    required.every((key) => key in values);
+  if (!isComplete(out)) {
+    throw new ToolError(1, 'invalid-input', 'Missing value');
+  }
+  return out;
 }
 
 export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
-  const task = ctx.args[0]!;
+  const [task] = ctx.args;
+  if (ctx.args.length !== 1 || task === undefined) {
+    throw new ToolError(1, 'invalid-input', 'One task ID is required');
+  }
   const gated = await withLedger(ctx.session, 'brief render', ctx.deps, async (tx) => {
     const bind = latest(tx.fold, 'bind');
     const snapshot = currentSnapshot(ctx.manifest.repositoryRoot, bind);
     const decision = gate(tx.fold, snapshot.hashes);
-    if (!decision.allowed) throw new ToolError(4, decision.reason!, decision.reason!);
+    if (!decision.allowed) {
+      throw new ToolError(4, decision.reason, decision.reason);
+    }
     const source = snapshot.bytes.plan;
-    if (!bind || source == null || snapshot.bytes.spec == null)
+    if (!bind || source === null || source === undefined || (snapshot.bytes.spec ?? null) === null) {
       throw new ToolError(4, 'lint-errors', 'Bound spec and plan must be readable');
+    }
     const parsed = parsePlan(source);
-    if (!parsed.ok) throw new ToolError(4, 'lint-errors', JSON.stringify(parsed.defects));
+    if (!parsed.ok) {
+      throw new ToolError(4, 'lint-errors', JSON.stringify(parsed.defects));
+    }
     const selected = selectTaskBrief(parsed.plan, task);
-    if (!selected) throw new ToolError(1, 'invalid-input', 'Unknown task ' + task);
+    if (!selected) {
+      throw new ToolError(1, 'invalid-input', 'Unknown task ' + task);
+    }
     const launch = launches(tx.fold, task).at(-1);
-    if (!launch || launch.finished || launch.abandoned || launch.superseded)
+    if (!launch || launch.finished || launch.abandoned || launch.superseded) {
       throw new ToolError(4, 'no-open-launch', 'No open launch for ' + task);
+    }
     await ctx.deps.hook?.('brief:after-gate');
-    const level = (latest(tx.fold, 'level')?.data['level'] ?? 'medium') as Level;
+    const recorded: unknown = latest(tx.fold, 'level')?.data['level'];
+    const level = isLevel(recorded) ? recorded : 'medium';
     return { bind, snapshot, launch, source, parsed, selected, level, postFold: tx.fold };
   });
   const { bind, snapshot, launch, source, parsed, selected, level, postFold } = gated;
   const { section, criteria } = taskParts(source, selected);
-  const worktree = path.resolve(ctx.session, launch.record.data['path']);
+  const worktree = path.resolve(ctx.session, textValue(launch.record.data['path']));
   const reportPath = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.report.md');
   const redLogDir = path.join(ctx.session, '.state', 'briefs', task + '-' + launch.launch + '.red');
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
   const quality = briefQuality(ctx.deps.skillRoot, 'writer');
-  const slots: Record<string, string> = {
+  const slots = {
     task,
     worktree,
-    specPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['spec']),
-    specHash: snapshot.hashes.spec!,
-    planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']),
-    planHash: snapshot.hashes.plan!,
+    specPath: path.resolve(ctx.manifest.repositoryRoot, textValue(bind.data['spec'])),
+    specHash: textValue(snapshot.hashes.spec),
+    planPath: path.resolve(ctx.manifest.repositoryRoot, textValue(bind.data['plan'])),
+    planHash: textValue(snapshot.hashes.plan),
     design: bind.data['design']
       ? 'Governing design: `' +
-        path.resolve(ctx.manifest.repositoryRoot, bind.data['design']) +
+        path.resolve(ctx.manifest.repositoryRoot, textValue(bind.data['design'])) +
         '` (governed hash ' +
         snapshot.hashes.design +
         ').'
@@ -378,8 +416,10 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
     reportPath,
     redLogDir,
     redCapture: renderRedCapture(selected, task, worktree, redLogDir),
-    contracts: checks(parsed.plan)
-      .find((check) => check.criterion === 'contract')!
+    contracts: present(
+      checks(parsed.plan).find((check) => check.criterion === 'contract'),
+      'contract checks',
+    )
       .commands.map((command) => '- `' + command + '`')
       .join('\n'),
   };
@@ -407,8 +447,11 @@ export async function renderBrief(ctx: HandlerContext): Promise<HandlerResult> {
 function selectExplorerKind(text: string, kind: 'map' | 'research'): string {
   const other = kind === 'map' ? 'research' : 'map';
   return text
-    .replace(new RegExp(`<!--\\s*kind:\\s*${other}\\s*-->[\\s\\S]*?<!--\\s*/kind:\\s*${other}\\s*-->\\r?\\n?`, 'g'), '')
-    .replace(new RegExp(`<!--\\s*/?kind:\\s*${kind}\\s*-->\\r?\\n?`, 'g'), '');
+    .replaceAll(
+      new RegExp(`<!--\\s*kind:\\s*${other}\\s*-->[\\s\\S]*?<!--\\s*/kind:\\s*${other}\\s*-->\\r?\\n?`, 'g'),
+      '',
+    )
+    .replaceAll(new RegExp(`<!--\\s*/?kind:\\s*${kind}\\s*-->\\r?\\n?`, 'g'), '');
 }
 
 const EXPLORER_REQUIRED_VALUES = ['objective', 'questions'] as const;
@@ -438,16 +481,16 @@ export async function renderExplorerBrief(ctx: HandlerContext): Promise<HandlerR
   const templateText = fs.readFileSync(path.join(templates, 'explorer-brief.md'), 'utf8');
   const kindTemplate = selectExplorerKind(templateText, kind);
 
-  const slots: Record<string, string> = {
+  const slots = {
     objective: values.objective,
     questions: values.questions,
     limit,
     splitAt,
     nestedLaunch,
     quality: briefQuality(ctx.deps.skillRoot, 'explorer'),
-    ...(kind === 'map'
+    ...(values.outputPath
       ? {
-          outputPath: values.outputPath!,
+          outputPath: values.outputPath,
           cliPath: path.join(ctx.deps.skillRoot, 'scripts', 'dispatch.ts'),
           session: ctx.session,
           mapBudget: DEFAULT_MAP_BUDGET.toLocaleString('en-US'),
@@ -478,10 +521,11 @@ export async function renderTestCleanupBrief(ctx: HandlerContext): Promise<Handl
   );
   const fold = foldLedger(ctx.session);
   const bind = latest(fold, 'bind');
-  if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim())
+  if (!bind || typeof bind.data['plan'] !== 'string' || !bind.data['plan'].trim()) {
     throw new ToolError(4, 'lint-errors', 'No bound plan');
+  }
   const templates = path.join(ctx.deps.skillRoot, 'references', 'templates');
-  const slots: Record<string, string> = {
+  const slots = {
     base: values.base,
     integrationPath: values.integrationPath,
     planPath: path.resolve(ctx.manifest.repositoryRoot, bind.data['plan']),

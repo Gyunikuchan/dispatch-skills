@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { toolingRoot } from './check-terms.ts';
 import { loadConfig, validateConfig } from '../skills/dispatch/scripts/lib/config.ts';
-export function validateConfigs(root: string): string[] {
+export function validateConfigs(root: string): Array<string> {
   const skill = path.resolve(root, 'skills/dispatch'),
     file = path.join(skill, 'config.sample.jsonc');
   try {

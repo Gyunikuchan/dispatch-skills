@@ -2,19 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
-import { governedPlanText } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
-import { governedDesignText } from '../../../skills/dispatch/scripts/toolkit/domain/design.ts';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
+import { fixture, report } from '../../helpers/review-fixture.ts';
+import { anything, flag, jsonObject, listOf, narrow, numeric, optional, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 // SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
 type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
 const PLAN_REVIEW = 'plan-work.plan';
 const ceilingId = (review: string, ceiling: number) => 'ceiling:' + review + ':' + ceiling;
-const addRecord = (f: ReviewFixture, record: object) => appendRecord(f.session, record, f.deps);
+const addRecord = (f: ReviewFixture, record: JsonObject) => appendRecord(f.session, record, f.deps);
 const openCeiling = (f: ReviewFixture, review: string, ceiling: number) =>
   addRecord(f, {
     kind: 'escalation',
@@ -43,7 +40,7 @@ test('rejected MUST remains pending beyond cap and requires source-specific expl
     let phase = 0;
     f.deps.delegate = async (_provider, request) => {
       const prompt = fs.readFileSync(request.promptPath, 'utf8');
-      if (!phase)
+      if (!phase) {
         return {
           outcome: {
             status: 'ok',
@@ -53,6 +50,7 @@ test('rejected MUST remains pending beyond cap and requires source-specific expl
           },
           invocations: [],
         };
+      }
       const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map((m) => m[1]!);
       assert.doesNotMatch(prompt, /### Settled in earlier rounds/);
       assert.equal(ids.length, 1);
@@ -87,7 +85,10 @@ test('rejected MUST remains pending beyond cap and requires source-specific expl
     });
     phase = 1;
     assert.equal((await f.call()).exit, 0);
-    assert.equal(f.read(2, 'findings.json').confirmations.length, 2);
+    assert.equal(
+      narrow(f.read(2, 'findings.json'), shape({ confirmations: listOf(anything) })).confirmations.length,
+      2,
+    );
     assert.equal((await f.call()).output.reason, 'round-cap');
   } finally {
     f.cleanup();
@@ -103,12 +104,14 @@ test('confirmed rejection survives ordinary target edits and a changed ruling ne
     fs.writeFileSync(configFile, JSON.stringify(config));
     let phase = 0,
       expected = 0;
-    const ids: string[] = [];
+    const ids: Array<string> = [];
     f.deps.delegate = async (_provider, request) => {
       const assigned = [...fs.readFileSync(request.promptPath, 'utf8').matchAll(/Request ID: `([^`]+)`/g)].map(
         (m) => m[1]!,
       );
-      if (phase) assert.equal(assigned.length, expected);
+      if (phase) {
+        assert.equal(assigned.length, expected);
+      }
       ids.push(...assigned);
       return {
         outcome: {
@@ -177,9 +180,9 @@ test('tool-only MUST rejection assigns the saved configured reviewer and fails c
   try {
     await f.call();
     const file = path.join(f.directory, 'round-1/findings.json'),
-      saved = f.read(1, 'findings.json');
-    saved.findings[0].severity = 'MUST';
-    saved.findings[0].sources = ['tool'];
+      saved = narrow(f.read(1, 'findings.json'), shape({ findings: listOf(jsonObject) }));
+    const first = saved.findings[0]!;
+    saved.findings[0] = { ...first, severity: 'MUST', sources: ['tool'] };
     fs.writeFileSync(file, JSON.stringify(saved));
     await f.add('ruling', {
       subject: 'review:plan-work.plan:R1-F001',
@@ -210,13 +213,19 @@ test('tool-only MUST rejection assigns the saved configured reviewer and fails c
     };
     assert.equal((await f.call()).exit, 0);
     assert.equal(assigned, 1);
-    assert.deepEqual(f.read(2, 'round.json').requests[0].sourceSlots, [
-      f.read(1, 'round.json').roster.find((slot: any) => !slot.reserve).slot,
-    ]);
+    assert.deepEqual(
+      narrow(f.read(2, 'round.json'), shape({ requests: listOf(shape({ sourceSlots: listOf(text) })) })).requests[0]!
+        .sourceSlots,
+      [
+        narrow(
+          f.read(1, 'round.json'),
+          shape({ roster: listOf(shape({ reserve: optional(flag), slot: text })) }),
+        ).roster.find((slot) => !slot.reserve)!.slot,
+      ],
+    );
     const metadataFile = path.join(f.directory, 'round-1/round.json'),
-      metadata = f.read(1, 'round.json');
-    metadata.roster = [];
-    fs.writeFileSync(metadataFile, JSON.stringify(metadata));
+      metadata = narrow(f.read(1, 'round.json'), jsonObject);
+    fs.writeFileSync(metadataFile, JSON.stringify({ ...metadata, roster: [] }));
     assert.equal((await f.call()).output.reason, 'review-confirmation-required');
   } finally {
     f.cleanup();
@@ -296,13 +305,15 @@ test('unanswered source in past-cap rejection rounds escalate across edits and r
     f.deps.delegate = async (provider, request) => {
       launches++;
       const ids = [...fs.readFileSync(request.promptPath, 'utf8').matchAll(/Request ID: `([^`]+)`/g)].map((m) => m[1]!);
-      if (phase === 'finding')
+      if (phase === 'finding') {
         return {
           outcome: { status: 'ok', text: report(undefined, undefined, 'MUST'), resume: null, sessionId: null },
           invocations: [],
         };
-      if (ids.length && phase === 'missing' && provider === 'claude')
+      }
+      if (ids.length && phase === 'missing' && provider === 'claude') {
         return { outcome: { status: 'fail', cls: 'auth', detail: 'Source credentials unavailable' }, invocations: [] };
+      }
       return {
         outcome: {
           status: 'ok',
@@ -412,17 +423,21 @@ test('rejected MUST saved confirmation generation survives crashes and supersede
         };
       };
       f.deps.hook = (point) => {
-        if (point === 'review:after-pending') throw Error('crash');
+        if (point === 'review:after-pending') {
+          throw Error('crash');
+        }
       };
       assert.equal((await f.call()).exit, 2);
       delete f.deps.hook;
-      if (changed)
+      if (changed) {
         await f.add('ruling', {
           subject: 'review:plan-work.plan:R1-F001',
           ruling: 'rejected',
           rationale: 'New evidence for isolated writes',
         });
-      else await f.add('note', { text: 'Unrelated observation' });
+      } else {
+        await f.add('note', { text: 'Unrelated observation' });
+      }
       const before = launches;
       const result = await f.call();
       assert.equal(result.exit, changed ? 4 : 0);
@@ -431,8 +446,10 @@ test('rejected MUST saved confirmation generation survives crashes and supersede
         assert.equal(result.output.reason, 'target-moved');
         assert.equal((await f.call()).exit, 0);
         assert.ok(launches > before);
-        assert.equal(f.read(2, 'round.json').generation, 2);
-      } else assert.equal(f.read(2, 'round.json').generation, 1);
+        assert.equal(narrow(f.read(2, 'round.json'), shape({ generation: numeric })).generation, 2);
+      } else {
+        assert.equal(narrow(f.read(2, 'round.json'), shape({ generation: numeric })).generation, 1);
+      }
     } finally {
       f.cleanup();
     }

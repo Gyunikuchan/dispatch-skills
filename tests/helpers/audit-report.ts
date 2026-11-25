@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { mock } from 'node:test';
 import { tempDir } from './fake-ports.ts';
-// @ts-expect-error -- local .mjs helper is checked through its public commands
-import * as status from '../../.agents/skills/audit-dispatch-skills-fix/scripts/status.mjs';
+import {
+  cmdBatch,
+  cmdInit,
+  cmdList,
+  cmdProgress,
+  cmdSet,
+  cmdTriage,
+  loadReport,
+  parseFindings,
+} from '../../.agents/skills/audit-dispatch-skills-fix/scripts/status.mjs';
 
+export const status = { cmdBatch, cmdInit, cmdList, cmdProgress, cmdSet, cmdTriage, loadReport, parseFindings };
+type JsonValue = string | number | boolean | null | Array<JsonValue> | { [key: string]: JsonValue };
+type Payload = { [key: string]: JsonValue };
 export const SENTINEL = 'No defect findings.';
 export const finding = (id: string, severity = 'medium', state = '') =>
   [
@@ -51,20 +63,17 @@ export function report(defects = finding('A-1'), opportunities = '') {
   return { root, file };
 }
 export function captured(run: () => void) {
-  const out: string[] = [],
-    log = console.log,
-    error = console.error;
-  console.log = (...args: unknown[]) => {
+  const out: Array<string> = [];
+  const capture = (...args: Array<unknown>) => {
     out.push(args.join(' '));
   };
-  console.error = (...args: unknown[]) => {
-    out.push(args.join(' '));
-  };
+  const log = mock.method(console, 'log', capture);
+  const error = mock.method(console, 'error', capture);
   try {
     run();
   } finally {
-    console.log = log;
-    console.error = error;
+    log.mock.restore();
+    error.mock.restore();
   }
   return out.join('\n');
 }
@@ -73,7 +82,7 @@ function json(root: string, data: unknown) {
   fs.writeFileSync(file, JSON.stringify(data));
   return file;
 }
-const triage = (changes: Record<string, unknown> = {}) => ({
+const triage = (changes: Payload = {}) => ({
   ruling: 'accept',
   evidence: 'Current source confirms the defect.',
   impact: 'Retry loses diagnostics.',
@@ -85,10 +94,10 @@ const triage = (changes: Record<string, unknown> = {}) => ({
   verification: ['node --test focused.test.ts'],
   ...changes,
 });
-export function recordTriage(root: string, file: string, id: string, changes: Record<string, unknown> = {}) {
+export function recordTriage(root: string, file: string, id: string, changes: Payload = {}) {
   return captured(() => status.cmdTriage(root, file, ['triage', id, '--from', json(root, triage(changes))]));
 }
-export function recordProgress(root: string, file: string, ids: string, data: Record<string, unknown>) {
+export function recordProgress(root: string, file: string, ids: string, data: Payload) {
   return captured(() => status.cmdProgress(root, file, ['progress', ids, '--from', json(root, data)]));
 }
 export function artifact(root: string, name: string) {
@@ -100,5 +109,3 @@ export function unchanged(file: string, run: () => void, pattern: RegExp) {
   assert.throws(run, pattern);
   assert.equal(fs.readFileSync(file, 'utf8'), before);
 }
-
-export { status };

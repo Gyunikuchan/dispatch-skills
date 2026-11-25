@@ -2,6 +2,7 @@
 
 import { safeRelativePath } from './context.ts';
 import { EXECUTION_STATUS_HEADING, RESOLUTION_HEADING } from './document-lint.ts';
+import { defined } from './defined.ts';
 import { commentOpenOutsideCode, FENCE } from './markdown-structure.ts';
 
 export type CitationDefect = { code: 'broken-citation'; severity: 'defect'; line: number; message: string };
@@ -35,21 +36,23 @@ function lineCount(content: string): number {
 }
 
 function opensBacktickSpanOnLine(text: string, marker: string): boolean {
-  if (marker[0] !== '`') return false;
+  if (marker[0] !== '`') {
+    return false;
+  }
   const start = text.indexOf(marker);
   return start >= 0 && text.slice(start + marker.length).includes('`');
 }
 
 const stripHeadingPrefix = (heading: string): string => heading.replace(/^##\s+/, '').trim();
 
-function governedCitationLines(source: string, kind: 'plan' | 'design'): { line: number; text: string }[] {
+function governedCitationLines(source: string, kind: 'plan' | 'design'): Array<{ line: number; text: string }> {
   const excludedHeadings = new Set(
     kind === 'plan'
       ? [stripHeadingPrefix(RESOLUTION_HEADING)]
       : [stripHeadingPrefix(EXECUTION_STATUS_HEADING), stripHeadingPrefix(RESOLUTION_HEADING)],
   );
-  const out: { line: number; text: string }[] = [];
-  const stack: Container[] = [];
+  const out: Array<{ line: number; text: string }> = [];
+  const stack: Array<Container> = [];
   let fence: { char: '`' | '~'; length: number; containerDepth: number } | null = null;
   let inComment = false;
   let inExcluded = false;
@@ -61,23 +64,30 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
     for (const frame of stack) {
       if (frame.kind === 'quote') {
         const match = QUOTE_PREFIX.exec(rest);
-        if (!match) break;
+        if (!match) {
+          break;
+        }
         rest = rest.slice(match[0].length);
       } else if (rest.trim() === '') {
         rest = '';
       } else {
-        if (/^ */.exec(rest)![0].length < frame.indent) break;
+        if ((/^ */.exec(rest)?.[0].length ?? 0) < frame.indent) {
+          break;
+        }
         rest = rest.slice(frame.indent);
       }
       matched++;
     }
     stack.length = matched;
 
-    if (fence !== null && stack.length < fence.containerDepth) fence = null;
+    if (fence !== null && stack.length < fence.containerDepth) {
+      fence = null;
+    }
 
     if (fence !== null) {
       const closeMatch = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(rest);
-      if (closeMatch && closeMatch[1]![0] === fence.char && closeMatch[1]!.length >= fence.length) {
+      const closer = closeMatch?.[1];
+      if (closer?.[0] === fence.char && closer.length >= fence.length) {
         fence = null;
       }
       continue;
@@ -91,10 +101,10 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
           rest = rest.slice(quote[0].length);
           continue;
         }
-        const list = LIST_PREFIX.exec(rest);
-        if (list) {
-          stack.push({ kind: 'list', indent: list[1]!.length });
-          rest = rest.slice(list[1]!.length);
+        const listPrefix = LIST_PREFIX.exec(rest)?.[1];
+        if (listPrefix !== undefined) {
+          stack.push({ kind: 'list', indent: listPrefix.length });
+          rest = rest.slice(listPrefix.length);
           continue;
         }
         break;
@@ -102,7 +112,7 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
 
       const marker = FENCE.exec(rest)?.[1];
       if (marker && !opensBacktickSpanOnLine(rest, marker)) {
-        fence = { char: marker[0]! as '`' | '~', length: marker.length, containerDepth: stack.length };
+        fence = { char: marker.startsWith('`') ? '`' : '~', length: marker.length, containerDepth: stack.length };
         continue;
       }
     }
@@ -113,7 +123,6 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
       if (inComment) {
         const close = rest.indexOf('-->', cursor);
         if (close === -1) {
-          cursor = rest.length;
           break;
         }
         inComment = false;
@@ -132,9 +141,13 @@ function governedCitationLines(source: string, kind: 'plan' | 'design'): { line:
 
     if (!inComment && stack.length === 0) {
       const heading = /^## +(.+?)\s*$/.exec(text);
-      if (heading) inExcluded = excludedHeadings.has(heading[1]!.trim());
+      if (heading) {
+        inExcluded = excludedHeadings.has(defined(heading[1]).trim());
+      }
     }
-    if (!inExcluded && text) out.push({ line: lineNo, text });
+    if (!inExcluded && text) {
+      out.push({ line: lineNo, text });
+    }
   }
   return out;
 }
@@ -144,11 +157,14 @@ export function lintCitations(
   source: string,
   kind: 'plan' | 'design',
   readRepoFile: (relPath: string) => string | null,
-): CitationDefect[] {
-  const defects: CitationDefect[] = [];
+): Array<CitationDefect> {
+  const defects: Array<CitationDefect> = [];
   const fileCache = new Map<string, string | null>();
   const read = (relPath: string): string | null => {
-    if (fileCache.has(relPath)) return fileCache.get(relPath)!;
+    const cached = fileCache.get(relPath);
+    if (cached !== undefined) {
+      return cached;
+    }
     let content: string | null = null;
     try {
       content = readRepoFile(relPath);
@@ -161,10 +177,12 @@ export function lintCitations(
 
   for (const { line, text } of governedCitationLines(source, kind)) {
     for (const match of text.matchAll(/`([^`]+)`/g)) {
-      const token = match[1]!.trim();
+      const token = defined(match[1]).trim();
       const parsed = LINE_REF.exec(token);
-      if (!parsed) continue;
-      const prefix = parsed[1]!;
+      if (!parsed) {
+        continue;
+      }
+      const prefix = defined(parsed[1]);
       const start = Number(parsed[2]);
       const end = parsed[3] === undefined ? start : Number(parsed[3]);
 
@@ -174,24 +192,26 @@ export function lintCitations(
         IPV4.test(prefix) ||
         /^localhost$/i.test(prefix) ||
         (!prefix.includes('/') && HOSTNAME_TLD.test(prefix))
-      )
+      ) {
         continue;
+      }
 
       const safe = safeRelativePath(prefix);
       const existing = safe ? read(prefix) : null;
       if (existing === null) {
         if (/\s/.test(prefix)) {
           const tokens = prefix.trim().split(/\s+/);
-          const firstToken = tokens[0]!;
-          const lastToken = tokens.at(-1)!;
+          const firstToken = defined(tokens[0]);
+          const lastToken = defined(tokens.at(-1));
           if (
             /\s--?[A-Za-z]/.test(prefix) ||
             /^localhost$/i.test(lastToken) ||
             IPV4.test(lastToken) ||
             (!lastToken.includes('/') && HOSTNAME_TLD.test(lastToken)) ||
             !firstToken.includes('/')
-          )
+          ) {
             continue;
+          }
         } else if (!(prefix.includes('/') || DOTTED_EXT.test(prefix) || WELL_KNOWN_ROOT_FILES.has(prefix))) {
           continue;
         }

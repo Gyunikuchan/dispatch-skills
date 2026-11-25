@@ -49,14 +49,17 @@ export function parseLink(input: string): Link | null {
   } catch {
     return null;
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
 
   const host = url.hostname.toLowerCase();
   const segments = url.pathname.split('/').filter(Boolean);
 
   if (X_HOSTS.has(host)) {
-    if (segments.length >= 3 && segments[1] === 'status' && /^\d+$/.test(segments[2]!)) {
-      return { site: 'x', id: segments[2]! };
+    const [, route, id] = segments;
+    if (route === 'status' && id && /^\d+$/.test(id)) {
+      return { site: 'x', id };
     }
     return null;
   }
@@ -82,10 +85,18 @@ export function parseLink(input: string): Link | null {
 
 // SECTION: JSON and formatting helpers
 
-type JsonRecord = Record<string, unknown>;
+type JsonValue = string | number | boolean | null | Array<JsonValue> | JsonRecord;
+// A parsed JSON object; absent keys read as undefined.
+interface JsonRecord {
+  [key: string]: JsonValue | undefined;
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function asRecord(value: unknown): JsonRecord | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as JsonRecord) : null;
+  return isJsonRecord(value) ? value : null;
 }
 
 function asString(value: unknown): string | undefined {
@@ -93,10 +104,14 @@ function asString(value: unknown): string | undefined {
 }
 
 function asNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
   }
   return undefined;
 }
@@ -105,24 +120,29 @@ function formatCount(value: number | undefined): string {
   return value === undefined ? '0' : value.toLocaleString('en-US');
 }
 
+const pad = (n: number) => String(n).padStart(2, '0');
+
 function formatTimestamp(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
 
 // SECTION: X handler
 
-function collectMediaUrls(status: JsonRecord): string[] {
+function collectMediaUrls(status: JsonRecord): Array<string> {
   const media = asRecord(status['media']);
-  if (!media) return [];
-  const urls: string[] = [];
+  if (!media) {
+    return [];
+  }
+  const urls: Array<string> = [];
   const seen = new Set<string>();
   const addItems = (items: unknown) => {
-    if (!Array.isArray(items)) return;
+    if (!Array.isArray(items)) {
+      return;
+    }
     for (const item of items) {
       const rec = asRecord(item);
       const url = rec ? asString(rec['url']) : undefined;
@@ -151,7 +171,7 @@ async function handleX(id: string, deps: Deps): Promise<number> {
     return 1;
   }
 
-  let payload: JsonRecord | null = null;
+  let payload: JsonRecord | null;
   try {
     payload = asRecord(await response.json());
   } catch {
@@ -173,7 +193,7 @@ async function handleX(id: string, deps: Deps): Promise<number> {
   const rawText = asRecord(status['raw_text']);
   const text = asString(status['text']) ?? (rawText ? asString(rawText['text']) : undefined) ?? '';
 
-  const lines: string[] = [
+  const lines: Array<string> = [
     `# X post by ${authorName} (@${screenName})${createdAt ? ` · ${createdAt}` : ''}`,
     text,
     `Likes ${formatCount(asNumber(status['likes']))} · Reposts ${formatCount(asNumber(status['reposts']))} · Replies ${formatCount(asNumber(status['replies']))}${asNumber(status['views']) !== undefined ? ` · Views ${formatCount(asNumber(status['views']))}` : ''}`,
@@ -193,15 +213,21 @@ async function handleX(id: string, deps: Deps): Promise<number> {
 
   const thread = payload ? payload['thread'] : undefined;
   if (Array.isArray(thread)) {
-    const sameAuthorPosts: string[] = [];
+    const sameAuthorPosts: Array<string> = [];
     for (const entry of thread) {
       const post = asRecord(entry);
-      if (!post) continue;
+      if (!post) {
+        continue;
+      }
       const postAuthor = asRecord(post['author']);
       const postHandle = postAuthor ? asString(postAuthor['screen_name']) : undefined;
-      if (postHandle && postHandle.toLowerCase() !== screenName.toLowerCase()) continue;
+      if (postHandle && postHandle.toLowerCase() !== screenName.toLowerCase()) {
+        continue;
+      }
       const postText = asString(post['text']);
-      if (postText) sameAuthorPosts.push(postText);
+      if (postText) {
+        sameAuthorPosts.push(postText);
+      }
     }
     if (sameAuthorPosts.length > 1) {
       lines.push('', '## Thread (same author)');
@@ -227,56 +253,71 @@ function selectCaptionTrack(player: JsonRecord): CaptionTrack | null {
   const captions = asRecord(player['captions']);
   const renderer = captions ? asRecord(captions['playerCaptionsTracklistRenderer']) : null;
   const rawTracks = renderer ? renderer['captionTracks'] : undefined;
-  if (!Array.isArray(rawTracks)) return null;
+  if (!Array.isArray(rawTracks)) {
+    return null;
+  }
 
-  const tracks: CaptionTrack[] = [];
+  const tracks: Array<CaptionTrack> = [];
   for (const entry of rawTracks) {
     const rec = asRecord(entry);
-    if (!rec) continue;
+    if (!rec) {
+      continue;
+    }
     const baseUrl = asString(rec['baseUrl']);
     const languageCode = asString(rec['languageCode']);
-    if (!baseUrl || !languageCode) continue;
+    if (!baseUrl || !languageCode) {
+      continue;
+    }
     tracks.push({ baseUrl, languageCode, isAsr: asString(rec['kind']) === 'asr' });
   }
-  if (!tracks.length) return null;
-
   const isEnglish = (t: CaptionTrack) => t.languageCode === 'en' || t.languageCode.startsWith('en-');
   return (
     tracks.find((t) => isEnglish(t) && !t.isAsr) ??
     tracks.find((t) => isEnglish(t) && t.isAsr) ??
     tracks.find((t) => !t.isAsr) ??
-    tracks[0]!
+    tracks[0] ??
+    null
   );
 }
 
-function parseJson3Transcript(jsonText: string): string[] {
-  let parsed: JsonRecord | null = null;
+function parseJson3Transcript(jsonText: string): Array<string> {
+  let parsed: JsonRecord | null;
   try {
     parsed = asRecord(JSON.parse(jsonText));
   } catch {
     return [];
   }
   const events = parsed ? parsed['events'] : undefined;
-  if (!Array.isArray(events)) return [];
+  if (!Array.isArray(events)) {
+    return [];
+  }
 
-  const paragraphs: string[] = [];
+  const paragraphs: Array<string> = [];
   let windowStartMs: number | null = null;
-  let currentWords: string[] = [];
+  let currentWords: Array<string> = [];
 
   for (const item of events) {
     const event = asRecord(item);
-    if (!event) continue;
+    if (!event) {
+      continue;
+    }
     const segs = event['segs'];
-    if (!Array.isArray(segs)) continue;
+    if (!Array.isArray(segs)) {
+      continue;
+    }
 
-    const pieces: string[] = [];
+    const pieces: Array<string> = [];
     for (const seg of segs) {
       const segRec = asRecord(seg);
       const utf8 = segRec ? asString(segRec['utf8']) : undefined;
-      if (utf8) pieces.push(utf8);
+      if (utf8) {
+        pieces.push(utf8);
+      }
     }
-    const text = pieces.join('').replace(/\s+/g, ' ').trim();
-    if (!text) continue;
+    const text = pieces.join('').replaceAll(/\s+/g, ' ').trim();
+    if (!text) {
+      continue;
+    }
 
     const startMs = asNumber(event['tStartMs']) ?? 0;
     if (windowStartMs === null) {
@@ -296,7 +337,9 @@ function parseJson3Transcript(jsonText: string): string[] {
 }
 
 function truncateUtf8(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) {
+    return text;
+  }
   let low = 0;
   let high = text.length;
   while (low < high) {
@@ -312,7 +355,10 @@ function truncateUtf8(text: string, maxBytes: number): string {
   return sliced.replace(/[\uD800-\uDBFF]$/, '');
 }
 
-async function fetchCaptionJson3(track: CaptionTrack, deps: Deps): Promise<{ paragraphs: string[]; reason?: string }> {
+async function fetchCaptionJson3(
+  track: CaptionTrack,
+  deps: Deps,
+): Promise<{ paragraphs: Array<string>; reason?: string }> {
   let url: URL;
   try {
     url = new URL(track.baseUrl);
@@ -327,14 +373,18 @@ async function fetchCaptionJson3(track: CaptionTrack, deps: Deps): Promise<{ par
       headers: { 'User-Agent': USER_AGENT },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!response.ok) return { paragraphs: [], reason: `HTTP ${response.status}` };
+    if (!response.ok) {
+      return { paragraphs: [], reason: `HTTP ${response.status}` };
+    }
     body = await response.text();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return { paragraphs: [], reason: detail };
   }
 
-  if (!body.trim()) return { paragraphs: [], reason: 'empty caption body' };
+  if (!body.trim()) {
+    return { paragraphs: [], reason: 'empty caption body' };
+  }
   const paragraphs = parseJson3Transcript(body);
   return paragraphs.length > 0 ? { paragraphs } : { paragraphs: [], reason: 'no caption segments' };
 }
@@ -365,7 +415,7 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
     return 1;
   }
 
-  let player: JsonRecord | null = null;
+  let player: JsonRecord | null;
   try {
     player = asRecord(await response.json());
   } catch {
@@ -398,13 +448,15 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
     `Duration ${formatTimestamp(durationSec * 1000)}`,
     `Views ${formatCount(views)}`,
   ];
-  if (publishDate) metaParts.push(`Published ${publishDate}`);
+  if (publishDate) {
+    metaParts.push(`Published ${publishDate}`);
+  }
 
   const headerLines = [`# YouTube: ${title}`, metaParts.join(' · '), '', '## Description', description || '(none)'];
   const headerText = headerLines.join('\n');
 
   const track = selectCaptionTrack(player);
-  let paragraphs: string[] = [];
+  let paragraphs: Array<string> = [];
   let label = 'en';
   let failureReason = 'no caption tracks';
 
@@ -412,7 +464,9 @@ async function handleYouTube(id: string, deps: Deps): Promise<number> {
     label = track.isAsr ? `${track.languageCode}, auto-generated` : track.languageCode;
     const fetched = await fetchCaptionJson3(track, deps);
     paragraphs = fetched.paragraphs;
-    if (fetched.reason) failureReason = fetched.reason;
+    if (fetched.reason) {
+      failureReason = fetched.reason;
+    }
   }
 
   if (paragraphs.length === 0) {
@@ -483,16 +537,18 @@ function runYtDlpPass(
       { timeout: REQUEST_TIMEOUT_MS },
       (error) => {
         if (error) {
-          const missingBinary = (error as NodeJS.ErrnoException).code === 'ENOENT';
+          const missingBinary = error.code === 'ENOENT';
           resolve({ file: null, missingBinary });
           return;
         }
+        let file: string | null;
         try {
-          const match = fs.readdirSync(outDir).find((file) => file.endsWith('.json3'));
-          resolve({ file: match ? path.join(outDir, match) : null, missingBinary: false });
+          const match = fs.readdirSync(outDir).find((name) => name.endsWith('.json3'));
+          file = match ? path.join(outDir, match) : null;
         } catch {
-          resolve({ file: null, missingBinary: false });
+          file = null;
         }
+        resolve({ file, missingBinary: false });
       },
     );
   });
@@ -500,11 +556,17 @@ function runYtDlpPass(
 
 async function defaultRunYtDlp(url: string, outDir: string): Promise<string | null> {
   const manual = await runYtDlpPass(url, outDir, '--write-subs');
-  if (manual.file) return manual.file;
-  if (manual.missingBinary) return null;
+  if (manual.file) {
+    return manual.file;
+  }
+  if (manual.missingBinary) {
+    return null;
+  }
 
   const auto = await runYtDlpPass(url, outDir, '--write-auto-subs');
-  if (!auto.file) return null;
+  if (!auto.file) {
+    return null;
+  }
   const asrPath = auto.file.replace(/\.json3$/i, '.asr.json3');
   fs.renameSync(auto.file, asrPath);
   return asrPath;
@@ -517,7 +579,7 @@ function defaultWriteTemp(name: string, text: string): string {
 }
 
 /** Reads an X post or YouTube video URL and prints Markdown to stdout. */
-export async function main(argv: string[], deps?: Partial<Deps>): Promise<number> {
+export async function main(argv: Array<string>, deps?: Partial<Deps>): Promise<number> {
   const resolved: Deps = {
     fetch: deps?.fetch ?? globalThis.fetch,
     runYtDlp: deps?.runYtDlp ?? defaultRunYtDlp,
@@ -534,15 +596,16 @@ export async function main(argv: string[], deps?: Partial<Deps>): Promise<number
       }),
   };
 
-  if (argv.length !== 1) {
+  const [url] = argv;
+  if (argv.length !== 1 || url === undefined) {
     resolved.stderr('Usage: node read-link.ts <x-or-youtube-url>\n');
     return 2;
   }
 
-  const link = parseLink(argv[0]!);
+  const link = parseLink(url);
   if (!link) {
     resolved.stderr(
-      `Usage: unsupported URL ${JSON.stringify(argv[0])}; expected an X/Twitter status or YouTube video URL\n`,
+      `Usage: unsupported URL ${JSON.stringify(url)}; expected an X/Twitter status or YouTube video URL\n`,
     );
     return 2;
   }
@@ -551,13 +614,10 @@ export async function main(argv: string[], deps?: Partial<Deps>): Promise<number
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  main(process.argv.slice(2)).then(
-    (code) => {
-      process.exitCode = code;
-    },
-    (error: unknown) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
-    },
-  );
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
 }

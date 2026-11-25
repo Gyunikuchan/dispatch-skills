@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import quietReporter, { FILE_BUDGET_MS, type ReporterEvent } from '../../scripts/test-reporter.ts';
+import quietReporter, { FILE_BUDGET_MS } from '../../scripts/test-reporter.ts';
+import type { ReporterEvent } from '../../scripts/test-reporter.ts';
 
 const root = path.resolve('/repo');
 const file = (rel: string) => path.join(root, rel);
 
-async function report(events: ReporterEvent[]) {
+async function report(events: Array<ReporterEvent>) {
   let code = 0;
-  const errors: string[] = [];
+  const errors: Array<string> = [];
   async function* source() {
     yield* events;
   }
@@ -19,8 +20,9 @@ async function report(events: ReporterEvent[]) {
       code = value;
     },
     stderr: { write: (text: string) => errors.push(text) },
-  }))
+  })) {
     out += chunk;
+  }
   return { out, code, errors };
 }
 
@@ -36,19 +38,20 @@ test('passing runs print one quiet summary with the slowest files', async () => 
   assert.match(out, /Slowest files: tests\/unit\/core\/b\.test\.ts 9ms, tests\/unit\/core\/a\.test\.ts 5ms/);
 });
 
+const failEvent = (name: string): ReporterEvent => ({
+  type: 'test:fail',
+  data: {
+    name,
+    file: file('tests/unit/core/a.test.ts'),
+    line: 3,
+    column: 1,
+    nesting: 0,
+    details: { duration_ms: 1, error: { cause: { message: `${name} broke`, stack: `${name} broke\n  at x` } } },
+  },
+});
+
 test('failures expand the first and list the rest by location', async () => {
-  const fail = (name: string): ReporterEvent => ({
-    type: 'test:fail',
-    data: {
-      name,
-      file: file('tests/unit/core/a.test.ts'),
-      line: 3,
-      column: 1,
-      nesting: 0,
-      details: { duration_ms: 1, error: { cause: { message: `${name} broke`, stack: `${name} broke\n  at x` } } },
-    },
-  });
-  const { out, code } = await report([fail('first'), fail('second')]);
+  const { out, code } = await report([failEvent('first'), failEvent('second')]);
   assert.equal(code, 1);
   assert.match(out, /✖ first\n {2}Location: tests\/unit\/core\/a\.test\.ts:3:1\n {2}first broke/);
   assert.match(out, /✖ second\n {2}Location: tests\/unit\/core\/a\.test\.ts:3:1\n\n/);

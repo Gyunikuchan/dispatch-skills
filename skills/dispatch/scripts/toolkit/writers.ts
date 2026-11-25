@@ -1,8 +1,12 @@
 import { SESSION_WORKTREES } from '../lib/session-paths.ts';
+import { isRecord } from '../lib/config.ts';
+import type { JsonObject } from '../lib/config.ts';
+import { present, textValue } from './narrow.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { HandlerContext, HandlerResult } from './cli.ts';
-import { withPostFold, type Fold } from './ledger.ts';
+import { withPostFold } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import type { LedgerRecord } from './records.ts';
 import { gitOk, gitPaths, changedPaths, testedTree, headTree } from './git.ts';
 import { ensureIntegration } from './integration.ts';
@@ -17,89 +21,123 @@ type Launch = {
   abandoned?: LedgerRecord;
   superseded: boolean;
 };
-export function launches(fold: Fold, task: string): Launch[] {
-  const rows: Launch[] = [];
+export function launches(fold: Fold, task: string): Array<Launch> {
+  const rows: Array<Launch> = [];
   for (const record of fold.records) {
-    if (record.kind !== 'writer' || record.data['task'] !== task) continue;
+    if (record.kind !== 'writer' || record.data['task'] !== task) {
+      continue;
+    }
     if (record.data['phase'] === 'launched') {
       const previous = rows.at(-1);
-      if (previous && !previous.finished && !previous.abandoned) previous.superseded = true;
+      if (previous && !previous.finished && !previous.abandoned) {
+        previous.superseded = true;
+      }
       rows.push({ launch: rows.length + 1, record, superseded: false });
     } else {
       const launch = rows.find((r) => r.launch === record.data['launch']);
-      if (launch && record.data['phase'] === 'finished') launch.finished = record;
-      if (launch && record.data['phase'] === 'abandoned') launch.abandoned = record;
+      if (launch && record.data['phase'] === 'finished') {
+        launch.finished = record;
+      }
+      if (launch && record.data['phase'] === 'abandoned') {
+        launch.abandoned = record;
+      }
     }
   }
   return rows;
 }
 export function candidate(fold: Fold, id: string) {
   const launch = launches(fold, id).at(-1);
-  if (!launch?.finished) return undefined;
-  if (integrationEnded(fold, id, launch.finished.seq)) return undefined;
+  if (!launch?.finished) {
+    return undefined;
+  }
+  if (integrationEnded(fold, id, launch.finished.seq)) {
+    return undefined;
+  }
   return launch;
+}
+
+/** The commit, task section and seq a writer launch recorded. */
+export function launchBase(record: LedgerRecord): JsonObject {
+  const base: unknown = record.data['base'];
+  if (!isRecord(base)) {
+    throw new TypeError('Missing the writer launch base');
+  }
+  return base;
 }
 
 export function isStale(fold: Fold, launch: LedgerRecord, currentTaskSection: string): boolean {
   return (
-    launch.data['base'].taskSection !== currentTaskSection ||
-    fold.records.some(
-      (r) => r.kind === 'edit' && r.seq > launch.data['base'].seq && r.data['affects'].includes(launch.data['task']),
-    )
+    launchBase(launch)['taskSection'] !== currentTaskSection ||
+    fold.records.some((r) => {
+      if (r.kind !== 'edit' || r.seq <= Number(launchBase(launch)['seq'])) {
+        return false;
+      }
+      const affects: unknown = r.data['affects'];
+      return Array.isArray(affects) && affects.includes(launch.data['task']);
+    })
   );
 }
 const open = (launch: Launch | undefined): launch is Launch =>
   !!launch && !launch.finished && !launch.abandoned && !launch.superseded;
 function completion(fold: Fold, launch: Launch) {
+  const { finished } = launch;
   return (
-    launch.finished &&
+    finished &&
     fold.records.findLast(
       (r) =>
         r.kind === 'integrate' &&
-        r.seq > launch.finished!.seq &&
+        r.seq > finished.seq &&
         r.data['task'] === launch.record.data['task'] &&
         (r.data['phase'] === 'done' ||
-          (r.data['phase'] === 'abandoned' && r.data['candidate'] === launch.finished!.data['candidate'])),
+          (r.data['phase'] === 'abandoned' && r.data['candidate'] === finished.data['candidate'])),
     )
   );
 }
 type Observation = { exists: boolean; dirty: boolean; head: string };
-export function writerStates(fold: Fold, tasks: string[], observe: (path: string) => Observation) {
+export function writerStates(fold: Fold, tasks: Array<string>, observe: (path: string) => Observation) {
   return tasks.flatMap((task) => {
     const rows = launches(fold, task);
-    if (!rows.length) return [{ task, state: 'unlaunched', liveness: 'unknown' }];
+    if (!rows.length) {
+      return [{ task, state: 'unlaunched', liveness: 'unknown' }];
+    }
     return rows.map((launch) => {
       const { record, finished } = launch;
       const done = completion(fold, launch);
       let state: string;
-      if (launch.abandoned || launch.superseded) state = 'launch-abandoned';
-      else if (done) state = done.data['phase'] === 'done' ? 'integrated' : 'integration-abandoned';
-      else if (finished) state = 'candidate-unintegrated';
-      else {
-        const observed = observe(record.data['path']);
+      if (launch.abandoned || launch.superseded) {
+        state = 'launch-abandoned';
+      } else if (done) {
+        state = done.data['phase'] === 'done' ? 'integrated' : 'integration-abandoned';
+      } else if (finished) {
+        state = 'candidate-unintegrated';
+      } else {
+        const observed = observe(textValue(record.data['path']));
         state = !observed.exists
           ? 'missing-worktree'
-          : observed.dirty || observed.head !== record.data['base'].commit
+          : observed.dirty || observed.head !== launchBase(record)['commit']
             ? 'ready-to-submit'
             : 'no-progress';
       }
       return {
         task,
         state,
-        path: record.data['path'] as string,
+        path: textValue(record.data['path']),
         launch: launch.launch,
-        ...(finished ? { candidate: finished.data['candidate'] as string } : {}),
+        ...(finished && { candidate: textValue(finished.data['candidate']) }),
         liveness: 'unknown',
       };
     });
   });
 }
-export function terminalWorktrees(fold: Fold, observed: Record<string, { head: string }>): string[] {
-  const tasks = [...new Set(fold.records.filter((r) => r.kind === 'writer').map((r) => r.data['task'] as string))];
+export function terminalWorktrees(fold: Fold, observed: Record<string, { head: string }>): Array<string> {
+  const tasks = [...new Set(fold.records.filter((r) => r.kind === 'writer').map((r) => textValue(r.data['task'])))];
   const all = tasks.flatMap((task) => launches(fold, task));
-  const paths = [...new Set(all.map((r) => r.record.data['path'] as string))];
+  const paths = [...new Set(all.map((r) => textValue(r.record.data['path'])))];
   const terminal = paths.filter((p) => {
-    const launch = all.findLast((r) => r.record.data['path'] === p)!;
+    const launch = present(
+      all.findLast((r) => r.record.data['path'] === p),
+      'the launch of a writer worktree',
+    );
     return !!launch.abandoned || !!completion(fold, launch);
   });
   const integration = integrationRecord(fold);
@@ -107,27 +145,35 @@ export function terminalWorktrees(fold: Fold, observed: Record<string, { head: s
   const closed = fold.records.some(
     (r) => r.kind === 'integrate' && r.data['phase'] === 'closed' && r.seq > (integration?.seq ?? 0),
   );
-  if (
-    integration &&
-    (closed ||
+  if (integration) {
+    const integrationPath = textValue(integration.data['path']);
+    if (
+      closed ||
       (!all.some(open) &&
         !all.some((r) => r.finished && !completion(fold, r)) &&
         delivered &&
-        observed[integration.data['path']]?.head === delivered.data['source']))
-  )
-    terminal.push(integration.data['path']);
+        observed[integrationPath]?.head === delivered.data['source'])
+    ) {
+      terminal.push(integrationPath);
+    }
+  }
   return terminal;
 }
 function taskId(ctx: HandlerContext) {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One task ID is required');
-  const id = ctx.args[0]!;
+  if (ctx.args.length !== 1) {
+    throw new ToolError(1, 'invalid-input', 'One task ID is required');
+  }
+  const id = present(ctx.args[0], 'the task ID argument');
   const plan = loadPlan(ctx.session, ctx.manifest);
   const paths = ownedPaths(plan, id);
   return {
     id,
     paths,
     section: taskSection(plan, id),
-    prerequisites: plan.tasks.find((task) => task.id === id)!.prerequisites,
+    prerequisites: present(
+      plan.tasks.find((task) => task.id === id),
+      'the planned task',
+    ).prerequisites,
   };
 }
 export const candidateRef = (sid: string, task: string, launch: number) =>
@@ -141,29 +187,35 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
     const rows = launches(tx.fold, id);
     const previous = rows.at(-1);
     if (ctx.values['relaunch']) {
-      if (!open(previous)) refuse('no-open-launch');
-      const cwd = path.resolve(ctx.session, previous.record.data['path']);
-      if (!fs.existsSync(cwd)) refuse('missing-worktree');
-      if ((await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD'])) !== previous.record.data['base'].commit)
+      if (!open(previous)) {
+        refuse('no-open-launch');
+      }
+      const worktreePath = textValue(previous.record.data['path']);
+      const cwd = path.resolve(ctx.session, worktreePath);
+      if (!fs.existsSync(cwd)) {
+        refuse('missing-worktree');
+      }
+      if ((await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD'])) !== launchBase(previous.record)['commit']) {
         refuse('submit-pending');
+      }
       await tx.append({
         kind: 'writer',
         by: 'tool',
         data: {
           phase: 'launched',
           task: id,
-          path: previous.record.data['path'],
-          base: { ...previous.record.data['base'], taskSection: section, seq: tx.fold.lastSeq },
+          path: worktreePath,
+          base: { ...launchBase(previous.record), taskSection: section, seq: tx.fold.lastSeq },
         },
       });
-      return result({ task: id, launch: rows.length + 1, path: previous.record.data['path'], relaunch: true });
+      return result({ task: id, launch: rows.length + 1, path: worktreePath, relaunch: true });
     }
     if (!open(previous)) {
       const pending = prerequisites.filter(
         (task) =>
           !tx.fold.records.some((r) => r.kind === 'integrate' && r.data['phase'] === 'done' && r.data['task'] === task),
       );
-      if (pending.length)
+      if (pending.length) {
         refuse(
           'prerequisite-pending',
           'Prerequisites not integrated: ' +
@@ -172,21 +224,27 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
             id +
             '.',
         );
+      }
     }
     const integration = await ensureIntegration(tx, ctx);
-    if (previous?.finished && !completion(tx.fold, previous)) refuse('candidate-pending');
+    if (previous?.finished && !completion(tx.fold, previous)) {
+      refuse('candidate-pending');
+    }
     if (open(previous)) {
-      const cwd = path.resolve(ctx.session, previous.record.data['path']);
-      if (fs.existsSync(cwd)) refuse('writer-open');
+      const worktreePath = textValue(previous.record.data['path']);
+      const cwd = path.resolve(ctx.session, worktreePath);
+      if (fs.existsSync(cwd)) {
+        refuse('writer-open');
+      }
       await gitOk(ctx.deps, ctx.manifest.repositoryRoot, ['worktree', 'prune']);
       await gitOk(ctx.deps, ctx.manifest.repositoryRoot, [
         'worktree',
         'add',
         '--detach',
         cwd,
-        previous.record.data['base'].commit,
+        textValue(launchBase(previous.record)['commit']),
       ]);
-      return result({ task: id, launch: previous.launch, path: previous.record.data['path'], restored: true });
+      return result({ task: id, launch: previous.launch, path: worktreePath, restored: true });
     }
     const n = rows.length + 1;
     const relative = `${SESSION_WORKTREES}/${id}-${n}`;
@@ -199,23 +257,28 @@ export async function create(ctx: HandlerContext): Promise<HandlerResult> {
     let base: string;
     if (registered && !tx.fold.records.some((r) => r.kind === 'writer' && r.data['path'] === relative)) {
       base = await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD']);
-      for (const r of tx.fold.records)
-        if (
-          r.kind === 'integrate' &&
-          r.data['phase'] === 'done' &&
-          prerequisites.includes(r.data['task']) &&
-          (await gitOk(ctx.deps, cwd, ['merge-base', r.data['commit'], base])) !== r.data['commit']
-        )
+      for (const r of tx.fold.records) {
+        if (r.kind !== 'integrate' || r.data['phase'] !== 'done') {
+          continue;
+        }
+        const prerequisite = textValue(r.data['task']);
+        if (!prerequisites.includes(prerequisite)) {
+          continue;
+        }
+        const commit = textValue(r.data['commit']);
+        if ((await gitOk(ctx.deps, cwd, ['merge-base', commit, base])) !== commit) {
           refuse(
             'stale-worktree',
             'Unlaunched worktree ' +
               relative +
               ' predates prerequisite ' +
-              r.data['task'] +
+              prerequisite +
               '. Preserve any untracked or ignored files it holds, remove it, then rerun worktree create ' +
               id +
               '.',
           );
+        }
+      }
     } else {
       base = await gitOk(ctx.deps, integration.path, ['rev-parse', 'HEAD']);
       await gitOk(ctx.deps, ctx.manifest.repositoryRoot, ['worktree', 'add', '--detach', cwd, base]);
@@ -238,13 +301,17 @@ export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
   const { id, paths } = taskId(ctx);
   return withPostFold(ctx.session, 'worktree submit', ctx.deps, async (tx) => {
     const launch = launches(tx.fold, id).at(-1);
-    if (!open(launch)) refuse('no-open-launch');
-    const cwd = path.resolve(ctx.session, launch.record.data['path']);
-    const base = launch.record.data['base'].commit;
+    if (!open(launch)) {
+      refuse('no-open-launch');
+    }
+    const cwd = path.resolve(ctx.session, textValue(launch.record.data['path']));
+    const base = textValue(launchBase(launch.record)['commit']);
     let candidate = await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD']);
     if (candidate !== base) {
       const parent = await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD^']);
-      if (parent !== base) refuse('submit-pending', 'Writer HEAD is not one commit beyond its base');
+      if (parent !== base) {
+        refuse('submit-pending', 'Writer HEAD is not one commit beyond its base');
+      }
       const diff = await gitPaths(ctx.deps, cwd, ['diff', '--name-only', '--no-renames', '-z', base, candidate, '--']);
       const outside = diff.filter((p) => !paths.includes(p));
       if (outside.length) {
@@ -254,8 +321,12 @@ export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
     } else {
       const changed = await changedPaths(ctx.deps, cwd, base);
       const outside = changed.filter((p) => !paths.includes(p));
-      if (outside.length) refuse('out-of-scope', JSON.stringify({ paths: outside }));
-      if (!changed.length) refuse('no-changes');
+      if (outside.length) {
+        refuse('out-of-scope', JSON.stringify({ paths: outside }));
+      }
+      if (!changed.length) {
+        refuse('no-changes');
+      }
       await gitOk(ctx.deps, cwd, ['add', '-A']);
       // NOTE: plumbing skips host hooks, which may stage unowned generated files; integration commits still run them.
       candidate = await gitOk(ctx.deps, cwd, [
@@ -286,14 +357,20 @@ export async function submit(ctx: HandlerContext): Promise<HandlerResult> {
 export async function abandon(ctx: HandlerContext): Promise<HandlerResult> {
   const { id } = taskId(ctx);
   const reason = ctx.values['reason'];
-  if (typeof reason !== 'string' || !reason.trim())
+  if (typeof reason !== 'string' || !reason.trim()) {
     throw new ToolError(1, 'invalid-input', 'A non-blank --reason is required');
+  }
   return withPostFold(ctx.session, 'worktree abandon', ctx.deps, async (tx) => {
     const launch = launches(tx.fold, id).at(-1);
-    if (!open(launch)) refuse('no-open-launch');
-    const cwd = path.resolve(ctx.session, launch.record.data['path']);
+    if (!open(launch)) {
+      refuse('no-open-launch');
+    }
+    const worktreePath = textValue(launch.record.data['path']);
+    const cwd = path.resolve(ctx.session, worktreePath);
     const head = await gitOk(ctx.deps, cwd, ['rev-parse', 'HEAD']);
-    if (head !== launch.record.data['base'].commit) refuse('submit-pending');
+    if (head !== launchBase(launch.record)['commit']) {
+      refuse('submit-pending');
+    }
     const tree = await testedTree(ctx.deps, ctx.session, cwd);
     if (tree !== (await headTree(ctx.deps, cwd))) {
       const commit = await gitOk(ctx.deps, cwd, ['commit-tree', tree, '-p', head, '-m', 'dispatch abandoned: ' + id]);
@@ -304,6 +381,6 @@ export async function abandon(ctx: HandlerContext): Promise<HandlerResult> {
       by: 'tool',
       data: { phase: 'abandoned', task: id, launch: launch.launch, reason },
     });
-    return result({ task: id, launch: launch.launch, path: launch.record.data['path'], abandoned: true });
+    return result({ task: id, launch: launch.launch, path: worktreePath, abandoned: true });
   });
 }

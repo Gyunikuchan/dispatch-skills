@@ -1,10 +1,11 @@
+import { stringList, stringMap, textValue } from './narrow.ts';
 import type { PlanCriterion } from './domain/types.ts';
 import type { Fold } from './ledger.ts';
 import type { Check } from './plan-view.ts';
 
 /** Criteria whose tests a cleanup commit removed keep their evidence at their recorded tree. */
-type CleanupBinding = { from: string; fromTree: string; removed: string[]; trees: Record<string, string> };
-type CleanupEvidenceResult = { ok: true; trees: Record<string, string> } | { ok: false; stale: string[] };
+type CleanupBinding = { from: string; fromTree: string; removed: Array<string>; trees: Record<string, string> };
+type CleanupEvidenceResult = { ok: true; trees: Record<string, string> } | { ok: false; stale: Array<string> };
 type CurrentTree = { headTree: string; testedTree: string };
 type EvidenceRecord = Fold['records'][number];
 export type CriterionStatus = {
@@ -17,7 +18,9 @@ export type CriterionStatus = {
 };
 
 export function strictEvidence(fold: Fold, check: Check): EvidenceRecord | undefined {
-  if (check.evidenceClass === 'review') return undefined;
+  if (check.evidenceClass === 'review') {
+    return undefined;
+  }
   const row = fold.records.findLast(
     (r) =>
       r.kind === 'evidence' &&
@@ -36,7 +39,7 @@ export function strictEvidence(fold: Fold, check: Check): EvidenceRecord | undef
 
 const normalizePath = (value: string) => value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
 
-export function matchesDeclared(diffPath: string, declared: readonly string[]): boolean {
+export function matchesDeclared(diffPath: string, declared: ReadonlyArray<string>): boolean {
   const target = normalizePath(diffPath);
   return declared.some((entry) => {
     const base = normalizePath(entry);
@@ -47,17 +50,17 @@ export function matchesDeclared(diffPath: string, declared: readonly string[]): 
 /** Cleanup evidence rule: latest clean passing evidence per criterion, with no declared-own or undeclared path changes since that tree. */
 export function cleanupEvidence(
   fold: Fold,
-  checks: readonly Check[],
-  criteria: readonly Pick<PlanCriterion, 'id' | 'changes' | 'tests'>[],
-  removed: readonly string[],
+  checks: ReadonlyArray<Check>,
+  criteria: ReadonlyArray<Pick<PlanCriterion, 'id' | 'changes' | 'tests'>>,
+  removed: ReadonlyArray<string>,
   fromTree: string,
-  diffs: ReadonlyMap<string, readonly string[]>,
+  diffs: ReadonlyMap<string, ReadonlyArray<string>>,
 ): CleanupEvidenceResult {
   const checkById = new Map(checks.map((check) => [check.criterion, check]));
   const criterionById = new Map(criteria.map((criterion) => [criterion.id, criterion]));
   const allDeclared = criteria.flatMap((criterion) => [...criterion.changes, ...criterion.tests]);
   const trees: Record<string, string> = {};
-  const stale: string[] = [];
+  const stale: Array<string> = [];
 
   for (const id of removed) {
     const criterion = criterionById.get(id);
@@ -89,13 +92,17 @@ export function cleanupEvidence(
 }
 
 function eligibleEvidence(fold: Fold, check: Check, current: CurrentTree): EvidenceRecord | undefined {
-  if (check.evidenceClass === 'review') return undefined;
-  if (current.testedTree !== current.headTree) return undefined;
+  if (check.evidenceClass === 'review') {
+    return undefined;
+  }
+  if (current.testedTree !== current.headTree) {
+    return undefined;
+  }
   const row = strictEvidence(fold, check);
   return row && row.data['tree'] === current.headTree ? row : undefined;
 }
 
-export function eligibility(fold: Fold, checks: readonly Check[], current: CurrentTree) {
+export function eligibility(fold: Fold, checks: ReadonlyArray<Check>, current: CurrentTree) {
   return checks.map((check) => ({
     criterion: check.criterion,
     state: eligibleEvidence(fold, check, current) ? ('verified' as const) : ('missing' as const),
@@ -110,10 +117,10 @@ export function cleanupBinding(fold: Fold): CleanupBinding | null {
   const record = latestCleanup(fold);
   return record
     ? {
-        from: record.data['from'],
-        fromTree: record.data['fromTree'],
-        removed: record.data['removed'],
-        trees: record.data['trees'] ?? {},
+        from: textValue(record.data['from']),
+        fromTree: textValue(record.data['fromTree']),
+        removed: stringList(record.data['removed']),
+        trees: stringMap(record.data['trees'] ?? {}),
       }
     : null;
 }
@@ -125,16 +132,20 @@ function boundEvidence(
   cleanup: CleanupBinding | null | undefined,
 ): EvidenceRecord | undefined {
   const row = current ? eligibleEvidence(fold, check, current) : undefined;
-  if (row || !cleanup?.removed.includes(check.criterion)) return row;
+  if (row || !cleanup?.removed.includes(check.criterion)) {
+    return row;
+  }
   const tree =
     cleanup.trees && Object.hasOwn(cleanup.trees, check.criterion) ? cleanup.trees[check.criterion] : undefined;
-  if (!tree) return undefined;
+  if (!tree) {
+    return undefined;
+  }
   return eligibleEvidence(fold, check, { headTree: tree, testedTree: tree });
 }
 
 export function verifiedStage(
   fold: Fold,
-  checks: readonly Check[],
+  checks: ReadonlyArray<Check>,
   current: CurrentTree,
   cleanup?: CleanupBinding | null,
 ): boolean {
@@ -145,20 +156,20 @@ export function verifiedStage(
 
 export function criterionStatuses(
   fold: Fold,
-  checks: readonly Check[],
+  checks: ReadonlyArray<Check>,
   current: CurrentTree | null,
   cleanup?: CleanupBinding | null,
-): CriterionStatus[] {
+): Array<CriterionStatus> {
   return checks.map((check) => {
     const evidence = boundEvidence(fold, check, current, cleanup);
     if (evidence) {
       return {
         criterion: check.criterion,
         state: 'verified',
-        ...(cleanup?.removed.includes(check.criterion)
-          ? { reason: 'verified at ' + cleanup.trees[check.criterion] + '; tests removed in cleanup' }
-          : {}),
-        ...(typeof evidence.data['path'] === 'string' ? { evidence: evidence.data['path'] } : {}),
+        ...(cleanup?.removed.includes(check.criterion) && {
+          reason: 'verified at ' + cleanup.trees[check.criterion] + '; tests removed in cleanup',
+        }),
+        ...(typeof evidence.data['path'] === 'string' && { evidence: evidence.data['path'] }),
       };
     }
 
@@ -170,8 +181,8 @@ export function criterionStatuses(
         criterion: check.criterion,
         state: 'manual',
         seq: manual.seq,
-        ...(typeof manual.quote === 'string' ? { quote: manual.quote } : {}),
-        ...(typeof manual.data['evidence'] === 'string' ? { evidence: manual.data['evidence'] } : {}),
+        ...(typeof manual.quote === 'string' && { quote: manual.quote }),
+        ...(typeof manual.data['evidence'] === 'string' && { evidence: manual.data['evidence'] }),
       };
     }
 
@@ -183,8 +194,8 @@ export function criterionStatuses(
         criterion: check.criterion,
         state: 'waived',
         seq: waiver.seq,
-        ...(typeof waiver.quote === 'string' ? { quote: waiver.quote } : {}),
-        ...(typeof waiver.data['reason'] === 'string' ? { reason: waiver.data['reason'] } : {}),
+        ...(typeof waiver.quote === 'string' && { quote: waiver.quote }),
+        ...(typeof waiver.data['reason'] === 'string' && { reason: waiver.data['reason'] }),
       };
     }
 
@@ -192,7 +203,7 @@ export function criterionStatuses(
   });
 }
 
-export function criterionStatusCounts(statuses: readonly CriterionStatus[]) {
+export function criterionStatusCounts(statuses: ReadonlyArray<CriterionStatus>) {
   return {
     verified: statuses.filter((status) => status.state === 'verified').length,
     manual: statuses.filter((status) => status.state === 'manual').length,

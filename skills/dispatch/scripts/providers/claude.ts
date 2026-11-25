@@ -10,6 +10,9 @@ import {
 } from './response.ts';
 import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 import { validSessionId } from '../lib/session.ts';
+import { isRecord } from '../lib/config.ts';
+import { parseJson } from '../lib/integrity.ts';
+import type { JsonObject, JsonValue } from '../lib/integrity.ts';
 import { CLAUDE_INVOCATION_USAGE, claudeUsage } from '../lib/usage/claude.ts';
 import { sessionUsageReader } from './session-usage.ts';
 
@@ -61,7 +64,7 @@ const CLI_OUTDATED = /claude_code_version_too_old|Claude Code \S+ does not suppo
 const ADVISORY = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$/gim;
 
 const exe = (env: PlatformEnv): string => (env.os === 'win32' ? '.exe' : '');
-const join = (env: PlatformEnv, ...parts: string[]): string => parts.join(env.os === 'win32' ? '\\' : '/');
+const join = (env: PlatformEnv, ...parts: Array<string>): string => parts.join(env.os === 'win32' ? '\\' : '/');
 
 type Envelope = {
   text: string;
@@ -74,18 +77,23 @@ type Envelope = {
 
 function parseEnvelope(stdout: string): Envelope | null {
   const trimmed = stdout.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
-  let parsed: unknown;
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null;
+  }
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(trimmed);
+    parsed = parseJson(trimmed);
   } catch {
     return null;
   }
   const pick = Array.isArray(parsed)
-    ? parsed.findLast((entry: unknown) => (entry as { type?: unknown } | null)?.type === 'result')
+    ? parsed.findLast((entry) => isRecord(entry) && entry['type'] === 'result')
     : parsed;
-  if (typeof pick !== 'object' || pick === null) return null;
-  const record = pick as Record<string, unknown>;
+  if (typeof pick !== 'object' || pick === null) {
+    return null;
+  }
+  const record: JsonObject = isRecord(pick) ? pick : {};
+  const status = record['api_error_status'];
   const text =
     typeof record['result'] === 'string'
       ? record['result']
@@ -97,7 +105,7 @@ function parseEnvelope(stdout: string): Envelope | null {
     sessionId: typeof record['session_id'] === 'string' ? record['session_id'] : null,
     isError: record['is_error'] === true,
     subtype: typeof record['subtype'] === 'string' ? record['subtype'] : null,
-    status: Number.isInteger(record['api_error_status']) ? (record['api_error_status'] as number) : null,
+    status: typeof status === 'number' && Number.isInteger(status) ? status : null,
     code: typeof record['api_error_code'] === 'string' ? record['api_error_code'] : null,
   };
 }
@@ -177,36 +185,60 @@ export const claude: ProviderSpec = {
     (out.wrapUpStop ? validSessionId(req.sessionPreset) : null),
   argv(req) {
     const argv = [req.binary, '-p', req.prompt, '--output-format', 'json', '--permission-mode', 'plan'];
-    if (req.resume) argv.push('--resume', req.resume);
-    else if (req.sessionPreset) argv.push('--session-id', req.sessionPreset);
-    if (req.model) argv.push('--model', req.model);
-    if (req.effort) argv.push('--effort', req.effort);
-    if (req.schemaText) argv.push('--json-schema', req.schemaText);
-    if (req.sandbox) argv.push('--settings', SANDBOX_SETTINGS);
-    for (const tool of READ_ONLY_ALLOWED_TOOLS) argv.push('--allowedTools', tool);
-    for (const command of req.readCommands ?? []) argv.push('--allowedTools', `Bash(${command}*)`);
+    if (req.resume) {
+      argv.push('--resume', req.resume);
+    } else if (req.sessionPreset) {
+      argv.push('--session-id', req.sessionPreset);
+    }
+    if (req.model) {
+      argv.push('--model', req.model);
+    }
+    if (req.effort) {
+      argv.push('--effort', req.effort);
+    }
+    if (req.schemaText) {
+      argv.push('--json-schema', req.schemaText);
+    }
+    if (req.sandbox) {
+      argv.push('--settings', SANDBOX_SETTINGS);
+    }
+    for (const tool of READ_ONLY_ALLOWED_TOOLS) {
+      argv.push('--allowedTools', tool);
+    }
+    for (const command of req.readCommands ?? []) {
+      argv.push('--allowedTools', `Bash(${command}*)`);
+    }
     argv.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS, ...DISALLOWED_SUBAGENT_TOOLS);
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },
   parse(out): RunOutcome {
     const envelope = parseEnvelope(out.stdout);
-    const diagnostics = out.stderrTail.replace(ADVISORY, '');
+    const diagnostics = out.stderrTail.replaceAll(ADVISORY, '');
     const both = `${out.stderrTail}\n${out.stdout}`;
     if (out.exit === 0 && !envelope?.isError) {
       const early =
         classifyFailure(out.stderrTail) ??
         (isSandboxUnsupported(diagnostics, { includeSettings: true, strict: true }) ? 'sandbox-unsupported' : null);
-      if (early) return failOutcome(early, `claude: ${out.stderrTail.trim().slice(0, 300)}`);
+      if (early) {
+        return failOutcome(early, `claude: ${out.stderrTail.trim().slice(0, 300)}`);
+      }
       const text = envelope ? envelope.text : extractCleanResponse(out.stdout);
-      if (!text) return failOutcome('empty-output', 'claude exited 0 with no response text');
+      if (!text) {
+        return failOutcome('empty-output', 'claude exited 0 with no response text');
+      }
       const sessionId = envelope?.sessionId ?? extractSessionId(out.stdout, 'claude');
       return { status: 'ok', text, sessionId, resume: sessionId ? `claude --resume ${sessionId}` : null };
     }
     const detail = `claude exit ${String(out.exit)}: ${(envelope?.text || out.stderrTail).trim().slice(0, 300)}`;
-    if (isSandboxUnsupported(diagnostics, { includeSettings: true })) return failOutcome('sandbox-unsupported', detail);
-    if (envelope?.code === 'claude_code_version_too_old' || CLI_OUTDATED.test(both))
+    if (isSandboxUnsupported(diagnostics, { includeSettings: true })) {
+      return failOutcome('sandbox-unsupported', detail);
+    }
+    if (envelope?.code === 'claude_code_version_too_old' || CLI_OUTDATED.test(both)) {
       return failOutcome('cli-outdated', detail);
-    if (envelope?.status === 404 || MODEL_NOT_FOUND.test(both)) return failOutcome('model-not-found', detail);
+    }
+    if (envelope?.status === 404 || MODEL_NOT_FOUND.test(both)) {
+      return failOutcome('model-not-found', detail);
+    }
     return failOutcome(classifyFailure(both) ?? 'empty-output', detail);
   },
 };

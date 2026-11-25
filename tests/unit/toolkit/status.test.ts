@@ -1,3 +1,6 @@
+import { fakeGit } from './helpers/fake-git.ts';
+import { checks as planChecks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -5,6 +8,20 @@ import { test } from 'node:test';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { appendRecord, currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { sessionFixture } from './helpers/session.ts';
+import {
+  dictionaryOf,
+  flag,
+  jsonObject,
+  listOf,
+  narrow,
+  numeric,
+  optional,
+  parseJson,
+  readJson,
+  shape,
+  text,
+} from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 test('status report exposes bindings approval gate open escalations and torn tail without locking', async () => {
   const f = sessionFixture({ memory: true });
@@ -12,7 +29,7 @@ test('status report exposes bindings approval gate open escalations and torn tai
     f.artifact('mission.spec.md', 'mission');
     const plan = f.artifact('work.plan.md', 'plan');
     const append = (kind: string, key: string, data: unknown, by = 'orchestrator') =>
-      appendRecord(f.session, { kind, key, data, by, ...(by === 'user' ? { quote: 'approved' } : {}) }, f.deps);
+      appendRecord(f.session, { kind, key, data, by, ...(by === 'user' && { quote: 'approved' }) }, f.deps);
     await append('bind', 'bind', { spec: 'mission.spec.md', plan: 'work.plan.md' });
     const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
     await append('confirm', 'confirm', { spec: hashes.spec }, 'user');
@@ -24,7 +41,19 @@ test('status report exposes bindings approval gate open escalations and torn tai
     const run = async () => {
       f.lines.length = 0;
       assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      return readJson(
+        f.output().path!,
+        shape({
+          level: optional(text),
+          bound: optional(jsonObject),
+          current: optional(jsonObject),
+          approved: optional(jsonObject),
+          gate: optional(jsonObject),
+          escalations: optional(listOf(jsonObject)),
+          recordCount: optional(numeric),
+          tornTail: optional(flag),
+        }),
+      );
     };
     const report = await run();
     assert.equal(report.level, 'high');
@@ -73,7 +102,6 @@ const PLAN = [
 ].join('\n');
 
 test('status retains missing automated criteria for manual completions and waivers', async () => {
-  const { fakeGit } = await import('./helpers/fake-git.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
@@ -127,18 +155,23 @@ test('status retains missing automated criteria for manual completions and waive
       f.deps,
     );
     await main(['status', 'show', '--session', f.session], f.deps);
-    const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+    const value = readJson(
+      f.output().path!,
+      shape({
+        criteria: listOf(text),
+        criterionStatuses: listOf(shape({ criterion: text, state: text })),
+      }),
+    );
     assert.ok(value.criteria.includes('SC1'), JSON.stringify(value));
     assert.ok(value.criteria.includes('SC2'), JSON.stringify(value));
-    assert.equal(value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state, 'manual');
-    assert.equal(value.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC2').state, 'waived');
+    assert.equal(value.criterionStatuses.find((row) => row.criterion === 'SC1')?.state, 'manual');
+    assert.equal(value.criterionStatuses.find((row) => row.criterion === 'SC2')?.state, 'waived');
   } finally {
     f.cleanup();
   }
 });
 
 test('status retains recovery status with broken and missing plan', async () => {
-  const { fakeGit } = await import('./helpers/fake-git.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
@@ -203,8 +236,9 @@ test('status retains recovery status with broken and missing plan', async () => 
     fs.writeFileSync(plan, '# Broken plan\n');
     assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
     const broken = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
-    for (const field of ['level', 'bound', 'escalations', 'recordCount'])
+    for (const field of ['level', 'bound', 'escalations', 'recordCount']) {
       assert.deepEqual(broken[field], before[field], field);
+    }
     assert.equal(broken.writers.state, 'unavailable');
     assert.equal(broken.criteria.state, 'unavailable');
     assert.ok(broken.writers.reason.length > 0);
@@ -215,8 +249,9 @@ test('status retains recovery status with broken and missing plan', async () => 
     fs.rmSync(plan);
     assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
     const missing = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
-    for (const field of ['level', 'bound', 'escalations', 'recordCount'])
+    for (const field of ['level', 'bound', 'escalations', 'recordCount']) {
       assert.deepEqual(missing[field], before[field], field);
+    }
     assert.equal(missing.writers.state, 'unavailable');
     assert.equal(missing.criteria.state, 'unavailable');
     assert.ok(missing.writers.reason.length > 0);
@@ -228,7 +263,6 @@ test('status retains recovery status with broken and missing plan', async () => 
 });
 
 test('uncommitted consumers report the delivery source as not yet delivered', async () => {
-  const { fakeGit } = await import('./helpers/fake-git.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
@@ -279,6 +313,11 @@ test('uncommitted consumers report the delivery source as not yet delivered', as
   }
 });
 
+const write = (file: string, value: unknown) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value));
+};
+
 test('status budget and coverage admission reflect rulings and open slots', async () => {
   // status budget reflects rulings after completion
   {
@@ -305,7 +344,7 @@ test('status budget and coverage admission reflect rulings and open slots', asyn
       const budget = async () => {
         f.lines.length = 0;
         assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
-        return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[review];
+        return readJson(f.output().path!, shape({ reviews: dictionaryOf(jsonObject) })).reviews[review];
       };
       assert.deepEqual(await budget(), {
         cap: 2,
@@ -336,10 +375,7 @@ test('status budget and coverage admission reflect rulings and open slots', asyn
     try {
       const review = 'code-integration',
         directory = path.join(f.session, '.state/reviews', review, 'round-1');
-      const write = (file: string, value: unknown) => {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify(value));
-      };
+
       const roster = ['codex[0]', 'opencode[1]'].map((slot, index) => ({
         slot,
         provider: 'codex',
@@ -371,7 +407,7 @@ test('status budget and coverage admission reflect rulings and open slots', asyn
       const budget = async () => {
         f.lines.length = 0;
         assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
-        return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[review];
+        return readJson(f.output().path!, shape({ reviews: dictionaryOf(jsonObject) })).reviews[review];
       };
       // An entry-less failure cannot be ordered, so coverage is unreadable but status still answers.
       assert.deepEqual(await budget(), {
@@ -400,9 +436,6 @@ test('status budget and coverage admission reflect rulings and open slots', asyn
 });
 
 test('statusReport reflects latest strict criterion evidence across pass-fail-pass', async () => {
-  const { fakeGit } = await import('./helpers/fake-git.ts');
-  const { checks: planChecks, loadPlan } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
-  const { readManifest } = await import('../../../skills/dispatch/scripts/lib/session.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.artifact('mission.spec.md', 'mission');
@@ -457,9 +490,15 @@ test('statusReport reflects latest strict criterion evidence across pass-fail-pa
     const readStatus = async () => {
       f.lines.length = 0;
       assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
-      const report = JSON.parse(fs.readFileSync(f.output().path!, 'utf8'));
+      const report = readJson(
+        f.output().path!,
+        shape({
+          criteria: listOf(text),
+          criterionStatuses: listOf(shape({ criterion: text, state: text })),
+        }),
+      );
       return {
-        state: report.criterionStatuses.find((row: { criterion: string }) => row.criterion === 'SC1').state,
+        state: report.criterionStatuses.find((row) => row.criterion === 'SC1')?.state,
         needsCheck: report.criteria.includes('SC1'),
       };
     };
@@ -525,20 +564,25 @@ test('cleanup checkpoints bind to their opening and require a clean descendant a
     f.deps.run = async ([, ...args]) => {
       let stdout = '';
       let exit = 0;
-      if (args[0] === 'rev-parse') stdout = args[1] === 'HEAD' ? head : tree;
-      else if (args[0] === 'diff')
+      if (args[0] === 'rev-parse') {
+        stdout = args[1] === 'HEAD' ? head : tree;
+      } else if (args[0] === 'diff') {
         stdout = args.includes('--no-renames') ? 'src/former.ts\0docs/renamed.md\0' : 'docs/renamed.md\0';
-      else if (args[0] === 'merge-base') exit = diverged ? 1 : 0;
-      else if (args[0] === '--no-optional-locks') stdout = dirty ? '?? dirty.md\n' : '';
-      else assert.fail(JSON.stringify(args));
+      } else if (args[0] === 'merge-base') {
+        exit = diverged ? 1 : 0;
+      } else if (args[0] === '--no-optional-locks') {
+        stdout = dirty ? '?? dirty.md\n' : '';
+      } else {
+        assert.fail(JSON.stringify(args));
+      }
       return { exit, stdout, stderr: '' };
     };
     const status = async () => {
       f.lines.length = 0;
       assert.equal(await main(['status', 'show', '--resume', '--session', f.session], f.deps), 0);
-      return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).cleanup;
+      return readJson(f.output().path!, shape({ cleanup: optional(text) })).cleanup;
     };
-    const checkpoint = async (mode: string, value: object, exit = 0) => {
+    const checkpoint = async (mode: string, value: JsonObject, exit = 0) => {
       f.lines.length = 0;
       assert.equal(
         await main(['ledger', 'append', '-', '--cleanup', mode, '--session', f.session], {
@@ -552,7 +596,7 @@ test('cleanup checkpoints bind to their opening and require a clean descendant a
     await checkpoint('skip', { head: first });
     const skip = latest(foldLedger(f.session), 'note')!;
     assert.equal(skip.key, `test-cleanup:skip:${opening.seq}:${first}`);
-    assert.deepEqual(JSON.parse(skip.data['text']), {
+    assert.deepEqual(parseJson(narrow(skip.data['text'], text), jsonObject), {
       openingSeq: opening.seq,
       head: first,
       tree,
@@ -583,7 +627,11 @@ test('cleanup checkpoints bind to their opening and require a clean descendant a
     assert.equal(await status(), 'unbound');
     head = base;
     await checkpoint('skip', { head: base });
-    assert.deepEqual(JSON.parse(latest(foldLedger(f.session), 'note')!.data['text']).paths, []);
+    assert.deepEqual(
+      parseJson(narrow(latest(foldLedger(f.session), 'note')!.data['text'], text), shape({ paths: listOf(text) }))
+        .paths,
+      [],
+    );
     assert.equal(await status(), 'checkpoint');
   } finally {
     f.cleanup();
@@ -593,12 +641,13 @@ test('cleanup checkpoints bind to their opening and require a clean descendant a
 test('compact status points to the active round as history grows and rejects unreadable pointers', async (t) => {
   const f = sessionFixture();
   try {
+    f.deps.skillRoot = path.join(f.root, 'isolated-skill');
     const base = 'a'.repeat(40),
       head = 'b'.repeat(40);
     const specPath = f.artifact('mission.spec.md', '# Mission');
     f.artifact('work.plan.md', PLAN);
-    const append = (kind: string, key: string, data: object, by = 'tool') =>
-      appendRecord(f.session, { kind, key, by, data, ...(by === 'user' ? { quote: 'confirmed' } : {}) }, f.deps);
+    const append = (kind: string, key: string, data: JsonObject, by = 'tool') =>
+      appendRecord(f.session, { kind, key, by, data, ...(by === 'user' && { quote: 'confirmed' }) }, f.deps);
     await append('bind', 'bind', { spec: 'mission.spec.md', plan: 'work.plan.md' });
     const hashes = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
     await append('level', 'level', { level: 'low' });
@@ -651,10 +700,11 @@ test('compact status points to the active round as history grows and rejects unr
         { slot: 'claude[0]', provider: 'claude', index: 0, native: true, reserve: true },
       ],
     };
-    const sizes: { rounds: number; compact: number; detailed: number }[] = [];
+    const sizes: Array<{ rounds: number; compact: number; detailed: number }> = [];
     for (let number = 1; number <= 20; number++) {
-      if (number > 1)
+      if (number > 1) {
         write(prefix + '/findings.json', { review: 'code-integration', round: number - 1, findings: [], failed: [] });
+      }
       prefix = series + '/round-' + number;
       roundFile = prefix + '/round.json';
       write(roundFile, { ...metadata, round: number });
@@ -662,7 +712,9 @@ test('compact status points to the active round as history grows and rejects unr
         asOfSeq: 5,
         repositoryChanges: [{ cwd: f.root, paths: ['a-path-changed-during-review.md'] }],
       });
-      if (![1, 5, 20].includes(number)) continue;
+      if (![1, 5, 20].includes(number)) {
+        continue;
+      }
       const compact = await status(true),
         details = await status(false);
       assert.deepEqual(compact.value, {

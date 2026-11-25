@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { stripBom } from '../lib/fs-ext.ts';
+import { parseJson } from '../lib/integrity.ts';
+import type { JsonValue } from '../lib/integrity.ts';
 import type { HandlerContext } from './cli.ts';
 import { ToolError } from './output.ts';
 
 export function readRequiredReason(ctx: HandlerContext): string {
   const value = ctx.values['reason'];
-  if (typeof value !== 'string' || !value.trim())
+  if (typeof value !== 'string' || !value.trim()) {
     throw new ToolError(1, 'invalid-input', 'A non-blank --reason is required');
+  }
   return value;
 }
 
@@ -21,7 +24,7 @@ export type TextPayloadSpec = {
 };
 
 export type JsonPayloadSpec = TextPayloadSpec & {
-  readonly direct?: readonly DirectFieldSpec[];
+  readonly direct?: ReadonlyArray<DirectFieldSpec>;
   readonly optional?: boolean;
 };
 
@@ -30,11 +33,12 @@ type RawSource =
   | { readonly kind: 'direct'; readonly value: Record<string, string> }
   | { readonly kind: 'raw'; readonly text: string; readonly origin: string };
 
-function readFileOrStdin(
-  ctx: HandlerContext,
-  source: unknown,
-  label: string,
-): { readonly text: string; readonly origin: string } {
+interface LoadedText {
+  readonly text: string;
+  readonly origin: string;
+}
+
+function readFileOrStdin(ctx: HandlerContext, source: unknown, label: string): LoadedText {
   if (typeof source !== 'string' || !source.trim()) {
     throw new ToolError(1, 'invalid-input', `${label} requires a readable file path or -`);
   }
@@ -75,7 +79,9 @@ function resolveSource(ctx: HandlerContext, spec: JsonPayloadSpec): RawSource {
     throw new ToolError(1, 'invalid-input', `${spec.label} accepts only one input form`);
   }
   if (modes === 0) {
-    if (spec.optional) return { kind: 'none' };
+    if (spec.optional) {
+      return { kind: 'none' };
+    }
     throw new ToolError(1, 'invalid-input', `${spec.label} requires input`);
   }
 
@@ -122,12 +128,16 @@ export function readTextPayload(ctx: HandlerContext, spec: TextPayloadSpec): str
 }
 
 /** Reads and parses a JSON payload from a file path, stdin `-`, inline `--json` flag, or co-required direct flags. */
-export function readJsonPayload(ctx: HandlerContext, spec: JsonPayloadSpec): unknown {
+export function readJsonPayload(ctx: HandlerContext, spec: JsonPayloadSpec): JsonValue | undefined {
   const resolved = resolveSource(ctx, spec);
-  if (resolved.kind === 'none') return undefined;
-  if (resolved.kind === 'direct') return resolved.value;
+  if (resolved.kind === 'none') {
+    return undefined;
+  }
+  if (resolved.kind === 'direct') {
+    return resolved.value;
+  }
   try {
-    return JSON.parse(resolved.text) as unknown;
+    return parseJson(resolved.text);
   } catch {
     throw new ToolError(1, 'invalid-input', `${spec.label} from ${resolved.origin} is not valid JSON`);
   }

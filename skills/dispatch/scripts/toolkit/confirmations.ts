@@ -5,9 +5,9 @@ import {
   reviewFindingsFile,
   reviewGenerationDirectory,
   reviewSlotFile,
-  type ReviewTarget,
   reviewRoundEntries,
 } from './review-state.ts';
+import type { ReviewTarget } from './review-state.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,10 +15,13 @@ import type { Manifest } from '../lib/session.ts';
 import type { Finding, RosterSlot } from './domain/types.ts';
 import type { SlotOutcome } from './fanout.ts';
 import type { FindingsValue } from './findings.ts';
-import { latest, type Fold } from './ledger.ts';
+import { latest } from './ledger.ts';
+import type { Fold } from './ledger.ts';
 import { integrationRecord } from './integration-state.ts';
 import type { LedgerRecord } from './records.ts';
 import { ToolError } from './output.ts';
+import { isRecord } from '../lib/config.ts';
+import { present, textValue } from './narrow.ts';
 import { parseReport } from './domain/report.ts';
 import { effectiveSeverity } from './domain/severity.ts';
 
@@ -31,7 +34,7 @@ export type RejectionRequest = {
   rationale: string;
   target: ReviewTarget;
   spec: { path: string; hash: string };
-  sourceSlots: string[];
+  sourceSlots: Array<string>;
 };
 export type RejectionReply = RejectionRequest & {
   sourceSlot: string;
@@ -55,8 +58,8 @@ export type ConfirmationRound = {
     target: ReviewTarget;
     spec: { path: string; hash: string };
     artifactPath?: string;
-    roster: RosterSlot[];
-    requests?: readonly RejectionRequest[];
+    roster: Array<RosterSlot>;
+    requests?: ReadonlyArray<RejectionRequest>;
   };
   findings: FindingsValue;
 };
@@ -71,20 +74,27 @@ export function rejectionRequest(request: Omit<RejectionRequest, 'requestId'>): 
 
 /** Only attributed replies to the captured ruling can close a rejection. */
 export function rejectionState(
-  rounds: readonly ConfirmationRound[],
-  rulings: readonly LedgerRecord[],
-  escalations: readonly LedgerRecord[],
-): RejectionState[] {
-  const states: RejectionState[] = [];
-  for (const round of rounds)
+  rounds: ReadonlyArray<ConfirmationRound>,
+  rulings: ReadonlyArray<LedgerRecord>,
+  escalations: ReadonlyArray<LedgerRecord>,
+): Array<RejectionState> {
+  const states: Array<RejectionState> = [];
+  for (const round of rounds) {
     for (const finding of round.findings.findings) {
       const history = rulings.filter(
         (row) => row.kind === 'ruling' && row.data['subject'] === 'review:' + round.review + ':' + finding.id,
       );
-      if (effectiveSeverity(finding, history) !== 'MUST') continue;
+      if (effectiveSeverity(finding, history) !== 'MUST') {
+        continue;
+      }
       const ruling = history.findLast((row) => row.data['ruling'] === 'accepted' || row.data['ruling'] === 'rejected');
-      if (ruling?.data['ruling'] !== 'rejected') continue;
-      const current = rounds.filter((value) => value.review === round.review).at(-1)!.metadata;
+      if (ruling?.data['ruling'] !== 'rejected') {
+        continue;
+      }
+      const current = present(
+        rounds.findLast((value) => value.review === round.review),
+        'review round',
+      ).metadata;
       const sources = finding.sources.filter((slot) => slot !== 'tool');
       const sourceSlots = sources.length
         ? sources
@@ -92,18 +102,19 @@ export function rejectionState(
             .filter((slot) => !slot.reserve)
             .slice(0, 1)
             .map((slot) => slot.slot);
-      if (!sourceSlots.length)
+      if (!sourceSlots.length) {
         throw new ToolError(
           4,
           'review-confirmation-required',
           'No saved reviewer can confirm tool finding ' + finding.id,
         );
+      }
       let request = rejectionRequest({
         review: round.review,
         finding: finding.id,
         rulingSeq: ruling.seq,
         claim: finding,
-        rationale: ruling.data['rationale'],
+        rationale: textValue(ruling.data['rationale']),
         target: current.target,
         spec: current.spec,
         sourceSlots,
@@ -130,8 +141,9 @@ export function rejectionState(
               (request) => request.requestId === reply.requestId && request.sourceSlots.includes(reply.sourceSlot),
             ) ||
             reply.rulingSeq > replyRound.metadata.startSeq
-          )
+          ) {
             continue;
+          }
           if (
             reply.review !== round.review ||
             reply.finding !== finding.id ||
@@ -140,16 +152,22 @@ export function rejectionState(
             !request.sourceSlots.includes(reply.sourceSlot) ||
             !reply.replyRationale?.trim() ||
             reply.requestId !== identity(reply)
-          )
+          ) {
             continue;
+          }
           if (
             JSON.stringify(reply.target) !== JSON.stringify(replyRound.metadata.target) ||
             JSON.stringify(reply.spec) !== JSON.stringify(replyRound.metadata.spec)
-          )
+          ) {
             continue;
+          }
           const responder = reply.responder;
-          if (!responder || !replyRound.metadata.roster.some((slot) => slot.slot === reply.sourceSlot && !slot.reserve))
+          if (
+            !responder ||
+            !replyRound.metadata.roster.some((slot) => slot.slot === reply.sourceSlot && !slot.reserve)
+          ) {
             continue;
+          }
           if (
             !responder.native &&
             !replyRound.metadata.roster.some(
@@ -158,15 +176,20 @@ export function rejectionState(
                 slot.provider === responder.provider &&
                 (slot.slot === reply.sourceSlot || slot.reserve),
             )
-          )
+          ) {
             continue;
-          if (responder.native && responder.slot !== reply.sourceSlot) continue;
+          }
+          if (responder.native && responder.slot !== reply.sourceSlot) {
+            continue;
+          }
           responded.add(reply.sourceSlot);
           const agreed = agreements.get(reply.requestId) ?? new Set<string>();
           agreements.set(reply.requestId, agreed);
           if (reply.decision === 'agree') {
             agreement = true;
-            if (reply.rulingSeq === ruling.seq) agreed.add(reply.sourceSlot);
+            if (reply.rulingSeq === ruling.seq) {
+              agreed.add(reply.sourceSlot);
+            }
           } else if (reply.decision === 'disagree') {
             disagreed = true;
             agreed.delete(reply.sourceSlot);
@@ -176,16 +199,20 @@ export function rejectionState(
             request = rejectionRequest({ ...request, target: reply.target, spec: reply.spec });
           }
         }
-        if (disagreed) disagreements++;
-        else if (agreement) disagreements = 0;
-        if (replyRound.metadata.startSeq >= Math.max(accepted, resolved))
+        if (disagreed) {
+          disagreements++;
+        } else if (agreement) {
+          disagreements = 0;
+        }
+        if (replyRound.metadata.startSeq >= Math.max(accepted, resolved)) {
           for (const slot of sourceSlots) {
             if (
               !replyRound.metadata.requests?.some(
                 (value) => value.finding === finding.id && value.sourceSlots.includes(slot),
               )
-            )
+            ) {
               continue;
+            }
             const previous = unanswered.get(slot) ?? 0;
             unanswered.set(
               slot,
@@ -194,6 +221,7 @@ export function rejectionState(
                 : previous + Number(replyRound.metadata.round > (replyRound.metadata.cap ?? Infinity)),
             );
           }
+        }
       }
       const escalation = escalations.findLast(
         (row) => row.kind === 'escalation' && row.data['id'] === 'rejection:' + round.review + ':' + finding.id,
@@ -205,19 +233,23 @@ export function rejectionState(
         noResponses: Math.max(0, ...unanswered.values()),
       });
     }
+  }
   return states;
 }
 
 export function reviewId(kind: string, artifact: string, gitSeries?: string): string {
-  let slug = (kind === 'code' ? artifact : path.basename(artifact, '.md')).replace(/[^A-Za-z0-9_.-]/g, '-');
-  if (gitSeries !== undefined)
+  let slug = (kind === 'code' ? artifact : path.basename(artifact, '.md')).replaceAll(/[^A-Za-z0-9_.-]/g, '-');
+  if (gitSeries !== undefined) {
     slug +=
       '-' +
       crypto
         .createHash('sha256')
         .update(artifact + gitSeries)
         .digest('hex');
-  if (!slug || slug === '.' || slug === '..') throw new ToolError(1, 'invalid-input', 'Invalid review target');
+  }
+  if (!slug || slug === '.' || slug === '..') {
+    throw new ToolError(1, 'invalid-input', 'Invalid review target');
+  }
   return kind + '-' + slug;
 }
 const canonical = (file: string) => {
@@ -228,12 +260,72 @@ const canonical = (file: string) => {
   }
 };
 type Selection = ReadonlyMap<string, (metadata: ConfirmationRound['metadata']) => boolean>;
+const isIdList = (selected: ReadonlyArray<string> | Selection): selected is ReadonlyArray<string> =>
+  Array.isArray(selected);
+
+// SECTION: Saved round validation
+// Stored rounds are trusted past these checks: they prove what rejection confirmation reads.
+const isRoundMetadata = (value: unknown): value is ConfirmationRound['metadata'] =>
+  isRecord(value) && isRecord(value['spec']) && Boolean(value['spec']['path']) && Boolean(value['target']);
+const SEVERITIES = new Set<unknown>(['MUST', 'SHOULD', 'CONSIDER']);
+const isConfirmableFinding = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value['id'] === 'string' &&
+  SEVERITIES.has(value['severity']) &&
+  Array.isArray(value['sources']) &&
+  value['sources'].every((source) => typeof source === 'string');
+const isSavedFindings = (value: unknown): value is FindingsValue =>
+  isRecord(value) && Array.isArray(value['findings']) && value['findings'].every(isConfirmableFinding);
+
+/** A reply counts only when the saved slot report it came from still says the same. */
+function isReplyBacked(
+  dir: string,
+  review: string,
+  metadata: ConfirmationRound['metadata'],
+  reply: RejectionReply,
+): boolean {
+  try {
+    const saved: unknown = JSON.parse(
+      fs.readFileSync(reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), reply.sourceSlot), 'utf8'),
+    );
+    if (
+      !isRecord(saved) ||
+      saved['state'] !== 'done' ||
+      saved['slot'] !== reply.sourceSlot ||
+      JSON.stringify(saved['responder']) !== JSON.stringify(reply.responder)
+    ) {
+      return false;
+    }
+    const expectedRequestIds = (metadata.requests ?? []).flatMap((request) =>
+      request.sourceSlots.includes(reply.sourceSlot) ? [request.requestId] : [],
+    );
+    const parsed = parseReport({
+      kind: review.startsWith('code-') ? 'code' : review.startsWith('design-') ? 'design' : 'plan',
+      source: reply.sourceSlot,
+      text: textValue(saved['text']),
+      expectedRequestIds,
+    });
+    return Boolean(
+      parsed.ok &&
+      parsed.confirmations?.some(
+        (value) =>
+          value.requestId === reply.requestId &&
+          value.decision === reply.decision &&
+          value.rationale === reply.replyRationale,
+      ),
+    );
+  } catch {
+    return false;
+  }
+}
 export function applicableReviewIds(manifest: Manifest, fold: Fold): Selection {
   const bind = latest(fold, 'bind'),
     selected = new Map<string, (metadata: ConfirmationRound['metadata']) => boolean>();
-  if (!bind) return selected;
-  const spec = canonical(path.resolve(manifest.repositoryRoot, bind.data['spec']));
-  for (const kind of ['plan', 'design'] as const)
+  if (!bind) {
+    return selected;
+  }
+  const spec = canonical(path.resolve(manifest.repositoryRoot, textValue(bind.data['spec'])));
+  for (const kind of ['plan', 'design'] as const) {
     if (typeof bind.data[kind] === 'string') {
       const artifact = canonical(path.resolve(manifest.repositoryRoot, bind.data[kind]));
       selected.set(
@@ -243,8 +335,9 @@ export function applicableReviewIds(manifest: Manifest, fold: Fold): Selection {
           (!metadata.artifactPath || canonical(metadata.artifactPath) === artifact),
       );
     }
+  }
   const opened = integrationRecord(fold);
-  if (opened)
+  if (opened) {
     selected.set(
       INTEGRATION_REVIEW,
       (metadata) =>
@@ -252,84 +345,56 @@ export function applicableReviewIds(manifest: Manifest, fold: Fold): Selection {
         typeof metadata.target !== 'string' &&
         metadata.target.base === opened.data['base'],
     );
+  }
   return selected;
 }
-export function loadRejections(session: string, fold: Fold, selected: readonly string[] | Selection): RejectionState[] {
-  const rounds: ConfirmationRound[] = [];
-  const entries = Array.isArray(selected)
-    ? selected.map((id) => [id, () => true] as const)
-    : [...(selected as Selection)];
+export function loadRejections(
+  session: string,
+  fold: Fold,
+  selected: ReadonlyArray<string> | Selection,
+): Array<RejectionState> {
+  const rounds: Array<ConfirmationRound> = [];
+  const entries = isIdList(selected) ? selected.map((id) => [id, () => true] as const) : [...selected];
   for (const [review, applies] of entries) {
     if (
       !fold.records.some(
         (row) =>
           row.kind === 'ruling' &&
-          row.data['subject'].startsWith('review:' + review + ':') &&
+          textValue(row.data['subject']).startsWith('review:' + review + ':') &&
           row.data['ruling'] === 'rejected',
       )
-    )
+    ) {
       continue;
+    }
     const directory = reviewDirectory(session, review);
-    if (!fs.existsSync(directory)) continue;
+    if (!fs.existsSync(directory)) {
+      continue;
+    }
     for (const { name } of reviewRoundEntries(fs.readdirSync(directory))) {
       const dir = path.join(directory, name);
-      if (!fs.existsSync(reviewRoundFile(dir)) && fs.readdirSync(dir).length === 0) continue;
+      if (!fs.existsSync(reviewRoundFile(dir)) && fs.readdirSync(dir).length === 0) {
+        continue;
+      }
       try {
-        const metadata = JSON.parse(fs.readFileSync(reviewRoundFile(dir), 'utf8'));
-        if (!metadata.spec?.path || !metadata.target) throw new Error('Invalid round');
-        if (!applies(metadata)) continue;
-        if (!metadata.spec?.hash || !Array.isArray(metadata.roster)) throw new Error('Invalid round');
-        if (!fs.existsSync(reviewFindingsFile(dir))) continue;
-        const findings = JSON.parse(fs.readFileSync(reviewFindingsFile(dir), 'utf8'));
-        if (
-          !Array.isArray(findings.findings) ||
-          findings.findings.some(
-            (f: Finding) =>
-              !f ||
-              typeof f.id !== 'string' ||
-              !['MUST', 'SHOULD', 'CONSIDER'].includes(f.severity) ||
-              !Array.isArray(f.sources) ||
-              f.sources.some((source) => typeof source !== 'string'),
-          )
-        )
+        const metadata: unknown = JSON.parse(fs.readFileSync(reviewRoundFile(dir), 'utf8'));
+        if (!isRoundMetadata(metadata)) {
+          throw new Error('Invalid round');
+        }
+        if (!applies(metadata)) {
+          continue;
+        }
+        if (!metadata.spec.hash || !Array.isArray(metadata.roster)) {
+          throw new Error('Invalid round');
+        }
+        if (!fs.existsSync(reviewFindingsFile(dir))) {
+          continue;
+        }
+        const findings: unknown = JSON.parse(fs.readFileSync(reviewFindingsFile(dir), 'utf8'));
+        if (!isSavedFindings(findings)) {
           throw new Error('Invalid findings');
-        findings.confirmations = (Array.isArray(findings.confirmations) ? findings.confirmations : []).filter(
-          (reply: RejectionReply) => {
-            try {
-              const saved = JSON.parse(
-                fs.readFileSync(
-                  reviewSlotFile(reviewGenerationDirectory(dir, metadata.generation), reply.sourceSlot),
-                  'utf8',
-                ),
-              );
-              if (
-                saved.state !== 'done' ||
-                saved.slot !== reply.sourceSlot ||
-                JSON.stringify(saved.responder) !== JSON.stringify(reply.responder)
-              )
-                return false;
-              const expectedRequestIds = (metadata.requests ?? [])
-                .filter((request: RejectionRequest) => request.sourceSlots.includes(reply.sourceSlot))
-                .map((request: RejectionRequest) => request.requestId);
-              const parsed = parseReport({
-                kind: review.startsWith('code-') ? 'code' : review.startsWith('design-') ? 'design' : 'plan',
-                source: reply.sourceSlot,
-                text: saved.text,
-                expectedRequestIds,
-              });
-              return (
-                parsed.ok &&
-                parsed.confirmations?.some(
-                  (value) =>
-                    value.requestId === reply.requestId &&
-                    value.decision === reply.decision &&
-                    value.rationale === reply.replyRationale,
-                )
-              );
-            } catch {
-              return false;
-            }
-          },
+        }
+        findings.confirmations = (Array.isArray(findings.confirmations) ? findings.confirmations : []).filter((reply) =>
+          isReplyBacked(dir, review, metadata, reply),
         );
         rounds.push({ review, metadata, findings });
       } catch {

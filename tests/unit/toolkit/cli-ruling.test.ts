@@ -2,17 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import { nodeLinkFs } from '../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { sessionFixture } from './helpers/session.ts';
-
-function useMemoryAtomicWrite(): () => void {
-  const writeAtomic = nodeLinkFs.writeAtomic;
-  nodeLinkFs.writeAtomic = (file, text) => fs.writeFileSync(file, text);
-  return () => {
-    nodeLinkFs.writeAtomic = writeAtomic;
-  };
-}
+import { sessionFixture, useMemoryAtomicWrite } from './helpers/session.ts';
+import { jsonObject, readJson } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 describe('toolkit CLI rulings contract', () => {
   test('plan and design ruling appends update only the matching findings section', async () => {
@@ -28,13 +21,13 @@ describe('toolkit CLI rulings contract', () => {
         'strategy.design.md',
         '# Strategy\n\n## Review Findings & Resolutions\nDesign driver note.\n\n## Next\nDesign stays intact.\n',
       );
-      const append = async (name: string, record: object) => {
+      const append = async (name: string, record: JsonObject) => {
         const file = path.join(f.root, `${name}.json`);
         fs.writeFileSync(file, JSON.stringify(record));
         f.lines.length = 0;
         const exit = await main(['ledger', 'append', file, '--session', f.session], f.deps);
         const output = f.output();
-        return { exit, output, value: JSON.parse(fs.readFileSync(output.path!, 'utf8')) as Record<string, unknown> };
+        return { exit, output, value: readJson(output.path!, jsonObject) };
       };
       const relative = (file: string) => path.relative(f.root, file).split(path.sep).join('/');
       await append('bind', {
@@ -95,13 +88,13 @@ describe('toolkit CLI rulings contract', () => {
     try {
       const spec = f.artifact('mission.spec.md', '# Mission\n## Intent & Problem\nKeep work recoverable.\n');
       const plan = f.artifact('work.plan.md', '# Work\n\n## Review Findings & Resolutions\nDriver note.\n');
-      const append = async (record: object) => {
+      const append = async (record: JsonObject) => {
         const file = path.join(f.root, 'ruling.json');
         fs.writeFileSync(file, JSON.stringify(record));
         f.lines.length = 0;
         const exit = await main(['ledger', 'append', file, '--session', f.session], f.deps);
         const output = f.output();
-        return { exit, output, value: JSON.parse(fs.readFileSync(output.path!, 'utf8')) as Record<string, unknown> };
+        return { exit, output, value: readJson(output.path!, jsonObject) };
       };
       const relative = (file: string) => path.relative(f.root, file).split(path.sep).join('/');
       await append({
@@ -177,7 +170,7 @@ describe('toolkit CLI rulings contract', () => {
           }),
         );
         assert.equal(await main(['ledger', 'append', file, '--session', f.session], f.deps), 0);
-        const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as Record<string, unknown>;
+        const value = readJson(f.output().path!, jsonObject);
         assert.equal(value['findingsSection'], 'updated', JSON.stringify(value));
         assert.match(fs.readFileSync(plan, 'utf8'), /Round 1 \(plan-work\.plan\): 1 findings/);
       } finally {
@@ -204,7 +197,7 @@ describe('toolkit CLI rulings contract', () => {
           }),
         );
         assert.equal(await main(['ledger', 'append', file, '--session', f.session], f.deps), 0);
-        const value = JSON.parse(fs.readFileSync(f.output().path!, 'utf8')) as Record<string, unknown>;
+        const value = readJson(f.output().path!, jsonObject);
         assert.equal('findingsSection' in value, false);
         assert.equal(fs.readFileSync(plan, 'utf8'), source);
       } finally {

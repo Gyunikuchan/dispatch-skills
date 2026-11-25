@@ -4,15 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { sessionFixture } from './helpers/session.ts';
-import {
-  appendRecord,
-  currentHashes,
-  foldLedger,
-  gate,
-  latest,
-  queryLedger,
-} from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import { appendRecord, foldLedger, latest, queryLedger } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import type { JsonObject } from './helpers/json.ts';
+import { narrow, refusal } from './helpers/json.ts';
 
 test('ledger bindings preserve rulings queries and input validation', async () => {
   const f = sessionFixture({ memory: true });
@@ -26,7 +21,7 @@ test('ledger bindings preserve rulings queries and input validation', async () =
       const output = f.output();
       return { exit, output, value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null };
     };
-    const add = (kind: string, data: object, extra: object = {}) =>
+    const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
       appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'k' + n++, ...extra }, f.deps);
     const hash = 'sha256:' + 'a'.repeat(64),
       git = 'a'.repeat(40);
@@ -34,10 +29,12 @@ test('ledger bindings preserve rulings queries and input validation', async () =
     f.artifact('p.plan.md', 'plan');
     const binding = { kind: 'bind', key: 'bind', by: 'orchestrator', data: { spec: 's.spec.md', plan: 'p.plan.md' } };
     assert.equal((await call(binding)).exit, 0);
-    for (const ruling of ['X', 'Y', 'X'])
+    for (const ruling of ['X', 'Y', 'X']) {
       assert.ok((await add('ruling', { subject: 's', ruling, rationale: 'r' })).seq > 0);
-    for (const state of ['open', 'resolved', 'open'])
+    }
+    for (const state of ['open', 'resolved', 'open']) {
       assert.ok((await add('escalation', { id: 'e', state, summary: 's' })).seq > 0);
+    }
     assert.equal(latest(foldLedger(f.session), 'escalation')?.data['state'], 'open');
     assert.equal(foldLedger(f.session).records.filter((r) => r.kind === 'ruling').length, 3);
     await assert.rejects(
@@ -51,7 +48,7 @@ test('ledger bindings preserve rulings queries and input validation', async () =
         diffRef: 'd',
       }),
       (error: unknown) => {
-        const failure = error as { reason?: string; message?: string };
+        const failure = narrow(error, refusal);
         assert.equal(failure.reason, 'invalid-record');
         assert.match(failure.message ?? '', /append a bind record that includes it first/i);
         assert.match(failure.message ?? '', /currently bound artifact kinds:.*\bplan\b.*\bspec\b/i);
@@ -60,7 +57,7 @@ test('ledger bindings preserve rulings queries and input validation', async () =
     );
     fs.unlinkSync(path.join(f.root, 's.spec.md'));
     assert.equal((await call(binding)).value.deduped, true);
-    for (const phase of ['deliver-started', 'delivered'])
+    for (const phase of ['deliver-started', 'delivered']) {
       assert.equal(
         (
           await call({
@@ -72,6 +69,7 @@ test('ledger bindings preserve rulings queries and input validation', async () =
         ).exit,
         0,
       );
+    }
     assert.equal(
       foldLedger(f.session).records.filter((r) => r.kind === 'integrate' && r.data['mode'] === 'uncommitted').length,
       2,
@@ -87,10 +85,13 @@ test('ledger bindings preserve rulings queries and input validation', async () =
       assert.throws(
         () => queryLedger(folded, filter),
         (error: unknown) => {
-          const failure = error as { reason?: string; message?: string };
+          const failure = narrow(error, refusal);
           assert.equal(failure.reason, 'invalid-input');
-          if (filter.kind === 'bad') assert.equal(failure.message, `filter.kind must be one of: ${KINDS.join(', ')}.`);
-          else assert.equal(failure.message, 'filter.since must be a nonnegative safe integer.');
+          if (filter.kind === 'bad') {
+            assert.equal(failure.message, `filter.kind must be one of: ${KINDS.join(', ')}.`);
+          } else {
+            assert.equal(failure.message, 'filter.since must be a nonnegative safe integer.');
+          }
           return true;
         },
       );
@@ -127,6 +128,22 @@ test('ledger bindings preserve rulings queries and input validation', async () =
   }
 });
 
+const run = async (text: string) => {
+  const f = sessionFixture({ memory: true });
+  try {
+    const exit = await main(['ledger', 'append', '--session', f.session, '-'], { ...f.deps, readStdin: () => text });
+    const output = f.output();
+    return {
+      exit,
+      reason: output.reason,
+      value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null,
+      records: foldLedger(f.session).records,
+    };
+  } finally {
+    f.cleanup();
+  }
+};
+
 test('stdin ledger appends validate records and preserve atomic batches', async () => {
   const single = JSON.stringify({ kind: 'note', by: 'orchestrator', key: 'one', data: { text: 'one' } });
   const batch = JSON.stringify([
@@ -137,21 +154,7 @@ test('stdin ledger appends validate records and preserve atomic batches', async 
     { kind: 'note', by: 'orchestrator', key: 'one', data: { text: 'one' } },
     { kind: 'invalid' },
   ]);
-  const run = async (text: string) => {
-    const f = sessionFixture({ memory: true });
-    try {
-      const exit = await main(['ledger', 'append', '--session', f.session, '-'], { ...f.deps, readStdin: () => text });
-      const output = f.output();
-      return {
-        exit,
-        reason: output.reason,
-        value: output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null,
-        records: foldLedger(f.session).records,
-      };
-    } finally {
-      f.cleanup();
-    }
-  };
+
   // Valid single, batch and BOM-prefixed batch append atomically.
   for (const text of [single, batch, '\ufeff' + batch]) {
     const r = await run(text);
@@ -184,7 +187,7 @@ test('stdin ledger appends validate records and preserve atomic batches', async 
       assert.equal(
         await main(['ledger', 'append', '--session', f.session, '-'], {
           ...f.deps,
-          ...(readStdin ? { readStdin } : {}),
+          ...(readStdin && { readStdin }),
         }),
         1,
       );
@@ -215,7 +218,7 @@ test('ledger file appends match stdin validation results', async () => {
         const file = f.artifact('record.json', text);
         const exit = await main(['ledger', 'append', '--session', f.session, stdin ? '-' : file], {
           ...f.deps,
-          ...(stdin ? { readStdin: () => text } : {}),
+          ...(stdin && { readStdin: () => text }),
         });
         const output = f.output();
         results.push({

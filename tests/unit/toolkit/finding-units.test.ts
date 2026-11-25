@@ -56,7 +56,7 @@ test('finding units group locus variants and code findings', () => {
     rounds: [
       {
         findings: [
-          { id: 'a', locus: 'src\\x.ts:L4' },
+          { id: 'a', locus: String.raw`src\x.ts:L4` },
           { id: 'b', locus: 'unresolved-locus: x' },
           { id: 'c', locus: 'absolute:L2', defect: 'missing-red: T1 SC1' },
         ],
@@ -82,6 +82,9 @@ test('finding units group locus variants and code findings', () => {
   );
 });
 
+const ruling = (id: string, seq: number) =>
+  id === 'a' && seq >= 4 ? 'accepted' : id === 'b' && seq >= 4 ? 'accepted' : 'rejected';
+
 test('finding units preserve round start rulings and count growth without findings', () => {
   const rounds = [
     {
@@ -102,8 +105,7 @@ test('finding units preserve round start rulings and count growth without findin
       startSeq: 5,
     },
   ];
-  const ruling = (id: string, seq: number) =>
-    id === 'a' && seq >= 4 ? 'accepted' : id === 'b' && seq >= 4 ? 'accepted' : 'rejected';
+
   const units = findingUnits({ kind: 'plan', round: 3, rounds, planPath: '', ruling });
   const second = findingUnits({ kind: 'plan', round: 2, rounds, planPath: '', ruling });
   assert.deepEqual([second[0]!.hot, second[0]!.hotStreak], [false, 0]);

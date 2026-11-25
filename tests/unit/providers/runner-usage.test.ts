@@ -4,27 +4,11 @@ import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scri
 
 import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
 import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
-import {
-  CONTINUE_PROMPT,
-  IDLE_TIMEOUT_MS,
-  buildAttachmentBlock,
-  findSensitiveMatch,
-  formatSafetyPrompt,
-  GUARDRAIL_HEADER,
-  runDelegate,
-  type RunnerFs,
-  type RunnerPorts,
-} from '../../../skills/dispatch/scripts/providers/runner.ts';
-import {
-  batchInvocation,
-  killArgv,
-  mustSpill,
-  sanitizeEnv,
-} from '../../../skills/dispatch/scripts/providers/process-policy.ts';
+import { IDLE_TIMEOUT_MS, runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { RunnerFs, RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type {
   DelegateRequest,
   Launch,
@@ -32,18 +16,20 @@ import type {
   ProcessResult,
   ProviderUsageContext,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
+import type { DiagnosticUsage } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
+import type { Invocation } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = {
   os: 'linux',
   arch: 'x64',
   wsl: false,
   bubblewrap: true,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
 };
-const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24000 };
+
 const req: DelegateRequest = {
   promptPath: '/r/p.md',
   model: null,
@@ -91,10 +77,13 @@ function memFs(
   };
 }
 
+/** Placeholder until the fake process registers its real callback. */
+const noop = (): void => {};
+
 /** Manual clock: timers fire only when the test advances time. */
 function manualClock() {
   let now = 0;
-  const timers: { at: number; ms: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
   return {
     now: () => now,
     every: (ms: number, fn: () => void) => {
@@ -106,30 +95,37 @@ function manualClock() {
     },
     advance(ms: number) {
       now += ms;
-      for (const t of [...timers])
+      for (const t of timers.slice()) {
         while (t.live && t.at <= now) {
           t.at += t.ms;
           t.fn();
         }
+      }
     },
   };
 }
 
 function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.md': 'Review it' }) {
-  const launches: Launch[] = [];
-  const signals: string[] = [];
+  const launches: Array<Launch> = [];
+  const signals: Array<string> = [];
   const clock = manualClock();
-  let finish: (r: ProcessResult) => void = () => {};
-  let activity: () => void = () => {};
-  let line: (value: string, fragment?: boolean) => void = () => {};
+  let finish: (r: ProcessResult) => void = noop;
+  let activity: () => void = noop;
+  let line: (value: string, fragment?: boolean) => void = noop;
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
-        if (io.onActivity) activity = io.onActivity;
-        if (io.onLine) line = io.onLine;
-        if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
+        if (io.onActivity) {
+          activity = io.onActivity;
+        }
+        if (io.onLine) {
+          line = io.onLine;
+        }
+        if (launch.argv[0] === 'taskkill') {
+          return { pid: 99, done: Promise.resolve(ok()) };
+        }
         return {
           pid: 50,
           done: new Promise<ProcessResult>((resolve) => {
@@ -171,7 +167,10 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   };
 }
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+const flush = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 
 const makeNudgeSpec = (sessionId: string | null): any => ({
   ...claude,
@@ -188,19 +187,6 @@ const makeNudgeSpec = (sessionId: string | null): any => ({
     env: {},
     cwd: r.cwd,
   }),
-});
-
-const makeCapacitySpec = (retryAfterMs?: number): any => ({
-  ...makeNudgeSpec('sess1'),
-  parse: (out: ProcessResult) =>
-    out.stdout.includes('FINAL')
-      ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
-      : {
-          status: 'fail' as const,
-          cls: 'capacity' as const,
-          detail: 'at capacity',
-          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-        },
 });
 
 const opencodeText = (text: string) => JSON.stringify({ type: 'text', sessionID: 'ses', part: { text } });
@@ -220,7 +206,9 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
           const seg = rest.split('/')[0];
-          if (seg) names.add(seg);
+          if (seg) {
+            names.add(seg);
+          }
         }
       }
       return [...names];
@@ -231,7 +219,9 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
     },
     read: (file, maxBytes) => {
       const buf = find(file);
-      if (!buf) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      if (!buf) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
       return buf.subarray(0, maxBytes);
     },
     decompress: null,
@@ -347,7 +337,7 @@ test('OpenCode invocation rows attribute measured or launch model, effort, and w
 
 test('OpenCode resumed launch receives its own launch window', async () => {
   const h = harness(posix);
-  const contexts: ProviderUsageContext[] = [];
+  const contexts: Array<ProviderUsageContext> = [];
   const spec = {
     ...opencode,
     attemptSession: () => 'sess1',
@@ -376,37 +366,38 @@ test('OpenCode resumed launch receives its own launch window', async () => {
   assert.equal(contexts[1]?.launchEndMs, 100);
 });
 
-test('OpenCode resumed launch keeps a shared boundary millisecond in the earlier launch', async () => {
-  const windows = async (firstMs: number, pauseMs: number) => {
-    const h = harness(posix);
-    const contexts: ProviderUsageContext[] = [];
-    const spec = {
-      ...opencode,
-      attemptSession: () => 'sess1',
-      usage: (_raw: string, seen?: ProviderUsageContext) => {
-        contexts.push(seen!);
-        return undefined;
-      },
-      parse: (out: ProcessResult) =>
-        out.stdout.includes('FINAL')
-          ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
-          : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
-    };
-    const pending = runDelegate(
-      spec,
-      { ...req, collectUsage: true, onResume: () => h.clock.advance(pauseMs) },
-      'cli',
-      h.ports,
-    );
-    await flush();
-    h.clock.advance(firstMs);
-    h.finish(ok({ exit: 1, stdout: '' }));
-    await flush();
-    await flush();
-    h.finish(ok({ stdout: 'FINAL' }));
-    await pending;
-    return contexts;
+const windows = async (firstMs: number, pauseMs: number) => {
+  const h = harness(posix);
+  const contexts: Array<ProviderUsageContext> = [];
+  const spec = {
+    ...opencode,
+    attemptSession: () => 'sess1',
+    usage: (_raw: string, seen?: ProviderUsageContext) => {
+      contexts.push(seen!);
+      return undefined;
+    },
+    parse: (out: ProcessResult) =>
+      out.stdout.includes('FINAL')
+        ? { status: 'ok' as const, text: 'FINAL', sessionId: 'sess1', resume: null }
+        : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' },
   };
+  const pending = runDelegate(
+    spec,
+    { ...req, collectUsage: true, onResume: () => h.clock.advance(pauseMs) },
+    'cli',
+    h.ports,
+  );
+  await flush();
+  h.clock.advance(firstMs);
+  h.finish(ok({ exit: 1, stdout: '' }));
+  await flush();
+  await flush();
+  h.finish(ok({ stdout: 'FINAL' }));
+  await pending;
+  return contexts;
+};
+
+test('OpenCode resumed launch keeps a shared boundary millisecond in the earlier launch', async () => {
   const sameMillisecond = await windows(0, 0);
   assert.equal(sameMillisecond[0]?.launchEndMs, 0);
   assert.equal(sameMillisecond[1]?.launchStartMs, 1);
@@ -474,7 +465,7 @@ test('resumed launch subtracts usage already recorded for its session', async ()
   assert.equal(usage?.output, 3);
   assert.equal(usage?.scope, 'invocation');
   assert.deepEqual({ ...usage?.models }, { m: { input: 4, output: 3 } });
-  const rows = [prior, usage!].map((value) => ({
+  const rows = [prior, usage].map((value) => ({
     phase: 'ask-run',
     provider: 'agy',
     model: 'm',
@@ -514,8 +505,9 @@ test('session usage sums optional counters once and preserves model keys safely'
   const sum = sumSessionUsage([first, later])!;
   assert.deepEqual([sum.input, sum.output, sum.cacheRead, sum.cacheWrite, sum.reasoning], [9, 3, 9, 12, 14]);
   assert.deepEqual(sum.models?.['__proto__'], { input: 9, output: 3, cacheRead: 9 });
-  assert.equal(Object.hasOwn(sum.models!, '__proto__'), true);
-  assert.equal(sumSessionUsage([first, { ...later, models: undefined } as unknown as typeof later])?.models, undefined);
+  assert.equal(Object.hasOwn(sum.models, '__proto__'), true);
+  const { models: _models, ...unmodelled } = later;
+  assert.equal(sumSessionUsage([first, unmodelled])?.models, undefined);
 });
 
 test('failed cumulative normalization never records the raw total', async () => {
@@ -595,7 +587,7 @@ test('cumulative resumes subtract prior usage and earlier deltas in the same ses
 
 test('runner reports each attempt and each resume as it happens', async () => {
   const h = harness(posix),
-    events: unknown[] = [];
+    events: Array<unknown> = [];
   const run = runDelegate(
     makeNudgeSpec('sess1'),
     { ...req, onInvocation: (row) => events.push(row), onResume: (id, count) => events.push([id, count]) },
@@ -616,7 +608,7 @@ test('runner reports each attempt and each resume as it happens', async () => {
   failed.ports.process.start = () => {
     throw new Error('launch');
   };
-  const rows: unknown[] = [];
+  const rows: Array<Invocation> = [];
   await assert.rejects(
     runDelegate(
       makeNudgeSpec('sess1'),
@@ -633,12 +625,12 @@ test('runner reports each attempt and each resume as it happens', async () => {
     /launch/,
   );
   assert.equal(rows.length, 1);
-  assert.equal((rows[0] as { outcome: string }).outcome, 'launch-failed');
+  assert.equal(rows[0]!.outcome, 'launch-failed');
 });
 
 test('cumulative session usage reaches the observer without diagnostics', async () => {
   const h = harness(posix),
-    rows: any[] = [];
+    rows: Array<any> = [];
   const spec = {
     ...makeNudgeSpec('sess1'),
     resumeUsage: 'cumulative' as const,
@@ -661,36 +653,37 @@ test('cumulative session usage reaches the observer without diagnostics', async 
   assert.equal(rows[1].usage.input, 0);
 });
 
+const usageRow = (model: string, effort: string | null) => ({
+  input: 100,
+  output: 10,
+  scope: 'invocation' as const,
+  provenance: 'fixture',
+  inputSemantics: 'uncached' as const,
+  actualModels: [model],
+  actualEffort: effort,
+  models: { [model]: { input: 100, output: 10 } },
+});
+
 test('agy session usage unions models and effort over a table', async () => {
   const { sumSessionUsage } = await import('../../../skills/dispatch/scripts/providers/runner.ts');
-  const row = (model: string, effort: string | null) => ({
-    input: 100,
-    output: 10,
-    scope: 'invocation' as const,
-    provenance: 'fixture',
-    inputSemantics: 'uncached' as const,
-    actualModels: [model],
-    actualEffort: effort,
-    models: { [model]: { input: 100, output: 10 } },
-  });
   for (const [efforts, expected, models] of [
     [['medium', 'medium'], 'medium', ['model-a', 'model-b']],
     [['medium', 'high'], null, ['model-a', 'model-b']],
     [['medium', null], null, ['model-a', 'model-b']],
   ] as const) {
-    const united = sumSessionUsage!([row('model-a', efforts[0]), row('model-b', efforts[1])]);
+    const united = sumSessionUsage([usageRow('model-a', efforts[0]), usageRow('model-b', efforts[1])]);
     assert.deepEqual(united?.actualModels, models);
     assert.equal(united?.actualEffort, expected);
     assert.deepEqual(united?.models?.['model-a'], { input: 100, output: 10 });
   }
-  const noEffort = sumSessionUsage!([
-    (({ actualEffort: _a, ...r }) => r)(row('model-a', 'medium') as Record<string, unknown>) as never,
-    (({ actualEffort: _b, ...r }) => r)(row('model-b', 'high') as Record<string, unknown>) as never,
+  const noEffort = sumSessionUsage([
+    (({ actualEffort: _a, ...r }) => r)(usageRow('model-a', 'medium')),
+    (({ actualEffort: _b, ...r }) => r)(usageRow('model-b', 'high')),
   ]);
   assert.equal(noEffort?.actualEffort, undefined);
 });
 
-async function runAgyResumed(usages: Record<string, unknown>[], opts: Record<string, unknown> = {}) {
+async function runAgyResumed(usages: Array<DiagnosticUsage>, opts: Partial<DelegateRequest> = {}) {
   const h = harness(posix);
   let call = 0;
   const spec = {
@@ -794,9 +787,10 @@ test('agy resumed effort distinguishes Tag 1.21 null from Tag 1.19 missing', asy
     input: 300,
     output: 30,
     actualModels: ['model-a', 'model-b'],
-    actualEffort: undefined,
     models: { 'model-a': { input: 100, output: 10 }, 'model-b': { input: 200, output: 20 } },
   };
+  // A present-but-undefined key, which the declared type cannot spell.
+  Reflect.set(undefEffort, 'actualEffort', undefined);
   const doneUndef = await runAgyResumed([u1, undefEffort]);
   assert.equal(doneUndef.invocations[1]?.effort, 'low');
   assert.equal(doneUndef.invocations[1]?.usage?.actualEffort, undefined);
@@ -847,6 +841,14 @@ test('agy resumed envelope keeps explicit attribution and drops it without a DB'
   assert.deepEqual(multi.invocations[0]?.usage?.actualModels, ['model-x', 'model-y']);
 });
 
+const claudeStdout = (input: number, output: number, result = '') =>
+  JSON.stringify({
+    type: 'result',
+    result,
+    session_id: 'sess-win-1',
+    modelUsage: { 'claude-haiku-5-5': { inputTokens: input, outputTokens: output } },
+  });
+
 test('session window: complete session read records session provenance, bands, and skips cumulative delta', async () => {
   const h = harness(posix);
   const sessionPath = '/h/.claude/projects/-repo/sess-win-1.jsonl';
@@ -856,13 +858,6 @@ test('session window: complete session read records session provenance, bands, a
     h.clock.advance(1);
     return 1;
   };
-  const claudeStdout = (input: number, output: number, result = '') =>
-    JSON.stringify({
-      type: 'result',
-      result,
-      session_id: 'sess-win-1',
-      modelUsage: { 'claude-haiku-5-5': { inputTokens: input, outputTokens: output } },
-    });
   const pending = runDelegate(claude, { ...req, collectUsage: true, model: 'haiku' }, 'cli', h.ports);
   await flush();
   h.clock.advance(10);
@@ -1112,7 +1107,9 @@ test('Delegate response counts exclude resumed overlap at the launch boundary', 
   let elapsed = 0;
   h.ports.clock.elapsed = () => {
     waitChecks++;
-    if (waitChecks >= 3) clockTime = 1001;
+    if (waitChecks >= 3) {
+      clockTime = 1001;
+    }
     return (elapsed += 0.5);
   };
   const pending = runDelegate(claude, { ...req, collectUsage: true }, 'cli', h.ports);
@@ -1164,7 +1161,9 @@ test('Delegate response counts exclude resumed overlap at the launch boundary', 
   let e2 = 0;
   h2.ports.clock.elapsed = () => {
     e2 += 0.5;
-    if (e2 >= 1 && c2 < 2001) c2 = 2001;
+    if (e2 >= 1 && c2 < 2001) {
+      c2 = 2001;
+    }
     return e2;
   };
   const p2 = runDelegate(
@@ -1222,7 +1221,9 @@ test('session window: second-resolution row counts on fresh launch and makes res
     ...claude,
     sessionUsage: (raw: string, ctx: ProviderUsageContext) => {
       const base = claude.sessionUsage!(raw, ctx);
-      if (ctx.resumed && base?.complete) return { complete: false };
+      if (ctx.resumed && base?.complete) {
+        return { complete: false };
+      }
       return base;
     },
   };
@@ -1305,7 +1306,9 @@ test('session window: agy stdout usage shares per-launch ReadBudget with session
   const spentSpec = {
     ...agy,
     usage(raw: string, context?: ProviderUsageContext) {
-      if (context?.transcripts?.budget) context.transcripts.budget.remaining = 0;
+      if (context?.transcripts?.budget) {
+        context.transcripts.budget.remaining = 0;
+      }
       return agy.usage!(raw, {
         ...context!,
         readSqliteGenMetadata: () => {

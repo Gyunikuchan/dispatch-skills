@@ -1,16 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  ARMS,
-  type Json,
-  defects,
-  prepared,
-  writeClaims,
-  defectClaim,
-  scenario,
-  ids,
-} from '../helpers/audit-calibration.ts';
+import { ARMS, defects, prepared, writeClaims, defectClaim, scenario, ids } from '../helpers/audit-calibration.ts';
 
 test('audit calibration summarize enforces fixed claims integrity before scoring', async () => {
   {
@@ -21,7 +12,7 @@ test('audit calibration summarize enforces fixed claims integrity before scoring
     assert.throws(
       () =>
         mod.summarize({
-          fixture: f as never,
+          fixture: f,
           workDir,
           adjudication: { arms: { old: s.matches, new: s.matches } },
           usage: {},
@@ -41,7 +32,7 @@ test('audit calibration summarize enforces fixed claims integrity before scoring
     assert.throws(
       () =>
         mod.summarize({
-          fixture: f as never,
+          fixture: f,
           workDir,
           adjudication: { arms: { old: s.matches, new: bad } },
           usage: {},
@@ -52,7 +43,7 @@ test('audit calibration summarize enforces fixed claims integrity before scoring
     assert.throws(
       () =>
         mod.summarize({
-          fixture: f as never,
+          fixture: f,
           workDir,
           adjudication: { arms: { old: s.matches, new: s.matches } },
           usage: {},
@@ -65,19 +56,21 @@ test('audit calibration summarize enforces fixed claims integrity before scoring
 test('audit calibration accepts an opportunity claim as recovery only for an efficiency case', async () => {
   const { mod, workDir, f } = await prepared();
   const s = scenario(f, ids(defects(f)));
-  for (const c of defects(f)) s.cases[c.id] = [{ ...defectClaim(`${c.id}-1`), verdict: 'opportunity' }];
+  for (const c of defects(f)) {
+    s.cases[c.id] = [{ ...defectClaim(`${c.id}-1`), verdict: 'opportunity' }];
+  }
   for (const arm of ARMS) {
     writeClaims(workDir, arm, s.cases);
     mod.fixClaims(workDir, arm);
   }
-  const efficiency = defects(f).find((c: Json) => c['category'] === 'efficiency').id;
-  const other = defects(f).find((c: Json) => c['category'] !== 'efficiency').id;
+  const efficiency = defects(f).find((c) => c.category === 'efficiency')!.id;
+  const other = defects(f).find((c) => c.category !== 'efficiency')!.id;
   const only = (id: string) =>
     Object.fromEntries(
       Object.entries(s.matches).map(([k, v]) => [k, k === id ? v : { match: null, rationale: 'miss' }]),
     );
   const summary = mod.summarize({
-    fixture: f as never,
+    fixture: f,
     workDir,
     adjudication: { arms: { old: only(efficiency), new: only(efficiency) } },
     usage: {},
@@ -86,7 +79,7 @@ test('audit calibration accepts an opportunity claim as recovery only for an eff
   assert.throws(
     () =>
       mod.summarize({
-        fixture: f as never,
+        fixture: f,
         workDir,
         adjudication: { arms: { old: only(other), new: only(other) } },
         usage: {},
@@ -105,7 +98,7 @@ test('audit calibration flags an accepted defect claim without a static trace as
     mod.fixClaims(workDir, arm);
   }
   const summary = mod.summarize({
-    fixture: f as never,
+    fixture: f,
     workDir,
     adjudication: { arms: { old: s.matches, new: s.matches } },
     usage: {},
@@ -123,7 +116,7 @@ test('audit calibration reports unavailable usage instead of computing savings',
   }
   const usage = { old: { inputTokens: 100, toolCalls: 5 }, new: { inputTokens: null, toolCalls: 4 } };
   const summary = mod.summarize({
-    fixture: f as never,
+    fixture: f,
     workDir,
     adjudication: { arms: { old: s.matches, new: s.matches } },
     usage,

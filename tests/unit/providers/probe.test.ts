@@ -1,20 +1,17 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import {
-  probeProviders,
-  type ProbeDeps,
-  type ProbeSpawnPort,
-} from '../../../skills/dispatch/scripts/providers/probe.ts';
+import { probeProviders } from '../../../skills/dispatch/scripts/providers/probe.ts';
+import type { ProbeDeps, ProbeSpawnPort } from '../../../skills/dispatch/scripts/providers/probe.ts';
 import type { PlatformEnv, ProviderId } from '../../../skills/dispatch/scripts/providers/types.ts';
-import * as opencodeModule from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import { bwrapArgv } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 
 const platform = (os: PlatformEnv['os'], bubblewrap = false): PlatformEnv => ({
   os,
   bubblewrap,
   arch: 'x64',
   wsl: false,
-  argvLimit: 10000,
+  argvLimit: 10_000,
   home: '/home/probe',
   path: [],
   pathExt: [],
@@ -96,14 +93,14 @@ test('respects sandboxRequired false opt-out and uniform failure predicate', asy
 
 test('probes OpenCode standalone readiness and Linux bwrapArgv', async () => {
   const env = { ...platform('linux', true), xdg: { cache: '/xdg/cache' } };
-  const launches: [string, readonly string[]][] = [];
+  const launches: Array<[string, ReadonlyArray<string>]> = [];
   const options = deps(async (binary, args) => {
     launches.push([binary, args]);
     return result(args.includes('debug') ? '[]' : undefined);
   }, env);
   const row = await rows('opencode', options);
   assert.deepEqual([row.readiness, row.sandbox], ['ok', 'ok']);
-  const [bwrap, ...args] = opencodeModule.bwrapArgv({ platform: env, cwd: '/work', briefFile: null }, ['true']);
+  const [bwrap, ...args] = bwrapArgv({ platform: env, cwd: '/work', briefFile: null }, ['true']);
   assert.deepEqual(launches, [
     ['opencode', ['--version']],
     ['opencode', ['--standalone', 'debug', 'config']],
@@ -143,10 +140,10 @@ test('probes OpenCode standalone readiness and Linux bwrapArgv', async () => {
 });
 
 test('enforces provider budgets across queued and active timeouts', async () => {
-  const providers: ProviderId[] = ['agy', 'claude', 'codex', 'copilot', 'opencode'];
-  for (const start of [15100, 6000]) {
+  const providers: Array<ProviderId> = ['agy', 'claude', 'codex', 'copilot', 'opencode'];
+  for (const start of [15_100, 6000]) {
     let now = 100;
-    const calls: number[] = [];
+    const calls: Array<number> = [];
     const options = deps(
       async (_bin, _args, launch) => {
         calls.push(launch.timeoutMs);
@@ -162,7 +159,10 @@ test('enforces provider budgets across queued and active timeouts', async () => 
       providers.map((name) => target(name)),
       { ...options, now: () => now },
     );
-    assert.deepEqual(calls, start === 15100 ? [10000, 10000, 10000, 10000] : [10000, 10000, 10000, 10000, 9100]);
+    assert.deepEqual(
+      calls,
+      start === 15_100 ? [10_000, 10_000, 10_000, 10_000] : [10_000, 10_000, 10_000, 10_000, 9100],
+    );
     assert.deepEqual(
       probes.map((row) => [row.failureCategory, row.binaryFound, row.version]),
       providers.map(() => ['timeout', false, null]),
@@ -218,7 +218,7 @@ test('reconstructs numeric version from integers and leaks zero credentials from
 });
 
 test('resolves first launchable provider mode including desktop or vscode installs', async () => {
-  const called: string[] = [];
+  const called: Array<string> = [];
   const options = deps(async (binary) => {
     called.push(binary);
     return result();

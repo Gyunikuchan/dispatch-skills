@@ -29,28 +29,40 @@ function contractRegions(): Map<string, ContractRegion> {
   ]);
 }
 
+export interface RenderedContracts {
+  text: string;
+  errors: Array<string>;
+  drift: Array<string>;
+}
+
 /** Validates governed delimiters and replaces only the content between each pair. */
-export function renderContractRegions(markdown: string): { text: string; errors: string[]; drift: string[] } {
+export function renderContractRegions(markdown: string): RenderedContracts {
   const regions = contractRegions();
-  const errors: string[] = [],
-    drift: string[] = [];
+  const errors: Array<string> = [],
+    drift: Array<string> = [];
   const headings = [...markdown.matchAll(/^(#{1,3} [^\r\n]+)\r?\n/gm)];
   const seen = new Set<string>();
   let open: { id: string; index: number; end: number } | undefined;
   let text = '',
     cursor = 0;
   for (const marker of markdown.matchAll(GENERATED_MARKER)) {
-    const [token, closing, markerId] = marker;
-    const id = markerId!;
+    // The id group is mandatory in GENERATED_MARKER; the default only satisfies the indexed type.
+    const [token, closing, id = ''] = marker;
     const index = marker.index;
-    const end = index + token!.length;
+    const end = index + token.length;
     const region = regions.get(id);
     const label = `${TOOLKIT}: ${region?.heading ?? id}`;
-    if (!region) errors.push(`${label}: unknown generated marker`);
+    if (!region) {
+      errors.push(`${label}: unknown generated marker`);
+    }
     if (!closing) {
-      if (seen.has(id)) errors.push(`${label}: duplicate opening marker`);
+      if (seen.has(id)) {
+        errors.push(`${label}: duplicate opening marker`);
+      }
       seen.add(id);
-      if (open) errors.push(`${TOOLKIT}: ${open.id}: opening marker before closing marker`);
+      if (open) {
+        errors.push(`${TOOLKIT}: ${open.id}: opening marker before closing marker`);
+      }
       open = { id, index, end };
       continue;
     }
@@ -80,24 +92,32 @@ export function renderContractRegions(markdown: string): { text: string; errors:
             (current === '' || current.endsWith('\n')) &&
             /^(?:\r?\n)+$/.test(markdown.slice(end, sectionEnd))
           : before.replace(COMMAND_PREFIX, '') === region.prefix && /^`[^`\r\n]+`$/.test(current));
-      if (!correct) errors.push(`${label}: generated markers at the wrong boundary`);
-      else {
+      if (!correct) {
+        errors.push(`${label}: generated markers at the wrong boundary`);
+      } else {
         const expected = delimiterNewline === '\r\n' ? region.text.replaceAll('\n', '\r\n') : region.text;
-        if (current !== expected) drift.push(`${label}: generated content differs`);
+        if (current !== expected) {
+          drift.push(`${label}: generated content differs`);
+        }
         text += markdown.slice(cursor, bodyStart) + expected;
         cursor = index;
       }
     }
     open = undefined;
   }
-  if (open) errors.push(`${TOOLKIT}: ${open.id}: missing closing marker`);
-  for (const [id, { heading }] of regions)
-    if (!seen.has(id)) errors.push(`${TOOLKIT}: ${heading}: missing opening marker`);
+  if (open) {
+    errors.push(`${TOOLKIT}: ${open.id}: missing closing marker`);
+  }
+  for (const [id, { heading }] of regions) {
+    if (!seen.has(id)) {
+      errors.push(`${TOOLKIT}: ${heading}: missing opening marker`);
+    }
+  }
   return { text: errors.length ? markdown : text + markdown.slice(cursor), errors, drift };
 }
 
 /** Checks the checkout, writing only an updated contract in generation mode. */
-export function maintain(skillDir: string, check: boolean): string[] {
+export function maintain(skillDir: string, check: boolean): Array<string> {
   const read = (relative: string) => fs.readFileSync(path.join(skillDir, relative), 'utf8');
   const markdown = read(TOOLKIT);
   const result = renderContractRegions(markdown);
@@ -108,7 +128,7 @@ export function maintain(skillDir: string, check: boolean): string[] {
   return errors;
 }
 
-function main(args: readonly string[]): number {
+function main(args: ReadonlyArray<string>): number {
   if (args.length > 1 || (args.length === 1 && args[0] !== '--check')) {
     process.stderr.write('Usage: node scripts/maintain.ts [--check]\n');
     return 2;
@@ -116,7 +136,9 @@ function main(args: readonly string[]): number {
   try {
     const skillDir = fileURLToPath(new URL('../skills/dispatch/', import.meta.url));
     const errors = maintain(skillDir, args[0] === '--check');
-    for (const error of errors) process.stderr.write(`${error}\n`);
+    for (const error of errors) {
+      process.stderr.write(`${error}\n`);
+    }
     return errors.length ? 1 : 0;
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

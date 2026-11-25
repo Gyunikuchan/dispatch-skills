@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scanOverlay, type FileTable } from './scan.ts';
+import { scanOverlay } from './scan.ts';
+import type { FileTable } from './scan.ts';
 
 export const TIERS = [
   'tests/unit/policy/',
@@ -12,7 +13,7 @@ export const TIERS = [
   'tests/e2e/',
 ] as const;
 
-export function checkTestLayout(files: FileTable): string[] {
+export function checkTestLayout(files: FileTable): Array<string> {
   return files
     .filter(({ path }) => path.endsWith('.test.ts') && !TIERS.some((tier) => path.startsWith(tier)))
     .map(({ path }) => `test layout rule: ${path} is outside every tier; move it under one of ${TIERS.join(', ')}`);

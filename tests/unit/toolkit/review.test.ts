@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
@@ -7,13 +8,28 @@ import { appendRecord, foldLedger } from '../../../skills/dispatch/scripts/toolk
 import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
 import { atomic } from '../../../skills/dispatch/scripts/toolkit/fanout/state.ts';
 import { CLEAN, fixture, report } from '../../helpers/review-fixture.ts';
+import {
+  both,
+  dictionaryOf,
+  flag,
+  jsonObject,
+  jsonValue,
+  listOf,
+  narrow,
+  numeric,
+  optional,
+  readJson,
+  shape,
+  text,
+} from './helpers/json.ts';
+import type { JsonObject, JsonValue } from './helpers/json.ts';
 
 const blockedReport = (reason: string) => JSON.stringify({ status: 'BLOCKED', reason });
 const reply = (text: string) => ({
   outcome: { status: 'ok' as const, text, resume: null, sessionId: null },
   invocations: [],
 });
-const configure = (f: Awaited<ReturnType<typeof fixture>>, config: Record<string, unknown>, rounds = 2) =>
+const configure = (f: Awaited<ReturnType<typeof fixture>>, config: JsonObject, rounds = 2) =>
   fs.writeFileSync(
     path.join(f.deps.skillRoot, 'config.jsonc'),
     JSON.stringify({
@@ -30,19 +46,21 @@ function failFirstRoundRenames(dir: string) {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
   const attempts = new Map<string, number>();
   Object.defineProperty(process, 'platform', { value: 'win32' });
-  fs.renameSync = (from, to) => {
+  const lockedRename = mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
     const destination = String(to);
     if (destination.startsWith(dir + path.sep)) {
       const count = (attempts.get(destination) ?? 0) + 1;
       attempts.set(destination, count);
-      if (count === 1) throw Object.assign(new Error('Transient rename lock'), { code: 'EPERM' });
+      if (count === 1) {
+        throw Object.assign(new Error('Transient rename lock'), { code: 'EPERM' });
+      }
     }
     rename(from, to);
-  };
+  });
   return {
     attempts,
     restore() {
-      fs.renameSync = rename;
+      lockedRename.mock.restore();
       Object.defineProperty(process, 'platform', platform);
     },
   };
@@ -58,7 +76,7 @@ test('review rename retry: round completes and retains the reviewed spec', async
     const spec = fs.readFileSync(f.spec, 'utf8');
     const result = await f.call();
     assert.equal(result.exit, 0, JSON.stringify(result.output));
-    assert.equal(f.read(1, 'findings.json').round, 1);
+    assert.equal(narrow(f.read(1, 'findings.json'), shape({ round: numeric })).round, 1);
     assert.equal(locks.attempts.get(findings), 2);
     assert.equal(locks.attempts.get(snapshot), 2);
     assert.equal(fs.readFileSync(snapshot, 'utf8'), spec);
@@ -85,7 +103,7 @@ test('review rename retry: fan-out atomic write persists its value', async () =>
 });
 
 test('blocked reasons list distinctly, carry failures and survive sanitizing', async () => {
-  const cases: { name: string; run: () => Promise<void> }[] = [
+  const cases: Array<{ name: string; run: () => Promise<void> }> = [
     {
       name: 'lists and orders before findings',
       run: async () => {
@@ -99,7 +117,7 @@ test('blocked reasons list distinctly, carry failures and survive sanitizing', a
             );
           const result = await f.call();
           assert.equal(result.exit, 0, JSON.stringify(result));
-          assert.deepEqual(result.value.blocked, [
+          assert.deepEqual(narrow(result.value, shape({ blocked: listOf(jsonObject) })).blocked, [
             { slot: 'claude[0]', provider: 'claude', model: 'fake', reason: 'Cannot read the session artifact' },
           ]);
           assert.match(result.output.summary, /blocked claude\[0\]: Cannot read the session artifact/);
@@ -151,7 +169,9 @@ test('blocked reasons list distinctly, carry failures and survive sanitizing', a
           const result = await f.call();
           assert.equal(result.exit, 0, JSON.stringify(result));
           assert.deepEqual(
-            result.value.blocked.map((entry: { model: string; reason: string }) => [entry.model, entry.reason]),
+            narrow(result.value, shape({ blocked: listOf(shape({ model: text, reason: text })) })).blocked.map(
+              (entry) => [entry.model, entry.reason],
+            ),
             [
               ['a', 'p'.repeat(200)],
               ['b', 'p'.repeat(200)],
@@ -176,19 +196,25 @@ test('blocked reasons list distinctly, carry failures and survive sanitizing', a
             reply(provider === 'claude' ? blockedReport('<invoke name="beta">') : CLEAN);
           const second = await f.call();
           assert.equal(second.exit, 0, JSON.stringify(second));
-          assert.equal(second.value.blocked[0].reason, '(reason removed by sanitizer)');
-          assert.equal(second.value.blockers, undefined);
+          const secondValue = narrow(
+            second.value,
+            shape({ blocked: listOf(shape({ reason: text })), blockers: optional(listOf(jsonObject)) }),
+          );
+          assert.equal(secondValue.blocked[0]!.reason, '(reason removed by sanitizer)');
+          assert.equal(secondValue.blockers, undefined);
         } finally {
           f.cleanup();
         }
       },
     },
   ];
-  for (const item of cases) await item.run();
+  for (const item of cases) {
+    await item.run();
+  }
 });
 
 test('blocked slots, blockers and pending keep their notice', async () => {
-  const cases: { name: string; run: () => Promise<void> }[] = [
+  const cases: Array<{ name: string; run: () => Promise<void> }> = [
     {
       name: 'native pending lists blocked',
       run: async () => {
@@ -206,14 +232,20 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           const pending = await f.call();
           assert.equal(pending.exit, 4);
           assert.equal(pending.output.reason, 'native-pending');
-          assert.deepEqual(pending.value.blocked, [
+          const pendingValue = narrow(
+            pending.value,
+            shape({ blocked: listOf(jsonObject), pending: listOf(shape({ replyPath: text })) }),
+          );
+          assert.deepEqual(pendingValue.blocked, [
             { slot: 'claude[0]', provider: 'claude', model: 'fake', reason: 'Cannot read the session artifact' },
           ]);
           assert.match(pending.output.summary, /blocked claude\[0\]: Cannot read the session artifact/);
-          for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+          for (const slot of pendingValue.pending) {
+            fs.writeFileSync(slot.replyPath, CLEAN);
+          }
           const done = await f.call();
           assert.equal(done.exit, 0, JSON.stringify(done));
-          assert.deepEqual(done.value.blocked, pending.value.blocked);
+          assert.deepEqual(narrow(done.value, shape({ blocked: listOf(jsonObject) })).blocked, pendingValue.blocked);
         } finally {
           f.cleanup();
         }
@@ -228,7 +260,7 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           const pending = await f.call();
           assert.equal(pending.exit, 4);
           assert.equal(pending.output.reason, 'native-pending');
-          assert.equal(pending.value.cliWave, 'pending');
+          assert.equal(narrow(pending.value, shape({ cliWave: text })).cliWave, 'pending');
           assert.match(pending.output.summary, /1 native slot/);
           const lower = pending.output.summary.toLowerCase();
           assert.ok(
@@ -238,7 +270,7 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           const waved = await f.call();
           assert.equal(waved.exit, 4);
           assert.equal(waved.output.reason, 'native-pending');
-          assert.equal(waved.value.cliWave, 'done');
+          assert.equal(narrow(waved.value, shape({ cliWave: text })).cliWave, 'done');
           assert.doesNotMatch(waved.output.summary, /at once/i);
           assert.doesNotMatch(waved.output.summary, /launch them now/i);
         } finally {
@@ -273,8 +305,12 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           f.deps.delegate = async (provider, request) => delegate(provider, request, CLEAN);
           const second = await f.call();
           assert.equal(second.exit, 0, JSON.stringify(second));
-          assert.equal(second.value.blocked.length, 10);
-          assert.equal(second.value.blockers.length, 10);
+          const secondValue = narrow(
+            second.value,
+            shape({ blocked: listOf(jsonObject), blockers: listOf(jsonObject) }),
+          );
+          assert.equal(secondValue.blocked.length, 10);
+          assert.equal(secondValue.blockers.length, 10);
           assert.match(second.output.summary, /orchestrator blocker claude\[0\]: m0 denied/);
           assert.match(second.output.summary, /\+\d+ more blocked/);
           assert.ok(Buffer.byteLength(second.output.summary, 'utf8') <= 1024);
@@ -296,16 +332,22 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           f.deps.delegate = async (provider) =>
             reply(provider === 'claude' ? blockedReport('Artifact denied by the guard') : CLEAN);
           f.deps.hook = (point) => {
-            if (point === 'review:after-pending') throw new Error('Interrupted');
+            if (point === 'review:after-pending') {
+              throw new Error('Interrupted');
+            }
           };
           assert.equal((await f.call()).exit, 2);
           delete f.deps.hook;
           const resumed = await f.call();
           assert.equal(resumed.exit, 0, JSON.stringify(resumed));
-          assert.deepEqual(resumed.value.blocked, [
+          const resumedValue = narrow(
+            resumed.value,
+            shape({ blocked: listOf(jsonObject), blockers: listOf(jsonObject) }),
+          );
+          assert.deepEqual(resumedValue.blocked, [
             { slot: 'claude[0]', provider: 'claude', model: 'fake', reason: 'Artifact denied by the guard' },
           ]);
-          assert.deepEqual(resumed.value.blockers, [
+          assert.deepEqual(resumedValue.blockers, [
             { slot: 'claude[0]', reason: 'Artifact denied by the guard', rounds: [1, 2] },
           ]);
           assert.match(
@@ -362,12 +404,14 @@ test('blocked slots, blockers and pending keep their notice', async () => {
           f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport('First blocker') : CLEAN);
           assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
           fs.mkdirSync(path.join(f.directory, 'round-2'), { recursive: true });
-          const metadata = f.read(1, 'round.json');
+          const metadata = narrow(f.read(1, 'round.json'), jsonObject);
           fs.mkdirSync(path.join(f.directory, 'round-3'), { recursive: true });
           fs.writeFileSync(path.join(f.directory, 'round-3/round.json'), JSON.stringify({ ...metadata, round: 3 }));
           const result = await f.call();
           assert.equal(result.exit, 0, JSON.stringify(result));
-          assert.deepEqual(result.value.blockers, [{ slot: 'claude[0]', reason: 'First blocker', rounds: [1, 3] }]);
+          assert.deepEqual(narrow(result.value, shape({ blockers: listOf(jsonObject) })).blockers, [
+            { slot: 'claude[0]', reason: 'First blocker', rounds: [1, 3] },
+          ]);
         } finally {
           f.cleanup();
         }
@@ -378,7 +422,6 @@ test('blocked slots, blockers and pending keep their notice', async () => {
       run: async () => {
         const f = await fixture();
         try {
-          const { createHash } = await import('node:crypto');
           const raw = 'Denied because ' + 'x'.repeat(300) + ' TAILMARKER';
           f.deps.delegate = async (provider) => reply(provider === 'claude' ? blockedReport(raw) : CLEAN);
           const result = await f.call();
@@ -398,7 +441,9 @@ test('blocked slots, blockers and pending keep their notice', async () => {
       },
     },
   ];
-  for (const item of cases) await item.run();
+  for (const item of cases) {
+    await item.run();
+  }
 });
 
 test('report failure class names a missing report and keeps refusal wording', async () => {
@@ -419,7 +464,10 @@ test('report failure class names a missing report and keeps refusal wording', as
       f.deps.delegate = async (provider) => reply(provider === 'claude' ? item.text : CLEAN);
       const result = await f.call();
       assert.equal(result.exit, 0, item.name + ': ' + JSON.stringify(result));
-      const failed = f.read(1, 'findings.json').failed as { slot: string; cls: string; reason: string }[];
+      const failed = narrow(
+        f.read(1, 'findings.json'),
+        shape({ failed: listOf(shape({ slot: text, cls: text, reason: text })) }),
+      ).failed;
       assert.deepEqual(
         failed.map((row) => [row.slot, row.cls]),
         [['claude[0]', item.cls]],
@@ -442,10 +490,12 @@ const ceilingRows = (f: ReviewFixture, review = PLAN_REVIEW) =>
   );
 const openCeilingRows = (f: ReviewFixture, review = PLAN_REVIEW) => {
   const latest = new Map<string, string>();
-  for (const row of ceilingRows(f, review)) latest.set(String(row.data['id']), String(row.data['state']));
+  for (const row of ceilingRows(f, review)) {
+    latest.set(String(row.data['id']), String(row.data['state']));
+  }
   return [...latest].filter(([, state]) => state === 'open');
 };
-const addRecord = (f: ReviewFixture, record: object) => appendRecord(f.session, record, f.deps);
+const addRecord = (f: ReviewFixture, record: JsonObject) => appendRecord(f.session, record, f.deps);
 const openCeiling = (f: ReviewFixture, review: string, ceiling: number) =>
   addRecord(f, {
     kind: 'escalation',
@@ -482,7 +532,9 @@ const planAccepted = async (f: ReviewFixture, step: number, change = true) => {
     ruling: 'accepted',
     rationale: 'Resolution',
   });
-  if (change) fs.appendFileSync(f.plan, '\n## Fix ' + step + '\nChanged.\n');
+  if (change) {
+    fs.appendFileSync(f.plan, '\n## Fix ' + step + '\nChanged.\n');
+  }
   return result;
 };
 const callDefaultLevel = async (f: ReviewFixture) => {
@@ -496,24 +548,34 @@ const callDefaultLevel = async (f: ReviewFixture) => {
 };
 const setPlanRounds = (f: ReviewFixture, level: string, rounds: number) => {
   const file = path.join(f.deps.skillRoot, 'config.jsonc');
-  const config = JSON.parse(fs.readFileSync(file, 'utf8')) as {
-    phases: Record<string, { rounds: Record<string, number> }>;
-  };
-  config.phases['plan-review']!.rounds[level] = rounds;
+  const config = readJson(
+    file,
+    shape({
+      phases: dictionaryOf(
+        shape({ rounds: optional(dictionaryOf(numeric)), targets: optional(dictionaryOf(numeric)) }),
+      ),
+    }),
+  );
+  config.phases['plan-review']!.rounds![level] = rounds;
   fs.writeFileSync(file, JSON.stringify(config));
 };
 const singlePlanTarget = (f: ReviewFixture) => {
   const file = path.join(f.deps.skillRoot, 'config.jsonc');
-  const config = JSON.parse(fs.readFileSync(file, 'utf8')) as {
-    phases: Record<string, { targets: Record<string, number> }>;
-  };
-  config.phases['plan-review']!.targets['medium'] = 1;
+  const config = readJson(
+    file,
+    shape({
+      phases: dictionaryOf(
+        shape({ rounds: optional(dictionaryOf(numeric)), targets: optional(dictionaryOf(numeric)) }),
+      ),
+    }),
+  );
+  config.phases['plan-review']!.targets!['medium'] = 1;
   fs.writeFileSync(file, JSON.stringify(config));
 };
 const seedRound = (f: ReviewFixture, round: number) => {
   const directory = path.join(f.directory, 'round-' + round);
   fs.mkdirSync(directory, { recursive: true });
-  const metadata = f.read(round - 1, 'round.json');
+  const metadata = narrow(f.read(round - 1, 'round.json'), jsonObject);
   fs.writeFileSync(path.join(directory, 'round.json'), JSON.stringify({ ...metadata, round, generation: 1 }));
 };
 const seededFinding = (id: string, severity: 'MUST' | 'SHOULD') => ({
@@ -529,7 +591,7 @@ const seededFinding = (id: string, severity: 'MUST' | 'SHOULD') => ({
 const seedCompletedRound = (
   f: ReviewFixture,
   round: number,
-  findings: object[],
+  findings: Array<object>,
   rulingSnapshot = '[]',
   startSeq = 0,
 ) => {
@@ -635,7 +697,7 @@ const codeAccepted = async (f: ReviewFixture, step: number, review?: string) => 
   };
   const result = await f.call('code', 'worktree');
   assert.equal(result.exit, 0, JSON.stringify(result));
-  const id = review ?? result.value.review;
+  const id = review ?? narrow(result.value, shape({ review: text })).review;
   await f.add('ruling', {
     subject: 'review:' + id + ':R' + step + '-F001',
     ruling: 'accepted',
@@ -644,28 +706,32 @@ const codeAccepted = async (f: ReviewFixture, step: number, review?: string) => 
   return result;
 };
 
+const viaPlan = async (f: ReviewFixture) => {
+  const result = await f.call();
+  return { exit: result.exit, reason: result.output.reason };
+};
+
+const viaLow = async (f: ReviewFixture) => {
+  f.lines.length = 0;
+  const exit = await main(
+    ['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'],
+    f.deps,
+  );
+  return { exit, reason: f.output().reason };
+};
+
+type CeilingSeed = void | { launches: number; seq: number } | { review: string };
+
 test('review ceiling admission grants rounds by resolution and refuses otherwise', async () => {
-  const viaPlan = async (f: ReviewFixture) => {
-    const result = await f.call();
-    return { exit: result.exit, reason: result.output.reason as string | undefined };
-  };
-  const viaLow = async (f: ReviewFixture) => {
-    f.lines.length = 0;
-    const exit = await main(
-      ['review', 'run', f.plan, '--kind', 'plan', '--level', 'low', '--session', f.session, '--host', 'opencode'],
-      f.deps,
-    );
-    return { exit, reason: f.output().reason as string | undefined };
-  };
-  const rows: {
+  const rows: Array<{
     name: string;
-    seed: (f: ReviewFixture) => Promise<unknown>;
+    seed: (f: ReviewFixture) => Promise<CeilingSeed>;
     invoke?: 'low';
-    run?: (f: ReviewFixture, ctx: unknown) => Promise<{ exit: number; reason?: string }>;
+    run?: (f: ReviewFixture, ctx: CeilingSeed) => Promise<{ exit: number; reason?: string }>;
     exit: number;
     reason?: string;
-    check?: (f: ReviewFixture, ctx: unknown) => unknown;
-  }[] = [
+    check?: (f: ReviewFixture, ctx: CeilingSeed) => void | Promise<void>;
+  }> = [
     {
       name: 'accepted MUST past the ceiling opens an escalation',
       seed: async (f) => {
@@ -728,7 +794,7 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       exit: 4,
       reason: 'escalation-open',
       check: async (f, ctx) => {
-        const base = ctx as { launches: number; seq: number };
+        const base = narrow(ctx, shape({ launches: numeric, seq: numeric }));
         assert.equal(f.launches.length, base.launches);
         assert.equal(foldLedger(f.session).lastSeq, base.seq);
         f.lines.length = 0;
@@ -822,8 +888,8 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       },
       exit: 0,
       check: (f) => {
-        assert.equal(f.read(5, 'round.json').cap, 2);
-        assert.equal(f.read(6, 'round.json').cap, 2);
+        assert.equal(narrow(f.read(5, 'round.json'), shape({ cap: numeric })).cap, 2);
+        assert.equal(narrow(f.read(6, 'round.json'), shape({ cap: numeric })).cap, 2);
         assert.ok(fs.existsSync(path.join(f.directory, 'round-6/findings.json')));
       },
     },
@@ -893,10 +959,13 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       },
       exit: 0,
       check: (f) => {
-        const round = f.read(5, 'round.json');
+        const round = narrow(f.read(5, 'round.json'), shape({ scope: text, requests: listOf(jsonObject) }));
         assert.match(round.scope, /^Re-review round 5 \(full\)/);
         assert.equal(round.requests.length, 1);
-        assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+        assert.equal(
+          narrow(f.read(5, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+          1,
+        );
       },
     },
     {
@@ -922,23 +991,29 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       seed: async (f) => {
         worktreeRun(f);
         const file = path.join(f.deps.skillRoot, 'config.jsonc');
-        const config = JSON.parse(fs.readFileSync(file, 'utf8')) as {
-          phases: Record<string, { targets: Record<string, number>; rounds: Record<string, number> }>;
-        };
-        config.phases['code-review']!.targets['low'] = 1;
-        config.phases['code-review']!.rounds['low'] = 1;
+        const config = readJson(
+          file,
+          shape({
+            phases: dictionaryOf(
+              shape({ rounds: optional(dictionaryOf(numeric)), targets: optional(dictionaryOf(numeric)) }),
+            ),
+          }),
+        );
+        config.phases['code-review']!.targets!['low'] = 1;
+        config.phases['code-review']!.rounds!['low'] = 1;
         fs.writeFileSync(file, JSON.stringify(config));
         const first = await codeAccepted(f, 1);
-        await openCeiling(f, first.value.review, 3);
-        return { review: first.value.review };
+        const firstReview = narrow(first.value, shape({ review: text })).review;
+        await openCeiling(f, firstReview, 3);
+        return { review: firstReview };
       },
       run: async (f, ctx) => {
-        const review = (ctx as { review: string }).review;
+        const review = narrow(ctx, shape({ review: text })).review;
         const launches = f.launches.length;
         await assert.rejects(resolveCeiling(f, review, 3, 'defer: accept as follow-up'), { reason: 'invalid-record' });
         const blocked = await f.call('code', 'worktree');
         assert.equal(f.launches.length, launches);
-        return { exit: blocked.exit, reason: blocked.output.reason as string };
+        return { exit: blocked.exit, reason: String(blocked.output.reason ?? '') };
       },
       exit: 4,
       reason: 'escalation-open',
@@ -961,7 +1036,7 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       },
       exit: 0,
       check: (f) => {
-        assert.equal(f.read(3, 'round.json').cap, 2);
+        assert.equal(narrow(f.read(3, 'round.json'), shape({ cap: numeric })).cap, 2);
       },
     },
     {
@@ -1010,7 +1085,9 @@ test('review ceiling admission grants rounds by resolution and refuses otherwise
       const ctx = await row.seed(f);
       const outcome = row.run ? await row.run(f, ctx) : row.invoke === 'low' ? await viaLow(f) : await viaPlan(f);
       assert.equal(outcome.exit, row.exit, row.name);
-      if (row.reason !== undefined) assert.equal(outcome.reason, row.reason, row.name);
+      if (row.reason !== undefined) {
+        assert.equal(outcome.reason, row.reason, row.name);
+      }
       await row.check?.(f, ctx);
     } finally {
       f.cleanup();
@@ -1046,7 +1123,7 @@ test('moved incomplete round is refused without replacing pending state', async 
       );
       assert.equal(exit, 4);
       assert.equal(f.output().reason, 'level-unapproved');
-      assert.ok(f.read(5, 'round.json').roster.length > 0);
+      assert.ok(narrow(f.read(5, 'round.json'), shape({ roster: listOf(jsonObject) })).roster.length > 0);
       assert.equal(fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8') : null, snapshot);
       assert.deepEqual(
         fs.readdirSync(path.join(f.directory, 'round-5')).filter((name) => name.startsWith('gen-')),
@@ -1121,9 +1198,13 @@ test('zero-round ceiling resolutions run required review for pending rejections'
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
-      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(confirmation-only\)/);
-      assert.equal(f.read(5, 'round.json').requests.length, 1);
-      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+      const round = narrow(f.read(5, 'round.json'), shape({ scope: text, requests: listOf(jsonObject) }));
+      assert.match(round.scope, /^Re-review round 5 \(confirmation-only\)/);
+      assert.equal(round.requests.length, 1);
+      assert.equal(
+        narrow(f.read(5, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+        1,
+      );
     } finally {
       f.cleanup();
     }
@@ -1142,9 +1223,13 @@ test('zero-round ceiling resolutions run required review for pending rejections'
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
-      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(confirmation-only\)/);
-      assert.equal(f.read(5, 'round.json').requests.length, 1);
-      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+      const round = narrow(f.read(5, 'round.json'), shape({ scope: text, requests: listOf(jsonObject) }));
+      assert.match(round.scope, /^Re-review round 5 \(confirmation-only\)/);
+      assert.equal(round.requests.length, 1);
+      assert.equal(
+        narrow(f.read(5, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+        1,
+      );
     } finally {
       f.cleanup();
     }
@@ -1177,9 +1262,13 @@ test('zero-round ceiling resolutions run required review for pending rejections'
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
-      assert.match(f.read(5, 'round.json').scope, /^Re-review round 5 \(full\)/);
-      assert.equal(f.read(5, 'round.json').requests.length, 1);
-      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+      const round = narrow(f.read(5, 'round.json'), shape({ scope: text, requests: listOf(jsonObject) }));
+      assert.match(round.scope, /^Re-review round 5 \(full\)/);
+      assert.equal(round.requests.length, 1);
+      assert.equal(
+        narrow(f.read(5, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+        1,
+      );
     } finally {
       f.cleanup();
     }
@@ -1202,10 +1291,13 @@ test('zero-round ceiling resolutions run required review for pending rejections'
       confirmDelegate(f);
       const result = await f.call();
       assert.equal(result.exit, 0, JSON.stringify(result));
-      const round = f.read(5, 'round.json');
+      const round = narrow(f.read(5, 'round.json'), shape({ scope: text, requests: listOf(jsonObject) }));
       assert.match(round.scope, /^Re-review round 5 \(confirmation-only\)/);
       assert.equal(round.requests.length, 1);
-      assert.equal(f.read(5, 'findings.json').confirmations.length, 1);
+      assert.equal(
+        narrow(f.read(5, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+        1,
+      );
     } finally {
       f.cleanup();
     }
@@ -1220,7 +1312,7 @@ test('first round saves current cap', async () => {
     planDelegate(f, CLEAN);
     const result = await f.call();
     assert.equal(result.exit, 0, JSON.stringify(result));
-    assert.equal(f.read(1, 'round.json').cap, 3);
+    assert.equal(narrow(f.read(1, 'round.json'), shape({ cap: numeric })).cap, 3);
     assert.match(result.output.summary, /round 1\/3/);
   } finally {
     f.cleanup();
@@ -1302,7 +1394,7 @@ test('saved ceiling and round cap ignore subsequent level cap raises', async () 
       await f.add('level', { level: 'high' });
       const second = await callDefaultLevel(f);
       assert.equal(second.exit, 0, JSON.stringify(second));
-      assert.equal(f.read(2, 'round.json').cap, 2);
+      assert.equal(narrow(f.read(2, 'round.json'), shape({ cap: numeric })).cap, 2);
       const third = await callDefaultLevel(f);
       assert.equal(third.exit, 4);
       assert.equal(third.output.reason, 'round-cap');
@@ -1316,7 +1408,15 @@ test('saved ceiling and round cap ignore subsequent level cap raises', async () 
 const statusBudget = async (f: ReviewFixture) => {
   f.lines.length = 0;
   assert.equal(await main(['status', 'show', '--session', f.session], f.deps), 0);
-  return JSON.parse(fs.readFileSync(f.output().path!, 'utf8')).reviews[PLAN_REVIEW];
+  const parsed = readJson(
+    f.output().path!,
+    shape({
+      reviews: dictionaryOf(
+        shape({ cap: numeric, ceiling: numeric, nextRound: numeric, asOfSeq: numeric, state: text }),
+      ),
+    }),
+  );
+  return parsed.reviews[PLAN_REVIEW]!;
 };
 
 test('review budget matches admission after rulings and ceiling resolutions', async () => {
@@ -1346,14 +1446,20 @@ test('review budget matches admission after rulings and ceiling resolutions', as
     const fifth = await f.call();
     assert.equal(fifth.exit, 0, JSON.stringify(fifth));
     // The completed result is historical at its asOfSeq; the unruled round-5 MUST needs a continuation for round 6.
-    assert.deepEqual(fifth.value.budget, {
+    const fifthBudget = narrow(
+      fifth.value,
+      shape({
+        budget: shape({ cap: numeric, ceiling: numeric, nextRound: numeric, asOfSeq: numeric, state: text }),
+      }),
+    ).budget;
+    assert.deepEqual(fifthBudget, {
       cap: 2,
       ceiling: 6,
       nextRound: 6,
       asOfSeq: foldLedger(f.session).lastSeq,
       state: 'requires-continuation',
     });
-    assert.deepEqual(await statusBudget(f), fifth.value.budget);
+    assert.deepEqual(await statusBudget(f), fifthBudget);
     assert.equal((await f.call()).output.reason, 'round-cap');
 
     await f.add('ruling', {
@@ -1363,7 +1469,7 @@ test('review budget matches admission after rulings and ceiling resolutions', as
     });
     const accepted = await statusBudget(f);
     assert.equal(accepted.state, 'allowed');
-    assert.ok(accepted.asOfSeq > fifth.value.budget.asOfSeq);
+    assert.ok(accepted.asOfSeq > fifthBudget.asOfSeq);
   } finally {
     f.cleanup();
   }
@@ -1391,9 +1497,9 @@ const VALID_TASK_PLAN = [
   '- `node contract`',
 ].join('\n');
 const delegateSlots = (f: ReviewFixture) => f.launches.map((launch) => launch.provider);
-const targetSlotIds = (metadata: { roster: { slot: string; reserve: boolean }[] }) =>
+const targetSlotIds = (metadata: { roster: Array<{ slot: string; reserve: boolean }> }) =>
   metadata.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot);
-const reserveSlotIds = (metadata: { roster: { slot: string; reserve: boolean }[] }) =>
+const reserveSlotIds = (metadata: { roster: Array<{ slot: string; reserve: boolean }> }) =>
   metadata.roster.filter((slot) => slot.reserve).map((slot) => slot.slot);
 const configureAssignable = (f: ReviewFixture) =>
   configure(f, {
@@ -1415,14 +1521,14 @@ const rejectedMustRound = async (f: ReviewFixture, target: string, kind: 'plan' 
   const first = await f.call(kind, target, level);
   assert.equal(first.exit, 0, JSON.stringify(first));
   await f.add('ruling', {
-    subject: 'review:' + first.value.review + ':R1-F001',
+    subject: 'review:' + narrow(first.value, shape({ review: text })).review + ':R1-F001',
     ruling: 'rejected',
     rationale: 'The captured implementation bounds each write',
   });
   return first;
 };
 const answerConfirmation = (f: ReviewFixture) => {
-  const reads: { provider: string; prompt: string }[] = [];
+  const reads: Array<{ provider: string; prompt: string }> = [];
   f.deps.delegate = async (provider, request, mode) => {
     f.launches.push({ provider, request, mode });
     const prompt = fs.readFileSync(request.promptPath, 'utf8');
@@ -1443,12 +1549,7 @@ const answerConfirmation = (f: ReviewFixture) => {
   };
   return reads;
 };
-const seedConfirmationRound = (
-  f: ReviewFixture,
-  round: number,
-  metadata: Record<string, unknown>,
-  findings: object[] = [],
-) => {
+const seedConfirmationRound = (f: ReviewFixture, round: number, metadata: JsonObject, findings: Array<object> = []) => {
   const dir = path.join(f.directory, 'round-' + round);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'round.json'), JSON.stringify({ ...metadata, round }));
@@ -1458,9 +1559,9 @@ const seedConfirmationRound = (
   );
   fs.writeFileSync(path.join(dir, 'target.snapshot.md'), fs.readFileSync(f.plan, 'utf8'));
 };
-const rewriteRound = (f: ReviewFixture, round: number, change: (metadata: Record<string, unknown>) => void) => {
+const rewriteRound = (f: ReviewFixture, round: number, change: (metadata: { [key: string]: JsonValue }) => void) => {
   const file = path.join(f.directory, 'round-' + round, 'round.json');
-  const metadata = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  const metadata = readJson(file, dictionaryOf(jsonValue));
   change(metadata);
   fs.writeFileSync(file, JSON.stringify(metadata));
 };
@@ -1476,7 +1577,16 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       f.launches.length = 0;
       const second = await f.call();
       assert.equal(second.exit, 0, JSON.stringify(second));
-      const round = f.read(2, 'round.json');
+      const round = narrow(
+        f.read(2, 'round.json'),
+        shape({
+          scope: text,
+          roster: listOf(shape({ slot: text, reserve: flag })),
+          requests: listOf(jsonObject),
+          spec: shape({ path: text, hash: text }),
+          target: text,
+        }),
+      );
       assert.match(
         round.scope,
         /^Re-review round 2 \(confirmation-only\) — comparison: sha256:[a-f0-9]+\.\.sha256:[a-f0-9]+$/,
@@ -1485,7 +1595,10 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       assert.deepEqual(reserveSlotIds(round), ['copilot[0]']);
       assert.deepEqual(delegateSlots(f), ['agy']);
       assert.equal(round.requests.length, 1);
-      assert.equal(f.read(2, 'findings.json').confirmations.length, 1);
+      assert.equal(
+        narrow(f.read(2, 'findings.json'), shape({ confirmations: listOf(jsonObject) })).confirmations.length,
+        1,
+      );
       const prompt = reads[0]!.prompt;
       for (const expected of [
         "Confirm or dispute the host's evidence-backed rejection of your earlier MUST finding(s) on this unchanged target.",
@@ -1503,8 +1616,9 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
         '- Required change: Keep writes isolated until finalization',
         '- Host rejection: The captured implementation bounds each write',
         '{"status":"CLEAN","findings":[],"confirmations":[{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]}',
-      ])
+      ]) {
         assert.ok(prompt.includes(expected), expected);
+      }
       assert.match(prompt, /read-only/i);
       assert.match(prompt, /Do not edit/i);
       assert.match(prompt, /Request ID: `[a-f0-9]{64}`/);
@@ -1528,9 +1642,12 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const base = 'a'.repeat(40),
         head = 'b'.repeat(40);
       f.deps.run = async (argv) => {
-        if (argv[1] === 'rev-parse')
+        if (argv[1] === 'rev-parse') {
           return { exit: 0, stdout: argv.at(-1) === 'main^{commit}' ? base : head, stderr: '' };
-        if (argv[1] === 'diff') return { exit: 0, stdout: 'src/file.ts\0', stderr: '' };
+        }
+        if (argv[1] === 'diff') {
+          return { exit: 0, stdout: 'src/file.ts\0', stderr: '' };
+        }
         return { exit: 0, stdout: '', stderr: '' };
       };
       await rejectedMustRound(f, 'main..feature', 'code', 'low');
@@ -1539,7 +1656,16 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const second = await f.call('code', 'main..feature', 'low');
       assert.equal(second.exit, 0, JSON.stringify(second));
       const round = JSON.parse(
-        fs.readFileSync(path.join(f.session, '.state/reviews', second.value.review, 'round-2', 'round.json'), 'utf8'),
+        fs.readFileSync(
+          path.join(
+            f.session,
+            '.state/reviews',
+            narrow(second.value, shape({ review: text })).review,
+            'round-2',
+            'round.json',
+          ),
+          'utf8',
+        ),
       );
       assert.match(round.scope, /^Re-review round 2 \(confirmation-only\) — comparison: b{40}\.\.b{40}$/);
       assert.deepEqual(targetSlotIds(round), ['agy[0]']);
@@ -1605,7 +1731,16 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const second = await f.call('code', item.target, 'low');
       assert.equal(second.exit, 0, JSON.stringify(second));
       const round = JSON.parse(
-        fs.readFileSync(path.join(f.session, '.state/reviews', second.value.review, 'round-2', 'round.json'), 'utf8'),
+        fs.readFileSync(
+          path.join(
+            f.session,
+            '.state/reviews',
+            narrow(second.value, shape({ review: text })).review,
+            'round-2',
+            'round.json',
+          ),
+          'utf8',
+        ),
       );
       assert.match(round.scope, /^Re-review round 2 \(confirmation-only\)/);
       assert.deepEqual(targetSlotIds(round), ['agy[0]']);
@@ -1642,7 +1777,10 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const reads = answerConfirmation(f);
       const second = await f.call();
       assert.equal(second.exit, 0, JSON.stringify(second));
-      const round = f.read(2, 'round.json');
+      const round = narrow(
+        f.read(2, 'round.json'),
+        shape({ scope: text, roster: listOf(shape({ slot: text, reserve: flag })) }),
+      );
       assert.match(round.scope, /^Re-review round 2 \(full\)/);
       assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
       assert.doesNotMatch(round.scope, /confirmation-only/);
@@ -1661,7 +1799,7 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       rewriteRound(f, 1, (metadata) => {
         metadata['cap'] = 3;
       });
-      const first = f.read(1, 'round.json');
+      const first = narrow(f.read(1, 'round.json'), both(jsonObject, shape({ target: text })));
       seedConfirmationRound(f, 2, {
         ...first,
         generation: 1,
@@ -1675,7 +1813,10 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       planDelegate(f, CLEAN);
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
-      const round = f.read(3, 'round.json');
+      const round = narrow(
+        f.read(3, 'round.json'),
+        shape({ scope: text, roster: listOf(shape({ slot: text, reserve: flag })) }),
+      );
       assert.match(round.scope, /^Re-review round 3 \(full\)/);
       assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
     } finally {
@@ -1694,14 +1835,14 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
           { slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false },
         ];
       });
-      const first = f.read(1, 'round.json');
+      const first = narrow(f.read(1, 'round.json'), both(jsonObject, shape({ target: text })));
       seedConfirmationRound(f, 2, {
         ...first,
         generation: 1,
         roster: [{ slot: 'agy[0]', provider: 'agy', model: 'fake', index: 0, reserve: false }],
         scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target,
       });
-      const second = f.read(2, 'findings.json');
+      const second = narrow(f.read(2, 'findings.json'), jsonObject);
       fs.writeFileSync(
         path.join(f.directory, 'round-2', 'findings.json'),
         JSON.stringify({ ...second, asOfSeq: 1, repositoryCheck: { state: 'unavailable', reason: 'fixture' } }),
@@ -1720,7 +1861,10 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       planDelegate(f, CLEAN);
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
-      const round = f.read(3, 'round.json');
+      const round = narrow(
+        f.read(3, 'round.json'),
+        shape({ scope: text, roster: listOf(shape({ slot: text, reserve: flag })) }),
+      );
       assert.match(round.scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
       assert.doesNotMatch(round.scope, /changed paths:/);
       assert.deepEqual(targetSlotIds(round), ['claude[0]', 'agy[0]']);
@@ -1761,7 +1905,7 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       const failed = await f.call();
       assert.equal(failed.exit, 2);
       assert.equal(failed.output.reason, 'review-failed');
-      assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
+      assert.match(narrow(f.read(2, 'round.json'), shape({ scope: text })).scope, /\(confirmation-only\)/);
     } finally {
       f.cleanup();
     }
@@ -1773,11 +1917,12 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
     try {
       configureAssignable(f);
       await rejectedMustRound(f, f.plan, 'plan');
-      const reads: { provider: string; prompt: string }[] = [];
+      const reads: Array<{ provider: string; prompt: string }> = [];
       f.deps.delegate = async (provider, request, mode) => {
         f.launches.push({ provider, request, mode });
-        if (provider === 'agy')
+        if (provider === 'agy') {
           return { outcome: { status: 'fail', cls: 'auth', detail: 'No credentials' }, invocations: [] };
+        }
         const prompt = fs.readFileSync(request.promptPath, 'utf8');
         reads.push({ provider, prompt });
         const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map((match) => match[1]!);
@@ -1802,14 +1947,20 @@ test('unchanged target with pending MUST rejection runs confirmation-only prompt
       f.launches.length = 0;
       const second = await f.call();
       assert.equal(second.exit, 0, JSON.stringify(second));
-      const round = f.read(2, 'round.json');
+      const round = narrow(
+        f.read(2, 'round.json'),
+        shape({ scope: text, roster: listOf(shape({ slot: text, reserve: flag })) }),
+      );
       assert.deepEqual(targetSlotIds(round), ['agy[0]']);
       assert.deepEqual(reserveSlotIds(round), ['copilot[0]']);
       assert.deepEqual(delegateSlots(f), ['agy', 'copilot']);
       assert.match(reads[0]!.prompt, /\(confirmation-only\)/);
-      const [confirmation] = f.read(2, 'findings.json').confirmations;
-      assert.equal(confirmation.sourceSlot, 'agy[0]');
-      assert.equal(confirmation.responder.slot, 'copilot[0]');
+      const [confirmation] = narrow(
+        f.read(2, 'findings.json'),
+        shape({ confirmations: listOf(shape({ sourceSlot: text, responder: shape({ slot: text }) })) }),
+      ).confirmations;
+      assert.equal(confirmation!.sourceSlot, 'agy[0]');
+      assert.equal(confirmation!.responder.slot, 'copilot[0]');
       assert.equal((await f.call()).output.reason, 'round-cap');
     } finally {
       f.cleanup();
@@ -1829,13 +1980,13 @@ test('non-code rerun scope names changed headings only with a prior snapshot', a
           { slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false },
         ];
       });
-      const first = f.read(1, 'round.json');
+      const first = narrow(f.read(1, 'round.json'), both(jsonObject, shape({ target: text })));
       seedConfirmationRound(f, 2, {
         ...first,
         generation: 1,
         scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target,
       });
-      const second = f.read(2, 'findings.json');
+      const second = narrow(f.read(2, 'findings.json'), jsonObject);
       fs.writeFileSync(
         path.join(f.directory, 'round-2', 'findings.json'),
         JSON.stringify({ ...second, asOfSeq: 1, repositoryCheck: { state: 'unavailable', reason: 'fixture' } }),
@@ -1855,7 +2006,10 @@ test('non-code rerun scope names changed headings only with a prior snapshot', a
       planDelegate(f, CLEAN);
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
-      assert.match(f.read(3, 'round.json').scope, /^Full review — changed: Fix; comparison: sha256:[a-f0-9]{64}$/);
+      assert.match(
+        narrow(f.read(3, 'round.json'), shape({ scope: text })).scope,
+        /^Full review — changed: Fix; comparison: sha256:[a-f0-9]{64}$/,
+      );
     } finally {
       f.cleanup();
     }
@@ -1872,13 +2026,13 @@ test('non-code rerun scope names changed headings only with a prior snapshot', a
           { slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false },
         ];
       });
-      const first = f.read(1, 'round.json');
+      const first = narrow(f.read(1, 'round.json'), both(jsonObject, shape({ target: text })));
       seedConfirmationRound(f, 2, {
         ...first,
         generation: 1,
         scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target,
       });
-      const second = f.read(2, 'findings.json');
+      const second = narrow(f.read(2, 'findings.json'), jsonObject);
       fs.writeFileSync(
         path.join(f.directory, 'round-2', 'findings.json'),
         JSON.stringify({ ...second, asOfSeq: 1, repositoryCheck: { state: 'unavailable', reason: 'fixture' } }),
@@ -1898,7 +2052,10 @@ test('non-code rerun scope names changed headings only with a prior snapshot', a
       planDelegate(f, CLEAN);
       const third = await f.call();
       assert.equal(third.exit, 0, JSON.stringify(third));
-      assert.match(f.read(3, 'round.json').scope, /^Full review — comparison: sha256:[a-f0-9]{64}$/);
+      assert.match(
+        narrow(f.read(3, 'round.json'), shape({ scope: text })).scope,
+        /^Full review — comparison: sha256:[a-f0-9]{64}$/,
+      );
     } finally {
       f.cleanup();
     }
@@ -1922,41 +2079,46 @@ test('non-code re-review omits the changed segment without changed headings', as
     try {
       seedCompletedRound(f, 1, []);
       planDelegate(f, CLEAN);
-      if (edit) fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      if (edit) {
+        fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
+      }
       const second = await f.call();
       assert.equal(second.exit, 0, name + ': ' + JSON.stringify(second));
-      const scope = f.read(2, 'round.json').scope as string;
+      const scope = narrow(f.read(2, 'round.json'), shape({ scope: text })).scope;
       assert.match(scope, expected, name);
-      if (!edit) assert.doesNotMatch(scope, /changed:/, name);
+      if (!edit) {
+        assert.doesNotMatch(scope, /changed:/, name);
+      }
     } finally {
       f.cleanup();
     }
   }
 });
 
+const runPinned = async (f: Awaited<ReturnType<typeof fixture>>, pins: string) => {
+  f.lines.length = 0;
+  const exit = await main(
+    [
+      'review',
+      'run',
+      f.plan,
+      '--kind',
+      'plan',
+      '--level',
+      'medium',
+      '--session',
+      f.session,
+      '--host',
+      'opencode',
+      '--pins',
+      pins,
+    ],
+    f.deps,
+  );
+  return { exit, output: f.output() };
+};
+
 test('review run honors pins for all and provider selection and rejects invalid pins', async () => {
-  const runPinned = async (f: Awaited<ReturnType<typeof fixture>>, pins: string) => {
-    f.lines.length = 0;
-    const exit = await main(
-      [
-        'review',
-        'run',
-        f.plan,
-        '--kind',
-        'plan',
-        '--level',
-        'medium',
-        '--session',
-        f.session,
-        '--host',
-        'opencode',
-        '--pins',
-        pins,
-      ],
-      f.deps,
-    );
-    return { exit, output: f.output() };
-  };
   {
     const f = await fixture();
     try {
@@ -1977,7 +2139,9 @@ test('review run honors pins for all and provider selection and rejects invalid 
       const all = await runPinned(f, '(all)');
       assert.equal(all.exit, 0, JSON.stringify(all));
       assert.deepEqual(
-        f.read(1, 'round.json').roster.map((r: { provider: string }) => r.provider),
+        narrow(f.read(1, 'round.json'), shape({ roster: listOf(shape({ provider: text })) })).roster.map(
+          (r) => r.provider,
+        ),
         ['claude', 'agy'],
       );
     } finally {
@@ -1991,7 +2155,9 @@ test('review run honors pins for all and provider selection and rejects invalid 
       const single = await runPinned(f, '(agy)');
       assert.equal(single.exit, 0, JSON.stringify(single));
       assert.deepEqual(
-        f.read(1, 'round.json').roster.map((r: { provider: string }) => r.provider),
+        narrow(f.read(1, 'round.json'), shape({ roster: listOf(shape({ provider: text })) })).roster.map(
+          (r) => r.provider,
+        ),
         ['agy'],
       );
       for (const bad of ['(0)', '(unknown)']) {
@@ -2012,7 +2178,9 @@ test('explicit pins override prior-round narrowing on a non-decisive follow-up r
     const first = await f.call();
     assert.equal(first.exit, 0, JSON.stringify(first));
     assert.deepEqual(
-      f.read(1, 'round.json').roster.map((r: { provider: string }) => r.provider),
+      narrow(f.read(1, 'round.json'), shape({ roster: listOf(shape({ provider: text })) })).roster.map(
+        (r) => r.provider,
+      ),
       ['claude', 'agy'],
     );
     f.launches.length = 0;
@@ -2042,14 +2210,16 @@ test('explicit pins override prior-round narrowing on a non-decisive follow-up r
     );
     assert.equal(secondExit, 0, JSON.stringify(f.output()));
     assert.deepEqual(
-      f.read(2, 'round.json').roster.map((r: { provider: string }) => r.provider),
+      narrow(f.read(2, 'round.json'), shape({ roster: listOf(shape({ provider: text })) })).roster.map(
+        (r) => r.provider,
+      ),
       ['agy'],
     );
     assert.deepEqual(
       f.launches.map((l) => l.provider),
       ['agy'],
     );
-    assert.match(f.read(2, 'round.json').scope as string, /^Re-review round 2 \(full\)/);
+    assert.match(narrow(f.read(2, 'round.json'), shape({ scope: text })).scope, /^Re-review round 2 \(full\)/);
   } finally {
     f.cleanup();
   }
@@ -2065,13 +2235,13 @@ test('explicit pins override saved roster on an admitted repository rerun', asyn
         { slot: 'agy[0]', provider: 'agy', model: 'fake', index: 1, reserve: false },
       ];
     });
-    const first = f.read(1, 'round.json');
+    const first = narrow(f.read(1, 'round.json'), both(jsonObject, shape({ target: text })));
     seedConfirmationRound(f, 2, {
       ...first,
       generation: 1,
       scope: 'Re-review round 2 (confirmation-only) — comparison: ' + first.target + '..' + first.target,
     });
-    const second = f.read(2, 'findings.json');
+    const second = narrow(f.read(2, 'findings.json'), jsonObject);
     fs.writeFileSync(
       path.join(f.directory, 'round-2', 'findings.json'),
       JSON.stringify({ ...second, asOfSeq: 1, repositoryCheck: { state: 'unavailable', reason: 'fixture' } }),
@@ -2113,7 +2283,9 @@ test('explicit pins override saved roster on an admitted repository rerun', asyn
     );
     assert.equal(thirdExit, 0, JSON.stringify(f.output()));
     assert.deepEqual(
-      f.read(3, 'round.json').roster.map((r: { provider: string }) => r.provider),
+      narrow(f.read(3, 'round.json'), shape({ roster: listOf(shape({ provider: text })) })).roster.map(
+        (r) => r.provider,
+      ),
       ['agy'],
     );
     assert.deepEqual(
@@ -2215,8 +2387,8 @@ async function openReviewIntegration(f: ReviewFixture) {
   await f.add('integrate', { phase: 'done', task: 'T1', commit: INTEGRATION_HEAD });
 }
 
-function recordReviewVerification(f: ReviewFixture, open: string[] = []) {
-  return f.add('integrate', {
+async function recordReviewVerification(f: ReviewFixture, open: Array<string> = []): Promise<void> {
+  await f.add('integrate', {
     phase: 'verification',
     cycle: 1,
     outcome: open.length ? 'partial' : 'proved',
@@ -2227,8 +2399,8 @@ function recordReviewVerification(f: ReviewFixture, open: string[] = []) {
   });
 }
 
-function recordCleanupSkip(f: ReviewFixture) {
-  return addRecord(f, {
+async function recordCleanupSkip(f: ReviewFixture): Promise<void> {
+  await addRecord(f, {
     kind: 'note',
     by: 'orchestrator',
     key: 'test-cleanup:skip',
@@ -2249,21 +2421,22 @@ function assertReviewWarning(
   warning: string | undefined,
 ) {
   assert.equal(result.exit, 0, JSON.stringify(result));
-  assert.ok(fs.existsSync(path.join(f.session, result.value.findingsFile)), 'round persisted findings.json');
-  assert.equal(result.value.warning, warning);
+  const value = narrow(result.value, shape({ findingsFile: text, warning: optional(text) }));
+  assert.ok(fs.existsSync(path.join(f.session, value.findingsFile)), 'round persisted findings.json');
+  assert.equal(value.warning, warning);
   const prefix = warning === undefined ? 'review ' : 'warning: ' + warning + '; review ';
   assert.ok(result.output.summary.startsWith(prefix), result.output.summary);
   assert.ok(Buffer.byteLength(result.output.summary, 'utf8') <= 1024);
 }
 
-const integrationWarningCases: {
+const integrationWarningCases: Array<{
   name: string;
-  prepare?: (f: ReviewFixture) => unknown;
-  arrange?: (f: ReviewFixture) => unknown;
+  prepare?: (f: ReviewFixture) => Promise<void>;
+  arrange?: (f: ReviewFixture) => Promise<void>;
   warning?: string;
   dirty?: boolean;
   cleanupCommit?: boolean;
-}[] = [
+}> = [
   { name: 'missing verification and cleanup', warning: NO_VERIFICATION + '; ' + NO_TEST_CLEANUP },
   {
     name: 'verification from before integration opened',
@@ -2350,17 +2523,17 @@ const integrationWarningCases: {
   },
 ];
 
-const reviewWarningCases: {
+const reviewWarningCases: Array<{
   name: string;
   target: 'worktree' | 'integration';
   integrate?: boolean;
-  prepare?: (f: ReviewFixture) => unknown;
-  arrange?: (f: ReviewFixture) => unknown;
+  prepare?: (f: ReviewFixture) => Promise<void>;
+  arrange?: (f: ReviewFixture) => Promise<void>;
   warning?: string;
   dirty?: boolean;
   cleanupCommit?: boolean;
   rerun?: boolean;
-}[] = [
+}> = [
   { name: 'worktree after task integration', target: 'worktree', integrate: true, warning: WRONG_REVIEW_TARGET },
   { name: 'standalone worktree has none', target: 'worktree' },
   ...integrationWarningCases.map((item) => ({ ...item, target: 'integration' as const })),
@@ -2378,7 +2551,9 @@ for (const item of reviewWarningCases) {
     try {
       if (item.target === 'worktree') {
         worktreeRun(f);
-        if (item.integrate) await openReviewIntegration(f);
+        if (item.integrate) {
+          await openReviewIntegration(f);
+        }
         const result = await f.call('code', 'worktree', 'low');
         assertReviewWarning(f, result, item.warning);
       } else if (item.rerun) {
@@ -2394,7 +2569,8 @@ for (const item of reviewWarningCases) {
         });
         const first = await f.call('code', 'integration', 'low');
         assert.equal(first.exit, 0, JSON.stringify(first));
-        const findings = JSON.parse(fs.readFileSync(first.value.path, 'utf8')).findings;
+        const firstPath = narrow(first.value, shape({ path: text })).path;
+        const findings = readJson(firstPath, shape({ findings: listOf(shape({ id: text })) })).findings;
         for (const finding of findings) {
           await f.add('ruling', {
             subject: 'review:code-integration:' + finding.id,
@@ -2416,7 +2592,7 @@ for (const item of reviewWarningCases) {
         planDelegate(f, CLEAN);
         const second = await f.call('code', 'integration', 'low');
         assertReviewWarning(f, second, item.warning);
-        assert.equal(second.value.round, 2);
+        assert.equal(narrow(second.value, shape({ round: numeric })).round, 2);
         assert.match(second.output.summary, /repository changes: .*…$/);
       } else {
         fs.writeFileSync(f.plan, VALID_TASK_PLAN);
@@ -2485,7 +2661,7 @@ test('reviewRun refuses broken-citation on new and superseded rounds but not nat
     assert.match(duringFinalize.output.summary, /broken-citation/);
     const pendingPath = path.join(f2.directory, 'round-1', 'pending.json');
     assert.equal(fs.existsSync(pendingPath), true);
-    assert.equal(f2.read(1, 'round.json').generation, 1);
+    assert.equal(narrow(f2.read(1, 'round.json'), shape({ generation: numeric })).generation, 1);
 
     // Retry while pending.json exists and target still has broken citation also refuses before deleting pending.json.
     delete f2.deps.hook;
@@ -2493,7 +2669,7 @@ test('reviewRun refuses broken-citation on new and superseded rounds but not nat
     assert.equal(retry.exit, 4);
     assert.equal(retry.output.reason, 'lint-errors');
     assert.equal(fs.existsSync(pendingPath), true);
-    assert.equal(f2.read(1, 'round.json').generation, 1);
+    assert.equal(narrow(f2.read(1, 'round.json'), shape({ generation: numeric })).generation, 1);
   } finally {
     f2.cleanup();
   }
@@ -2513,7 +2689,7 @@ test('reviewRun refuses broken-citation on new and superseded rounds but not nat
     assert.equal(duringFanout.exit, 4);
     assert.equal(duringFanout.output.reason, 'lint-errors');
     assert.match(duringFanout.output.summary, /broken-citation/);
-    assert.equal(f3.read(1, 'round.json').generation, 1);
+    assert.equal(narrow(f3.read(1, 'round.json'), shape({ generation: numeric })).generation, 1);
   } finally {
     f3.cleanup();
   }
@@ -2531,7 +2707,9 @@ test('reviewRun refuses broken-citation on new and superseded rounds but not nat
     assert.equal(pending.output.reason, 'native-pending');
 
     fs.rmSync(realFile);
-    for (const slot of pending.value.pending) fs.writeFileSync(slot.replyPath, CLEAN);
+    for (const slot of narrow(pending.value, shape({ pending: listOf(shape({ replyPath: text })) })).pending) {
+      fs.writeFileSync(slot.replyPath, CLEAN);
+    }
     const cliWave = await f4.call('plan', f4.plan);
     assert.equal(cliWave.exit, 4);
     assert.equal(cliWave.output.reason, 'native-pending');

@@ -3,10 +3,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 /** Absolute path of the shipped repository root. */
-export const OVERLAY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+export const OVERLAY_ROOT = path.resolve(import.meta.dirname, '..', '..');
 export const REPO_ROOT = OVERLAY_ROOT;
 
 /** One overlay file: `path` is relative to the repository root with forward slashes. */
@@ -14,13 +13,13 @@ export interface FileEntry {
   path: string;
   text: string;
 }
-export type FileTable = readonly FileEntry[];
+export type FileTable = ReadonlyArray<FileEntry>;
 
 const TEXT_EXTENSIONS = new Set(['.ts', '.mjs', '.js', '.json', '.md', '.jsonc']);
 
 // Path-only callers pass `withText: false` to skip reads that dominate the per-file budget under load.
-export function scanOverlay(root = OVERLAY_ROOT, withText = true): FileEntry[] {
-  const out: FileEntry[] = [];
+export function scanOverlay(root = OVERLAY_ROOT, withText = true): Array<FileEntry> {
+  const out: Array<FileEntry> = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
@@ -29,11 +28,12 @@ export function scanOverlay(root = OVERLAY_ROOT, withText = true): FileEntry[] {
           !['node_modules', '.git', '.scratch', '.codegraph', '.agents', '.claude', '.codex', '.opencode'].includes(
             entry.name,
           )
-        )
+        ) {
           walk(full);
+        }
         continue;
       }
-      const rel = path.relative(root, full).replace(/\\/g, '/');
+      const rel = path.relative(root, full).replaceAll('\\', '/');
       out.push({
         path: rel,
         text: withText && TEXT_EXTENSIONS.has(path.extname(entry.name)) ? fs.readFileSync(full, 'utf8') : '',
@@ -54,12 +54,14 @@ const STATIC_IMPORT =
 const DYNAMIC_IMPORT = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /** Static, re-export, side-effect, and literal dynamic imports; `typeOnly` when erased at runtime. */
-export function extractImports(text: string): ImportRef[] {
-  const refs: ImportRef[] = [];
+export function extractImports(text: string): Array<ImportRef> {
+  const refs: Array<ImportRef> = [];
   for (const match of text.matchAll(STATIC_IMPORT)) {
     const clause = match[3] ?? '';
     const specifier = match[4] ?? '';
-    if (match[1] === 'export' && !clause) continue;
+    if (match[1] === 'export' && !clause) {
+      continue;
+    }
     const braces = /^\{([^}]*)\}\s+from\s+$/.exec(clause.trim() + ' ');
     const names =
       braces?.[1]
@@ -69,13 +71,17 @@ export function extractImports(text: string): ImportRef[] {
     const allTypes = names.length > 0 && names.every((name) => name.startsWith('type '));
     refs.push({ specifier, typeOnly: Boolean(match[2]) || allTypes });
   }
-  for (const match of text.matchAll(DYNAMIC_IMPORT)) refs.push({ specifier: match[1] ?? '', typeOnly: false });
+  for (const match of text.matchAll(DYNAMIC_IMPORT)) {
+    refs.push({ specifier: match[1] ?? '', typeOnly: false });
+  }
   return refs;
 }
 
 /** Resolves a relative specifier against an overlay-relative importer; null for bare/builtin specifiers. */
 export function resolveRelative(importer: string, specifier: string): string | null {
-  if (!specifier.startsWith('.')) return null;
+  if (!specifier.startsWith('.')) {
+    return null;
+  }
   return path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier));
 }
 

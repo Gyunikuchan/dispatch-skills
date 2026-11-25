@@ -14,9 +14,11 @@ import {
   lintSectionOrder,
   lintSummaryBox,
   RESOLUTION_HEADING,
-  type PlaceholderVocabulary,
 } from './document-lint.ts';
-import { sectionRanges, structuralLines, withoutSections, type StructuralLine } from './markdown-structure.ts';
+import type { PlaceholderVocabulary } from './document-lint.ts';
+import { isRecord } from '../../lib/config.ts';
+import { sectionRanges, structuralLines, withoutSections } from './markdown-structure.ts';
+import type { StructuralLine } from './markdown-structure.ts';
 import type { DesignIncrement, ExecutionStatusRow, IncrementState, LintDefect, ParsedDesign } from './types.ts';
 
 const lint = (code: LintDefect['code'], line: number | null, message: string): LintDefect => ({
@@ -41,7 +43,7 @@ const REQUIRED_SECTIONS = [
 const DESIGN_SECTION_ORDER = [
   '## At a Glance',
   EXECUTION_STATUS_HEADING,
-  ...REQUIRED_SECTIONS.filter((heading) => heading !== 'At a Glance').map((heading) => `## ${heading}`),
+  ...REQUIRED_SECTIONS.flatMap((heading) => (heading === 'At a Glance' ? [] : [`## ${heading}`])),
   RESOLUTION_HEADING,
 ] as const;
 const INCREMENT_FIELDS = [
@@ -54,7 +56,11 @@ const INCREMENT_FIELDS = [
   'Rollback boundary',
   'Parallel safety',
 ];
-const STATES: Readonly<Record<string, IncrementState>> = {
+// Keyed by the author's status word, so any string may be looked up.
+interface StateAliases {
+  readonly [word: string]: IncrementState | undefined;
+}
+const STATES: StateAliases = {
   complete: 'complete',
   completed: 'complete',
   active: 'active',
@@ -70,23 +76,24 @@ const splitColumns = (line: string) =>
     .replace(/\|$/, '')
     .split('|')
     .map((column) => column.trim());
-const sectionBody = (lines: readonly StructuralLine[], heading: string) => {
+const sectionBody = (lines: ReadonlyArray<StructuralLine>, heading: string) => {
   const range = sectionRanges(lines, heading)[0];
   return range ? lines.slice(range.start + 1, range.end) : null;
 };
 
 // SECTION: Graph
 
+type IncrementGraph = { increments: Array<DesignIncrement>; defects: Array<LintDefect> };
+
 /** `| I<nn> | <priority> | <summary> | <prerequisites> | <paths> |` rows of the graph section only. */
-export function parseIncrementGraph(lines: readonly StructuralLine[]): {
-  increments: DesignIncrement[];
-  defects: LintDefect[];
-} {
-  const defects: LintDefect[] = [];
-  const increments: DesignIncrement[] = [];
+export function parseIncrementGraph(lines: ReadonlyArray<StructuralLine>): IncrementGraph {
+  const defects: Array<LintDefect> = [];
+  const increments: Array<DesignIncrement> = [];
   const ids = new Set<string>();
   for (const { text, line } of sectionBody(lines, '## Increment Dependency Graph') ?? []) {
-    if (!/^\|\s*I\d{2}\s*\|/.test(text)) continue;
+    if (!/^\|\s*I\d{2}\s*\|/.test(text)) {
+      continue;
+    }
     const columns = splitColumns(text);
     const id = columns[0] ?? '';
     const priority = Number(/^\|\s*I\d{2}\s*\|\s*(\d+)\s*\|/.exec(text)?.[1]);
@@ -94,7 +101,9 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): {
       defects.push(lint('invalid-priority', line, `Increment ${id} needs an integer priority.`));
       continue;
     }
-    if (ids.has(id)) defects.push(lint('duplicate-id', line, `Increment ${id} appears more than once.`));
+    if (ids.has(id)) {
+      defects.push(lint('duplicate-id', line, `Increment ${id} appears more than once.`));
+    }
     ids.add(id);
     const prerequisites = (columns[3] ?? '')
       .split(',')
@@ -103,15 +112,17 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): {
     const paths = columns
       .slice(4)
       .flatMap((column) => column.split(','))
-      .map((item) => item.replace(/`/g, '').trim())
+      .map((item) => item.replaceAll('`', '').trim())
       .filter(Boolean);
     increments.push({ id, priority, summary: columns[2] ?? '', behaviour: [], prerequisites, paths });
   }
-  if (!increments.length)
+  if (!increments.length) {
     defects.push(lint('missing-increments', null, 'Increment Dependency Graph requires at least one I<nn> row.'));
+  }
   const sequence = increments.map((row) => Number(row.id.slice(1))).sort((a, b) => a - b);
-  if (sequence.some((number, index) => number !== index + 1))
+  if (sequence.some((number, index) => number !== index + 1)) {
     defects.push(lint('invalid-id-sequence', null, 'Increment IDs must run I01, I02, … without gaps.'));
+  }
   const priorities = increments.map((row) => row.priority).sort((a, b) => a - b);
   if (new Set(priorities).size !== priorities.length || priorities.some((priority, index) => priority !== index + 1)) {
     defects.push(lint('invalid-priority-order', null, 'Increment priorities must be unique and run 1..n.'));
@@ -119,10 +130,11 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): {
   const edges = new Map(increments.map((row) => [row.id, row.prerequisites]));
   for (const row of increments) {
     for (const prerequisite of row.prerequisites) {
-      if (!ids.has(prerequisite))
+      if (!ids.has(prerequisite)) {
         defects.push(
           lint('missing-prerequisite', null, `Increment ${row.id} names unknown prerequisite ${prerequisite}.`),
         );
+      }
     }
   }
   const visiting = new Set<string>();
@@ -132,21 +144,27 @@ export function parseIncrementGraph(lines: readonly StructuralLine[]): {
       defects.push(lint('cycle', null, `Increment ${id} is part of a prerequisite cycle.`));
       return;
     }
-    if (visited.has(id) || !edges.has(id)) return;
+    if (visited.has(id) || !edges.has(id)) {
+      return;
+    }
     visiting.add(id);
-    for (const dependency of edges.get(id) ?? []) visit(dependency);
+    for (const dependency of edges.get(id) ?? []) {
+      visit(dependency);
+    }
     visiting.delete(id);
     visited.add(id);
   };
-  for (const row of increments) visit(row.id);
+  for (const row of increments) {
+    visit(row.id);
+  }
   return { increments, defects };
 }
 
 // SECTION: Details and status
 
-type IncrementBlock = { line: number; behaviour: string[]; fields: StructuralLine[] };
+type IncrementBlock = { line: number; behaviour: Array<string>; fields: Array<StructuralLine> };
 
-function incrementDetails(lines: readonly StructuralLine[]): Map<string, IncrementBlock> {
+function incrementDetails(lines: ReadonlyArray<StructuralLine>): Map<string, IncrementBlock> {
   const blocks = new Map<string, IncrementBlock>();
   let current: IncrementBlock | null = null;
   let afterDetails = false;
@@ -158,33 +176,43 @@ function incrementDetails(lines: readonly StructuralLine[]): Map<string, Increme
       afterDetails = false;
       continue;
     }
-    if (!current) continue;
-    if (entry.fenced) continue;
+    if (!current) {
+      continue;
+    }
+    if (entry.fenced) {
+      continue;
+    }
     if (entry.text.trim() === '<details>') {
       afterDetails = true;
       continue;
     }
     const text = entry.text.trim();
     if (afterDetails) {
-      if (text === '</details>' || text.startsWith('<summary>') || text === '</summary>') continue;
+      if (text === '</details>' || text.startsWith('<summary>') || text === '</summary>') {
+        continue;
+      }
       current.fields.push(entry);
       continue;
     }
     const bullet = /^ {0,3}[-*+]\s+(.+)$/.exec(entry.text)?.[1]?.trim();
-    if (!bullet || /^(?:Constraints|Overlap|Field):/i.test(bullet)) continue;
+    if (!bullet || /^(?:Constraints|Overlap|Field):/i.test(bullet)) {
+      continue;
+    }
     current.behaviour.push(bullet);
   }
   return blocks;
 }
 
 function parseExecutionStatus(
-  lines: readonly StructuralLine[],
+  lines: ReadonlyArray<StructuralLine>,
   ids: ReadonlySet<string>,
-  out: LintDefect[],
+  out: Array<LintDefect>,
 ): ParsedDesign['executionStatus'] {
   const body = sectionBody(lines, EXECUTION_STATUS_HEADING);
-  if (!body) return null;
-  const rows: ExecutionStatusRow[] = [];
+  if (!body) {
+    return null;
+  }
+  const rows: Array<ExecutionStatusRow> = [];
   let nextAction: string | null = null;
   for (const { text, line } of body) {
     const action = /^Next Action:\s*(.+)$/.exec(text.trim())?.[1];
@@ -192,7 +220,9 @@ function parseExecutionStatus(
       nextAction = action.trim();
       continue;
     }
-    if (!/^\|\s*I\d{2}\s*\|/.test(text)) continue;
+    if (!/^\|\s*I\d{2}\s*\|/.test(text)) {
+      continue;
+    }
     const [id = '', rawState = '', next = ''] = splitColumns(text);
     const state = STATES[rawState.toLowerCase()];
     if (!state) {
@@ -205,78 +235,93 @@ function parseExecutionStatus(
       );
       continue;
     }
-    if (!ids.has(id))
+    if (!ids.has(id)) {
       out.push(lint('execution-status', line, `Execution Status names ${id}, which the graph does not define.`));
-    if (rows.some((row) => row.id === id))
+    }
+    if (rows.some((row) => row.id === id)) {
       out.push(lint('execution-status', line, `Execution Status lists ${id} more than once.`));
+    }
     rows.push({ id, state, nextAction: next });
   }
   // NOTE: full graph coverage is not required: the status section lists only active and ready increments.
-  if (!nextAction)
+  if (!nextAction) {
     out.push(
       lint('execution-status', body[0]?.line ?? null, 'Execution Status requires a non-empty Next Action: line.'),
     );
+  }
   return { rows, nextAction };
 }
 
 // SECTION: Public API
 
 type DesignResult =
-  | { ok: true; design: ParsedDesign; warnings: LintDefect[] }
-  | { ok: false; defects: LintDefect[]; warnings: LintDefect[] };
-/** Concrete design guard at journal-consuming machine boundaries. */
-export function asParsedDesign(value: unknown): ParsedDesign | null {
-  const record = (v: unknown): v is Readonly<Record<string, unknown>> =>
-    typeof v === 'object' && v !== null && !Array.isArray(v);
+  | { ok: true; design: ParsedDesign; warnings: Array<LintDefect> }
+  | { ok: false; defects: Array<LintDefect>; warnings: Array<LintDefect> };
+/** Field shapes of a stored design; `asParsedDesign` checks graph consistency. */
+function hasDesignShape(value: unknown): value is ParsedDesign {
   if (
-    !record(value) ||
-    !record(value['box']) ||
+    !isRecord(value) ||
+    !isRecord(value['box']) ||
     !Object.values(value['box']).every((v) => typeof v === 'string') ||
-    !record(value['details']) ||
+    !isRecord(value['details']) ||
     typeof value['governedText'] !== 'string' ||
     !Array.isArray(value['increments']) ||
     !value['increments'].length
-  )
-    return null;
+  ) {
+    return false;
+  }
   const details = value['details'];
-  if (!Object.values(details).every((row) => record(row) && Object.values(row).every((v) => typeof v === 'string')))
+  if (!Object.values(details).every((row) => isRecord(row) && Object.values(row).every((v) => typeof v === 'string'))) {
+    return false;
+  }
+  return value['increments'].every(
+    (row) =>
+      isRecord(row) &&
+      /^I\d{2}$/.test(String(row['id'])) &&
+      Number.isInteger(row['priority']) &&
+      typeof row['summary'] === 'string' &&
+      Array.isArray(row['behaviour']) &&
+      row['behaviour'].every((v) => typeof v === 'string') &&
+      isRecord(details[String(row['id'])]) &&
+      Array.isArray(row['prerequisites']) &&
+      row['prerequisites'].every((v) => typeof v === 'string') &&
+      Array.isArray(row['paths']) &&
+      row['paths'].length > 0 &&
+      row['paths'].every((v) => typeof v === 'string' && v.trim()),
+  );
+}
+
+/** Concrete design guard at journal-consuming machine boundaries. */
+export function asParsedDesign(design: unknown): ParsedDesign | null {
+  if (!hasDesignShape(design)) {
     return null;
-  if (
-    !value['increments'].every(
-      (row) =>
-        record(row) &&
-        /^I\d{2}$/.test(String(row['id'])) &&
-        Number.isInteger(row['priority']) &&
-        typeof row['summary'] === 'string' &&
-        Array.isArray(row['behaviour']) &&
-        row['behaviour'].every((v) => typeof v === 'string') &&
-        record(details[String(row['id'])]) &&
-        Array.isArray(row['prerequisites']) &&
-        row['prerequisites'].every((v) => typeof v === 'string') &&
-        Array.isArray(row['paths']) &&
-        row['paths'].length > 0 &&
-        row['paths'].every((v) => typeof v === 'string' && v.trim()),
-    )
-  )
-    return null;
-  const design = value as unknown as ParsedDesign;
+  }
   const ids = new Set(design.increments.map((row) => row.id));
   const priorities = design.increments.map((row) => row.priority).sort((a, b) => a - b);
   if (
     ids.size !== design.increments.length ||
     priorities.some((n, i) => n !== i + 1) ||
     [...ids].sort().some((id, i) => id !== `I${String(i + 1).padStart(2, '0')}`)
-  )
+  ) {
     return null;
-  if (design.increments.some((row) => row.prerequisites.some((id) => !ids.has(id)))) return null;
+  }
+  if (design.increments.some((row) => row.prerequisites.some((id) => !ids.has(id)))) {
+    return null;
+  }
   const graph = new Map(design.increments.map((row) => [row.id, row.prerequisites]));
   const visited = new Set<string>(),
     visiting = new Set<string>();
   const acyclic = (id: string): boolean => {
-    if (visiting.has(id)) return false;
-    if (visited.has(id)) return true;
+    if (visiting.has(id)) {
+      return false;
+    }
+    if (visited.has(id)) {
+      return true;
+    }
     visiting.add(id);
-    if (!(graph.get(id) ?? []).every(acyclic)) return false;
+    if (!(graph.get(id) ?? []).every(acyclic)) {
+      return false;
+    }
     visiting.delete(id);
     visited.add(id);
     return true;
@@ -294,12 +339,20 @@ const detailField = (details: Record<string, string> | undefined, field: string)
 export function designScopeGrew(before: ParsedDesign, after: ParsedDesign): boolean {
   const beforePaths = new Set(before.increments.flatMap((row) => row.paths));
   for (const afterRow of after.increments) {
-    for (const p of afterRow.paths) if (!beforePaths.has(p)) return true;
+    for (const p of afterRow.paths) {
+      if (!beforePaths.has(p)) {
+        return true;
+      }
+    }
     const beforeRow = before.increments.find((row) => row.id === afterRow.id);
-    if (!beforeRow) return true;
+    if (!beforeRow) {
+      return true;
+    }
     const beforeVal = detailField(before.details[afterRow.id], 'Validation');
     const afterVal = detailField(after.details[afterRow.id], 'Validation');
-    if (afterVal !== beforeVal) return true;
+    if (afterVal !== beforeVal) {
+      return true;
+    }
   }
   const beforeLines = structuralLines(before.governedText);
   const afterLines = structuralLines(after.governedText);
@@ -311,20 +364,23 @@ export function designScopeGrew(before: ParsedDesign, after: ParsedDesign): bool
     .map((l) => l.text.trim())
     .filter(Boolean)
     .join('\n');
-  if (beforeIntegration !== afterIntegration) return true;
+  if (beforeIntegration !== afterIntegration) {
+    return true;
+  }
   return false;
 }
 
 /** Parses and lints a design; warnings preserve the parsed design. */
 export function parseDesign(source: string, options: { placeholders?: PlaceholderVocabulary } = {}): DesignResult {
   const lines = structuralLines(source);
-  const defects: LintDefect[] = [];
+  const defects: Array<LintDefect> = [];
   for (const heading of REQUIRED_SECTIONS) {
-    if (!sectionRanges(lines, `## ${heading}`).length)
+    if (!sectionRanges(lines, `## ${heading}`).length) {
       defects.push(lint('missing-section', null, `Design requires ## ${heading}.`));
+    }
   }
   defects.push(...lintSectionOrder(lines, DESIGN_SECTION_ORDER));
-  for (const { line, words } of lintLongParagraphs(lines))
+  for (const { line, words } of lintLongParagraphs(lines)) {
     defects.push(
       lint(
         'long-paragraph',
@@ -332,10 +388,12 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
         `Prose paragraph has ${words} words; use bullets or shorten it to ${LONG_PARAGRAPH_WORDS} words.`,
       ),
     );
+  }
   const approach = (sectionBody(lines, '## Approach') ?? []).map((entry) => entry.text).join('\n');
   const approachRequirements = [...new Set(approach.match(/\bREQ-[1-9]\d*\b/g) ?? [])];
-  if (!approachRequirements.length)
+  if (!approachRequirements.length) {
     defects.push(lint('missing-requirement-ref', null, '## Approach requires a REQ-<n> reference.'));
+  }
   const graph = parseIncrementGraph(lines);
   const blocks = incrementDetails(lines);
   const details: Record<string, Record<string, string>> = {};
@@ -348,23 +406,28 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
       continue;
     }
     const behaviour = block.behaviour;
-    if (!hasBehaviour(behaviour))
+    if (!hasBehaviour(behaviour)) {
       defects.push(
         lint('increment-behaviour', block.line, `Increment ${id} needs a behavioural bullet before its details.`),
       );
+    }
     const fields: Record<string, string> = {};
     for (const { text, line } of block.fields) {
       const match = /^\s*[-*]\s+([^:]+):\s*(.*)$/.exec(text);
-      if (!match?.[1]) continue;
+      if (!match?.[1]) {
+        continue;
+      }
       const value = (match[2] ?? '').trim();
       fields[match[1].trim()] = value;
-      if (value && isFillerNote(value))
+      if (value && isFillerNote(value)) {
         defects.push(lint('filler-note', line, `Increment ${id} field "${text.trim()}" is filler.`));
+      }
     }
     for (const field of INCREMENT_FIELDS) {
       const found = Object.entries(fields).some(([name, value]) => name.toLowerCase() === field.toLowerCase() && value);
-      if (!found)
+      if (!found) {
         defects.push(lint('missing-increment-field', null, `Increment ${id} requires "- ${field}: <value>".`));
+      }
     }
     details[id] = fields;
   }
@@ -377,12 +440,13 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
       : `Summary Increments value "${value}" must be a positive integer.`;
   defects.push(...lintSummaryBox(source, BOX_LABELS, { Parent: SPEC_PIN_VALUE, Increments: increments }));
   if (options.placeholders) {
-    for (const { token, line } of findPlaceholders(source, options.placeholders))
+    for (const { token, line } of findPlaceholders(source, options.placeholders)) {
       defects.push(lint('leftover-placeholder', line, `Leftover template placeholder ${token}.`));
+    }
   }
   defects.push(...graph.defects);
   const executionStatus = parseExecutionStatus(lines, new Set(graph.increments.map((row) => row.id)), defects);
-  const warnings: LintDefect[] = defects.map((item) => ({ ...item, severity: 'warning' }));
+  const warnings: Array<LintDefect> = defects.map((item) => ({ ...item, severity: 'warning' }));
   const designIncrements = graph.increments.map((increment) => ({
     ...increment,
     behaviour: blocks.get(increment.id)?.behaviour ?? [],
@@ -402,9 +466,9 @@ export function parseDesign(source: string, options: { placeholders?: Placeholde
   };
 }
 
-export function validateApproachRequirements(design: ParsedDesign, reqIds: readonly string[]): LintDefect[] {
+export function validateApproachRequirements(design: ParsedDesign, reqIds: ReadonlyArray<string>): Array<LintDefect> {
   const known = new Set(reqIds);
-  return [...new Set(design.approachRequirements ?? [])]
-    .filter((id) => !known.has(id))
-    .map((id) => lint('unknown-requirement', null, `Approach cites unknown requirement ${id}.`));
+  return [...new Set(design.approachRequirements ?? [])].flatMap((id) =>
+    known.has(id) ? [] : [lint('unknown-requirement', null, `Approach cites unknown requirement ${id}.`)],
+  );
 }

@@ -13,20 +13,31 @@ const REFERENCE_EXTENSION = /\.(?:md|json)$/;
 const MARKDOWN_EXTENSION = /\.md$/;
 const JSON_EXTENSION = /\.json$/;
 
-const hashFile = (file: string): string => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-
 const sha256 = (text: string): string => crypto.createHash('sha256').update(text).digest('hex');
+
+// SECTION: JSON shapes
+
+export type JsonValue = string | number | boolean | null | Array<JsonValue> | JsonObject;
+/** A parsed JSON object; absent keys read as undefined. */
+export interface JsonObject {
+  [key: string]: JsonValue | undefined;
+}
+/** `JSON.parse` without a reviver produces exactly a JsonValue. */
+export const parseJson: (text: string) => JsonValue = JSON.parse;
 
 // SECTION: skill file hashing
 
+const isObjectValue = (value: unknown): value is JsonObject => value !== null && typeof value === 'object';
+
 // Key-sorted re-serialization so JSON key order and whitespace do not change the hash.
 export function sortedJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
-  if (value !== null && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
+  if (Array.isArray(value)) {
+    return `[${value.map(sortedJson).join(',')}]`;
+  }
+  if (isObjectValue(value)) {
+    return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${sortedJson(record[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${sortedJson(value[key])}`)
       .join(',')}}`;
   }
   return JSON.stringify(value);
@@ -46,8 +57,12 @@ const jsonForm = (text: string): string => {
 // `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF, so CRLF always normalizes to LF.
 export function hashSkillFile(file: string): string {
   const text = fs.readFileSync(file, 'utf8');
-  if (MARKDOWN_EXTENSION.test(file)) return sha256(canonicalMarkdown(text));
-  if (JSON_EXTENSION.test(file)) return sha256(jsonForm(text));
+  if (MARKDOWN_EXTENSION.test(file)) {
+    return sha256(canonicalMarkdown(text));
+  }
+  if (JSON_EXTENSION.test(file)) {
+    return sha256(jsonForm(text));
+  }
   return sha256(text.replaceAll('\r\n', '\n'));
 }
 
@@ -55,11 +70,15 @@ const forward = (value: string): string => value.split(path.sep).join('/');
 
 function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<string, string>): void {
   const root = path.join(skillDir, sub);
-  if (!fs.existsSync(root)) return;
+  if (!fs.existsSync(root)) {
+    return;
+  }
   for (const entry of fs.readdirSync(root, { recursive: true })) {
     const relative = `${sub}/${forward(String(entry))}`;
     const absolute = path.join(skillDir, relative);
-    if (pattern.test(relative) && fs.statSync(absolute).isFile()) into[relative] = hashSkillFile(absolute);
+    if (pattern.test(relative) && fs.statSync(absolute).isFile()) {
+      into[relative] = hashSkillFile(absolute);
+    }
   }
 }
 
@@ -67,10 +86,14 @@ function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<st
 export function generateSkillHashes(skillDir: string): Record<string, string> {
   const entries: Record<string, string> = {};
   const skillMd = path.join(skillDir, 'SKILL.md');
-  if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashSkillFile(skillMd);
+  if (fs.existsSync(skillMd)) {
+    entries['SKILL.md'] = hashSkillFile(skillMd);
+  }
   collect(skillDir, 'scripts', SCRIPT_EXTENSION, entries);
   const packageManifest = path.join(skillDir, 'scripts', 'package.json');
-  if (fs.existsSync(packageManifest)) entries['scripts/package.json'] = hashSkillFile(packageManifest);
+  if (fs.existsSync(packageManifest)) {
+    entries['scripts/package.json'] = hashSkillFile(packageManifest);
+  }
   collect(skillDir, 'references', REFERENCE_EXTENSION, entries);
   return Object.fromEntries(
     Object.keys(entries)
@@ -82,7 +105,7 @@ export function generateSkillHashes(skillDir: string): Record<string, string> {
 type IntegrityResult =
   | { status: 'ok' }
   | { status: 'missing-manifest'; warning: string }
-  | { status: 'drift'; violations: string[] };
+  | { status: 'drift'; violations: Array<string> };
 
 /** Compares the manifest with a fresh hash of the skill; run before any dispatch. */
 export function checkIntegrity(skillDir: string): IntegrityResult {
@@ -99,8 +122,9 @@ export function checkIntegrity(skillDir: string): IntegrityResult {
   } catch {
     return { status: 'drift', violations: [MANIFEST_NAME] };
   }
-  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest))
+  if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
     return { status: 'drift', violations: [MANIFEST_NAME] };
+  }
   // `$`-prefixed keys carry build metadata (`$version`), not file hashes.
   const recorded = Object.fromEntries(Object.entries(manifest).filter(([key]) => !key.startsWith('$')));
   const actual = generateSkillHashes(skillDir);
@@ -114,8 +138,7 @@ export function checkIntegrity(skillDir: string): IntegrityResult {
 export function readVersion(skillDir: string): string | undefined {
   try {
     const manifest: unknown = JSON.parse(fs.readFileSync(path.join(skillDir, MANIFEST_NAME), 'utf8'));
-    const version =
-      typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>)['$version'] : undefined;
+    const version = isObjectValue(manifest) ? manifest['$version'] : undefined;
     return typeof version === 'string' ? version : undefined;
   } catch {
     return undefined;

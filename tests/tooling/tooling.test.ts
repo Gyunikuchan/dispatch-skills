@@ -30,8 +30,9 @@ test('toolingRoot defaults and requires a directory value', () => {
   assert.equal(toolingRoot([]), '.');
   assert.equal(toolingRoot(['--check']), '.');
   assert.equal(toolingRoot(['--check', '--root', '.']), '.');
-  for (const args of [['--root'], ['--root', '--check'], ['--check', '--root']])
+  for (const args of [['--root'], ['--root', '--check'], ['--check', '--root']]) {
     assert.throws(() => toolingRoot(args), /--root requires a directory value/);
+  }
 });
 
 // SECTION: Terminology

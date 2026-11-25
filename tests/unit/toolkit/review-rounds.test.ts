@@ -4,16 +4,44 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CliDeps } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { rejectionState } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
-import { artifactHash } from '../../../skills/dispatch/scripts/toolkit/artifacts.ts';
 import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { CLEAN, CONTEXT_MAP, fixture, report } from '../../helpers/review-fixture.ts';
+import { CLEAN, fixture, report } from '../../helpers/review-fixture.ts';
+import {
+  flag,
+  jsonObject,
+  listOf,
+  narrow,
+  numeric,
+  optional,
+  parseJson,
+  readJson,
+  shape,
+  text,
+} from './helpers/json.ts';
 
 // SECTION: Later-round roster policy
 
-const targetSlots = (metadata: { roster: { slot: string; reserve: boolean }[] }) =>
+type RoundFixture = Awaited<ReturnType<typeof fixture>>;
+const roundShape = shape({
+  round: numeric,
+  scope: text,
+  startSeq: numeric,
+  roster: listOf(shape({ slot: text, reserve: flag })),
+  rulingSnapshot: optional(text),
+  interRound: optional(shape({ diff: text, accepted: listOf(jsonObject) })),
+});
+const findingsShape = shape({
+  asOfSeq: numeric,
+  findings: listOf(shape({ id: text, origin: optional(text) })),
+  clusters: listOf(jsonObject),
+  units: listOf(shape({ unit: text, hot: optional(flag), hotStreak: optional(numeric), delta: optional(numeric) })),
+});
+const readRound = (f: RoundFixture, round: number) => narrow(f.read(round, 'round.json'), roundShape);
+const readFindings = (f: RoundFixture, round: number) => narrow(f.read(round, 'findings.json'), findingsShape);
+
+const targetSlots = (metadata: { roster: Array<{ slot: string; reserve: boolean }> }) =>
   metadata.roster.filter((slot) => !slot.reserve).map((slot) => slot.slot);
-const promptsOf = (f: Awaited<ReturnType<typeof fixture>>) =>
-  f.launches.map((launch) => fs.readFileSync(launch.request.promptPath, 'utf8'));
+const promptsOf = (f: RoundFixture) => f.launches.map((launch) => fs.readFileSync(launch.request.promptPath, 'utf8'));
 
 test('roster: later rounds roster scoping and labeling reflect finding severity', async () => {
   // CONSIDER narrows next round to first target and labels narrowed scope
@@ -30,10 +58,10 @@ test('roster: later rounds roster scoping and labeling reflect finding severity'
         invocations: [],
       });
       assert.equal((await f.call()).exit, 0);
-      const [first] = targetSlots(f.read(1, 'round.json'));
+      const [first] = targetSlots(readRound(f, 1));
       assert.equal((await f.call()).exit, 0);
-      assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
-      assert.match(f.read(2, 'round.json').scope, /^Re-review round 2 \(narrowed\)/);
+      assert.deepEqual(targetSlots(readRound(f, 2)), [first]);
+      assert.match(readRound(f, 2).scope, /^Re-review round 2 \(narrowed\)/);
     } finally {
       f.cleanup();
     }
@@ -52,12 +80,12 @@ test('roster: later rounds roster scoping and labeling reflect finding severity'
         invocations: [],
       });
       assert.equal((await f.call()).exit, 0);
-      const everyTarget = targetSlots(f.read(1, 'round.json'));
+      const everyTarget = targetSlots(readRound(f, 1));
       await f.add('ruling', { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed' });
       fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
       assert.equal((await f.call()).exit, 0);
-      assert.deepEqual(targetSlots(f.read(2, 'round.json')), everyTarget);
-      assert.match(f.read(2, 'round.json').scope, /^Re-review round 2 \(full\)/);
+      assert.deepEqual(targetSlots(readRound(f, 2)), everyTarget);
+      assert.match(readRound(f, 2).scope, /^Re-review round 2 \(full\)/);
     } finally {
       f.cleanup();
     }
@@ -83,10 +111,10 @@ test('roster: an accepted MUST past the round cap keeps every target', async () 
       fs.appendFileSync(f.plan, '\n## Fix ' + step + '\nChanged.\n');
     };
     await round();
-    const everyTarget = targetSlots(f.read(1, 'round.json'));
+    const everyTarget = targetSlots(readRound(f, 1));
     await round();
     assert.equal((await f.call()).exit, 0);
-    assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
+    assert.deepEqual(targetSlots(readRound(f, 3)), everyTarget);
   } finally {
     f.cleanup();
   }
@@ -100,7 +128,7 @@ test('roster: a narrowed round keeps the source slot of a pending rejection', as
       const ids = [...fs.readFileSync(request.promptPath, 'utf8').matchAll(/Request ID: `([^`]+)`/g)].map(
         (match) => match[1]!,
       );
-      if (phase === 'finding' && provider === 'agy')
+      if (phase === 'finding' && provider === 'agy') {
         return {
           outcome: {
             status: 'ok',
@@ -110,6 +138,7 @@ test('roster: a narrowed round keeps the source slot of a pending rejection', as
           },
           invocations: [],
         };
+      }
       return {
         outcome: {
           status: 'ok',
@@ -129,8 +158,14 @@ test('roster: a narrowed round keeps the source slot of a pending rejection', as
       };
     };
     assert.equal((await f.call()).exit, 0);
-    const source = f.read(1, 'findings.json').findings[0].sources[0] as string;
-    assert.equal(f.read(1, 'round.json').roster.find((slot: { slot: string }) => slot.slot === source).provider, 'agy');
+    const source = narrow(f.read(1, 'findings.json'), shape({ findings: listOf(shape({ sources: listOf(text) })) }))
+      .findings[0]!.sources[0]!;
+    assert.equal(
+      narrow(f.read(1, 'round.json'), shape({ roster: listOf(shape({ slot: text, provider: text })) })).roster.find(
+        (slot) => slot.slot === source,
+      )?.provider,
+      'agy',
+    );
     await f.add('ruling', {
       subject: 'review:plan-work.plan:R1-F001',
       ruling: 'rejected',
@@ -138,7 +173,7 @@ test('roster: a narrowed round keeps the source slot of a pending rejection', as
     });
     phase = 'rejection';
     assert.equal((await f.call()).exit, 0);
-    assert.ok(targetSlots(f.read(2, 'round.json')).includes(source));
+    assert.ok(targetSlots(readRound(f, 2)).includes(source));
   } finally {
     f.cleanup();
   }
@@ -146,16 +181,22 @@ test('roster: a narrowed round keeps the source slot of a pending rejection', as
 
 // Git stub for code-range tests
 
-function rangeGit(f: Awaited<ReturnType<typeof fixture>>, state: { feature: string }, diffs: Record<string, string[]>) {
+function rangeGit(
+  f: Awaited<ReturnType<typeof fixture>>,
+  state: { feature: string },
+  diffs: Record<string, Array<string>>,
+) {
   f.deps.run = async (argv) => {
-    if (argv[1] === 'rev-parse')
+    if (argv[1] === 'rev-parse') {
       return { exit: 0, stdout: argv.at(-1) === 'feature^{commit}' ? state.feature : 'main-id', stderr: '' };
-    if (argv[1] === 'diff')
+    }
+    if (argv[1] === 'diff') {
       return {
         exit: 0,
         stdout: (diffs[argv[4] + '..' + argv[5]] ?? []).map((file) => file + '\0').join(''),
         stderr: '',
       };
+    }
     return { exit: 0, stdout: '', stderr: '' };
   };
 }
@@ -190,17 +231,18 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
     try {
       f.deps.delegate = findingsDelegate('MUST', { step: 1 });
       assert.equal((await f.call()).exit, 0);
-      const [first] = targetSlots(f.read(1, 'round.json'));
+      const [first] = targetSlots(readRound(f, 1));
       await correct(f, 'R1-F001', 'consider');
-      if (plainRulingAfter)
+      if (plainRulingAfter) {
         await f.add('ruling', {
           subject: 'review:plan-work.plan:R1-F001',
           ruling: 'accepted',
           rationale: 'Applied the fix',
         });
+      }
       fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
       assert.equal((await f.call()).exit, 0);
-      assert.deepEqual(targetSlots(f.read(2, 'round.json')), [first]);
+      assert.deepEqual(targetSlots(readRound(f, 2)), [first]);
     } finally {
       f.cleanup();
     }
@@ -232,16 +274,18 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
       try {
         const counter = { step: 0 };
         f.deps.delegate = findingsDelegate('SHOULD', counter);
-        let everyTarget: string[] = [];
+        let everyTarget: Array<string> = [];
         for (const id of ['R1-F001', 'R2-F001']) {
           counter.step++;
           assert.equal((await f.call()).exit, 0);
-          if (id === 'R1-F001') everyTarget = targetSlots(f.read(1, 'round.json'));
+          if (id === 'R1-F001') {
+            everyTarget = targetSlots(readRound(f, 1));
+          }
           await correct(f, id, 'must');
           fs.appendFileSync(f.plan, '\n## Fix ' + counter.step + '\nChanged.\n');
         }
         assert.equal((await f.call()).exit, 0);
-        assert.deepEqual(targetSlots(f.read(3, 'round.json')), everyTarget);
+        assert.deepEqual(targetSlots(readRound(f, 3)), everyTarget);
       } finally {
         f.cleanup();
       }
@@ -261,7 +305,7 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
         fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
         assert.equal((await f.call()).exit, 0);
         assert.equal(
-          f.read(2, 'round.json').rulingSnapshot,
+          readRound(f, 2).rulingSnapshot,
           stored === 'SHOULD' ? JSON.stringify([['R1-F001', ruling.seq]]) : '[]',
         );
       } finally {
@@ -280,7 +324,7 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
           const ids = [...fs.readFileSync(request.promptPath, 'utf8').matchAll(/Request ID: `([^`]+)`/g)].map(
             (match) => match[1]!,
           );
-          if (phase === 'finding' && provider === 'agy')
+          if (phase === 'finding' && provider === 'agy') {
             return {
               outcome: {
                 status: 'ok',
@@ -290,6 +334,7 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
               },
               invocations: [],
             };
+          }
           return {
             outcome: {
               status: 'ok',
@@ -309,7 +354,9 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
           };
         };
         assert.equal((await f.call()).exit, 0);
-        if (raise) await correct(f, 'R1-F001', 'must');
+        if (raise) {
+          await correct(f, 'R1-F001', 'must');
+        }
         await f.add('ruling', {
           subject: 'review:plan-work.plan:R1-F001',
           ruling: 'rejected',
@@ -330,16 +377,20 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
   {
     // SECTION: Rejection confirmation after corrections (helpers stay with this case)
 
-    const rejectionStatesFor = (stored: 'MUST' | 'SHOULD', chain: readonly ('must' | 'should' | 'rejected')[]) => {
+    const rejectionStatesFor = (stored: 'MUST' | 'SHOULD', chain: ReadonlyArray<'must' | 'should' | 'rejected'>) => {
       const finding = {
         id: 'R1-F001',
         severity: stored,
+        impact: stored === 'MUST' ? ('blocks' as const) : ('degrades' as const),
+        trigger: 'realistic' as const,
+        category: 'correctness' as const,
         sources: ['reviewer'],
+        scope: 'in' as const,
         defect: 'Defect',
         locus: '§ Work',
         requiredChange: 'Fix',
       };
-      const round = {
+      const round: Parameters<typeof rejectionState>[0][number] = {
         review: 'plan-work.plan',
         metadata: {
           round: 1,
@@ -347,10 +398,19 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
           startSeq: 0,
           target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
           spec: { path: 'spec', hash: 'sha256:' + 'a'.repeat(64) },
-          roster: [{ slot: 'reviewer', reserve: false }],
+          roster: [{ slot: 'reviewer', provider: 'codex', index: 0, native: false, reserve: false }],
         },
-        findings: { review: 'plan-work.plan', round: 1, findings: [finding] },
-      } as unknown as Parameters<typeof rejectionState>[0][number];
+        findings: {
+          review: 'plan-work.plan',
+          round: 1,
+          cap: 2,
+          level: 'medium',
+          findings: [finding],
+          units: [],
+          clusters: [],
+          failed: [],
+        },
+      };
       const rulings = chain.map((step, index) => ({
         kind: 'ruling',
         seq: index + 1,
@@ -364,7 +424,7 @@ test('corrected finding severity governs roster, continuation, snapshot and conf
             : { ruling: 'accepted', ...CORRECTIONS[step] }),
         },
       }));
-      return rejectionState([round], rulings as never, []);
+      return rejectionState([round], rulings, []);
     };
 
     assert.equal(rejectionStatesFor('MUST', ['should', 'rejected']).length, 1);
@@ -384,7 +444,13 @@ test('review budget keeps the saved cap when the level cap changes', async () =>
       outcome: { status: 'ok', text: report('§ Work', 'Defect', 'MUST'), resume: null, sessionId: null },
       invocations: [],
     });
-    assert.deepEqual((await f.call()).value.budget, { cap: 2, ceiling: 4, nextRound: 2, asOfSeq: 2, state: 'allowed' });
+    assert.deepEqual(narrow((await f.call()).value, shape({ budget: jsonObject })).budget, {
+      cap: 2,
+      ceiling: 4,
+      nextRound: 2,
+      asOfSeq: 2,
+      state: 'allowed',
+    });
     const file = path.join(f.deps.skillRoot, 'config.jsonc'),
       config = JSON.parse(fs.readFileSync(file, 'utf8'));
     config.phases['plan-review'].rounds.medium = 5;
@@ -392,7 +458,7 @@ test('review budget keeps the saved cap when the level cap changes', async () =>
     fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
     const second = await f.call();
     // Round 3 would pass the saved cap, and the unruled MUST is not an accepted continuation.
-    assert.deepEqual(second.value.budget, {
+    assert.deepEqual(narrow(second.value, shape({ budget: jsonObject })).budget, {
       cap: 2,
       ceiling: 4,
       nextRound: 3,
@@ -407,10 +473,13 @@ test('review budget keeps the saved cap when the level cap changes', async () =>
 // SECTION: Loose-locus findings
 
 const LOOSE = 'A – T5 – Fix skill';
-const replyOf = (...items: readonly (readonly [string, string, string])[]) =>
+const replyOf = (...items: ReadonlyArray<readonly [string, string, string]>) =>
   JSON.stringify({
     status: 'FINDINGS',
-    findings: items.flatMap(([locus, defect, severity]) => JSON.parse(report(locus, defect, severity)).findings),
+    findings: items.flatMap(
+      ([locus, defect, severity]) =>
+        parseJson(report(locus, defect, severity), shape({ findings: listOf(jsonObject) })).findings,
+    ),
   });
 const oneReviewerDelegate =
   (text: string): CliDeps['delegate'] =>
@@ -431,11 +500,17 @@ test('round keeps loose-locus findings listed, counted and unlinked', async () =
           [LOOSE, 'Writes get lost', 'MUST'],
         ),
       );
-      if (kind === 'code') rangeGit(f, { feature: 'feature-1' }, { 'main-id..feature-1': ['src/a.ts'] });
+      if (kind === 'code') {
+        rangeGit(f, { feature: 'feature-1' }, { 'main-id..feature-1': ['src/a.ts'] });
+      }
       const result = kind === 'plan' ? await f.call() : await f.call('code', 'main..feature', 'low');
       assert.equal(result.exit, 0);
       const marked = 'unresolved-locus: ' + LOOSE;
-      assert.deepEqual(result.value.unresolvedLoci, [
+      const resultValue = narrow(
+        result.value,
+        shape({ path: text, unresolvedLoci: listOf(shape({ id: text, locus: text })) }),
+      );
+      assert.deepEqual(resultValue.unresolvedLoci, [
         { id: 'R1-F003', locus: marked },
         { id: 'R1-F001', locus: marked },
       ]);
@@ -450,36 +525,36 @@ test('round keeps loose-locus findings listed, counted and unlinked', async () =
         ),
         result.output.summary,
       );
-      const roundDir = path.dirname(result.value.path),
-        saved = JSON.parse(fs.readFileSync(result.value.path, 'utf8'));
+      const roundDir = path.dirname(resultValue.path),
+        saved = readJson(
+          resultValue.path,
+          shape({
+            findings: listOf(shape({ id: text, locus: text, scope: text })),
+            clusters: listOf(shape({ findings: listOf(text) })),
+            failed: listOf(jsonObject),
+          }),
+        );
       assert.deepEqual(
-        saved.findings.map((finding: { id: string; locus: string; scope: string }) => [
-          finding.id,
-          finding.locus,
-          finding.scope,
-        ]),
+        saved.findings.map((finding) => [finding.id, finding.locus, finding.scope]),
         [
           ['R1-F001', marked, 'in'],
           ['R1-F002', valid, 'in'],
           ['R1-F003', marked, 'in'],
         ],
       );
-      assert.deepEqual(saved.clusters.flatMap((cluster: { findings: string[] }) => cluster.findings).sort(), [
-        'R1-F001',
-        'R1-F002',
-        'R1-F003',
-      ]);
+      assert.deepEqual(saved.clusters.flatMap((cluster) => cluster.findings).sort(), ['R1-F001', 'R1-F002', 'R1-F003']);
       assert.deepEqual(saved.failed, []);
-      const roster = JSON.parse(fs.readFileSync(path.join(roundDir, 'round.json'), 'utf8')).roster as {
-        slot: string;
-        reserve: boolean;
-      }[];
-      for (const { slot } of roster.filter((entry) => !entry.reserve))
+      const roster = readJson(
+        path.join(roundDir, 'round.json'),
+        shape({ roster: listOf(shape({ slot: text, reserve: flag })) }),
+      ).roster;
+      for (const { slot } of roster.filter((entry) => !entry.reserve)) {
         assert.equal(
           JSON.parse(fs.readFileSync(path.join(roundDir, 'gen-1/slots', slot + '.json'), 'utf8')).state,
           'done',
           slot,
         );
+      }
     } finally {
       f.cleanup();
     }
@@ -496,7 +571,9 @@ test('round keeps loose-locus findings listed, counted and unlinked', async () =
       const result = await f.call();
       assert.equal(result.exit, 0);
       assert.deepEqual(
-        result.value.unresolvedLoci.map((entry: { locus: string }) => entry.locus),
+        narrow(result.value, shape({ unresolvedLoci: listOf(shape({ locus: text })) })).unresolvedLoci.map(
+          (entry) => entry.locus,
+        ),
         Array.from({ length: 6 }, (_, index) => 'unresolved-locus: loose ' + index),
       );
       assert.match(result.output.summary, /, 6 unresolved loci/);
@@ -515,7 +592,7 @@ test('round keeps loose-locus findings listed, counted and unlinked', async () =
       fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
       const second = await f.call();
       assert.equal(second.exit, 0);
-      const [finding] = JSON.parse(fs.readFileSync(second.value.path, 'utf8')).findings;
+      const [finding] = JSON.parse(fs.readFileSync(narrow(second.value, shape({ path: text })).path, 'utf8')).findings;
       assert.equal(finding.recurrence, undefined);
       assert.equal(finding.unresolved, undefined);
     } finally {
@@ -526,7 +603,6 @@ test('round keeps loose-locus findings listed, counted and unlinked', async () =
 
 // SECTION: Inter-round information
 
-type RoundFixture = Awaited<ReturnType<typeof fixture>>;
 const SINCE = '### Since the previous round';
 const DIFF = 'diff --git a/x b/x\n-Original body.\n+Changed body.\n';
 const UNCHANGED_TARGET = 'none; the target is unchanged since the previous round.';
@@ -564,8 +640,8 @@ const roomy = (f: RoundFixture) =>
       },
     }),
   );
-const blockBody = (lines: string[]) => lines.join('\n');
-const since = (diff: string, accepted: readonly string[]) =>
+const blockBody = (lines: Array<string>) => lines.join('\n');
+const since = (diff: string, accepted: ReadonlyArray<string>) =>
   blockBody([
     SINCE,
     'Inter-round diff: ' + diff,
@@ -602,8 +678,8 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       assert.match(prompt, /^- R1-F001 § Work: [^\n]+ — accepted \(new\): [^\n]+$/m);
     }
     assert.equal(fs.readFileSync(file, 'utf8'), DIFF);
-    assert.deepEqual(f.read(2, 'round.json').interRound, { diff, accepted: [{ id: 'R1-F001', locus: '§ Work' }] });
-    assert.equal(f.read(1, 'round.json').interRound, undefined);
+    assert.deepEqual(readRound(f, 2).interRound, { diff, accepted: [{ id: 'R1-F001', locus: '§ Work' }] });
+    assert.equal(readRound(f, 1).interRound, undefined);
   } finally {
     f.cleanup();
   }
@@ -622,7 +698,7 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       const first = await f.call('code', 'main..feature', 'low');
       assert.equal(first.exit, 0, JSON.stringify(first.output));
       await f.add('ruling', {
-        subject: 'review:' + first.value.review + ':R1-F001',
+        subject: 'review:' + narrow(first.value, shape({ review: text })).review + ':R1-F001',
         ruling: 'accepted',
         rationale: 'Fixed',
       });
@@ -631,25 +707,28 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       const second = await f.call('code', 'main..feature', 'low');
       assert.equal(second.exit, 0, JSON.stringify(second.output));
       const roundOf = (round: number) =>
-        JSON.parse(
-          fs.readFileSync(
-            path.join(path.dirname(path.dirname(second.value.path)), 'round-' + round, 'round.json'),
-            'utf8',
+        readJson(
+          path.join(
+            path.dirname(path.dirname(narrow(second.value, shape({ path: text })).path)),
+            'round-' + round,
+            'round.json',
           ),
+          shape({ interRound: optional(jsonObject) }),
         );
       assert.deepEqual(roundOf(2).interRound, {
         diff: '`git diff feature-1 feature-2`',
         accepted: [{ id: 'R1-F001', locus: 'src/a.ts:L3' }],
       });
-      for (const prompt of promptsOf(f).slice(launched))
+      for (const prompt of promptsOf(f).slice(launched)) {
         assert.ok(
           prompt.includes(sinceStandard('`git diff feature-1 feature-2`') + '\n') &&
             prompt.includes('— accepted (new)'),
           prompt,
         );
+      }
       const third = await f.call('code', 'main..feature', 'low');
       assert.equal(third.exit, 0, JSON.stringify(third.output));
-      assert.equal(roundOf(3).interRound.diff, UNCHANGED_TARGET);
+      assert.equal(roundOf(3).interRound?.['diff'], UNCHANGED_TARGET);
     } finally {
       f.cleanup();
     }
@@ -663,11 +742,12 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       let phase = 'finding';
       script(f, (provider, prompt) => {
         const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map((match) => match[1]!);
-        if (phase === 'finding' && provider === 'agy')
+        if (phase === 'finding' && provider === 'agy') {
           return replyOf(
             ['§ Work', 'Concurrent writes overwrite captured results', 'MUST'],
             ['§ Notes', 'Naming could be clearer today', 'CONSIDER'],
           );
+        }
         return JSON.stringify({
           status: 'CLEAN',
           findings: [],
@@ -689,18 +769,19 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       // Round 2: unchanged target with a pending rejection.
       let before = f.launches.length;
       assert.equal((await f.call()).exit, 0);
-      assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
-      assert.deepEqual(f.read(2, 'round.json').interRound, {
+      assert.match(readRound(f, 2).scope, /\(confirmation-only\)/);
+      assert.deepEqual(readRound(f, 2).interRound, {
         diff: UNCHANGED_TARGET,
         accepted: [{ id: 'R1-F002', locus: '§ Notes' }],
       });
-      for (const prompt of promptsOf(f).slice(before))
+      for (const prompt of promptsOf(f).slice(before)) {
         assert.ok(prompt.includes('\n' + since(UNCHANGED_TARGET, ['R1-F002 § Notes']) + '\n\n### Inspection'), prompt);
+      }
       // Round 3: the confirmation-only round did not move the window.
       fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
       before = f.launches.length;
       assert.equal((await f.call()).exit, 0);
-      assert.deepEqual(f.read(3, 'round.json').interRound?.accepted, [{ id: 'R1-F002', locus: '§ Notes' }]);
+      assert.deepEqual(readRound(f, 3).interRound?.accepted, [{ id: 'R1-F002', locus: '§ Notes' }]);
       assert.ok(
         promptsOf(f)
           .slice(before)
@@ -709,8 +790,8 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       // Round 4: round 3 reviewed the target; only a findings-section refresh changed the plan.
       before = f.launches.length;
       assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
-      assert.doesNotMatch(f.read(4, 'round.json').scope, /confirmation-only/);
-      assert.deepEqual(f.read(4, 'round.json').interRound, { diff: UNCHANGED_TEXT, accepted: [] });
+      assert.doesNotMatch(readRound(f, 4).scope, /confirmation-only/);
+      assert.deepEqual(readRound(f, 4).interRound, { diff: UNCHANGED_TEXT, accepted: [] });
       assert.ok(
         promptsOf(f)
           .slice(before)
@@ -744,12 +825,13 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       );
       const before = f.launches.length;
       assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
-      const round = f.read(2, 'round.json');
+      const round = readRound(f, 2);
       assert.match(round.scope, /^Full review/);
       assert.doesNotMatch(round.scope, /Re-review/);
       assert.deepEqual(round.interRound, { diff: UNCHANGED_TEXT, accepted: [] });
-      for (const prompt of promptsOf(f).slice(before))
+      for (const prompt of promptsOf(f).slice(before)) {
         assert.ok(prompt.includes(round.scope) && prompt.includes(sinceStandard(UNCHANGED_TEXT)), prompt);
+      }
     } finally {
       f.cleanup();
     }
@@ -790,7 +872,7 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
       script(f, () => CLEAN);
       assert.equal((await f.call()).exit, 0, JSON.stringify(f.output()));
       const file = path.join(f.directory, 'round-2', 'inter-round.diff');
-      assert.deepEqual(f.read(2, 'round.json').interRound, {
+      assert.deepEqual(readRound(f, 2).interRound, {
         diff: '`' + file + '` (unified diff of the governed text)',
         accepted: [],
       });
@@ -801,7 +883,7 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
   }
   // a failed diff or missing input leaves the round unavailable
   {
-    const cases: [string, (f: RoundFixture) => void][] = [
+    const cases: Array<[string, (f: RoundFixture) => void]> = [
       ['spawn failure', () => {}],
       ['git error', (f) => diffGit(f, { exit: 128, stdout: '' })],
       ['exit 1 with no output', (f) => diffGit(f, { exit: 1, stdout: '' })],
@@ -822,10 +904,11 @@ test('inter-round diff, rerun labels and unavailable inputs carry the accepted l
         arrange(f);
         const before = f.launches.length;
         assert.equal((await f.call()).exit, 0, name);
-        assert.equal(f.read(2, 'round.json').interRound.diff, 'unavailable.', name);
+        assert.equal(readRound(f, 2).interRound?.diff, 'unavailable.', name);
         assert.equal(fs.existsSync(path.join(f.directory, 'round-2', 'inter-round.diff')), false, name);
-        for (const prompt of promptsOf(f).slice(before))
+        for (const prompt of promptsOf(f).slice(before)) {
           assert.ok(prompt.includes('Inter-round diff: unavailable.'), name);
+        }
       } finally {
         f.cleanup();
       }
@@ -849,7 +932,7 @@ const escalate = (
     {
       kind: 'escalation',
       by,
-      ...(quote === undefined ? {} : { quote }),
+      ...(!(quote === undefined) && { quote }),
       key: 'decision-' + decisionKey++,
       data: { id, state, summary },
     },
@@ -911,7 +994,9 @@ test('accepted findings and user decisions persist across rounds', async () => {
     ];
     const prompts = promptsOf(f).slice(before);
     assert.ok(prompts.length > 0);
-    for (const prompt of prompts) assert.deepEqual(decisionLines(prompt), expected);
+    for (const prompt of prompts) {
+      assert.deepEqual(decisionLines(prompt), expected);
+    }
   } finally {
     f.cleanup();
   }
@@ -922,8 +1007,9 @@ test('accepted findings and user decisions persist across rounds', async () => {
       let phase = 'finding';
       script(f, (provider, prompt) => {
         const ids = [...prompt.matchAll(/Request ID: `([^`]+)`/g)].map((match) => match[1]!);
-        if (phase === 'finding' && provider === 'agy')
+        if (phase === 'finding' && provider === 'agy') {
           return report('§ Work', 'Concurrent writes overwrite captured results', 'MUST');
+        }
         return JSON.stringify({
           status: 'CLEAN',
           findings: [],
@@ -951,7 +1037,7 @@ test('accepted findings and user decisions persist across rounds', async () => {
       phase = 'confirmation';
       const before = f.launches.length;
       assert.equal((await f.call()).exit, 0);
-      assert.match(f.read(2, 'round.json').scope, /\(confirmation-only\)/);
+      assert.match(readRound(f, 2).scope, /\(confirmation-only\)/);
       const prompts = promptsOf(f).slice(before);
       assert.ok(prompts.length > 0);
       for (const prompt of prompts) {
@@ -982,7 +1068,7 @@ test('accepted findings and user decisions persist across rounds', async () => {
       fs.appendFileSync(f.plan, '\n## Fix\nChanged.\n');
       script(f, () => JSON.stringify({ status: 'BLOCKED', reason: 'cannot read the artifact' }));
       assert.equal((await f.call()).output.reason, 'review-failed');
-      const startSeq = f.read(2, 'round.json').startSeq;
+      const startSeq = readRound(f, 2).startSeq;
       await escalate(
         f,
         'recurrence:plan-work.plan:R1-F003:g1',
@@ -994,33 +1080,35 @@ test('accepted findings and user decisions persist across rounds', async () => {
       script(f, () => report());
       const before = f.launches.length;
       assert.equal((await f.call()).exit, 0);
-      assert.equal(f.read(2, 'round.json').startSeq, startSeq);
+      assert.equal(readRound(f, 2).startSeq, startSeq);
       const prompts = promptsOf(f).slice(before);
       assert.ok(prompts.length > 0);
-      for (const prompt of prompts)
+      for (const prompt of prompts) {
         assert.deepEqual(decisionLines(prompt), [
           decisionLine('recurrence:plan-work.plan:R1-F002:g1', 'Keep the recurrence closed', 'keep'),
         ]);
+      }
     } finally {
       f.cleanup();
     }
   }
 });
 
+const withOrigin = () => {
+  const body = JSON.parse(report('§ Work', 'Concurrent writes overwrite captured results', 'SHOULD'));
+  body.findings[0].origin = 'fix-induced';
+  return JSON.stringify(body);
+};
+
 // SECTION: Finding origin
 
 test('origin: the round-2 prompt asks for it and findings.json and the summary carry the reply value', async () => {
   const f = await fixture();
   try {
-    const withOrigin = () => {
-      const body = JSON.parse(report('§ Work', 'Concurrent writes overwrite captured results', 'SHOULD'));
-      body.findings[0].origin = 'fix-induced';
-      return JSON.stringify(body);
-    };
     script(f, withOrigin);
     const first = await f.call();
     assert.equal(first.exit, 0, JSON.stringify(first.output));
-    assert.equal(f.read(1, 'findings.json').findings[0].origin, 'original');
+    assert.equal(readFindings(f, 1).findings[0]?.origin, 'original');
     assert.doesNotMatch(first.output.summary, /fix-induced/);
     assert.ok(promptsOf(f).every((prompt) => !prompt.includes('add `origin`')));
     await f.add('ruling', { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed' });
@@ -1028,7 +1116,7 @@ test('origin: the round-2 prompt asks for it and findings.json and the summary c
     const before = f.launches.length;
     const second = await f.call();
     assert.equal(second.exit, 0, JSON.stringify(second.output));
-    assert.equal(f.read(2, 'findings.json').findings[0].origin, 'fix-induced');
+    assert.equal(readFindings(f, 2).findings[0]?.origin, 'fix-induced');
     assert.match(second.output.summary, /, 1 fix-induced/);
     assert.ok(
       promptsOf(f)
@@ -1044,7 +1132,7 @@ test('review run stores finding units for every round', async () => {
   const f = await fixture();
   try {
     fs.writeFileSync(f.plan, '# Work\n## Work\n### T1 — Task\nOriginal.\n## Review Findings & Resolutions\n');
-    let clean = false;
+    const clean = false;
     f.deps.delegate = async () => ({
       outcome: {
         status: 'ok',
@@ -1055,18 +1143,18 @@ test('review run stores finding units for every round', async () => {
       invocations: [],
     });
     assert.equal((await f.call()).exit, 0);
-    const first = f.read(1, 'findings.json');
-    assert.equal(first.units[0].unit, 'T1');
-    assert.deepEqual(first.clusters, [{ file: f.plan, findings: [first.findings[0].id] }]);
+    const first = readFindings(f, 1);
+    assert.equal(first.units[0]?.unit, 'T1');
+    assert.deepEqual(first.clusters, [{ file: f.plan, findings: [first.findings[0]?.id] }]);
     await f.add('ruling', { subject: 'review:plan-work.plan:R1-F001', ruling: 'accepted', rationale: 'Fixed' });
     fs.writeFileSync(
       f.plan,
       '# Work\n## Work\n### T1 — Task\nOriginal and expanded.\n## Review Findings & Resolutions\n',
     );
     assert.equal((await f.call()).exit, 0);
-    const second = f.read(2, 'findings.json');
-    assert.deepEqual([second.units[0].unit, second.units[0].hot, second.units[0].hotStreak], ['T1', true, 1]);
-    assert.ok(second.units[0].delta > 0);
+    const second = readFindings(f, 2);
+    assert.deepEqual([second.units[0]?.unit, second.units[0]?.hot, second.units[0]?.hotStreak], ['T1', true, 1]);
+    assert.ok((second.units[0]?.delta ?? 0) > 0);
   } finally {
     f.cleanup();
   }
@@ -1108,7 +1196,7 @@ test('review run stores finding units for every round', async () => {
     await g.call();
     delete g.deps.hook;
     assert.equal((await g.call()).exit, 0);
-    const result = g.read(1, 'findings.json');
+    const result = readFindings(g, 1);
     assert.ok(Array.isArray(result.units));
     assert.equal(result.asOfSeq, saved);
     g.deps.delegate = async () => ({
@@ -1116,7 +1204,7 @@ test('review run stores finding units for every round', async () => {
       invocations: [],
     });
     assert.equal((await g.call()).exit, 0);
-    assert.deepEqual(g.read(2, 'findings.json').units, []);
+    assert.deepEqual(readFindings(g, 2).units, []);
   } finally {
     g.cleanup();
   }
@@ -1124,14 +1212,16 @@ test('review run stores finding units for every round', async () => {
 
 // SECTION: Hot units in the summary
 
-const acceptAll = async (f: RoundFixture, ids: readonly string[]) => {
-  for (const id of ids)
+const acceptAll = async (f: RoundFixture, ids: ReadonlyArray<string>) => {
+  for (const id of ids) {
     await f.add('ruling', { subject: 'review:plan-work.plan:' + id, ruling: 'accepted', rationale: 'Fixed' });
+  }
 };
 const itemsOf = (f: RoundFixture, round: number) =>
-  (f.read(round, 'findings.json').findings as { id: string; severity: string; defect: string }[]).map(
-    (finding) => `${finding.id} ${finding.severity}: ${finding.defect}`,
-  );
+  narrow(
+    f.read(round, 'findings.json'),
+    shape({ findings: listOf(shape({ id: text, severity: text, defect: text })) }),
+  ).findings.map((finding) => `${finding.id} ${finding.severity}: ${finding.defect}`);
 
 test('hot units are named with streak and byte delta within the bound', async () => {
   const f = await fixture();
@@ -1151,7 +1241,10 @@ test('hot units are named with streak and byte delta within the bound', async ()
     );
     const second = await f.call();
     assert.equal(second.exit, 0);
-    const units = f.read(2, 'findings.json').units as { unit: string; delta?: number }[];
+    const units = narrow(
+      f.read(2, 'findings.json'),
+      shape({ units: listOf(shape({ unit: text, delta: optional(numeric) })) }),
+    ).units;
     const t1 = units.find((entry) => entry.unit === 'T1')!,
       t2 = units.find((entry) => entry.unit === 'T2')!;
     assert.ok(t1.delta! > 0 && t2.delta! > 0, JSON.stringify(units));
@@ -1179,9 +1272,10 @@ test('hot units are named with streak and byte delta within the bound', async ()
         second.output.summary,
       );
       assert.equal(
-        (f.read(2, 'findings.json').units as { unit: string; delta?: number }[]).find(
-          (entry) => entry.unit === 'spec:REQ-1',
-        )!.delta,
+        narrow(
+          f.read(2, 'findings.json'),
+          shape({ units: listOf(shape({ unit: text, delta: optional(numeric) })) }),
+        ).units.find((entry) => entry.unit === 'spec:REQ-1')!.delta,
         undefined,
       );
     } finally {
@@ -1216,7 +1310,9 @@ test('hot units are named with streak and byte delta within the bound', async ()
       assert.equal(second.exit, 0);
       const { summary } = second.output;
       assert.ok(summary.includes('; 6 hot units: '), summary);
-      for (let i = 1; i <= 6; i++) assert.ok(summary.includes(`§ Unit ${i} of six with a long`), summary);
+      for (let i = 1; i <= 6; i++) {
+        assert.ok(summary.includes(`§ Unit ${i} of six with a long`), summary);
+      }
       assert.ok(Buffer.byteLength(summary) <= 1024, summary);
       assert.ok(summary.includes(' more in result'), summary);
     } finally {
@@ -1328,22 +1424,21 @@ test('spec snapshot: round directory holds the captured spec text for a plan rou
   }
 });
 
-test('spec snapshot: a failed snapshot write does not refuse the round', async () => {
+test('spec snapshot: a failed snapshot write does not refuse the round', async (t) => {
   const f = await fixture();
   const write = fs.writeFileSync;
+  const snapshotWrite = t.mock.method(fs, 'writeFileSync', (...args: Parameters<typeof write>) => {
+    if (String(args[0]).includes('spec.snapshot.md')) {
+      throw new Error('EPERM: simulated snapshot failure');
+    }
+    write(...args);
+  });
   try {
-    (fs as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = ((
-      file: fs.PathOrFileDescriptor,
-      ...rest: unknown[]
-    ) => {
-      if (String(file).includes('spec.snapshot.md')) throw new Error('EPERM: simulated snapshot failure');
-      return (write as (...args: unknown[]) => void)(file, ...rest);
-    }) as typeof fs.writeFileSync;
     const result = await f.call();
     assert.equal(result.exit, 0);
-    assert.equal(f.read(1, 'round.json').round, 1);
+    assert.equal(readRound(f, 1).round, 1);
   } finally {
-    (fs as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = write;
+    snapshotWrite.mock.restore();
     f.cleanup();
   }
 });

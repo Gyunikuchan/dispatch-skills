@@ -5,7 +5,13 @@ import { test } from 'node:test';
 import { tempDir } from '../helpers/fake-ports.ts';
 
 // NOTE: a literal dynamic import keeps each leaf test independently failing while the module is absent; tsc still types it.
-const load = () => import('../../.agents/skills/audit-dispatch-skills/scripts/scenarios.ts');
+import {
+  loadCatalog,
+  selectScenarios,
+  buildPackets,
+  emitPackets,
+} from '../../.agents/skills/audit-dispatch-skills/scripts/scenarios.ts';
+import { reserveRun, readRun, loadAuditConfig } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
 
 const VERBS = ['ask', 'design', 'plan', 'review', 'implement'] as const;
 const VERB_CLASSES = ['normal', 'decision', 'recovery'];
@@ -22,7 +28,7 @@ type Entry = {
   trigger: string;
   expectedOutcome: string;
   startingState: string;
-  entries: string[];
+  entries: Array<string>;
   kind?: string;
 };
 const entry = (scope: string, cls: string, suffix = 'a', extra: Partial<Entry> = {}): Entry => ({
@@ -36,26 +42,32 @@ const entry = (scope: string, cls: string, suffix = 'a', extra: Partial<Entry> =
   ...extra,
 });
 
-function catalog(extra: Entry[] = []) {
-  const scenarios: Entry[] = [];
-  for (const verb of VERBS)
-    for (const cls of VERB_CLASSES) scenarios.push(entry(verb, cls, 'a', verb === 'review' ? { kind: 'code' } : {}));
+function catalog(extra: Array<Entry> = []) {
+  const scenarios: Array<Entry> = [];
+  for (const verb of VERBS) {
+    for (const cls of VERB_CLASSES) {
+      scenarios.push(entry(verb, cls, 'a', verb === 'review' ? { kind: 'code' } : {}));
+    }
+  }
   scenarios.push(
     entry('review', 'decision', 'b', { kind: 'design' }),
     entry('review', 'recovery', 'b', { kind: 'plan' }),
   );
-  for (const cls of BOUNDARIES) scenarios.push(entry('shared', cls));
-  for (const cls of AUTHORING_CLASSES) scenarios.push(entry('authoring', cls));
+  for (const cls of BOUNDARIES) {
+    scenarios.push(entry('shared', cls));
+  }
+  for (const cls of AUTHORING_CLASSES) {
+    scenarios.push(entry('authoring', cls));
+  }
   return { version: 1, scenarios: [...scenarios, ...extra] };
 }
 const exists = () => true;
 type Selection = {
-  scopes: { scope: string; scenarios: { id: string; class: string; reason: string; kind?: string }[] }[];
+  scopes: Array<{ scope: string; scenarios: Array<{ id: string; class: string; reason: string; kind?: string }> }>;
 };
 const scopeOf = (selection: Selection, scope: string) => selection.scopes.find((s) => s.scope === scope);
 
 test('recovery-contract: bundled scenarios preserve work and enforce current recovery and scope boundaries', async () => {
-  const { loadCatalog } = await load();
   const scenario = loadCatalog().scenarios.find((entry) => entry.id === 'implement-recovery-interrupted-writer');
   assert.ok(scenario);
   assert.match(scenario.expectedOutcome, /ledger/);
@@ -72,17 +84,17 @@ test('recovery-contract: bundled scenarios preserve work and enforce current rec
 });
 
 test('audit scenarios default selection covers five verbs, the shared boundaries and the three authoring classes', async () => {
-  const { selectScenarios } = await load();
   const selection = selectScenarios({ catalog: catalog(), exists });
   assert.deepEqual(
     selection.scopes.map((s) => s.scope),
     [...VERBS, 'shared', 'authoring'],
   );
-  for (const verb of VERBS)
+  for (const verb of VERBS) {
     assert.deepEqual(
       scopeOf(selection, verb)?.scenarios.map((s) => s.class),
       VERB_CLASSES,
     );
+  }
   assert.deepEqual(
     scopeOf(selection, 'shared')?.scenarios.map((s) => s.class),
     BOUNDARIES,
@@ -97,7 +109,6 @@ test('audit scenarios default selection covers five verbs, the shared boundaries
 });
 
 test('audit scenarios review selection spreads code, design and plan targets', async () => {
-  const { selectScenarios } = await load();
   const review = scopeOf(selectScenarios({ catalog: catalog(), exists }), 'review');
   assert.deepEqual(review?.scenarios.map((s) => s.kind).sort(), ['code', 'design', 'plan']);
 
@@ -113,7 +124,6 @@ test('audit scenarios review selection spreads code, design and plan targets', a
 });
 
 test('audit scenarios risk metadata outranks rotation and records the reason', async () => {
-  const { selectScenarios } = await load();
   const risky = entry('ask', 'normal', 'b', { entries: ['skills/dispatch/references/verbs/ask.md'] });
   const selection = selectScenarios({
     catalog: catalog([risky]),
@@ -127,7 +137,6 @@ test('audit scenarios risk metadata outranks rotation and records the reason', a
 });
 
 test('audit scenarios prior coverage rotates equally ranked variants and ties break by stable id', async () => {
-  const { selectScenarios } = await load();
   const cat = catalog([entry('plan', 'normal', 'b'), entry('plan', 'normal', 'c')]);
   const rotated = selectScenarios({
     catalog: cat,
@@ -142,7 +151,6 @@ test('audit scenarios prior coverage rotates equally ranked variants and ties br
 });
 
 test('audit scenarios explicit narrowing selects only named scopes and labels the run partial', async () => {
-  const { selectScenarios } = await load();
   const selection = selectScenarios({
     catalog: catalog([entry('plan', 'decision', 'b')]),
     exists,
@@ -153,11 +161,12 @@ test('audit scenarios explicit narrowing selects only named scopes and labels th
     ['plan'],
   );
   assert.equal(selection.partial, true);
-  for (const omitted of ['ask', 'design', 'review', 'implement', 'shared', 'authoring'])
+  for (const omitted of ['ask', 'design', 'review', 'implement', 'shared', 'authoring']) {
     assert.ok(
       selection.gaps.some((g) => g.includes(omitted)),
       omitted,
     );
+  }
   assert.deepEqual(selection.selected, ['plan-decision-b']);
   assert.ok(selection.gaps.includes('scope plan class normal not selected (user-narrowed run)'));
   const decision = selection.scopes[0]?.scenarios.find((s) => s.class === 'decision');
@@ -171,16 +180,18 @@ test('audit scenarios explicit narrowing selects only named scopes and labels th
   });
   assert.equal(scenarioOnly.partial, true);
   assert.deepEqual(scenarioOnly.selected, ['plan-decision-b', 'shared-review-to-fix-a']);
-  for (const omitted of ['ask', 'design', 'review', 'implement', 'authoring'])
+  for (const omitted of ['ask', 'design', 'review', 'implement', 'authoring']) {
     assert.ok(scenarioOnly.gaps.includes(`scope ${omitted} not selected (user-narrowed run)`), omitted);
-  for (const cls of ['normal', 'recovery'])
+  }
+  for (const cls of ['normal', 'recovery']) {
     assert.ok(scenarioOnly.gaps.includes(`scope plan class ${cls} not selected (user-narrowed run)`), cls);
-  for (const cls of ['design-to-plan', 'plan-to-implement', 'interruption-to-resume'])
+  }
+  for (const cls of ['design-to-plan', 'plan-to-implement', 'interruption-to-resume']) {
     assert.ok(scenarioOnly.gaps.includes(`scope shared class ${cls} not selected (user-narrowed run)`), cls);
+  }
 });
 
 test('audit scenarios reject an invalid catalog', async () => {
-  const { selectScenarios } = await load();
   const missingClass = { version: 1, scenarios: catalog().scenarios.filter((s) => s.id !== 'ask-recovery-a') };
   assert.throws(() => selectScenarios({ catalog: missingClass, exists }), /ask.*recovery/);
   assert.throws(
@@ -201,7 +212,6 @@ test('audit scenarios reject an invalid catalog', async () => {
 });
 
 test('audit scenarios packets point to shared evidence and the scope reference without copying sources', async () => {
-  const { selectScenarios, buildPackets } = await load();
   const packets = buildPackets(selectScenarios({ catalog: catalog(), exists }), { runId: RUN });
   assert.equal(packets.length, 7);
   const plan = packets.find((p) => p.scope === 'plan');
@@ -227,38 +237,34 @@ test('audit scenarios packets point to shared evidence and the scope reference w
 });
 
 test('audit scenarios emitting packets writes one file per scope and records the selection in the run manifest', async () => {
-  const { selectScenarios, emitPackets } = await load();
-  const { reserveRun, readRun, loadAuditConfig } =
-    await import('../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts');
   const workDir = path.join(tempDir(), `${RUN}-work`);
   reserveRun(workDir, { runId: RUN, revision: 'abc', config: loadAuditConfig() });
   const selection = selectScenarios({ catalog: catalog(), exists });
   emitPackets(workDir, selection, { runId: RUN });
-  for (const scope of [...VERBS, 'shared', 'authoring'])
+  for (const scope of [...VERBS, 'shared', 'authoring']) {
     assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
-  const manifest = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: string[] } };
+  }
+  const manifest = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: Array<string> } };
   assert.deepEqual(manifest.scenarios?.selected, selection.selected);
   assert.equal(manifest.scopes['plan']?.lifecycle, 'pending');
   assert.equal(manifest.scopes['plan']?.resultPath, `${WORK}/findings/plan.md`);
 });
 
 test('audit scenarios bundled catalog validates against the current checkout', async () => {
-  const { loadCatalog, selectScenarios } = await load();
   const selection = selectScenarios({ catalog: loadCatalog() });
   assert.equal(selection.partial, false);
   assert.deepEqual(selection.gaps, []);
 });
 
 test('audit scenarios interrupted packet emission publishes no selection and a rerun completes every packet', async () => {
-  const { selectScenarios, emitPackets } = await load();
-  const { reserveRun, readRun, loadAuditConfig } =
-    await import('../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts');
   const workDir = path.join(tempDir(), `${RUN}-work`);
   reserveRun(workDir, { runId: RUN, revision: 'abc', config: loadAuditConfig() });
   const selection = selectScenarios({ catalog: catalog(), exists });
   let writes = 0;
   const interrupted = (file: string, text: string) => {
-    if (++writes > 2) throw new Error('interrupted');
+    if (++writes > 2) {
+      throw new Error('interrupted');
+    }
     fs.writeFileSync(file, text);
   };
   assert.throws(() => emitPackets(workDir, selection, { runId: RUN, writeFile: interrupted }), /interrupted/);
@@ -266,8 +272,9 @@ test('audit scenarios interrupted packet emission publishes no selection and a r
   assert.equal(partial.scenarios, undefined);
   assert.deepEqual(partial.scopes, {});
   emitPackets(workDir, selection, { runId: RUN });
-  for (const scope of [...VERBS, 'shared', 'authoring'])
+  for (const scope of [...VERBS, 'shared', 'authoring']) {
     assert.ok(fs.existsSync(path.join(workDir, 'packets', `${scope}.json`)), scope);
-  const done = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: string[] } };
+  }
+  const done = readRun(workDir) as ReturnType<typeof readRun> & { scenarios?: { selected: Array<string> } };
   assert.deepEqual(done.scenarios?.selected, selection.selected);
 });

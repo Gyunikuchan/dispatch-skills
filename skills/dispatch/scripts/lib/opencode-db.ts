@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 
 export type OpencodeMessage = {
   depth: number;
@@ -16,10 +17,10 @@ export type OpencodeMessage = {
   toolCalls?: number;
 };
 export type OpencodeRead = {
-  messages: OpencodeMessage[];
+  messages: Array<OpencodeMessage>;
   skipped: number;
   truncated: 'sessions' | 'rows' | null;
-  userMessageTimes?: number[];
+  userMessageTimes?: Array<number>;
   userTurnsTruncated?: true;
 };
 export type OpencodeReadOptions = {
@@ -31,17 +32,24 @@ export type OpencodeReadOptions = {
 };
 
 const DEFAULT_MAX_SESSIONS = 256;
-const DEFAULT_MAX_ROWS = 100000;
+const DEFAULT_MAX_ROWS = 100_000;
 
-type Row = Record<string, unknown>;
+type SqliteModule = { DatabaseSync: typeof DatabaseSync };
 
-let sqliteModule: typeof import('node:sqlite') | null = null;
-function getSqlite(): typeof import('node:sqlite') {
+const isSqliteModule = (value: unknown): value is SqliteModule =>
+  typeof value === 'object' && value !== null && 'DatabaseSync' in value && typeof value.DatabaseSync === 'function';
+
+let sqliteModule: SqliteModule | null = null;
+/** Loads `node:sqlite` on first use only, so runs that never open a database do not pay for it. */
+export function getSqlite(): SqliteModule {
   if (!sqliteModule) {
-    const req = createRequire(import.meta.url);
-    sqliteModule = req('node:sqlite');
+    const loaded: unknown = createRequire(import.meta.url)('node:sqlite');
+    if (!isSqliteModule(loaded)) {
+      throw new Error('node:sqlite does not provide DatabaseSync');
+    }
+    sqliteModule = loaded;
   }
-  return sqliteModule!;
+  return sqliteModule;
 }
 
 const token = (value: unknown): value is number =>
@@ -78,12 +86,16 @@ export function readOpencodeMessages(
       // The extra row only signals that descendants exceed the cap; it never enters the visited set.
       const children = db
         .prepare(`SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`)
-        .all(...frontier, remaining + 1) as Row[];
-      if (children.length === 0) break;
-      const next: string[] = [];
+        .all(...frontier, remaining + 1);
+      if (children.length === 0) {
+        break;
+      }
+      const next: Array<string> = [];
       for (const child of children) {
         const id = child['id'];
-        if (typeof id !== 'string' || depths.has(id)) continue;
+        if (typeof id !== 'string' || depths.has(id)) {
+          continue;
+        }
         if (next.length >= remaining) {
           truncated = 'sessions';
           break;
@@ -91,7 +103,9 @@ export function readOpencodeMessages(
         depths.set(id, depth + 1);
         next.push(id);
       }
-      if (truncated) break;
+      if (truncated) {
+        break;
+      }
       frontier = next;
       remaining -= next.length;
       depth++;
@@ -116,16 +130,12 @@ export function readOpencodeMessages(
       ORDER BY time_created, id
       LIMIT ?
     `)
-      .all(...ids, options.fromMs, options.toMs, maxRows + 1) as Row[];
+      .all(...ids, options.fromMs, options.toMs, maxRows + 1);
 
     const tables = new Set(
-      (
-        db
-          .prepare(
-            `SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`,
-          )
-          .all() as Row[]
-      )
+      db
+        .prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`)
+        .all()
         .map((r) => r['name'])
         .filter((n): n is string => typeof n === 'string'),
     );
@@ -137,15 +147,17 @@ export function readOpencodeMessages(
         : null;
     if (partQuery) {
       toolCounts = new Map<string, number>();
-      const toolRows = db.prepare(partQuery).all(...ids, options.fromMs, options.toMs) as Row[];
+      const toolRows = db.prepare(partQuery).all(...ids, options.fromMs, options.toMs);
       for (const tr of toolRows) {
         const msgId = tr['message_id'];
         const cnt = tr['tool_calls'];
-        if (typeof msgId === 'string' && token(cnt)) toolCounts.set(msgId, cnt);
+        if (typeof msgId === 'string' && token(cnt)) {
+          toolCounts.set(msgId, cnt);
+        }
       }
     }
 
-    const messages: OpencodeMessage[] = [];
+    const messages: Array<OpencodeMessage> = [];
     let skipped = 0;
     for (const row of rows.slice(0, maxRows)) {
       const sessionId = row['session_id'];
@@ -174,20 +186,22 @@ export function readOpencodeMessages(
       const msgId = row['id'];
       messages.push({
         depth: messageDepth,
-        ...(options.includeSessionIdentity ? { sessionId } : {}),
+        ...(options.includeSessionIdentity && { sessionId }),
         createdMs,
         model: typeof providerId === 'string' && typeof modelId === 'string' ? `${providerId}/${modelId}` : null,
         effort: typeof variant === 'string' ? variant : null,
         input,
         output,
-        ...(reasoning !== undefined ? { reasoning } : {}),
-        ...(cacheRead !== undefined ? { cacheRead } : {}),
-        ...(cacheWrite !== undefined ? { cacheWrite } : {}),
-        ...(toolCounts !== null && typeof msgId === 'string' ? { toolCalls: toolCounts.get(msgId) ?? 0 } : {}),
+        ...(reasoning !== undefined && { reasoning }),
+        ...(cacheRead !== undefined && { cacheRead }),
+        ...(cacheWrite !== undefined && { cacheWrite }),
+        ...(toolCounts !== null && typeof msgId === 'string' && { toolCalls: toolCounts.get(msgId) ?? 0 }),
       });
     }
     // Session truncation wins: it limits which sessions the row cap is applied to.
-    if (rows.length > maxRows && truncated === null) truncated = 'rows';
+    if (rows.length > maxRows && truncated === null) {
+      truncated = 'rows';
+    }
 
     const userRows = db
       .prepare(`
@@ -198,7 +212,7 @@ export function readOpencodeMessages(
       ORDER BY time_created, id
       LIMIT ?
     `)
-      .all(rootSessionId, options.fromMs, options.toMs, maxRows + 1) as Row[];
+      .all(rootSessionId, options.fromMs, options.toMs, maxRows + 1);
     const userTurnsTruncated = userRows.length > maxRows;
 
     return {

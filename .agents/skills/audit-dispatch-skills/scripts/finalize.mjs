@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 
 import { pathToFileURL } from 'node:url';
 const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === url;
-import { auditGitStatus, contentSnapshot, diffContent, diffStatus, resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
+import { auditGitStatus, compareCodeUnits, contentSnapshot, diffContent, diffStatus, resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 import { readRun, resolveAuthority, updateRun } from './run-state.ts';
 
 const MANIFEST = 'manifest.json';
@@ -41,7 +41,7 @@ export function main(options = {}) {
   }
 
   const manifest = fs.existsSync(path.join(workDir, MANIFEST)) ? readRun(workDir) : null;
-  if (manifest) assertStopped(manifest, workDir);
+  if (manifest) {assertStopped(manifest, workDir);}
 
   const ports = { copyDir: options.copyDir ?? defaultCopyDir, removeDir: options.removeDir ?? removeTree, appendReport: options.appendReport ?? fs.appendFileSync };
   const authority = resolveAuthority(workDir, manifest?.relocation ?? null);
@@ -49,7 +49,7 @@ export function main(options = {}) {
     // A prior attempt published; the integrity recorded at publication completes the footer without re-copying.
     const integrity = manifest.relocation.integrity ?? 'unknown (not recorded before publication)';
     completeReport(reportPath, authority.authoritative, integrity, ports);
-    if (authority.removeSource) ports.removeDir(workDir);
+    if (authority.removeSource) {ports.removeDir(workDir);}
     process.stdout.write(`Run artifacts already relocated to ${toPosix(authority.authoritative)}\n`);
     return;
   }
@@ -60,26 +60,26 @@ export function main(options = {}) {
   }
 
   const integrity = formatIntegrity(compare(root, workDir, reportPath, rel));
-  let destination = null;
+  let destination;
   try {
     destination = relocateWorkDir(workDir, runId, manifest !== null, integrity, ports.copyDir);
-  } catch (err) {
+  } catch (error) {
     const footer = [
       '',
       '---',
       '',
-      `Audit relocation failed (${err.message}); evidence remains at \`${toPosix(workDir)}\`${err.destination ? `; uncertain copy preserved at \`${toPosix(err.destination)}\`` : ''}. Re-run finalize to retry.`,
+      `Audit relocation failed (${error.message}); evidence remains at \`${toPosix(workDir)}\`${error.destination ? `; uncertain copy preserved at \`${toPosix(error.destination)}\`` : ''}. Re-run finalize to retry.`,
       '',
       `Repo integrity: ${integrity}`,
       '',
     ].join('\n');
     ports.appendReport(reportPath, footer, 'utf8');
-    throw new Error(`relocation failed: ${err.message}`);
+    throw new Error(`relocation failed: ${error.message}`, { cause: error });
   }
 
   const footer = completeReport(reportPath, destination, integrity, ports);
   // Source removal is last: until then the source manifest records the published destination and integrity.
-  if (destination) ports.removeDir(workDir);
+  if (destination) {ports.removeDir(workDir);}
   process.stdout.write(`Report: ${rel(reportPath)}\n${footer.trim()}\n`);
 }
 
@@ -90,7 +90,7 @@ const hasFooter = (reportPath, destination) => fs.readFileSync(reportPath, 'utf8
 /** Appends the authoritative-path and integrity footer once per destination, so retries never duplicate it. */
 function completeReport(reportPath, destination, integrity, ports) {
   const footer = ['', '---', '', `${ARTIFACTS_LINE}${destination ? `\`${toPosix(destination)}\`` : 'none'}`, '', `Repo integrity: ${integrity}`, ''].join('\n');
-  if (!(destination ? hasFooter(reportPath, destination) : hasFooter(reportPath))) ports.appendReport(reportPath, footer, 'utf8');
+  if (!(destination ? hasFooter(reportPath, destination) : hasFooter(reportPath))) {ports.appendReport(reportPath, footer, 'utf8');}
   return footer;
 }
 
@@ -103,7 +103,7 @@ function assertStopped(manifest, workDir) {
     ...Object.entries(manifest.scopes).filter(([, s]) => s.lifecycle === 'running' || s.lifecycle === 'pending').map(([id]) => `scope ${id}`),
     ...Object.entries(manifest.probes).filter(([, p]) => p.lifecycle === 'running' || p.lifecycle === 'pending').map(([id]) => `probe ${id}`),
   ];
-  if (running.length) throw new Error(`Cannot finalize: still running: ${running.join(', ')}. Stop or record a terminal state first.`);
+  if (running.length) {throw new Error(`Cannot finalize: still running: ${running.join(', ')}. Stop or record a terminal state first.`);}
   const unconfirmed = Object.entries(manifest.probes)
     .filter(([, p]) => p.exitConfirmed === false || p.liveness === 'unknown' || p.liveness === 'alive')
     .map(([id, p]) => `probe ${id} (${p.lifecycle}, liveness ${p.liveness}, handle ${p.handle ?? 'none'}${p.fixturePath ? `, fixture ${p.fixturePath}` : ''})`);
@@ -120,7 +120,7 @@ function assertStopped(manifest, workDir) {
 function compare(root, workDir, reportPath, rel) {
   const statusPath = path.join(workDir, 'git-status.txt');
   const snapshotPath = path.join(workDir, 'content-snapshot.json');
-  if (!fs.existsSync(statusPath)) return null;
+  if (!fs.existsSync(statusPath)) {return null;}
   const changes = diffStatus(fs.readFileSync(statusPath, 'utf8'), auditGitStatus(root) ?? '');
   const gaps = [];
   if (fs.existsSync(snapshotPath)) {
@@ -136,9 +136,9 @@ function compare(root, workDir, reportPath, rel) {
 
 /** @param {{changes: string[], gaps: string[]}|null} result @returns {string} */
 function formatIntegrity(result) {
-  if (result === null) return 'unknown (no baseline snapshot)';
+  if (result === null) {return 'unknown (no baseline snapshot)';}
   const gaps = result.gaps.length ? `\n\nGaps: ${result.gaps.join('; ')}` : '';
-  if (result.changes.length === 0) return `unchanged${gaps}`;
+  if (result.changes.length === 0) {return `unchanged${gaps}`;}
   return `CHANGED during the audit:\n\n\`\`\`\n${result.changes.join('\n')}\n\`\`\`${gaps}`;
 }
 
@@ -153,21 +153,23 @@ function formatIntegrity(result) {
  * @returns {string|null}
  */
 function relocateWorkDir(workDir, runId, tracked, integrity, copyDir) {
-  if (!fs.existsSync(workDir)) return null;
+  if (!fs.existsSync(workDir)) {return null;}
 
   const destination = fs.mkdtempSync(path.join(os.tmpdir(), `audit-dispatch-skills-${runId}-`));
-  const setPhase = (phase) => { if (tracked) updateRun(workDir, (m) => { m.relocation = phase === 'published' ? { phase, destination, integrity } : { phase, destination }; }); };
+  const setPhase = (phase) => { if (tracked) {updateRun(workDir, (m) => { m.relocation = phase === 'published' ? { phase, destination, integrity } : { phase, destination }; });} };
   try {
     setPhase('staging');
     copyDir(workDir, destination);
     const missing = treeMismatch(workDir, destination);
-    if (missing.length) throw new Error(`copy verification failed for ${missing.join(', ')}`);
+    if (missing.length) {throw new Error(`copy verification failed for ${missing.join(', ')}`);}
     setPhase('published');
     // The published manifest is copied last, so the destination carries the authoritative phase.
-    if (tracked) fs.copyFileSync(path.join(workDir, MANIFEST), path.join(destination, MANIFEST));
-  } catch (err) {
-    try { setPhase('failed'); } catch {}
-    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { destination });
+    if (tracked) {fs.copyFileSync(path.join(workDir, MANIFEST), path.join(destination, MANIFEST));}
+  } catch (error) {
+    try { setPhase('failed'); } catch {
+      // Best effort: the original failure below is the one to report.
+    }
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { destination });
   }
   return destination;
 }
@@ -175,15 +177,15 @@ function relocateWorkDir(workDir, runId, tracked, integrity, copyDir) {
 /** Paths whose content differs between the source and the copy; the manifest changes during staging. */
 function treeMismatch(source, copy) {
   const a = hashTree(source), b = hashTree(copy);
-  return [...new Set([...a.keys(), ...b.keys()])].filter((p) => p !== MANIFEST && a.get(p) !== b.get(p)).sort();
+  return [...new Set([...a.keys(), ...b.keys()])].filter((p) => p !== MANIFEST && a.get(p) !== b.get(p)).sort(compareCodeUnits);
 }
 
 function hashTree(dir, prefix = '', out = new Map()) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) hashTree(full, rel, out);
-    else out.set(rel, createHash('sha256').update(fs.readFileSync(full)).digest('hex'));
+    if (entry.isDirectory()) {hashTree(full, rel, out);}
+    else {out.set(rel, createHash('sha256').update(fs.readFileSync(full)).digest('hex'));}
   }
   return out;
 }
@@ -192,9 +194,9 @@ function hashTree(dir, prefix = '', out = new Map()) {
 export function moveEntry(from, to) {
   try {
     fs.renameSync(from, to);
-  } catch (err) {
+  } catch (error) {
     // NOTE: rename fails across volumes (EXDEV) and on Windows when a handle lingers (EPERM).
-    if (!['EXDEV', 'EPERM', 'EBUSY'].includes(err.code)) throw err;
+    if (!['EXDEV', 'EPERM', 'EBUSY'].includes(error.code)) {throw error;}
     fs.cpSync(from, to, { recursive: true });
     fs.rmSync(from, { recursive: true, force: true });
   }
@@ -208,8 +210,8 @@ export function moveEntry(from, to) {
 if (isMainModule(import.meta.url)) {
   try {
     main();
-  } catch (err) {
-    process.stderr.write(`[finalize] ${err.message}\n`);
+  } catch (error) {
+    process.stderr.write(`[finalize] ${error.message}\n`);
     process.exit(1);
   }
 }

@@ -1,36 +1,26 @@
+import { nodeProcess } from '../../../skills/dispatch/scripts/providers/node-process.ts';
+import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
 import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
 import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
-import { readOpencodeMessages } from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import {
   CONTINUE_PROMPT,
   IDLE_TIMEOUT_MS,
-  buildAttachmentBlock,
-  findSensitiveMatch,
-  formatSafetyPrompt,
   GUARDRAIL_HEADER,
   runDelegate,
-  type RunnerFs,
-  type RunnerPorts,
 } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import {
-  batchInvocation,
-  killArgv,
-  mustSpill,
-  sanitizeEnv,
-} from '../../../skills/dispatch/scripts/providers/process-policy.ts';
+import type { RunnerFs, RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type {
   DelegateRequest,
+  Invocation,
   Launch,
   PlatformEnv,
   ProcessResult,
-  ProviderUsageContext,
+  ProviderSpec,
 } from '../../../skills/dispatch/scripts/providers/types.ts';
 
 const posix: PlatformEnv = {
@@ -38,12 +28,12 @@ const posix: PlatformEnv = {
   arch: 'x64',
   wsl: false,
   bubblewrap: true,
-  argvLimit: 100000,
+  argvLimit: 100_000,
   home: '/h',
   path: [],
   pathExt: [],
 };
-const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24000 };
+const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24_000 };
 const req: DelegateRequest = {
   promptPath: '/r/p.md',
   model: null,
@@ -91,10 +81,13 @@ function memFs(
   };
 }
 
+/** Placeholder until the fake process registers its real callback. */
+const noop = (): void => {};
+
 /** Manual clock: timers fire only when the test advances time. */
 function manualClock() {
   let now = 0;
-  const timers: { at: number; ms: number; fn: () => void; live: boolean }[] = [];
+  const timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
   return {
     now: () => now,
     every: (ms: number, fn: () => void) => {
@@ -106,30 +99,37 @@ function manualClock() {
     },
     advance(ms: number) {
       now += ms;
-      for (const t of [...timers])
+      for (const t of timers.slice()) {
         while (t.live && t.at <= now) {
           t.at += t.ms;
           t.fn();
         }
+      }
     },
   };
 }
 
 function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.md': 'Review it' }) {
-  const launches: Launch[] = [];
-  const signals: string[] = [];
+  const launches: Array<Launch> = [];
+  const signals: Array<string> = [];
   const clock = manualClock();
-  let finish: (r: ProcessResult) => void = () => {};
-  let activity: () => void = () => {};
-  let line: (value: string, fragment?: boolean) => void = () => {};
+  let finish: (r: ProcessResult) => void = noop;
+  let activity: () => void = noop;
+  let line: (value: string, fragment?: boolean) => void = noop;
   const fs = memFs(files);
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
-        if (io.onActivity) activity = io.onActivity;
-        if (io.onLine) line = io.onLine;
-        if (launch.argv[0] === 'taskkill') return { pid: 99, done: Promise.resolve(ok()) };
+        if (io.onActivity) {
+          activity = io.onActivity;
+        }
+        if (io.onLine) {
+          line = io.onLine;
+        }
+        if (launch.argv[0] === 'taskkill') {
+          return { pid: 99, done: Promise.resolve(ok()) };
+        }
         return {
           pid: 50,
           done: new Promise<ProcessResult>((resolve) => {
@@ -171,10 +171,12 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
   };
 }
 
-const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+const flush = () =>
+  new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 
 test('Copilot retry clears only the rejected per-attempt configured effort', async () => {
-  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
   const h = harness(posix);
   const spec = {
     ...copilot,
@@ -229,11 +231,9 @@ const makeCapacitySpec = (retryAfterMs?: number): any => ({
           status: 'fail' as const,
           cls: 'capacity' as const,
           detail: 'at capacity',
-          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          ...(!(retryAfterMs === undefined) && { retryAfterMs }),
         },
 });
-
-const opencodeText = (text: string) => JSON.stringify({ type: 'text', sessionID: 'ses', part: { text } });
 
 function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<HostUsageFs> = {}): HostUsageFs {
   const find = (file: string): Buffer | undefined => {
@@ -250,7 +250,9 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
           const seg = rest.split('/')[0];
-          if (seg) names.add(seg);
+          if (seg) {
+            names.add(seg);
+          }
         }
       }
       return [...names];
@@ -261,21 +263,15 @@ function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<
     },
     read: (file, maxBytes) => {
       const buf = find(file);
-      if (!buf) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      if (!buf) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
       return buf.subarray(0, maxBytes);
     },
     decompress: null,
     ...extra,
   };
 }
-
-const claudeEntry = (atMs: number, input: number, output: number, model = 'claude-haiku-5-5') =>
-  JSON.stringify({
-    type: 'assistant',
-    timestamp: new Date(atMs).toISOString(),
-    effort: 'low',
-    message: { id: `m_${atMs}`, model, usage: { input_tokens: input, output_tokens: output } },
-  });
 
 // T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
@@ -303,12 +299,12 @@ test('resume: stall resumes once after idle or empty-output with continue prompt
   for (const first of ['idle', 'empty'] as const) {
     const h = harness(posix);
     const spec = makeNudgeSpec('sess1');
-    const rows: any[] = [];
+    const rows: Array<Invocation> = [];
     const run = runDelegate(spec, { ...req, onInvocation: (row) => rows.push(row) }, 'cli', h.ports);
     await flush();
-    if (first === 'idle')
+    if (first === 'idle') {
       h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'SESS partial', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
-    else {
+    } else {
       h.clock.advance(10);
       h.finish(ok({ exit: 1, stdout: 'no answer', stderrTail: 'boom' }));
     }
@@ -319,7 +315,7 @@ test('resume: stall resumes once after idle or empty-output with continue prompt
     const done = await run;
     assert.equal(h.launches.length, 2, first);
     assert.equal(done.outcome.status, 'ok', first);
-    assert.equal((done.invocations[1] as any)?.nudge, true, first);
+    assert.equal(done.invocations[1]?.nudge, true, first);
     assert.deepEqual(
       rows.map(({ startMs, endMs }) => [startMs, endMs]),
       first === 'idle'
@@ -364,8 +360,8 @@ test('resume: stall retries to the cap with the last valid session id', async ()
   }
   const h = harness(posix);
   let call = 0;
-  const spec: unknown = { ...makeNudgeSpec('sess1'), attemptSession: () => (call++ === 0 ? 'sess1' : null) };
-  const run = runDelegate(spec as never, req, 'cli', h.ports);
+  const spec: ProviderSpec = { ...makeNudgeSpec('sess1'), attemptSession: () => (call++ === 0 ? 'sess1' : null) };
+  const run = runDelegate(spec, req, 'cli', h.ports);
   await flush();
   h.finish(ok({ exit: 1, stdout: 'empty one' }));
   await flush();
@@ -386,7 +382,7 @@ test('resume: stall nudge marks resume launches but not effort retries', async (
   initial.finish(ok({ stdout: 'FINAL answer' }));
   const initialDone = await initialRun;
   assert.match(String(initial.launches[0]?.argv[1] ?? ''), /resume:prior/);
-  assert.equal((initialDone.invocations[0] as any)?.nudge, true);
+  assert.equal(initialDone.invocations[0]?.nudge, true);
 
   const chained = harness(posix);
   const chainedRun = runDelegate(makeNudgeSpec('sess1'), req, 'cli', chained.ports);
@@ -396,8 +392,8 @@ test('resume: stall nudge marks resume launches but not effort retries', async (
   await flush();
   chained.finish(ok({ stdout: 'FINAL answer' }));
   const chainedDone = await chainedRun;
-  assert.equal((chainedDone.invocations[0] as any)?.nudge, undefined);
-  assert.equal((chainedDone.invocations[1] as any)?.nudge, true);
+  assert.equal(chainedDone.invocations[0]?.nudge, undefined);
+  assert.equal(chainedDone.invocations[1]?.nudge, true);
 
   const h = harness(posix);
   const spec: any = {
@@ -417,7 +413,7 @@ test('resume: stall nudge marks resume launches but not effort retries', async (
   const done = await run;
   assert.equal(done.outcome.status, 'ok');
   assert.equal(h.launches.length, 2);
-  assert.equal((done.invocations[1] as any)?.nudge, undefined);
+  assert.equal(done.invocations[1]?.nudge, undefined);
 });
 
 test('resume: capacity waits bounded delay then resumes or skips without time', async () => {
@@ -441,7 +437,7 @@ test('resume: capacity waits bounded delay then resumes or skips without time', 
     h.finish(ok({ stdout: 'FINAL answer' }));
     const done = await run;
     assert.equal(done.outcome.status, 'ok');
-    assert.equal((done.invocations[1] as any)?.nudge, true);
+    assert.equal(done.invocations[1]?.nudge, true);
   }
   for (const [retryAfterMs, wait] of [
     [undefined, 30_000],
@@ -473,7 +469,7 @@ test('resume: capacity waits bounded delay then resumes or skips without time', 
     const done = await run;
     assert.equal(h.launches.length, 1);
     assert.equal(done.outcome.status, 'fail');
-    assert.equal((done.outcome as any).cls, 'capacity');
+    assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'capacity');
   }
 });
 
@@ -518,7 +514,7 @@ test('resume: stall skips resume when unresumable', async () => {
     assert.equal(done.outcome.status, 'fail');
   }
   for (const { name, result, cls } of [
-    { name: 'lifecycleError', result: ok({ lifecycleError: 'group unconfirmed' } as any), cls: 'timeout' },
+    { name: 'lifecycleError', result: ok({ lifecycleError: 'group unconfirmed' }), cls: 'timeout' },
     { name: 'truncated', result: ok({ truncated: true }), cls: 'buffer' },
     {
       name: 'overall-deadline timeout',
@@ -555,7 +551,7 @@ test('resume prompt carries safety header and continue prompt without attachment
   assert.ok(!resumePrompt.includes('/r/a.ts'));
   {
     // spilled first prompt does not leak brief file into resume
-    const spilled = harness(posix, { '/r/p.md': 'Review it', '/r/a.ts': `data ${'x'.repeat(110000)}` });
+    const spilled = harness(posix, { '/r/p.md': 'Review it', '/r/a.ts': `data ${'x'.repeat(110_000)}` });
     const spilledRun = runDelegate(makeNudgeSpec('sess1'), { ...req, attachments: ['/r/a.ts'] }, 'cli', spilled.ports);
     await flush();
     spilled.finish(ok({ exit: 1, stdout: 'empty' }));
@@ -595,9 +591,7 @@ test('resume: stall: first stall with missing or unreadable stalled file still n
     h.fs.readText = (f: string) => {
       if (f.endsWith('.stalled')) {
         if (code === 'ENOENT') {
-          const e = new Error('missing') as NodeJS.ErrnoException;
-          (e as any).code = 'ENOENT';
-          throw e;
+          throw Object.assign(new Error('missing'), { code: 'ENOENT' });
         }
         throw Object.assign(new Error('denied'), { code: 'EACCES' });
       }
@@ -612,21 +606,24 @@ test('resume: stall: first stall with missing or unreadable stalled file still n
     const done = await run;
     assert.equal(done.outcome.status, 'ok', code);
     assert.equal(h.launches.length, 2, code);
-    if (code === 'ENOENT') assert.ok((h.fs.files.get('/r/log.stalled') ?? '').includes('## codex'), code);
+    if (code === 'ENOENT') {
+      assert.ok((h.fs.files.get('/r/log.stalled') ?? '').includes('## codex'), code);
+    }
   }
 });
 
+const parse = (out: ProcessResult) =>
+  out.stdout.includes('FINAL')
+    ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
+    : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' };
+const argv = (r: any) => ({
+  argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt],
+  stdin: null,
+  env: {},
+  cwd: r.cwd,
+});
+
 test('resume: stall resume setup failure returns stalled outcome', async () => {
-  const parse = (out: ProcessResult) =>
-    out.stdout.includes('FINAL')
-      ? { status: 'ok' as const, text: 'FINAL', sessionId: 's', resume: null }
-      : { status: 'fail' as const, cls: 'empty-output' as const, detail: 'empty' };
-  const argv = (r: any) => ({
-    argv: ['bin', r.resume ? `resume:${r.resume}` : 'fresh', r.prompt],
-    stdin: null,
-    env: {},
-    cwd: r.cwd,
-  });
   {
     // resume prepare fails
     const h = harness(posix);
@@ -660,7 +657,9 @@ test('resume: stall resume setup failure returns stalled outcome', async () => {
       id: 'codex',
       silentUntilExit: undefined,
       prepare: async (r: any) => {
-        if (r.resume) h.clock.advance(10_000);
+        if (r.resume) {
+          h.clock.advance(10_000);
+        }
         return { kind: 'launch' as const, env: {}, release: () => {} };
       },
       parse,
@@ -680,7 +679,9 @@ test('resume: stall resume setup failure returns stalled outcome', async () => {
     h.ports.binary = 'C:/bin/tool.cmd';
     const realWrite = h.fs.writeText;
     h.fs.writeText = (f: string, t: string) => {
-      if (f === '/r/brief.md' && t.includes(CONTINUE_PROMPT)) throw new Error('spill boom');
+      if (f === '/r/brief.md' && t.includes(CONTINUE_PROMPT)) {
+        throw new Error('spill boom');
+      }
       realWrite(f, t);
     };
     const spec: any = {
@@ -713,7 +714,9 @@ test('resume: stall resume setup failure returns stalled outcome', async () => {
       attemptSession: () => 'sess1',
       parse,
       argv: (r: any) => {
-        if (r.resume) throw new Error('argv boom');
+        if (r.resume) {
+          throw new Error('argv boom');
+        }
         return { argv: ['bin', 'fresh', r.prompt], stdin: null, env: {}, cwd: r.cwd };
       },
     };
@@ -730,10 +733,12 @@ test('resume: stall resume setup failure returns stalled outcome', async () => {
     const h = harness(posix);
     const spec = makeNudgeSpec('sess1');
     const realStart = h.ports.process.start.bind(h.ports.process);
-    h.ports.process.start = ((launch: Launch, io: any) => {
-      if (String(launch.argv[1] ?? '').startsWith('resume:')) throw new Error('spawn boom');
-      return (realStart as any)(launch, io);
-    }) as any;
+    h.ports.process.start = (launch, io) => {
+      if (String(launch.argv[1] ?? '').startsWith('resume:')) {
+        throw new Error('spawn boom');
+      }
+      return realStart(launch, io);
+    };
     const run = runDelegate(spec, req, 'cli', h.ports);
     await flush();
     h.finish(ok({ exit: 1, stdout: 'empty' }));
@@ -775,10 +780,9 @@ test('resume: stall: win32 cmd resume spills continue prompt and starts', async 
 });
 
 test('resume: stall: copilot preset flag on fresh launch only', async () => {
-  const { copilot } = await import('../../../skills/dispatch/scripts/providers/copilot.ts');
   const h = harness(posix);
-  (h.ports as any).nonce = () => 'preset123';
-  const run = runDelegate(copilot, { ...req, timeoutMs: 60000 }, 'cli', h.ports);
+  h.ports.nonce = () => 'preset123';
+  const run = runDelegate(copilot, { ...req, timeoutMs: 60_000 }, 'cli', h.ports);
   await flush();
   assert.ok((h.launches[0]?.argv ?? []).includes('--session-id'));
   h.finish(ok({ exit: null, signal: 'SIGTERM', stdout: 'partial output', timedOut: true, idleMs: IDLE_TIMEOUT_MS }));
@@ -858,7 +862,9 @@ test('diagnostics usage parsing records measured usage and never throws', async 
       resumeUsage: undefined,
       usage: () => {
         calls++;
-        if (scenario === 'throw') throw new Error('parser');
+        if (scenario === 'throw') {
+          throw new Error('parser');
+        }
         return {
           input: 3,
           output: 2,
@@ -921,7 +927,9 @@ test('OpenCode settles its POSIX group after success, failure and timeout withou
       const spec = scenario === 'other-provider' ? claude : opencode;
       const pending = runDelegate(spec, { ...req, agent: 'explore', readOnlyVerified: true }, 'cli', h.ports);
       await flush();
-      if (scenario === 'timeout') h.clock.advance(req.timeoutMs);
+      if (scenario === 'timeout') {
+        h.clock.advance(req.timeoutMs);
+      }
       const stdout =
         scenario === 'other-provider'
           ? '{}'
@@ -942,14 +950,17 @@ test('OpenCode settles its POSIX group after success, failure and timeout withou
       assert.equal(checks, scenario === 'other-provider' ? 0 : 1);
       if (scenario === 'timeout') {
         assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
-        if (!confirmed)
+        if (!confirmed) {
           assert.match(result.outcome.status === 'fail' ? result.outcome.detail : '', /process group.*unconfirmed/);
+        }
       } else if (scenario !== 'other-provider' && !confirmed) {
         assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
         assert.match(result.outcome.status === 'fail' ? result.outcome.detail : '', /process group.*unconfirmed/);
-      } else if (scenario === 'success') assert.equal(result.outcome.status, 'ok');
-      else if (scenario === 'failure')
+      } else if (scenario === 'success') {
+        assert.equal(result.outcome.status, 'ok');
+      } else if (scenario === 'failure') {
         assert.notEqual(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
+      }
     }
   }
 });
@@ -957,7 +968,7 @@ test('OpenCode settles its POSIX group after success, failure and timeout withou
 test('OpenCode spawn failures with no PID preserve not-found without signaling or settling a process group', async () => {
   for (const timing of ['before-deadline', 'deadline-race'] as const) {
     const h = harness(posix);
-    let finish: (result: ProcessResult) => void = () => {};
+    let finish: (result: ProcessResult) => void = noop;
     let settleCalls = 0;
     Object.assign(h.ports.process, {
       settleGroup: async () => {
@@ -996,31 +1007,43 @@ test('POSIX owned-group checks distinguish missing groups, permission failure an
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
   Object.defineProperty(process, 'platform', { ...descriptor, value: 'linux' });
   t.after(() => Object.defineProperty(process, 'platform', descriptor));
-  const { nodeProcess } = await import('../../../skills/dispatch/scripts/providers/node-process.ts');
   t.mock.timers.enable();
   for (const scenario of ['gone', 'permission', 'term', 'kill', 'unconfirmed'] as const) {
-    const signals: (string | number | undefined)[] = [];
+    const signals: Array<string | number | undefined> = [];
     let terminated = false;
     let killed = false;
     const killMock = t.mock.method(process, 'kill', (pid: number, signal?: string | number) => {
       assert.equal(pid, -50);
       signals.push(signal);
-      if (scenario === 'permission') throw Object.assign(new Error('denied'), { code: 'EPERM' });
-      if (scenario === 'gone' || (scenario === 'term' && terminated) || (scenario === 'kill' && killed))
+      if (scenario === 'permission') {
+        throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      }
+      if (scenario === 'gone' || (scenario === 'term' && terminated) || (scenario === 'kill' && killed)) {
         throw Object.assign(new Error('gone'), { code: 'ESRCH' });
-      if (signal === 'SIGTERM') terminated = true;
-      if (signal === 'SIGKILL') killed = true;
+      }
+      if (signal === 'SIGTERM') {
+        terminated = true;
+      }
+      if (signal === 'SIGKILL') {
+        killed = true;
+      }
       return true;
     });
     try {
       const pending = nodeProcess.settleGroup!(50, 1000);
       t.mock.timers.tick(500);
-      for (let i = 0; i < 4; i++) await Promise.resolve();
+      for (let i = 0; i < 4; i++) {
+        await Promise.resolve();
+      }
       t.mock.timers.tick(500);
-      for (let i = 0; i < 4; i++) await Promise.resolve();
+      for (let i = 0; i < 4; i++) {
+        await Promise.resolve();
+      }
       assert.equal(await pending, !['permission', 'unconfirmed'].includes(scenario), scenario);
       assert.equal(signals.includes('SIGKILL'), ['kill', 'unconfirmed'].includes(scenario), scenario);
-      if (scenario === 'permission') assert.deepEqual(signals, [0], scenario);
+      if (scenario === 'permission') {
+        assert.deepEqual(signals, [0], scenario);
+      }
     } finally {
       killMock.mock.restore();
     }
@@ -1043,12 +1066,16 @@ test('OpenCode lifecycle steps keep preparation, response and settlement separat
       agent: 'explore',
       readOnlyVerified: true,
       collectLifecycle: true,
-      ...(scenario === 'offline' ? { endpoint: 'http://127.0.0.1:9/v1' } : {}),
+      ...(scenario === 'offline' && { endpoint: 'http://127.0.0.1:9/v1' }),
     };
     const pending = runDelegate(scenario === 'other-provider' ? claude : opencode, request, 'cli', h.ports);
     await flush();
-    if (scenario === 'offline') return pending;
-    if (scenario === 'timeout') h.clock.advance(req.timeoutMs);
+    if (scenario === 'offline') {
+      return pending;
+    }
+    if (scenario === 'timeout') {
+      h.clock.advance(req.timeoutMs);
+    }
     h.finish(ok({ stdout: scenario === 'other-provider' ? '{}' : text }));
     return pending;
   };

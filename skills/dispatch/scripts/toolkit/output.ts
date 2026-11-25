@@ -38,19 +38,23 @@ export const result = (value: unknown, postFold?: Fold): HandlerResult => ({
   value,
   exit: 0,
   summary: JSON.stringify(value),
-  ...(postFold ? { postFold } : {}),
+  ...(postFold && { postFold }),
 });
 export function refuse(reason: string, message = reason): never {
   throw new ToolError(4, reason, message);
 }
 
 export function capSummary(text: string): string {
-  if (Buffer.byteLength(text, 'utf8') <= 1024) return text;
+  if (Buffer.byteLength(text, 'utf8') <= 1024) {
+    return text;
+  }
   let result = '';
   let bytes = 3;
   for (const point of text) {
     const size = Buffer.byteLength(point, 'utf8');
-    if (bytes + size > 1024) break;
+    if (bytes + size > 1024) {
+      break;
+    }
     result += point;
     bytes += size;
   }
@@ -61,20 +65,26 @@ export function capSummary(text: string): string {
 const SUMMARY_ITEM_LIMIT = 5;
 const SUMMARY_ITEM_BYTES = 200;
 export function clipBytes(text: string, max: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= max) return text;
+  if (Buffer.byteLength(text, 'utf8') <= max) {
+    return text;
+  }
   let result = '';
   let bytes = Buffer.byteLength('…', 'utf8');
   for (const point of text) {
     const size = Buffer.byteLength(point, 'utf8');
-    if (bytes + size > max) break;
+    if (bytes + size > max) {
+      break;
+    }
     result += point;
     bytes += size;
   }
   return result + '…';
 }
 
-export function summaryWithItems(head: string, items: readonly string[]): string {
-  if (!items.length) return head;
+export function summaryWithItems(head: string, items: ReadonlyArray<string>): string {
+  if (!items.length) {
+    return head;
+  }
   const clipped = items.map((item) => clipBytes(item, SUMMARY_ITEM_BYTES));
   for (let shown = Math.min(SUMMARY_ITEM_LIMIT, clipped.length); shown > 0; shown--) {
     const omitted = clipped.length - shown;
@@ -85,7 +95,9 @@ export function summaryWithItems(head: string, items: readonly string[]): string
       ': ' +
       clipped.slice(0, shown).join('; ') +
       (omitted > 0 ? '; +' + omitted + ' more in result' : '');
-    if (Buffer.byteLength(text, 'utf8') <= 1024) return text;
+    if (Buffer.byteLength(text, 'utf8') <= 1024) {
+      return text;
+    }
   }
   return head;
 }

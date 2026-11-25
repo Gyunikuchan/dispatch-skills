@@ -1,12 +1,7 @@
 import { measured, uncached } from './diagnostics-gates.ts';
-import {
-  CATEGORIES,
-  DASH,
-  type Category,
-  type Finding,
-  type InvocationFacts,
-  type RunFacts,
-} from './diagnostics-types.ts';
+import { defined } from './defined.ts';
+import { CATEGORIES, DASH } from './diagnostics-types.ts';
+import type { Category, Finding, InvocationFacts, RunFacts } from './diagnostics-types.ts';
 
 // Share heuristics need `minSamples`, so one or two data points never read as a pattern.
 const DIAGNOSTIC_THRESHOLDS = {
@@ -20,7 +15,7 @@ const DIAGNOSTIC_THRESHOLDS = {
 } as const;
 const NON_REVIEW_STAGES = new Set(['spec', 'design', 'plan', 'implementation', 'ask']);
 
-const cacheReadMetrics = (items: readonly { input: number; cacheRead?: number }[]) => {
+const cacheReadMetrics = (items: ReadonlyArray<{ input: number; cacheRead?: number }>) => {
   const cacheRead = sum(items.map((item) => item.cacheRead)) ?? 0;
   const total = cacheRead + (sum(items.map((item) => item.input)) ?? 0);
   return { cacheRead, total, share: total > 0 ? cacheRead / total : undefined };
@@ -28,13 +23,16 @@ const cacheReadMetrics = (items: readonly { input: number; cacheRead?: number }[
 
 // SECTION: Heuristics
 
+const isMetered = (i: InvocationFacts): i is InvocationFacts & { usage: NonNullable<InvocationFacts['usage']> } =>
+  measured(i) !== undefined;
+
 const RANK = Object.keys(CATEGORIES);
-export const bySeverity = <T extends { category: Category }>(items: readonly T[]): T[] =>
+export const bySeverity = <T extends { category: Category }>(items: ReadonlyArray<T>): Array<T> =>
   [...items].sort((a, b) => RANK.indexOf(a.category) - RANK.indexOf(b.category));
 export const pct = (share: number) => `${Math.round(share * 100)}%`;
 export const num = (n: number | undefined) =>
-  n === undefined ? DASH : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-const tally = (values: readonly string[]) =>
+  n === undefined ? DASH : String(Math.round(n)).replaceAll(/\B(?=(\d{3})+(?!\d))/g, ',');
+const tally = (values: ReadonlyArray<string>) =>
   [...new Set(values)].map((v) => `${v} ×${values.filter((x) => x === v).length}`).join(', ');
 export const plural = (n: number, word: string) =>
   `${n} ${word}${n === 1 ? '' : /(?:s|sh|ch|x)$/.test(word) ? 'es' : 's'}`;
@@ -43,12 +41,14 @@ export const phaseName = (run: RunFacts, key: string | undefined) => {
   return key && /^review-[a-f0-9]{16}$/.test(key) ? `${name} · subject ${key.slice(7)}` : name;
 };
 
-export const sum = (values: readonly (number | undefined)[]): number | undefined =>
+export const sum = (values: ReadonlyArray<number | undefined>): number | undefined =>
   values.some((v) => v !== undefined) ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : undefined;
 
-function groups<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
-  const out = new Map<string, T[]>();
-  for (const item of items) out.set(key(item), [...(out.get(key(item)) ?? []), item]);
+function groups<T>(items: ReadonlyArray<T>, key: (item: T) => string): Map<string, Array<T>> {
+  const out = new Map<string, Array<T>>();
+  for (const item of items) {
+    out.set(key(item), [...(out.get(key(item)) ?? []), item]);
+  }
   return out;
 }
 
@@ -56,7 +56,14 @@ const PREFLIGHT = [
   'scripts/toolkit/doctor.ts',
   'Detect this condition in the preflight check and skip the provider before launch.',
 ] as const;
-const FAILURE_FIXES: Record<string, readonly [string, string]> = {
+// Keyed by a recorded failure class or tool action, so any string may be looked up.
+interface FailureFixes {
+  [cls: string]: readonly [string, string] | undefined;
+}
+interface ToolModules {
+  readonly [action: string]: string | undefined;
+}
+const FAILURE_FIXES: FailureFixes = {
   'model-not-found': [
     'scripts/policy/cascade.ts',
     'Check configured model names in the preflight and cascade past unknown models before launch.',
@@ -99,7 +106,7 @@ const DEFAULT_FIX = [
 ] as const;
 
 // The domain layer cannot import cli.ts, so this table mirrors its handler map.
-const TOOL_MODULES: Readonly<Record<string, string>> = {
+const TOOL_MODULES: ToolModules = {
   'ask run': 'ask',
   'review run': 'review',
   'diagnostics render': 'diagnostics',
@@ -128,11 +135,28 @@ const TOOL_MODULES: Readonly<Record<string, string>> = {
   'worktree abandon': 'writers',
 };
 
+// A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
+const isOk = (i: InvocationFacts) =>
+  i.outcome === 'ok' && (i.validationOutcome === undefined || i.validationOutcome === 'ok');
+
+const isFailure = (i: InvocationFacts) =>
+  i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok');
+
+const attemptIdentity = (i: InvocationFacts) => [i.subject ?? i.phase, i.slot, i.provider, i.model].join('\0');
+
+const failureClass = (i: InvocationFacts) => (i.outcome !== 'ok' ? i.outcome : defined(i.validationOutcome));
+
+// One clear refusal is not a pattern.
+const rejection = (item: { tool: string; action: string; cls: string }) =>
+  item.tool + ' ' + item.action + ': ' + item.cls;
+
+const idList = (values: ReadonlyArray<string>) => (values.length ? ` (${values.slice(0, 5).join(', ')})` : '');
+
 /** Deterministic findings (H1–H5, H8, H9) for one run, in severity order. */
 
-export function selectFindings(run: RunFacts, formatDuration: (ms: number | undefined) => string): Finding[] {
+export function selectFindings(run: RunFacts, formatDuration: (ms: number | undefined) => string): Array<Finding> {
   const T = DIAGNOSTIC_THRESHOLDS;
-  const out: Finding[] = [];
+  const out: Array<Finding> = [];
   const add = (
     source: string,
     category: Category,
@@ -143,34 +167,39 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
   ) => out.push({ source, category, component, evidence, impact, proposedFix });
   // Quota-store skips never launch, so they cost no driver time and are not attempts.
   const cli = run.invocations.filter((i) => i.surface === 'cli' && i.launched);
-  // A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
-  const isOk = (i: InvocationFacts) =>
-    i.outcome === 'ok' && (i.validationOutcome === undefined || i.validationOutcome === 'ok');
-  const isFailure = (i: InvocationFacts) =>
-    i.outcome !== 'ok' || (i.validationOutcome !== undefined && i.validationOutcome !== 'ok');
-  const identity = (i: InvocationFacts) => [i.subject ?? i.phase, i.slot, i.provider, i.model].join('\0');
   const cliIndex = new Map(cli.map((row, index) => [row, index] as const));
   // A stall or missing report that a resume chain recovers is not waste: consecutive resume attempts of the same subject, slot, provider and model must end in a valid ok row for the whole chain to leave the failure set.
   const recoveredByResume = (row: InvocationFacts): boolean => {
-    if (row.slot === undefined || row.attempt === undefined) return false;
+    if (row.slot === undefined || row.attempt === undefined) {
+      return false;
+    }
     const start = cliIndex.get(row);
-    if (start === undefined) return false;
-    const key = identity(row);
+    if (start === undefined) {
+      return false;
+    }
+    const key = attemptIdentity(row);
     let attempt = row.attempt;
     for (let index = start + 1; index < cli.length; index++) {
-      const next = cli[index]!;
-      if (identity(next) !== key) continue;
-      if (next.nudge !== true || next.attempt !== attempt + 1) return false;
+      const next = defined(cli[index]);
+      if (attemptIdentity(next) !== key) {
+        continue;
+      }
+      if (next.nudge !== true || next.attempt !== attempt + 1) {
+        return false;
+      }
       attempt = next.attempt;
-      if (isOk(next)) return true;
+      if (isOk(next)) {
+        return true;
+      }
     }
     return false;
   };
   const failed = cli.filter(isFailure).filter((row) => !recoveredByResume(row));
-  const failureClass = (i: InvocationFacts) => (i.outcome !== 'ok' ? i.outcome : i.validationOutcome!);
   const count = (key: (i: InvocationFacts) => string) => {
     const m = new Map<string, number>();
-    for (const i of failed) m.set(key(i), (m.get(key(i)) ?? 0) + 1);
+    for (const i of failed) {
+      m.set(key(i), (m.get(key(i)) ?? 0) + 1);
+    }
     return m;
   };
   const bySlot = count((i) => `${i.subject ?? i.phase}|${i.slot ?? ''}`);
@@ -190,9 +219,13 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       const indexOf = new Map(run.invocations.map((item, index) => [item, index]));
       const routed = new Set(['next-model', 'next-mode', 'reserve']);
       const recovered = items.filter((failedItem) => {
-        if (!failedItem.subject || !failedItem.slot || !routed.has(failedItem.routingOutcome ?? '')) return false;
+        if (!failedItem.subject || !failedItem.slot || !routed.has(failedItem.routingOutcome ?? '')) {
+          return false;
+        }
         const failedIndex = indexOf.get(failedItem);
-        if (failedIndex === undefined) return false;
+        if (failedIndex === undefined) {
+          return false;
+        }
         return run.invocations.slice(failedIndex + 1).some((later) => {
           if (
             later.surface !== 'cli' ||
@@ -200,8 +233,9 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
             later.subject !== failedItem.subject ||
             later.outcome !== 'ok' ||
             (later.validationOutcome !== undefined && later.validationOutcome !== 'ok')
-          )
+          ) {
             return false;
+          }
           const retried =
             later.slot === failedItem.slot &&
             failedItem.attempt !== undefined &&
@@ -236,8 +270,9 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       .filter((c) => c !== undefined)
       .at(-1);
     const fallback = cap === undefined && rounds >= T.reviewRounds;
-    if (!fallback && !reraised.length && !escalation) continue;
-    const ids = (values: readonly string[]) => (values.length ? ` (${values.slice(0, 5).join(', ')})` : '');
+    if (!fallback && !reraised.length && !escalation) {
+      continue;
+    }
     // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label; past the cap it marks designed continuation, so its fix must not raise the cap.
     const capReached = cap !== undefined && escalation?.kind === 'deadlock' && rounds === cap && !reraised.length;
     const pastCap =
@@ -248,8 +283,8 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       plural(rounds, 'round'),
       ...(capReached ? [`cap reached (${cap})`] : []),
       ...(pastCap ? [`continued past the cap (${cap})`] : []),
-      ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${ids(reraised)}`] : []),
-      ...(escalation && !capReached ? [`${escalation.kind} escalation${ids(escalation.ids)}`] : []),
+      ...(reraised.length ? [`${plural(reraised.length, 'finding')} re-raised across rounds${idList(reraised)}`] : []),
+      ...(escalation && !capReached ? [`${escalation.kind} escalation${idList(escalation.ids)}`] : []),
     ];
     add(
       'H2',
@@ -264,7 +299,9 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
   }
   for (const r of run.reviews) {
     const all = r.accepted + r.rejected;
-    if (all < T.minSamples || r.rejected / all <= T.rejectedShare) continue;
+    if (all < T.minSamples || r.rejected / all <= T.rejectedShare) {
+      continue;
+    }
     add(
       'H3',
       'review-convergence',
@@ -274,11 +311,13 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       'Read the rejection rulings; where reviewers misread scope or criteria, state that boundary in the artifact the prompt cites.',
     );
   }
-  const metered = run.invocations.filter((i) => measured(i));
+  const metered = run.invocations.filter(isMetered);
   for (const [provider, items] of groups(metered, (i) => i.provider)) {
-    const reporting = items.filter((i) => i.usage!.cacheRead !== undefined);
-    const { cacheRead, total: input, share } = cacheReadMetrics(reporting.map((i) => i.usage!));
-    if (!reporting.length || share === undefined || share >= T.cacheReadShare) continue;
+    const reporting = items.filter((i) => i.usage.cacheRead !== undefined);
+    const { cacheRead, total: input, share } = cacheReadMetrics(reporting.map((i) => i.usage));
+    if (!reporting.length || share === undefined || share >= T.cacheReadShare) {
+      continue;
+    }
     add(
       'H4',
       'token-economy',
@@ -291,7 +330,9 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
   for (const [role, rows] of groups(run.hostUsage?.rows ?? [], (r) => r.role)) {
     const reporting = rows.filter((r) => r.cacheRead !== undefined);
     const { cacheRead, total, share } = cacheReadMetrics(reporting);
-    if (!reporting.length || total < T.minCacheTokens || share === undefined || share >= T.cacheReadShare) continue;
+    if (!reporting.length || total < T.minCacheTokens || share === undefined || share >= T.cacheReadShare) {
+      continue;
+    }
     const platform = run.hostUsage?.platform ?? 'host';
     add(
       'H10',
@@ -331,9 +372,13 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
       (i) =>
         i.usageSource === 'session' && !i.coverage?.includes('transcript unavailable') && i.usage?.turns !== undefined,
     );
-    if (!hostOk || !delegatesOk) continue;
-    const turns = (sum(hRows.map((r) => r.turns)) ?? 0) + (sum(dRows.map((i) => i.usage!.turns)) ?? 0);
-    if (turns < T.turnChurn) continue;
+    if (!hostOk || !delegatesOk) {
+      continue;
+    }
+    const turns = (sum(hRows.map((r) => r.turns)) ?? 0) + (sum(dRows.map((i) => i.usage?.turns)) ?? 0);
+    if (turns < T.turnChurn) {
+      continue;
+    }
     add(
       'H11',
       'token-economy',
@@ -345,7 +390,7 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
   }
   for (const [agent, items] of groups(
     (run.hostUsage?.responses ?? []).filter((r) => NON_REVIEW_STAGES.has(r.stage) && r.agent !== undefined),
-    (r) => r.agent!,
+    (r) => defined(r.agent),
   )) {
     const complete =
       !run.hostUsage?.unavailable &&
@@ -356,25 +401,29 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
           !Object.keys(run.hostUsage?.notes?.[r.role] ?? {}).length &&
           !Object.keys(run.hostUsage?.notes?.host ?? {}).length,
       );
-    if (!complete) continue;
+    if (!complete) {
+      continue;
+    }
     const turns = sum(items.map((r) => r.observed)) ?? 0;
-    if (turns < T.turnChurn) continue;
+    if (turns < T.turnChurn) {
+      continue;
+    }
     add(
       'H11',
       'token-economy',
       'SKILL.md',
-      `${agent} (${items[0]!.role}): ${plural(turns, 'LLM turn')} across non-review stages.`,
+      `${agent} (${defined(items[0]).role}): ${plural(turns, 'LLM turn')} across non-review stages.`,
       'One agent accumulated excessive round-trips, multiplying repeated input tokens.',
       'Tighten the agent brief and turn budget, or delegate focused sub-tasks.',
     );
   }
   // Cache reads are cheap and dominate long sessions, so rank launches by uncached tokens; zero-usage failures are not samples.
-  const sizes = metered.map((i) => [i, uncached(i.usage!)] as const).filter(([, n]) => n > 0);
+  const sizes = metered.map((i) => [i, uncached(i.usage)] as const).filter(([, n]) => n > 0);
   if (sizes.length >= T.minSamples) {
     const all = sum(sizes.map(([, n]) => n)) ?? 0;
     const [top, n] = sizes.reduce((a, b) => (b[1] > a[1] ? b : a));
     // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
-    if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length))
+    if (all && n / all > Math.max(T.invocationShare, 2 / sizes.length)) {
       add(
         'H5',
         'token-economy',
@@ -383,10 +432,8 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
         'One invocation dominates token spend; its own repository exploration likely drives most of it.',
         "Lower that slot's turn budget or effort, or assign it a cheaper model.",
       );
+    }
   }
-  // One clear refusal is not a pattern.
-  const rejection = (item: { tool: string; action: string; cls: string }) =>
-    item.tool + ' ' + item.action + ': ' + item.cls;
   const repeated = [...groups(run.rejectedTools ?? [], rejection).values()].filter((items) => items.length >= 2).flat();
   for (const [component, items] of groups(
     repeated,
@@ -402,14 +449,16 @@ export function selectFindings(run: RunFacts, formatDuration: (ms: number | unde
     );
   }
   // One relaunch without a recorded cause is not a pattern.
-  if ((run.relaunches ?? 0) >= 2)
+  const relaunches = run.relaunches ?? 0;
+  if (relaunches >= 2) {
     add(
       'H9',
       'correctness',
       'scripts/toolkit/brief.ts',
-      `${plural(run.relaunches!, 'writer relaunch')}; rework evidence, cause unavailable.`,
+      `${plural(relaunches, 'writer relaunch')}; rework evidence, cause unavailable.`,
       'Additional launches repeat context and may repeat verification.',
       'Read the writer launch reports at `.state/briefs/<task>-<launch>.report.md` for the relaunch cause.',
     );
+  }
   return bySeverity(out);
 }

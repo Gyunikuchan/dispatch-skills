@@ -5,12 +5,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { nodeLinkFs } from '../../skills/dispatch/scripts/lib/node-fs-ext.ts';
+import { errorCode } from './guards.ts';
 
 export interface TestFs {
   hashFile(file: string): string;
   copyFileAtomic(source: string, destination: string): void;
   copyFileExclusive(source: string, destination: string): boolean;
-  listFiles(dir: string): string[];
+  listFiles(dir: string): Array<string>;
   inspectPath(file: string): {
     kind: 'file' | 'directory' | 'symlink';
     mode: number;
@@ -42,7 +43,9 @@ export interface TestFs {
 }
 
 function syncDirectory(dir: string): void {
-  if (process.platform === 'win32') return;
+  if (process.platform === 'win32') {
+    return;
+  }
   try {
     const fd = fs.openSync(dir, 'r');
     try {
@@ -51,8 +54,9 @@ function syncDirectory(dir: string): void {
       fs.closeSync(fd);
     }
   } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EISDIR', 'EPERM'].includes(String((error as { code?: string }).code)))
+    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EISDIR', 'EPERM'].includes(String(errorCode(error)))) {
       throw error;
+    }
   }
 }
 
@@ -67,7 +71,9 @@ function hashFile(file: string): string {
     chunk = Buffer.allocUnsafe(64 * 1024);
   try {
     let count: number;
-    while ((count = fs.readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, count));
+    while ((count = fs.readSync(fd, chunk)) > 0) {
+      digest.update(chunk.subarray(0, count));
+    }
   } finally {
     fs.closeSync(fd);
   }
@@ -78,15 +84,29 @@ function replaceAtomic(temp: string, file: string): void {
   try {
     fs.renameSync(temp, file);
   } catch (error) {
-    if (process.platform !== 'win32' || (error as { code?: string }).code !== 'EPERM') throw error;
+    if (process.platform !== 'win32' || errorCode(error) !== 'EPERM') {
+      throw error;
+    }
     const info = fs.lstatSync(file);
-    if (!info.isFile() || (info.mode & 0o200) !== 0) throw error;
+    if (!info.isFile() || (info.mode & 0o200) !== 0) {
+      throw error;
+    }
     fs.chmodSync(file, info.mode | 0o200);
     try {
       fs.renameSync(temp, file);
     } catch (retryError) {
       fs.chmodSync(file, info.mode);
       throw retryError;
+    }
+  }
+}
+
+function unlinkIfPresent(file: string): void {
+  try {
+    fs.unlinkSync(file);
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') {
+      throw error;
     }
   }
 }
@@ -105,23 +125,22 @@ function publishAtomic(file: string, content: string | Buffer): void {
     replaceAtomic(temp, file);
     syncDirectory(path.dirname(file));
   } finally {
-    try {
-      fs.unlinkSync(temp);
-    } catch (error) {
-      if ((error as { code?: string }).code !== 'ENOENT') throw error;
-    }
+    unlinkIfPresent(temp);
   }
 }
 
 const nodeFs: TestFs = {
   *readChunks(file, chunkBytes = 64 * 1024) {
-    if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024)
+    if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024) {
       throw new Error('Invalid chunk size.');
+    }
     const fd = fs.openSync(file, 'r');
     try {
       const chunk = Buffer.allocUnsafe(chunkBytes);
       let count: number;
-      while ((count = fs.readSync(fd, chunk)) > 0) yield Buffer.from(chunk.subarray(0, count));
+      while ((count = fs.readSync(fd, chunk)) > 0) {
+        yield Buffer.from(chunk.subarray(0, count));
+      }
     } finally {
       fs.closeSync(fd);
     }
@@ -144,15 +163,13 @@ const nodeFs: TestFs = {
         syncDirectory(path.dirname(destination));
         return true;
       } catch (error) {
-        if ((error as { code?: string }).code === 'EEXIST') return false;
+        if (errorCode(error) === 'EEXIST') {
+          return false;
+        }
         throw error;
       }
     } finally {
-      try {
-        fs.unlinkSync(temp);
-      } catch (error) {
-        if ((error as { code?: string }).code !== 'ENOENT') throw error;
-      }
+      unlinkIfPresent(temp);
     }
   },
   copyFileAtomic(source, destination) {
@@ -169,24 +186,27 @@ const nodeFs: TestFs = {
       replaceAtomic(temp, destination);
       syncDirectory(path.dirname(destination));
     } finally {
-      try {
-        fs.unlinkSync(temp);
-      } catch (error) {
-        if ((error as { code?: string }).code !== 'ENOENT') throw error;
-      }
+      unlinkIfPresent(temp);
     }
   },
   listFiles(dir) {
-    const result: string[] = [];
+    const result: Array<string> = [];
     const walk = (current: string, relative: string) => {
-      if (!fs.existsSync(current)) return;
+      if (!fs.existsSync(current)) {
+        return;
+      }
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
         const file = relative ? `${relative}/${entry.name}` : entry.name;
-        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(current, entry.name), file);
-        else result.push(file);
+        if (entry.isDirectory() && !entry.isSymbolicLink()) {
+          walk(path.join(current, entry.name), file);
+        } else {
+          result.push(file);
+        }
       }
     };
-    if (fs.existsSync(dir) && !fs.lstatSync(dir).isSymbolicLink()) walk(dir, '');
+    if (fs.existsSync(dir) && !fs.lstatSync(dir).isSymbolicLink()) {
+      walk(dir, '');
+    }
     return result.sort();
   },
   inspectPath(file) {
@@ -194,11 +214,14 @@ const nodeFs: TestFs = {
     try {
       stat = fs.lstatSync(file);
     } catch (error) {
-      if (['ENOENT', 'ENOTDIR'].includes(String((error as { code?: string }).code))) return null;
+      if (['ENOENT', 'ENOTDIR'].includes(String(errorCode(error)))) {
+        return null;
+      }
       throw error;
     }
-    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink())
+    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink()) {
       throw new Error(`Unsupported file type: ${file}`);
+    }
     let realPath: string | null;
     try {
       realPath = fs.realpathSync(file);
@@ -225,11 +248,7 @@ const nodeFs: TestFs = {
       replaceAtomic(temporary, file);
       syncDirectory(path.dirname(file));
     } finally {
-      try {
-        fs.unlinkSync(temporary);
-      } catch (error) {
-        if ((error as { code?: string }).code !== 'ENOENT') throw error;
-      }
+      unlinkIfPresent(temporary);
     }
   },
   readText: (file) => fs.readFileSync(file, 'utf8'),
@@ -278,15 +297,13 @@ const nodeFs: TestFs = {
         syncDirectory(path.dirname(file));
         return true;
       } catch (error) {
-        if ((error as { code?: string }).code === 'EEXIST') return false;
+        if (errorCode(error) === 'EEXIST') {
+          return false;
+        }
         throw error;
       }
     } finally {
-      try {
-        fs.unlinkSync(temp);
-      } catch (error) {
-        if ((error as { code?: string }).code !== 'ENOENT') throw error;
-      }
+      unlinkIfPresent(temp);
     }
   },
   writeAtomic(file, text) {
@@ -301,7 +318,9 @@ const nodeFs: TestFs = {
       fs.closeSync(fd);
     }
   },
-  remove: nodeLinkFs.remove,
+  remove: (file) => {
+    nodeLinkFs.remove(file);
+  },
 };
 
 export interface FakePorts {

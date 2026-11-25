@@ -7,10 +7,14 @@ import { describe, test } from 'node:test';
 import { currentHashes, foldLedger, latest } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { fixture } from '../helpers/e2e.ts';
 import { toolkitRepo } from './helpers/toolkit-repo.ts';
+import { isBoolean, isString, maybe, narrow, nullable, objectWith } from './helpers/json.ts';
 
 const CLI_ENTRY = path.resolve('skills/dispatch/scripts/toolkit/cli.ts');
 
-function runCli(args: string[], options: { cwd: string; stdin?: string; env?: NodeJS.ProcessEnv; entry?: string }) {
+function runCli(
+  args: Array<string>,
+  options: { cwd: string; stdin?: string; env?: NodeJS.ProcessEnv; entry?: string },
+) {
   const res = spawnSync(process.execPath, [options.entry ?? CLI_ENTRY, ...args], {
     cwd: options.cwd,
     env: options.env ?? process.env,
@@ -21,18 +25,21 @@ function runCli(args: string[], options: { cwd: string; stdin?: string; env?: No
   assert.equal(res.error, undefined, res.error?.message);
   const lines = res.stdout.trim().split(/\r?\n/).filter(Boolean);
   assert.equal(lines.length, 1, `Expected 1 JSON stdout line, got:\nstdout: ${res.stdout}\nstderr: ${res.stderr}`);
-  const output = JSON.parse(lines[0]!) as {
-    ok: boolean;
-    summary: string;
-    path: string | null;
-    reason?: string;
-    hint?: string;
-  };
+  const output = narrow(
+    JSON.parse(lines[0]!),
+    objectWith({
+      ok: isBoolean,
+      summary: isString,
+      path: nullable(isString),
+      reason: maybe(isString),
+      hint: maybe(isString),
+    }),
+  );
   const value = output.path ? JSON.parse(fs.readFileSync(output.path, 'utf8')) : null;
   return { exit: res.status ?? -1, output, value, stderr: res.stderr };
 }
 
-function hasShell(cmd: string, args: string[]): boolean {
+function hasShell(cmd: string, args: Array<string>): boolean {
   const res = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true });
   return !res.error && res.status === 0;
 }
@@ -41,6 +48,8 @@ const HAS_POWERSHELL =
   process.platform === 'win32' &&
   hasShell('powershell.exe', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major']);
 const HAS_SH = hasShell('sh', ['-c', 'true']);
+
+const shQuote = (value: string) => `'${value.replaceAll("'", String.raw`'\''`)}'`;
 
 describe('CLI payload matrix and shell quoting', () => {
   test('brief explorer, brief test-cleanup, brief verifier, and lint run accept file, stdin -, inline flags, and fail closed on conflicts', async () => {
@@ -399,7 +408,7 @@ describe('CLI payload matrix and shell quoting', () => {
                   '--session',
                   sub.session,
                 ];
-        const res = runCli(args, { cwd: r.root, ...(mode === 'stdin' ? { stdin: JSON.stringify(tcData) } : {}) });
+        const res = runCli(args, { cwd: r.root, ...(mode === 'stdin' && { stdin: JSON.stringify(tcData) }) });
         assert.equal(res.exit, 0, mode);
         assert.deepEqual(res.value.removed, ['SC1'], mode);
       }
@@ -468,7 +477,7 @@ describe('CLI payload matrix and shell quoting', () => {
     try {
       const initRes = await f.launch(['session', 'init', '--objective', 'Ask payload matrix', '--host', 'codex']).done;
       assert.equal(initRes.exit, 0, initRes.stderr);
-      const session = JSON.parse(initRes.stdout.trim()).path as string;
+      const session = narrow(JSON.parse(initRes.stdout.trim()).path, isString);
       const qFile = path.join(f.repo, 'question.md');
       fs.writeFileSync(qFile, 'Question via file');
 
@@ -495,7 +504,7 @@ describe('CLI payload matrix and shell quoting', () => {
           'Question via inline',
         ],
       ] as const) {
-        const res = runCli([...args], { cwd: f.repo, env, entry: f.entry, ...(stdin ? { stdin } : {}) });
+        const res = runCli([...args], { cwd: f.repo, env, entry: f.entry, ...(stdin && { stdin }) });
         assert.equal(res.exit, 0, mode);
         assert.equal(res.output.ok, true, mode);
         const digest = crypto.createHash('sha256').update(expectedQ).digest('hex').slice(0, 16);
@@ -554,7 +563,7 @@ describe('CLI payload matrix and shell quoting', () => {
         // 2. PowerShell inline quoting for --text (ask run) and --json (lint run) with spaces and quotes
         const initRes = await f.launch(['session', 'init', '--objective', 'PS inline quoting', '--host', 'codex']).done;
         assert.equal(initRes.exit, 0, initRes.stderr);
-        const session = JSON.parse(initRes.stdout.trim()).path as string;
+        const session = narrow(JSON.parse(initRes.stdout.trim()).path, isString);
         const binDir = path.dirname(path.join(f.dir, 'bin', 'opencode.cmd'));
         const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env['PATH'] ?? ''}` };
 
@@ -584,7 +593,7 @@ describe('CLI payload matrix and shell quoting', () => {
           diffRef: 'ps-diff',
           before: beforeHash,
         });
-        const psEscapedJson = jsonObj.replace(/(\\*)"/g, '$1$1\\"');
+        const psEscapedJson = jsonObj.replaceAll(/(\\*)"/g, String.raw`$1$1\"`);
         const psLint = `& '${process.execPath.replaceAll("'", "''")}' '${CLI_ENTRY.replaceAll("'", "''")}' lint run '${psPlanPath.replaceAll("'", "''")}' --% --json "${psEscapedJson}" --session "${r.session}"`;
         const lintOut = spawnSync('powershell.exe', ['-NoProfile', '-Command', psLint], {
           cwd: r.root,
@@ -614,7 +623,6 @@ describe('CLI payload matrix and shell quoting', () => {
       assert.equal((await r.run(['check', 'run'])).exit, 0);
       assert.equal((await r.run(['worktree', 'deliver'])).exit, 0);
 
-      const shQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       const planPath = path.join(r.root, 'work.plan.md');
       const beforeHash = currentHashes(r.root, latest(foldLedger(r.session), 'bind')).plan!;
       fs.writeFileSync(

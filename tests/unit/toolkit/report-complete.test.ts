@@ -1,3 +1,4 @@
+import { loadRejections } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -8,8 +9,11 @@ import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { currentHashes, foldLedger, latest } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
-import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
+import { fakeGit } from './helpers/fake-git.ts';
+import type { FakeGitState } from './helpers/fake-git.ts';
 import { sessionFixture } from './helpers/session.ts';
+import { flag, nullable, optional, parseJson, readJson, shape, text } from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
 
 const HEAD_A = 'a'.repeat(40);
 const TREE_A = 'b'.repeat(40);
@@ -85,17 +89,17 @@ async function fixture(count = 4, risk?: string, source = planSource(count, risk
   return { ...f, skillRoot };
 }
 
-async function invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
+async function invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: Array<string>) {
   f.lines.splice(0);
   const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
   assert.equal(f.lines.length, 1);
   return {
     exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
+    output: parseJson(f.lines[0]!, shape({ ok: flag, reason: optional(text), summary: text, path: nullable(text) })),
   };
 }
 
-async function append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
+async function append(f: ReturnType<typeof sessionFixture>, record: JsonObject) {
   const file = f.artifact(`event-${++eventNumber}.json`, JSON.stringify(record));
   const result = await invoke(f, 'ledger', 'append', file);
   assert.equal(result.exit, 0, result.output.summary);
@@ -142,11 +146,13 @@ async function evidence(f: ReturnType<typeof sessionFixture>, criterion: string,
   return evidencePath;
 }
 
-async function evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
+async function evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: Array<string>) {
   const plan = loadPlan(f.session, readManifest(f.session));
   const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
   const paths = new Map<string, string>();
-  for (const row of rows) paths.set(row.criterion, await evidence(f, row.criterion, row.commandDigest, tree));
+  for (const row of rows) {
+    paths.set(row.criterion, await evidence(f, row.criterion, row.commandDigest, tree));
+  }
   return paths;
 }
 
@@ -264,7 +270,6 @@ test('pending MUST rejection prevents report completion until attributed agreeme
         summary: 'User asks to recheck bounded write evidence',
       },
     });
-    const { loadRejections } = await import('../../../skills/dispatch/scripts/toolkit/confirmations.ts');
     const request = loadRejections(f.session, foldLedger(f.session), ['plan-report.plan'])[0]!.request;
     const second = path.join(f.session, '.state/reviews/plan-report.plan/round-2');
     fs.mkdirSync(second);
@@ -517,8 +522,9 @@ test('report complete delivery binds evidence and delivery to the locked tree an
     )) {
       assert.equal(call.locked, true, JSON.stringify(call.argv));
     }
-    for (const call of calls.filter(({ argv }) => argv[1] === 'diff'))
+    for (const call of calls.filter(({ argv }) => argv[1] === 'diff')) {
       assert.equal(call.locked, false, JSON.stringify(call.argv));
+    }
   } finally {
     f.cleanup();
   }
@@ -681,14 +687,14 @@ test('report complete warns on missing host retro only when diagnostics are enab
 
     let result = await invoke(f, 'report', 'complete');
     assert.equal(result.exit, 0, result.output.summary);
-    let value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as { warning?: string };
+    let value = readJson(result.output.path!, shape({ warning: optional(text) }));
     assert.equal(value.warning, undefined);
     assert.ok(!result.output.summary.includes('merge retro notes'));
 
     fs.writeFileSync(path.join(f.skillRoot, 'config.local.jsonc'), '{"diagnostics": true}\n');
     result = await invoke(f, 'report', 'complete');
     assert.equal(result.exit, 0, result.output.summary);
-    value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as { warning?: string };
+    value = readJson(result.output.path!, shape({ warning: optional(text) }));
     assert.ok(value.warning?.includes(retroPath));
     assert.ok(value.warning?.includes('merge retro notes'));
     assert.ok(result.output.summary.includes(retroPath));

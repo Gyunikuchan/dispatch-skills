@@ -1,3 +1,10 @@
+import {
+  taskSection,
+  checks,
+  ownedPaths,
+  commandDigest,
+  taskCriteria,
+} from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { parsePlan } from '../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
@@ -29,12 +36,13 @@ export const PLAN = [
 export function parsed(source = PLAN) {
   const result = parsePlan(source);
   assert.equal(result.ok, true, JSON.stringify(result));
-  if (!result.ok) throw new Error('plan');
+  if (!result.ok) {
+    throw new Error('plan');
+  }
   return result.plan;
 }
 describe('plan view', () => {
   test('task identity ignores positions and tracks task behavior and command changes', async () => {
-    const { taskSection, checks, ownedPaths } = await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
     const plan = parsed();
     assert.deepEqual(ownedPaths(plan, 'T1'), ['src/file.ts']);
     assert.equal(taskSection(plan, 'T1'), taskSection(parsed('\n\n' + PLAN), 'T1'));
@@ -42,8 +50,9 @@ describe('plan view', () => {
       PLAN.replace('implements behavior', 'implements new behavior'),
       PLAN.replace('File works', 'File runs'),
       PLAN.replace('process.exit(0)', 'process.exit(1)'),
-    ])
+    ]) {
       assert.notEqual(taskSection(plan, 'T1'), taskSection(parsed(source), 'T1'));
+    }
     assert.notEqual(
       checks(plan)[0]!.commandDigest,
       checks(parsed(PLAN.replace('process.exit(0)', 'process.exit(1)')))[0]!.commandDigest,
@@ -59,8 +68,6 @@ describe('plan view', () => {
   });
 
   test('checks retain evidence class without changing executable or contract digests', async () => {
-    const { checks, commandDigest, taskCriteria } =
-      await import('../../../skills/dispatch/scripts/toolkit/plan-view.ts');
     const executableChecks = checks(parsed());
     const reviewPlan = parsed(
       PLAN.replace(

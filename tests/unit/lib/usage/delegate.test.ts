@@ -10,21 +10,22 @@ import type {
 } from '../../../../skills/dispatch/scripts/lib/opencode-db.ts';
 import { lines, memoryFs } from './helpers/memory-fs.ts';
 
-test('Copilot delegate windows deduplicate replayed receipts', () => {
-  const event = (atMs: number, sequence: number) => ({
-    type: 'session.usage_record',
-    timestamp: new Date(atMs).toISOString(),
-    data: {
-      usage: {
-        accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence },
-        model: 'copilot-model',
-        inputTokens: 100,
-        outputTokens: 20,
-      },
+const event = (atMs: number, sequence: number) => ({
+  type: 'session.usage_record',
+  timestamp: new Date(atMs).toISOString(),
+  data: {
+    usage: {
+      accounting: { sourceSessionId: 'source', usageId: `receipt-${sequence}`, sequence },
+      model: 'copilot-model',
+      inputTokens: 100,
+      outputTokens: 20,
     },
-  });
+  },
+});
+
+test('Copilot delegate windows deduplicate replayed receipts', () => {
   const fs = memoryFs({
-    '/home/.copilot/session-state/sess-1/events.jsonl': lines(event(9000, 1), event(11000, 1), event(12000, 2)),
+    '/home/.copilot/session-state/sess-1/events.jsonl': lines(event(9000, 1), event(11_000, 1), event(12_000, 2)),
   });
   const result = readDelegateSession(baseQuery({ platform: 'copilot', fs }));
   assert.equal(result.usage?.input, 100);
@@ -36,7 +37,7 @@ test('Copilot delegate windows deduplicate replayed receipts', () => {
 test('Copilot actor projections retain model-cap subtotals without exposing dropped configuration', () => {
   const records = Array.from({ length: 34 }, (_, i) => ({
     type: 'session.usage_record',
-    timestamp: new Date(12000).toISOString(),
+    timestamp: new Date(12_000).toISOString(),
     data: {
       usage: {
         accounting: { sourceSessionId: 'source', usageId: `receipt-${i}`, sequence: i },
@@ -64,8 +65,8 @@ test('Copilot actor projections retain model-cap subtotals without exposing drop
   assert.equal(other?.copilot.billing.totalNanoAiu, 20);
 });
 
-function buildVarint(n: number): number[] {
-  const bytes: number[] = [];
+function buildVarint(n: number): Array<number> {
+  const bytes: Array<number> = [];
   let v = n >>> 0;
   while (v >= 0x80) {
     bytes.push((v & 0x7f) | 0x80);
@@ -75,15 +76,15 @@ function buildVarint(n: number): number[] {
   return bytes;
 }
 
-function buildField(fieldNum: number, wireType: number, payload: number[]): number[] {
+function buildField(fieldNum: number, wireType: number, payload: Array<number>): Array<number> {
   return [...buildVarint((fieldNum << 3) | wireType), ...payload];
 }
 
-function buildLengthDelimited(fieldNum: number, data: number[] | Uint8Array): number[] {
+function buildLengthDelimited(fieldNum: number, data: Array<number> | Uint8Array): Array<number> {
   return [...buildField(fieldNum, 2, buildVarint(data.length)), ...data];
 }
 
-function buildString(fieldNum: number, s: string): number[] {
+function buildString(fieldNum: number, s: string): Array<number> {
   return buildLengthDelimited(fieldNum, Buffer.from(s, 'utf8'));
 }
 
@@ -96,19 +97,33 @@ function buildGenMetadataBlob(opts: {
   displayName?: string;
   lastStepIndex?: number;
 }): Uint8Array {
-  const tag1: number[] = [];
-  const counters: number[] = [];
-  if (opts.input !== undefined) counters.push(...buildField(2, 0, buildVarint(opts.input)));
-  if (opts.output !== undefined) counters.push(...buildField(3, 0, buildVarint(opts.output)));
-  if (opts.cacheRead !== undefined) counters.push(...buildField(5, 0, buildVarint(opts.cacheRead)));
-  if (opts.reasoning !== undefined) counters.push(...buildField(9, 0, buildVarint(opts.reasoning)));
-  if (counters.length > 0) tag1.push(...buildLengthDelimited(4, counters));
-  if (opts.modelSlug !== undefined) tag1.push(...buildString(19, opts.modelSlug));
+  const tag1: Array<number> = [];
+  const counters: Array<number> = [];
+  if (opts.input !== undefined) {
+    counters.push(...buildField(2, 0, buildVarint(opts.input)));
+  }
+  if (opts.output !== undefined) {
+    counters.push(...buildField(3, 0, buildVarint(opts.output)));
+  }
+  if (opts.cacheRead !== undefined) {
+    counters.push(...buildField(5, 0, buildVarint(opts.cacheRead)));
+  }
+  if (opts.reasoning !== undefined) {
+    counters.push(...buildField(9, 0, buildVarint(opts.reasoning)));
+  }
+  if (counters.length > 0) {
+    tag1.push(...buildLengthDelimited(4, counters));
+  }
+  if (opts.modelSlug !== undefined) {
+    tag1.push(...buildString(19, opts.modelSlug));
+  }
   if (opts.lastStepIndex !== undefined) {
     const kv = [...buildString(1, 'last_step_index'), ...buildString(2, String(opts.lastStepIndex))];
     tag1.push(...buildLengthDelimited(20, kv));
   }
-  if (opts.displayName !== undefined) tag1.push(...buildString(21, opts.displayName));
+  if (opts.displayName !== undefined) {
+    tag1.push(...buildString(21, opts.displayName));
+  }
   return new Uint8Array(buildLengthDelimited(1, tag1));
 }
 
@@ -128,39 +143,39 @@ function baseQuery(overrides: Partial<DelegateQuery> & { fs: HostUsageFs }): Del
   };
 }
 
+const cacheMessage = (id: string, atMs: number, input: number, model = 'claude-haiku-5-5', effort?: string) => ({
+  type: 'assistant',
+  timestamp: new Date(atMs).toISOString(),
+  ...(effort && { effort }),
+  message: {
+    id,
+    model,
+    usage: {
+      input_tokens: input,
+      output_tokens: 10,
+      cache_read_input_tokens: 5,
+      cache_creation_input_tokens: 20,
+      cache_creation: { ephemeral_5m_input_tokens: 12, ephemeral_1h_input_tokens: 8 },
+    },
+  },
+});
+
 test('claude delegate reads encoded cwd path, nested subagents, and window boundaries without scanning other projects', () => {
   const encoded = '-repo-my-app';
   const sessionFile = `/home/.claude/projects/${encoded}/sess-1.jsonl`;
   const nestedSubagent = `/home/.claude/projects/${encoded}/sess-1/subagents/deep/agent-sub1.jsonl`;
   const otherProject = '/home/.claude/projects/other-proj/sess-1.jsonl';
 
-  const msg = (id: string, atMs: number, input: number, model = 'claude-haiku-5-5', effort?: string) => ({
-    type: 'assistant',
-    timestamp: new Date(atMs).toISOString(),
-    ...(effort ? { effort } : {}),
-    message: {
-      id,
-      model,
-      usage: {
-        input_tokens: input,
-        output_tokens: 10,
-        cache_read_input_tokens: 5,
-        cache_creation_input_tokens: 20,
-        cache_creation: { ephemeral_5m_input_tokens: 12, ephemeral_1h_input_tokens: 8 },
-      },
-    },
-  });
-
   const baseFs = memoryFs(
     {
       [sessionFile]: lines(
-        msg('before', 9_999, 100),
-        msg('at-start', 10_000, 1000, 'claude-haiku-5-5', 'low'),
-        msg('at-end', 20_000, 120_000, 'claude-haiku-5-5', 'low'),
-        msg('after', 20_001, 100),
+        cacheMessage('before', 9999, 100),
+        cacheMessage('at-start', 10_000, 1000, 'claude-haiku-5-5', 'low'),
+        cacheMessage('at-end', 20_000, 120_000, 'claude-haiku-5-5', 'low'),
+        cacheMessage('after', 20_001, 100),
       ),
-      [nestedSubagent]: lines(msg('sub', 15_000, 500, 'claude-sonnet-5-5', 'high')),
-      [otherProject]: lines(msg('other', 15_000, 9999)),
+      [nestedSubagent]: lines(cacheMessage('sub', 15_000, 500, 'claude-sonnet-5-5', 'high')),
+      [otherProject]: lines(cacheMessage('other', 15_000, 9999)),
     },
     { [nestedSubagent]: 15_000 },
   );
@@ -169,7 +184,9 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
   const fs: HostUsageFs = {
     ...baseFs,
     list(dir) {
-      if (path.normalize(dir) === path.normalize('/home/.claude/projects')) listRootCalls++;
+      if (path.normalize(dir) === path.normalize('/home/.claude/projects')) {
+        listRootCalls++;
+      }
       return baseFs.list(dir);
     },
   };
@@ -213,23 +230,23 @@ test('claude delegate reads encoded cwd path, nested subagents, and window bound
   });
 });
 
+const turnCtx = (model: string, effort: string) => ({ type: 'turn_context', payload: { model, effort } });
+const tokenCount = (ts: string, total: number, input: number, cached = 0) => ({
+  type: 'event_msg',
+  timestamp: ts,
+  payload: {
+    type: 'token_count',
+    info: {
+      total_token_usage: { total_tokens: total },
+      last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: 10 },
+    },
+  },
+});
+
 test('codex delegate reads session in window, ignores unrelated concurrent rollout, and handles wholeSecond by resume flag', () => {
   const dateDir = '/home/.codex/sessions/2026/11/14';
   const mainFile = `${dateDir}/rollout-2026-11-14T08-00-00-sess-1.jsonl`;
   const unrelatedFile = `${dateDir}/rollout-2026-11-14T08-00-00-other-sess.jsonl`;
-
-  const turnCtx = (model: string, effort: string) => ({ type: 'turn_context', payload: { model, effort } });
-  const tokenCount = (ts: string, total: number, input: number, cached = 0) => ({
-    type: 'event_msg',
-    timestamp: ts,
-    payload: {
-      type: 'token_count',
-      info: {
-        total_token_usage: { total_tokens: total },
-        last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: 10 },
-      },
-    },
-  });
 
   const startMs = Date.parse('2026-11-14T08:00:10.500Z');
   const endMs = Date.parse('2026-11-14T08:00:20.000Z');
@@ -272,14 +289,14 @@ test('codex delegate reads session in window, ignores unrelated concurrent rollo
   assert.equal(freshRes.usage?.input, 50);
 });
 
-test('opencode delegate reads DB in window, marks truncated or skipped incomplete, and skips query when budget is spent', () => {
-  const makeFs = (
-    readImpl: (dbPath: string, sessionId: string, opts: OpencodeReadOptions) => OpencodeRead,
-  ): HostUsageFs => ({
-    ...memoryFs({}),
-    opencodeMessages: readImpl,
-  });
+const makeFs = (
+  readImpl: (dbPath: string, sessionId: string, opts: OpencodeReadOptions) => OpencodeRead,
+): HostUsageFs => ({
+  ...memoryFs({}),
+  opencodeMessages: readImpl,
+});
 
+test('opencode delegate reads DB in window, marks truncated or skipped incomplete, and skips query when budget is spent', () => {
   const okFs = makeFs(() => ({
     messages: [
       { depth: 0, createdMs: 10_000, model: 'opencode-go/m1', effort: 'high', input: 40, output: 5, reasoning: 2 },
@@ -313,7 +330,7 @@ test('opencode delegate reads DB in window, marks truncated or skipped incomplet
   let called = 0;
   const spentFs = makeFs((_db, _id, _opts) => {
     called++;
-    return { messages: [] as OpencodeMessage[], skipped: 0, truncated: null };
+    return { messages: [] as Array<OpencodeMessage>, skipped: 0, truncated: null };
   });
   const spent = readDelegateSession(baseQuery({ platform: 'opencode', fs: spentFs, budget: { remaining: 0 } }));
   assert.equal(spent.complete, false);
@@ -469,32 +486,36 @@ test('incomplete reads: missing, unreadable, budget-exhausted, empty window, and
   assert.equal(accesses, 0);
 });
 
+const toolMessage = (id: string, atMs: number, model: string, tools: number) => ({
+  type: 'assistant',
+  timestamp: new Date(atMs).toISOString(),
+  effort: 'high',
+  message: {
+    id,
+    model,
+    content: Array.from({ length: tools }, (_, i) => ({
+      type: 'tool_use',
+      id: `${id}-t${i}`,
+      name: 'Read',
+      input: {},
+    })),
+    usage: { input_tokens: 100, output_tokens: 10 },
+  },
+});
+
 test('readDelegateSession keeps delegate turns and tools separate from children on shared and distinct models', () => {
   const encoded = '-repo-my-app';
   const sessionFile = `/home/.claude/projects/${encoded}/sess-1.jsonl`;
   const childFile = `/home/.claude/projects/${encoded}/sess-1/subagents/agent-1.jsonl`;
-  const msg = (id: string, atMs: number, model: string, tools: number) => ({
-    type: 'assistant',
-    timestamp: new Date(atMs).toISOString(),
-    effort: 'high',
-    message: {
-      id,
-      model,
-      content: Array.from({ length: tools }, (_, i) => ({
-        type: 'tool_use',
-        id: `${id}-t${i}`,
-        name: 'Read',
-        input: {},
-      })),
-      usage: { input_tokens: 100, output_tokens: 10 },
-    },
-  });
 
   // Shared model between delegate root and child subagent
   const sharedFs = memoryFs(
     {
-      [sessionFile]: lines(msg('d1', 12_000, 'claude-sonnet-5', 2), msg('d2', 14_000, 'claude-sonnet-5', 0)),
-      [childFile]: lines(msg('c1', 13_000, 'claude-sonnet-5', 3)),
+      [sessionFile]: lines(
+        toolMessage('d1', 12_000, 'claude-sonnet-5', 2),
+        toolMessage('d2', 14_000, 'claude-sonnet-5', 0),
+      ),
+      [childFile]: lines(toolMessage('c1', 13_000, 'claude-sonnet-5', 3)),
     },
     { [childFile]: 13_000 },
   );
@@ -530,8 +551,8 @@ test('readDelegateSession keeps delegate turns and tools separate from children 
   // Distinct models: root uses model A, child uses model B (gets known-zero turns/tools)
   const splitFs = memoryFs(
     {
-      [sessionFile]: lines(msg('d1', 12_000, 'model-a', 1)),
-      [childFile]: lines(msg('c1', 13_000, 'model-b', 4)),
+      [sessionFile]: lines(toolMessage('d1', 12_000, 'model-a', 1)),
+      [childFile]: lines(toolMessage('c1', 13_000, 'model-b', 4)),
     },
     { [childFile]: 13_000 },
   );

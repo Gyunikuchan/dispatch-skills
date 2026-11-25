@@ -2,60 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
-import {
-  REVIEW_TAGS_BY_KIND,
-  collectFindings,
-  matchFinding,
-  parseReport,
-} from '../../../../skills/dispatch/scripts/toolkit/domain/report.ts';
-import { IMPACTS, TRIGGERS, severityOf } from '../../../../skills/dispatch/scripts/toolkit/domain/severity.ts';
-
-const finding = (overrides: Record<string, string> = {}) => ({
-  impact: 'blocks',
-  trigger: 'realistic',
-  locus: 'src/fetch.ts:L12',
-  tag: 'correctness',
-  defect: 'retry loop never terminates on persistent failure',
-  requiredChange: 'bound the retry loop with a counter',
-  ...overrides,
-});
-const report = (findings: unknown[], status = 'FINDINGS') => JSON.stringify({ status, findings });
-
-const unknownTags = ['custom-tag', 'unrecognized-label', 'vendor-tag'] as const;
-
-const failure = (text: string, truncated = false) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text, truncated });
-  return result.ok ? null : result.failure.kind;
-};
-
-const parseDetail = (text: string) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
-  return result.ok ? null : result.failure.detail;
-};
-
-const MARK = 'unresolved-locus: ';
-const planLocus = '§ Work';
-const parsedLoci = (kind: 'code' | 'plan', findings: unknown[]) => {
-  const result = parseReport({ kind, source: 'codex[0]', text: report(findings) });
-  assert.ok(result.ok);
-  return result.findings.map((item) => item.locus);
-};
 
 // SECTION: Unknown tag recovery
-
-const planFinding = (tag: string, heading: string, defect: string) => ({
-  impact: 'degrades',
-  trigger: 'realistic',
-  locus: `§ ${heading}`,
-  tag,
-  defect,
-  requiredChange: `revise ${heading} to address the gap`,
-});
-const parsedFindings = (kind: 'plan' | 'code' | 'design', text: string) => {
-  const result = parseReport({ kind, source: 'agy[0]', text });
-  assert.ok(result.ok, result.ok ? '' : result.failure.detail);
-  return result.findings;
-};
 
 // SECTION: Diagnostics reports
 
@@ -74,13 +22,17 @@ import {
   renderDiagnostics,
   retroObservations,
   sanitizeFacts,
-  type Finding,
-  type InvocationFacts,
-  type RunFacts,
-  type Usage,
+} from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import type {
+  Finding,
+  InvocationFacts,
+  RunFacts,
+  Usage,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { resolvePricing } from '../../../../skills/dispatch/scripts/lib/pricing.ts';
 import { TOOL_ACTIONS } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { jsonObject, narrow } from '../helpers/json.ts';
+import type { JsonObject } from '../helpers/json.ts';
 
 const SKILL_ROOT = fileURLToPath(new URL('../../../../skills/dispatch/', import.meta.url));
 
@@ -124,7 +76,7 @@ const facts = (overrides: Partial<RunFacts> = {}): RunFacts => ({
   reviews: [],
   ...overrides,
 });
-const observation = (overrides: Record<string, unknown> = {}) => ({
+const observation = (overrides: JsonObject = {}) => ({
   id: 'o1',
   component: 'scripts/toolkit/records.ts',
   category: 'instruction-clarity',
@@ -133,14 +85,16 @@ const observation = (overrides: Record<string, unknown> = {}) => ({
   proposedFix: 'List the verdict values in the reply template and check them in validate.',
   ...overrides,
 });
-const render = (runs: RunFacts[]) => renderDiagnostics(runs).text;
+const render = (runs: Array<RunFacts>) => renderDiagnostics(runs).text;
 
-const only = (findings: readonly Finding[], source: string) => findings.filter((f) => f.source === source);
+const only = (findings: ReadonlyArray<Finding>, source: string) => findings.filter((f) => f.source === source);
 function assertShape(finding: Finding | undefined, category: keyof typeof CATEGORIES): Finding {
   assert.ok(finding, 'finding expected');
   assert.equal(finding.category, category);
   assert.ok(COMPONENTS.has(finding.component), `dispatch component: ${finding.component}`);
-  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) assert.ok(field.trim().length > 0);
+  for (const field of [finding.evidence, finding.impact, finding.proposedFix]) {
+    assert.ok(field.trim().length > 0);
+  }
   return finding;
 }
 
@@ -152,21 +106,14 @@ const rejections = (tool: string, action: string, cls: string, count = 2) =>
   Array.from({ length: count }, () => ({ tool, action, cls }));
 const h8 = (rejectedTools: NonNullable<RunFacts['rejectedTools']>) => only(heuristics(facts({ rejectedTools })), 'H8');
 
-const stageRows = (text: string) =>
-  text
-    .split('### Tokens by stage')[1]!
-    .split('</details>')[0]!
-    .split('\n')
-    .filter((line) => line.startsWith('|'));
-
 // SECTION: Scope gate and redaction
 
 const LEAKS = [
   'see /home/alice/repo/src/app.ts',
   'at ~/work/app',
-  'path C:\\Users\\alice\\repo',
+  String.raw`path C:\Users\alice\repo`,
   'path d:/work/repo',
-  'share \\\\server\\team\\x',
+  String.raw`share \\server\team\x`,
   'docs at https://intranet.example/x',
   'host www.example.org',
   'host build.example.com',
@@ -179,24 +126,8 @@ const CLEAN =
 
 // SECTION: Finding origin
 
-const originReply = (...origins: (string | undefined)[]) =>
-  report(
-    origins.map((origin, index) =>
-      finding({
-        defect: 'defect number ' + index + ' with distinct wording ' + 'x'.repeat(index) + ' unique' + index,
-        locus: 'src/file' + index + '.ts:L1',
-        ...(origin === undefined ? {} : { origin }),
-      }),
-    ),
-  );
-const draftsOf = (text: string) => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text });
-  assert.ok(result.ok, JSON.stringify(result));
-  return result.findings;
-};
-
 test('diagnostics config renders utility-subagents and redacts read-command locators', () => {
-  const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300000 } } };
+  const config = { 'utility-subagents': { codex: { model: 'gpt-6-luna', effort: 'low', 'context-limit': 300_000 } } };
   const sanitized = sanitizeFacts(facts({ config }));
   assert.deepEqual(sanitized.config?.['utility-subagents'], config['utility-subagents']);
   const text = render([facts({ config })]);
@@ -211,7 +142,7 @@ test('diagnostics config renders utility-subagents and redacts read-command loca
 test('pricing override snapshot keeps dotted ids and provider wildcards and drops unsafe keys and invalid entries', () => {
   const entry = {
     rates: { input: 1, output: 5, cacheRead: 0.05 },
-    tiers: [{ abovePromptTokens: 272000, rates: { input: 2, output: 7.5, cacheRead: 0.1 } }],
+    tiers: [{ abovePromptTokens: 272_000, rates: { input: 2, output: 7.5, cacheRead: 0.1 } }],
   };
   const zero = { rates: { input: 0, output: 0 } };
   const pricing = {
@@ -229,7 +160,7 @@ test('pricing override snapshot keeps dotted ids and provider wildcards and drop
   assert.deepEqual(sanitizeFacts(facts({ config: { pricing: 'cheap' } })).config?.['pricing'], {});
   const many = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`model-${i}`, zero]));
   assert.equal(
-    Object.keys(sanitizeFacts(facts({ config: { pricing: many } })).config?.['pricing'] as object).length,
+    Object.keys(narrow(sanitizeFacts(facts({ config: { pricing: many } })).config?.['pricing'], jsonObject)).length,
     32,
   );
   const text = render([facts({ config: { pricing } })]);
@@ -253,10 +184,12 @@ test('diagnostics render one subject per phase cell and bound observed collectio
       ],
     }),
   ]);
-  for (const line of text.split('\n').filter((line) => line.startsWith('|') && line.includes('subject')))
+  for (const line of text.split('\n').filter((line) => line.startsWith('|') && line.includes('subject'))) {
     assert.equal(line.match(/subject /g)?.length, 1, line);
-  for (const identity of [`${generations[0]}/1`, `${generations[0]}/2`, `${generations[1]}/1`])
+  }
+  for (const identity of [`${generations[0]}/1`, `${generations[0]}/2`, `${generations[1]}/1`]) {
     assert.ok(text.includes(`subject ${subject} · attempt ${identity} · slot codex[0]`), identity);
+  }
   const ask = render([
     facts({
       phases: [{ key: 'ask', name: 'ask' }],
@@ -274,8 +207,9 @@ test('diagnostics distinguish invalid retro native completion and unavailable co
     assert.match(render([facts({ observations })]), /Host retro: invalid/);
   }
   assert.match(render([facts({ observations: [] })]), /Host retro: empty/);
-  for (const retroState of ['missing', 'malformed', 'unreadable'] as const)
+  for (const retroState of ['missing', 'malformed', 'unreadable'] as const) {
     assert.match(render([facts({ retroState })]), new RegExp(`Host retro: ${retroState}`));
+  }
   const text = render([
     facts({
       invocations: [
@@ -392,14 +326,15 @@ test('diagnostics report: renders duration, token, and estimate columns with una
   );
 
   const legacy = render([
-    facts({
+    sanitizeFacts({
+      ...facts(),
       invocations: [
-        { ...invocation(), estimated: true, tokens: 5000 } as unknown as InvocationFacts,
+        { ...invocation(), estimated: true, tokens: 5000 },
         {
           ...bare({ surface: 'native', provider: 'claude', model: 'claude-opus-5-5', mode: 'native' }),
           estimated: true,
           tokens: 5000,
-        } as unknown as InvocationFacts,
+        },
       ],
     }),
   ]);
@@ -457,7 +392,7 @@ test('H8 names the handling module of repeated rejections and ignores one-offs',
   );
 
   for (const name of TOOL_ACTIONS) {
-    const [tool, action] = name.split(' ') as [string, string];
+    const [tool = '', action = ''] = name.split(' ');
     const finding = assertShape(h8(rejections(tool, action, 'invalid-input'))[0], 'correctness');
     assert.notEqual(finding.component, 'scripts/toolkit/cli.ts', `${name} has a module`);
   }
@@ -488,7 +423,7 @@ test('diagnostics report: orders findings by severity', () => {
       accepted: 1,
       rejected: 0,
       cap: 3,
-      ...(round === 3 ? { reraised: ['R1-F001'] } : {}),
+      ...(round === 3 && { reraised: ['R1-F001'] }),
     })),
     observations: [observation()],
   });
@@ -505,13 +440,17 @@ test('diagnostics report: orders findings by severity', () => {
   );
 });
 
+const run = (provider: string, usage: Usage | undefined) =>
+  facts({ invocations: [invocation({ provider, ...(usage && { usage }) })] });
+
+const measuredLine = (text: string) => /^- Provider CLI measured tokens: .*$/m.exec(text)?.[0];
+
 test('diagnostics report: equivalent codex and claude usage yield equal totals and heuristics', () => {
   const codex = normalizeUsage({ input: 1000, cacheRead: 300, cacheWrite: 0, output: 50 }, 'includes-cache');
   const claude = normalizeUsage({ input: 700, cacheRead: 300, cacheWrite: 0, output: 50 }, 'uncached');
   assert.deepEqual(codex, { input: 700, cacheRead: 300, cacheWrite: 0, output: 50 });
   assert.deepEqual(codex, claude);
-  const run = (provider: string, usage: Usage | undefined) =>
-    facts({ invocations: [invocation({ provider, ...(usage ? { usage } : {}) })] });
+
   const [a, b] = [heuristics(run('codex', codex)), heuristics(run('claude', claude))];
   assert.deepEqual(
     a.map((f) => [f.source, f.category, f.evidence.replace('codex', 'P')]),
@@ -521,7 +460,7 @@ test('diagnostics report: equivalent codex and claude usage yield equal totals a
     a.map((f) => f.source),
     ['H4'],
   );
-  const measuredLine = (text: string) => /^- Provider CLI measured tokens: .*$/m.exec(text)?.[0];
+
   assert.equal(measuredLine(render([run('codex', codex)])), measuredLine(render([run('claude', claude)])));
   assert.equal(normalizeUsage({ input: 100, cacheRead: 300, output: 1 }, 'includes-cache')?.input, 0);
 });
@@ -632,8 +571,9 @@ test('retro observations: validates ids, components, categories, content, and si
     ),
   ];
   assert.deepEqual([...COMPONENTS].sort(), shipped.sort());
-  for (const component of shipped)
+  for (const component of shipped) {
     assert.equal(retroObservations([observation({ component })]).values.length, 1, component);
+  }
   assert.equal(retroObservations([observation({ component: 'scripts/toolkit/cli.ts' })]).values.length, 1);
   assert.equal(
     retroObservations([observation({ component: 'scripts/toolkit/review-identity.ts' })]).values[0]?.component,
@@ -643,21 +583,26 @@ test('retro observations: validates ids, components, categories, content, and si
     retroObservations([observation({ component: 'references/templates/writer-brief.md' })]).values.length,
     1,
   );
-  for (const category of ['vibes', 'driver protocol', '', undefined])
+  for (const category of ['vibes', 'driver protocol', '', undefined]) {
     assert.equal(retroObservations([observation({ category })]).rejected, 1, String(category));
-  for (const category of [...Object.keys(CATEGORIES), 'Token economy'])
+  }
+  for (const category of [...Object.keys(CATEGORIES), 'Token economy']) {
     assert.equal(retroObservations([observation({ category })]).values.length, 1, category);
-  for (const id of ['', 'bad id', 'x'.repeat(49), 'a/b', 7])
+  }
+  for (const id of ['', 'bad id', 'x'.repeat(49), 'a/b', 7]) {
     assert.equal(retroObservations([observation({ id })]).rejected, 1, String(id));
+  }
   assert.deepEqual(retroObservations([observation({ id: 'dup' }), observation({ id: 'dup' })]).rejected, 1);
   for (const field of ['evidence', 'impact', 'proposedFix'] as const) {
-    for (const leak of LEAKS)
+    for (const leak of LEAKS) {
       assert.equal(retroObservations([observation({ [field]: leak })]).rejected, 1, `${field}: ${leak}`);
+    }
     assert.equal(retroObservations([observation({ [field]: CLEAN })]).values[0]?.[field], CLEAN);
   }
   assert.equal(retroObservations([observation({ evidence: 'z'.repeat(512) })]).values.length, 1);
-  for (const evidence of ['z'.repeat(513), 'é'.repeat(257), '   ', 42])
+  for (const evidence of ['z'.repeat(513), 'é'.repeat(257), '   ', 42]) {
     assert.equal(retroObservations([observation({ evidence })]).rejected, 1, String(evidence).slice(0, 8));
+  }
 });
 
 test('retro observations: sanitizes model and config facts', () => {
@@ -671,7 +616,7 @@ test('retro observations: sanitizes model and config facts', () => {
     },
     invocations: [
       invocation({
-        model: 'C:\\models\\private',
+        model: String.raw`C:\models\private`,
         provider: 'Codex Cloud',
         effort: 'h i g h',
         reportedModels: ['gpt-6-sol-2026', 'https://host/model', 'user@example.com'],
@@ -757,13 +702,13 @@ test('retro observations: rejects locators in ids models and config', () => {
 });
 
 test('diagnostics report: never renders resume objective or absolute paths', () => {
-  const run = {
+  const run = sanitizeFacts({
     ...facts(),
     objective: 'objective-canary',
     argument: 'argument-canary',
     sessionPath: 'C:/sessions/canary',
     version: '/opt/canary',
-    config: { diagnostics: true, 'canary-key': 'value', phases: { 'plan-review': { only: ['C:\\canary'] } } },
+    config: { diagnostics: true, 'canary-key': 'value', phases: { 'plan-review': { only: [String.raw`C:\canary`] } } },
     pins: '/home/canary',
     fault: { cls: 'timeout', effectId: 'C:/canary/effect', detail: 'canary detail' },
     phases: [{ key: 'review', name: 'canary phase', outcome: 'complete', wallMs: 1000 }],
@@ -795,7 +740,7 @@ test('diagnostics report: never renders resume objective or absolute paths', () 
       observation({ id: 'o2', component: 'canary.ts' }),
       { ...observation({ id: 'o3' }), extra: 'canary-extra' },
     ],
-  } as unknown as RunFacts;
+  });
   const { text } = renderDiagnostics([run]);
   assert.doesNotMatch(text, /canary/i);
   assert.doesNotMatch(text, /host event/);
@@ -824,7 +769,7 @@ test('host rows preserve totals and notes, scrub labels, and surface unavailabil
     },
     invocations: [invocation({ provider: 'claude', usage: { input: 7, output: 1 } })],
   });
-  (run.hostUsage!.rows[0] as unknown as Record<string, unknown>)['text'] = 'secret transcript';
+  Reflect.set(run.hostUsage!.rows[0]!, 'text', 'secret transcript');
   const text = render([run]);
   assert.ok(
     text.includes(
@@ -909,25 +854,35 @@ test('host platform edges render adapter coverage or explicit unavailability', (
   assert.ok(covered.includes('| plan | agy | host | stub-model | — | 17 | 2 | — | 4 | — | — |'));
 });
 
+const step = (name: string, outcome: string, extra: JsonObject = {}) => ({
+  step: name,
+  elapsedMs: 120,
+  budgetMs: 5000,
+  outcome,
+  ...extra,
+});
+
 test('diagnostics report names each lifecycle step outcome and keeps raw details out', () => {
-  const step = (name: string, outcome: string, extra: Record<string, unknown> = {}) => ({
-    step: name,
-    elapsedMs: 120,
-    budgetMs: 5000,
-    outcome,
-    ...extra,
-  });
   const hostile = {
+    ...bare(),
     lifecycleSteps: [
       step('debug-config', 'timeout'),
       step('prepare', 'failed', { detail: '/home/me/.config/opencode' }),
       step('teardown', 'unconfirmed'),
     ],
-  } as unknown as Partial<InvocationFacts>;
-  const text = render([facts({ invocations: [bare(hostile)] })]);
+  };
+  const text = render([sanitizeFacts({ ...facts(), invocations: [hostile] })]);
   assert.match(text, /lifecycle debug-config timeout 120\/5000 ms, teardown unconfirmed 120\/5000 ms/);
   assert.doesNotMatch(text, /prepare failed|home\/me|opencode/);
 });
+
+const cli = (startMs: number, endMs?: number) => ({
+  surface: 'cli' as const,
+  startMs,
+  ...(!(endMs === undefined) && { endMs }),
+});
+
+const slot = (slot: string, ...attempts: Array<unknown>) => ({ slot, attempts });
 
 test('review timing renders attempts, gaps and compaction without leaking names', () => {
   // review timing preserves unknown slots and limits CLI spans to launched attempts
@@ -942,21 +897,18 @@ test('review timing renders attempts, gaps and compaction without leaking names'
         ],
       },
     ];
-    const text = render([facts({ roundTiming: timing } as never)]);
+    const text = render([facts({ roundTiming: timing })]);
     assert.match(text, /subject 1234567890abcdef/);
     assert.match(text, /claude\[0\].*✓/);
     const unknown = render([
-      facts({
+      sanitizeFacts({
+        ...facts(),
         roundTiming: [{ ...timing[0], slots: [...timing[0]!.slots, { slot: 'native[0]', attempts: [] }] }],
-      } as never),
+      }),
     ]);
     assert.doesNotMatch(unknown, /✓/);
     const review = 'review-1234567890abcdef';
-    const cli = (startMs: number, endMs?: number) => ({
-      surface: 'cli' as const,
-      startMs,
-      ...(endMs === undefined ? {} : { endMs }),
-    });
+
     const native = { surface: 'native' as const };
     const empty = { slot: 'empty[0]', attempts: [] };
     const nativeOnly = { slot: 'native[0]', attempts: [native] };
@@ -970,7 +922,7 @@ test('review timing renders attempts, gaps and compaction without leaking names'
           { review, round: 3, slots: [empty, nativeOnly] },
           { review, round: 4, slots: [prior, { ...last, attempts: [{ startMs: 6000, endMs: 8000 }] }] },
         ],
-      } as never),
+      }),
     ]);
     const health = cliText.split('## Review health')[1]!;
     assert.match(health, /\| subject 1234567890abcdef \| 1\/4 \| 7s \(CLI only\) \|/);
@@ -979,7 +931,6 @@ test('review timing renders attempts, gaps and compaction without leaking names'
 
   // review timing includes retry gaps, ties and invalid endpoints
   {
-    const slot = (slot: string, ...attempts: unknown[]) => ({ slot, attempts });
     const rounds = [
       {
         review: 'review-1234567890abcdef',
@@ -999,7 +950,7 @@ test('review timing renders attempts, gaps and compaction without leaking names'
       },
       { review: 'review-1234567890abcdef', round: 3, slots: [slot('native[0]'), slot('a[0]', { startMs: 1 })] },
     ];
-    const text = render([facts({ roundTiming: rounds } as never)]);
+    const text = render([sanitizeFacts({ ...facts(), roundTiming: rounds })]);
     assert.match(text, /\| subject 1234567890abcdef \| 1 \| a\[0\] \| 5s \| ✓ \|/);
     assert.match(text, /\| subject 1234567890abcdef \| 1 \| b\[0\] \| 1s \| — \|/);
     assert.match(text, /\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
@@ -1015,7 +966,7 @@ test('review timing renders attempts, gaps and compaction without leaking names'
       round: i + 1,
       slots: [{ slot: 'codex[0]', attempts: [{ startMs: 0, endMs: 1000 }] }],
     }));
-    const text = render([facts({ roundTiming: rounds } as never)]);
+    const text = render([facts({ roundTiming: rounds })]);
     assert.ok(Buffer.byteLength(text) <= DIAGNOSTIC_LIMITS.reportBytes);
     const count = Number(/(\d+) review round rows omitted\./.exec(text)?.[1]);
     assert.ok(count > 1);
@@ -1042,7 +993,7 @@ test('review timing renders attempts, gaps and compaction without leaking names'
             slots: [{ slot: 'a[0]', attempts: [{ startMs: -1, endMs: 5 }] }],
           },
         ],
-      } as never),
+      }),
     ]);
     assert.doesNotMatch(text, /private\/path/);
     assert.match(text, /\| subject 1234567890abcdef \| 2 \| a\[0\] \| — \| — \|/);
@@ -1051,7 +1002,8 @@ test('review timing renders attempts, gaps and compaction without leaking names'
   // malformed timing slots and attempts stay unknown without leaking names
   {
     const text = render([
-      facts({
+      sanitizeFacts({
+        ...facts(),
         roundTiming: [
           {
             review: 'review-1234567890abcdef',
@@ -1064,7 +1016,7 @@ test('review timing renders attempts, gaps and compaction without leaking names'
             ],
           },
         ],
-      } as never),
+      }),
     ]);
     assert.doesNotMatch(text, /private\/path|✓/);
     const timing = text.split('### Review round timing')[1]!.split('### Review yield')[0]!;
@@ -1089,14 +1041,14 @@ test('round workload renders observed calls, dashes for unavailable cells, and t
               { key: 'review-run-plan', count: 1 },
             ],
           },
-          hostTokens: 8214330,
+          hostTokens: 8_214_330,
         },
         {
           review,
           kind: 'plan',
           round: 2,
           calls: { total: 1, phases: [{ key: 'review-run-plan', count: 1 }] },
-          hostTokens: 2901550,
+          hostTokens: 2_901_550,
         },
         { review, round: 3 },
         { review, round: 4, calls: { total: 1, phases: [{ key: 'review-run-plan', count: 1 }] } },
@@ -1155,27 +1107,26 @@ test('round workload follows review round timing inside Execution & review detai
 
 test('round workload survives sanitizing and drops malformed rows, keys, and fields', () => {
   const review = 'review-1234567890abcdef';
-  const clean = sanitizeFacts(
-    facts({
-      roundWorkload: [
-        {
-          review,
-          round: 1,
-          calls: {
-            total: 2,
-            phases: [
-              { key: 'lint-run', count: 2 },
-              { key: 'Bad Key', count: 1 },
-            ],
-          },
-          hostTokens: 40,
-          secret: '/private/path',
+  const clean = sanitizeFacts({
+    ...facts(),
+    roundWorkload: [
+      {
+        review,
+        round: 1,
+        calls: {
+          total: 2,
+          phases: [
+            { key: 'lint-run', count: 2 },
+            { key: 'Bad Key', count: 1 },
+          ],
         },
-        { review: 'plan-x', round: 1, calls: { total: 1, phases: [] } },
-        { review, round: 2 },
-      ] as never,
-    }),
-  );
+        hostTokens: 40,
+        secret: '/private/path',
+      },
+      { review: 'plan-x', round: 1, calls: { total: 1, phases: [] } },
+      { review, round: 2 },
+    ],
+  });
   assert.deepEqual(clean.roundWorkload, [
     { review, round: 1, calls: { total: 2, phases: [{ key: 'lint-run', count: 2 }] }, hostTokens: 40 },
     { review, round: 2 },
@@ -1210,8 +1161,8 @@ test('the render path keeps allowlisted host response facts and removes raw iden
         uncachedInput: undefined,
       },
     ],
-  } as NonNullable<RunFacts['hostUsage']>;
-  const run = facts({ hostUsage, invocations: [] });
+  };
+  const run = sanitizeFacts({ ...facts(), hostUsage, invocations: [] });
   const clean = sanitizeFacts(run);
   assert.deepEqual(clean.hostUsage?.responses, [
     response,
@@ -1389,7 +1340,7 @@ function multiRoundFixture(): RunFacts {
         wallMs: 120_000,
         driverMs: 10_000,
         hostMs: 90_000,
-        userMs: 5_000,
+        userMs: 5000,
       },
       {
         key: 'plan-review',
@@ -1398,7 +1349,7 @@ function multiRoundFixture(): RunFacts {
         wallMs: 180_000,
         driverMs: 15_000,
         hostMs: 120_000,
-        userMs: 5_000,
+        userMs: 5000,
       },
       {
         key: 'implementation',
@@ -1416,7 +1367,7 @@ function multiRoundFixture(): RunFacts {
         wallMs: 240_000,
         driverMs: 25_000,
         hostMs: 180_000,
-        userMs: 5_000,
+        userMs: 5000,
       },
       { key: 'ask', name: 'ask', outcome: 'complete', wallMs: 400 },
     ],
@@ -1435,7 +1386,7 @@ function multiRoundFixture(): RunFacts {
           effort: 'high',
           input: 50_000,
           cacheRead: 200_000,
-          output: 4_000,
+          output: 4000,
           turns: 5,
           toolCalls: 8,
           toolTurns: 4,
@@ -1461,7 +1412,7 @@ function multiRoundFixture(): RunFacts {
           effort: null,
           input: 40_000,
           cacheRead: 100_000,
-          output: 3_000,
+          output: 3000,
           turns: 8,
           toolCalls: 12,
           toolTurns: 6,
@@ -1515,12 +1466,12 @@ function multiRoundFixture(): RunFacts {
         usage: {
           input: 20_000,
           cacheRead: 60_000,
-          output: 2_000,
+          output: 2000,
           turns: 4,
           toolCalls: 6,
           toolTurns: 3,
           models: {
-            'gpt-6-sol': { input: 20_000, cacheRead: 60_000, output: 2_000, turns: 4, toolCalls: 6, toolTurns: 3 },
+            'gpt-6-sol': { input: 20_000, cacheRead: 60_000, output: 2000, turns: 4, toolCalls: 6, toolTurns: 3 },
           },
         },
         responses: [
@@ -1551,12 +1502,12 @@ function multiRoundFixture(): RunFacts {
         usage: {
           input: 30_000,
           cacheRead: 90_000,
-          output: 3_000,
+          output: 3000,
           turns: 5,
           toolCalls: 7,
           toolTurns: 4,
           models: {
-            'gpt-6-sol': { input: 30_000, cacheRead: 90_000, output: 3_000, turns: 5, toolCalls: 7, toolTurns: 4 },
+            'gpt-6-sol': { input: 30_000, cacheRead: 90_000, output: 3000, turns: 5, toolCalls: 7, toolTurns: 4 },
           },
         },
         responses: [
@@ -1633,14 +1584,14 @@ function multiRoundFixture(): RunFacts {
             model: 'gpt-6-sol',
             effort: 'medium',
             usageSource: 'session',
-            usage: { input: 20_000, cacheRead: 60_000, output: 2_000, turns: 4 },
+            usage: { input: 20_000, cacheRead: 60_000, output: 2000, turns: 4 },
           },
           {
             provider: 'codex',
             model: 'gpt-6-sol',
             effort: 'medium',
             usageSource: 'session',
-            usage: { input: 30_000, cacheRead: 90_000, output: 3_000, turns: 5 },
+            usage: { input: 30_000, cacheRead: 90_000, output: 3000, turns: 5 },
           },
         ],
       },
@@ -1692,7 +1643,7 @@ test('3-tier executive layout renders visible dashboard, 4 labeled details block
           accepted: 1,
           rejected: 0,
           cap: 3,
-          ...(round === 3 ? { reraised: ['R1-F001'] } : {}),
+          ...(round === 3 && { reraised: ['R1-F001'] }),
         })),
         observations: [observation({ id: 'o1' }), observation({ id: 'o2' })],
       }),
@@ -1711,21 +1662,21 @@ test('divergent cost vs token ranking uses priced midpoint bars, 1-block floor, 
           invocation({
             provider: 'claude',
             model: 'claude-opus-5-5',
-            usage: { input: 10_000, output: 2_000, turns: 3 },
+            usage: { input: 10_000, output: 2000, turns: 3 },
           }),
           invocation({
             provider: 'claude',
             model: 'claude-haiku-5',
             usage: { input: 200_000, output: 20_000, turns: 5 },
           }),
-          invocation({ provider: 'codex', model: 'gpt-6-sol', usage: { input: 1_500, output: 100, turns: 1 } }),
+          invocation({ provider: 'codex', model: 'gpt-6-sol', usage: { input: 1500, output: 100, turns: 1 } }),
           invocation({
             provider: 'codex',
             model: 'gpt-6-sol',
             effort: 'low',
             usage: { input: 10, output: 1, turns: 1 },
           }),
-          invocation({ provider: 'codex', model: 'unpriced-model', usage: { input: 50_000, output: 1_000, turns: 2 } }),
+          invocation({ provider: 'codex', model: 'unpriced-model', usage: { input: 50_000, output: 1000, turns: 2 } }),
         ],
       }),
     ],
@@ -2015,7 +1966,7 @@ test('bounded-range waste cost, midpoint share, wrapUp, and writerRelaunches ren
           invocation({
             model: 'bounded-model',
             usageSource: 'session',
-            usage: { input: 10_000, output: 1_000, turns: 2 },
+            usage: { input: 10_000, output: 1000, turns: 2 },
             slot: 'codex[0]',
             subject: '1111222233334444',
             attempt: 1,
@@ -2023,7 +1974,7 @@ test('bounded-range waste cost, midpoint share, wrapUp, and writerRelaunches ren
           invocation({
             model: 'bounded-model',
             usageSource: 'session',
-            usage: { input: 10_000, output: 1_000, turns: 2 },
+            usage: { input: 10_000, output: 1000, turns: 2 },
             slot: 'codex[0]',
             subject: '1111222233334444',
             attempt: 2,
@@ -2032,7 +1983,7 @@ test('bounded-range waste cost, midpoint share, wrapUp, and writerRelaunches ren
           invocation({
             model: 'bounded-model',
             usageSource: 'session',
-            usage: { input: 10_000, output: 1_000, turns: 2 },
+            usage: { input: 10_000, output: 1000, turns: 2 },
             slot: 'codex[0]',
             subject: '2222333344445555',
             attempt: 1,
@@ -2393,7 +2344,7 @@ test('Cache hit distinguishes missing vs zero, waste qualifies incomplete denomi
         invocations: [
           invocation({ model: 'gpt-6-sol', usage: { input: 1000, output: 100 } }),
           invocation({ model: 'gpt-6-sol', effort: 'low', usage: { input: 1000, cacheRead: 0, output: 100 } }),
-          invocation({ model: 'claude-opus-5-5', usage: { input: 10000, output: 1000 } }),
+          invocation({ model: 'claude-opus-5-5', usage: { input: 10_000, output: 1000 } }),
           invocation({ model: 'claude-opus-5-5', effort: 'low', usage: { input: 9000, output: 1000 } }),
           invocation({ model: 'claude-opus-5-5', effort: 'high', usage: { input: 8000, output: 1000 } }),
           invocation({ model: 'claude-opus-5-5', effort: 'xhigh', usage: { input: 7000, output: 1000 } }),

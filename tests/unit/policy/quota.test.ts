@@ -10,8 +10,11 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
   const key: QuotaKey = { provider: 'codex', model: null, mode: 'cli' };
   const marker: QuotaGeneration = { schemaVersion: 1, key, generation: '00000000-0000-4000-8000-000000000001' };
   const observation: QuotaObservation = { ...marker, bucket: 3, observedAt: 4 * H - 1 };
-  const decide = (now: number, rows: readonly unknown[] = [observation], markers: readonly unknown[] = [marker]) =>
-    quotaSnapshot([key], markers, rows, now).decisions[0]!;
+  const decide = (
+    now: number,
+    rows: ReadonlyArray<unknown> = [observation],
+    markers: ReadonlyArray<unknown> = [marker],
+  ) => quotaSnapshot([key], markers, rows, now).decisions[0]!;
 
   test('only the exact provider model and mode are suppressed in configured order', () => {
     const keys = [
@@ -57,7 +60,9 @@ describe('quota eligibility preserves exact keys and bounded expiry', () => {
       { ...observation, observedAt: Number.POSITIVE_INFINITY },
       { ...observation, extra: 'x'.repeat(4096) },
     ];
-    for (const row of invalid) assert.equal(decide(4 * H, [row]).skipped, false);
+    for (const row of invalid) {
+      assert.equal(decide(4 * H, [row]).skipped, false);
+    }
     assert.equal(
       decide(4 * H, [observation], [{ ...marker, generation: '00000000-0000-4000-8000-000000000002' }]).skipped,
       false,

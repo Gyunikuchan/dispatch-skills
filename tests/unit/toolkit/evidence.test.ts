@@ -1,11 +1,64 @@
+import {
+  criterionStatuses,
+  eligibility,
+  verifiedStage,
+  cleanupEvidence,
+  matchesDeclared,
+} from '../../../skills/dispatch/scripts/toolkit/evidence.ts';
+import { gitPaths, gitOk, gitRaw } from '../../../skills/dispatch/scripts/toolkit/git.ts';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { Check } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
+const toolFold = (data: Array<JsonObject>) => ({
+  records: data.map((entry, index) => ({
+    seq: index + 1,
+    key: `ev-${index}`,
+    at: '',
+    kind: 'evidence',
+    by: 'tool',
+    data: entry,
+  })),
+  lastSeq: data.length,
+  torn: null,
+});
+
+const evidence = (criterion: string, patch: JsonObject = {}) => ({
+  criterion,
+  commandDigest: `digest-${criterion}`,
+  tree: 'head-tree',
+  clean: true,
+  before: 'head-tree',
+  after: 'head-tree',
+  exit: 0,
+  path: `evidence/${criterion}.md`,
+  ...patch,
+});
+
+const ledgerFold = (
+  input: Array<{
+    kind: 'evidence' | 'manual-complete' | 'waiver';
+    data: JsonObject;
+    by?: string;
+    quote?: string;
+  }>,
+) => ({
+  records: input.map((record, index) => ({
+    seq: index + 1,
+    key: `key-${index}`,
+    at: '',
+    by: record.by ?? 'tool',
+    kind: record.kind,
+    data: record.data,
+    ...(record.quote !== undefined && { quote: record.quote }),
+  })),
+  lastSeq: input.length,
+  torn: null,
+});
+
 describe('evidence eligibility', () => {
   test('criterionStatuses enforces latest-record strict ordering for pass-fail-pass and fail-pass-fail', async () => {
-    const { criterionStatuses, eligibility, verifiedStage } =
-      await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const checks: Check[] = [
+    const checks: Array<Check> = [
       { criterion: 'SC1', commands: ['node a'], commandDigest: 'digest', evidenceClass: 'check' },
     ];
     const good = {
@@ -19,22 +72,11 @@ describe('evidence eligibility', () => {
       path: 'sc1.json',
     };
     const fail = { ...good, exit: 1, path: 'sc1-fail.json' };
-    const fold = (data: object[]) => ({
-      records: data.map((entry, index) => ({
-        seq: index + 1,
-        key: `ev-${index}`,
-        at: '',
-        kind: 'evidence',
-        by: 'tool',
-        data: entry,
-      })),
-      lastSeq: data.length,
-      torn: null,
-    });
+
     const trees = { headTree: 'tree', testedTree: 'tree' };
 
-    const observe = (records: object[], current = trees) => {
-      const f = fold(records);
+    const observe = (records: Array<JsonObject>, current = trees) => {
+      const f = toolFold(records);
       return {
         status: criterionStatuses(f, checks, current)[0]!,
         eligible: eligibility(f, checks, current)[0]!.state,
@@ -74,8 +116,7 @@ describe('evidence eligibility', () => {
   });
 
   test('criterion statuses resolve manual, waiver and contract precedence over stale evidence', async () => {
-    const { criterionStatuses } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-    const checks: Check[] = [
+    const checks: Array<Check> = [
       { criterion: 'verified', commands: ['node verify.ts'], commandDigest: 'digest-verified', evidenceClass: 'check' },
       { criterion: 'manual', commands: [], commandDigest: 'digest-manual', evidenceClass: 'review' },
       { criterion: 'manual-only', commands: [], commandDigest: 'digest-manual-only', evidenceClass: 'review' },
@@ -103,39 +144,9 @@ describe('evidence eligibility', () => {
       },
       { criterion: 'contract', commands: [], commandDigest: 'digest-contract', evidenceClass: 'contract' },
     ];
-    const evidence = (criterion: string, patch: Record<string, unknown> = {}) => ({
-      criterion,
-      commandDigest: `digest-${criterion}`,
-      tree: 'head-tree',
-      clean: true,
-      before: 'head-tree',
-      after: 'head-tree',
-      exit: 0,
-      path: `evidence/${criterion}.md`,
-      ...patch,
-    });
-    const fold = (
-      input: {
-        kind: 'evidence' | 'manual-complete' | 'waiver';
-        data: Record<string, unknown>;
-        by?: string;
-        quote?: string;
-      }[],
-    ) => ({
-      records: input.map((record, index) => ({
-        seq: index + 1,
-        key: `key-${index}`,
-        at: '',
-        by: record.by ?? 'tool',
-        kind: record.kind,
-        data: record.data,
-        ...(record.quote !== undefined ? { quote: record.quote } : {}),
-      })),
-      lastSeq: input.length,
-      torn: null,
-    });
+
     const rows = criterionStatuses(
-      fold([
+      ledgerFold([
         { kind: 'evidence', data: evidence('verified') },
         {
           kind: 'manual-complete',
@@ -230,7 +241,7 @@ describe('evidence eligibility', () => {
     );
     assert.equal(byCriterion.get('contract')?.evidence, 'evidence/contract.md');
     const manualContract = criterionStatuses(
-      fold([
+      ledgerFold([
         {
           kind: 'manual-complete',
           by: 'user',
@@ -246,12 +257,12 @@ describe('evidence eligibility', () => {
       { state: 'manual', quote: 'contract manual quote', evidence: 'manual/contract.md' },
     );
     assert.equal(
-      criterionStatuses(fold([]), [checks[10]!], { headTree: 'head-tree', testedTree: 'head-tree' })[0]?.state,
+      criterionStatuses(ledgerFold([]), [checks[10]!], { headTree: 'head-tree', testedTree: 'head-tree' })[0]?.state,
       'missing',
     );
 
     const withoutIntegration = criterionStatuses(
-      fold([
+      ledgerFold([
         { kind: 'evidence', data: evidence('verified') },
         {
           kind: 'manual-complete',
@@ -292,7 +303,7 @@ describe('evidence eligibility', () => {
       ],
     );
     const dirtyCheckout = criterionStatuses(
-      fold([{ kind: 'evidence', data: evidence('dirty-checkout') }]),
+      ledgerFold([{ kind: 'evidence', data: evidence('dirty-checkout') }]),
       [checks[9]!],
       { headTree: 'head-tree', testedTree: 'dirty-tree' },
     );
@@ -300,76 +311,79 @@ describe('evidence eligibility', () => {
   });
 });
 
+const patchedRow = (criterion: string, commandDigest: string, tree: string, patch = {}) => ({
+  criterion,
+  commandDigest,
+  tree,
+  before: tree,
+  after: tree,
+  clean: true,
+  exit: 0,
+  path: criterion + '.json',
+  ...patch,
+});
+
+const rowFold = (data: Array<JsonObject>) => ({
+  lastSeq: data.length,
+  torn: null,
+  records: data.map((data, i) => ({ seq: i + 1, key: String(i), at: '', kind: 'evidence', by: 'tool', data })),
+});
+
 test('cleanup keeps pre-cleanup evidence only for removed criteria', async () => {
-  const { criterionStatuses } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-  const checks: Check[] = [
+  const checks: Array<Check> = [
     { criterion: 'SC1', commands: ['step'], commandDigest: 'one', evidenceClass: 'check' },
     { criterion: 'SC2', commands: ['kept'], commandDigest: 'two', evidenceClass: 'check' },
   ];
-  const row = (criterion: string, commandDigest: string, tree: string, patch = {}) => ({
-    criterion,
-    commandDigest,
-    tree,
-    before: tree,
-    after: tree,
-    clean: true,
-    exit: 0,
-    path: criterion + '.json',
-    ...patch,
-  });
-  const fold = (data: Record<string, unknown>[]) => ({
-    lastSeq: data.length,
-    torn: null,
-    records: data.map((data, i) => ({ seq: i + 1, key: String(i), at: '', kind: 'evidence', by: 'tool', data })),
-  });
+
   const cleanup = { from: 'source-commit', fromTree: 'source', removed: ['SC1'], trees: { SC1: 'source' } };
   const current = { headTree: 'target', testedTree: 'target' };
-  const state = (rows: Record<string, unknown>[], binding: typeof cleanup | null = cleanup, tree = current) =>
-    criterionStatuses(fold(rows), checks, tree, binding)
+  const state = (rows: Array<JsonObject>, binding: typeof cleanup | null = cleanup, tree = current) =>
+    criterionStatuses(rowFold(rows), checks, tree, binding)
       .map((s) => s.state)
       .join();
-  const rows = [row('SC1', 'one', 'source'), row('SC2', 'two', 'target')];
-  const [removed, kept] = criterionStatuses(fold(rows), checks, current, cleanup);
+  const rows = [patchedRow('SC1', 'one', 'source'), patchedRow('SC2', 'two', 'target')];
+  const [removed, kept] = criterionStatuses(rowFold(rows), checks, current, cleanup);
   assert.equal(removed!.state, 'verified');
   assert.equal(removed!.evidence, 'SC1.json');
   assert.match(removed!.reason!, /verified at source; tests removed in cleanup/);
   assert.equal(kept!.state, 'verified');
   assert.equal(kept!.reason, undefined);
   assert.equal(state(rows, null), 'missing,verified');
-  assert.equal(state([row('SC1', 'one', 'source'), row('SC2', 'two', 'source')]), 'verified,missing');
+  assert.equal(state([patchedRow('SC1', 'one', 'source'), patchedRow('SC2', 'two', 'source')]), 'verified,missing');
   for (const patch of [
     { exit: 1 },
     { after: 'mutated' },
     { clean: false },
     { commandDigest: 'stale' },
     { tree: 'other' },
-  ])
-    assert.equal(state([row('SC1', 'one', 'source', patch), rows[1]!]), 'missing,verified');
+  ]) {
+    assert.equal(state([patchedRow('SC1', 'one', 'source', patch), rows[1]!]), 'missing,verified');
+  }
   assert.equal(state(rows, cleanup, { ...current, testedTree: 'dirty' }), 'verified,missing');
 });
 
+const evidenceRow = (criterion: string, commandDigest: string, tree: string) => ({
+  criterion,
+  commandDigest,
+  tree,
+  before: tree,
+  after: tree,
+  clean: true,
+  exit: 0,
+  path: criterion + '.json',
+});
+
 test('review evidence never qualifies on the current or cleanup tree', async () => {
-  const { eligibility, criterionStatuses, verifiedStage } =
-    await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
-  const checks: Check[] = [
+  const checks: Array<Check> = [
     { criterion: 'SC1', commands: ['step'], commandDigest: 'one', evidenceClass: 'check' },
     { criterion: 'SC2', commands: ['review'], commandDigest: 'two', evidenceClass: 'review' },
     { criterion: 'contract', commands: [], commandDigest: 'contract-digest', evidenceClass: 'contract' },
   ];
-  const row = (criterion: string, commandDigest: string, tree: string) => ({
-    criterion,
-    commandDigest,
-    tree,
-    before: tree,
-    after: tree,
-    clean: true,
-    exit: 0,
-    path: criterion + '.json',
-  });
+
   const records = [
-    row('SC1', 'one', 'source'),
-    row('SC2', 'two', 'source'),
-    row('contract', 'contract-digest', 'target'),
+    evidenceRow('SC1', 'one', 'source'),
+    evidenceRow('SC2', 'two', 'source'),
+    evidenceRow('contract', 'contract-digest', 'target'),
   ];
   const fold = {
     lastSeq: records.length,
@@ -404,36 +418,39 @@ test('review evidence never qualifies on the current or cleanup tree', async () 
   assert.equal(eligibility(fold, [checks[2]!], { headTree: 'target', testedTree: 'dirty' })[0]?.state, 'missing');
 });
 
+const mkCheck = (criterion: string, commandDigest = `digest-${criterion}`): Check => ({
+  criterion,
+  commands: ['node test.ts'],
+  commandDigest,
+  evidenceClass: 'check',
+});
+
+const mkRow = (criterion: string, tree: string, patch: JsonObject = {}) => ({
+  criterion,
+  commandDigest: `digest-${criterion}`,
+  tree,
+  before: tree,
+  after: tree,
+  clean: true,
+  exit: 0,
+  path: `${criterion}.json`,
+  ...patch,
+});
+
+const mkFold = (records: Array<JsonObject>) => ({
+  lastSeq: records.length,
+  torn: null,
+  records: records.map((data, index) => ({
+    seq: index + 1,
+    key: `k-${index}`,
+    at: '',
+    kind: 'evidence',
+    by: 'tool',
+    data,
+  })),
+});
+
 describe('cleanup evidence rule', () => {
-  const mkCheck = (criterion: string, commandDigest = `digest-${criterion}`): Check => ({
-    criterion,
-    commands: ['node test.ts'],
-    commandDigest,
-    evidenceClass: 'check',
-  });
-  const mkRow = (criterion: string, tree: string, patch: Record<string, unknown> = {}) => ({
-    criterion,
-    commandDigest: `digest-${criterion}`,
-    tree,
-    before: tree,
-    after: tree,
-    clean: true,
-    exit: 0,
-    path: `${criterion}.json`,
-    ...patch,
-  });
-  const mkFold = (records: Record<string, unknown>[]) => ({
-    lastSeq: records.length,
-    torn: null,
-    records: records.map((data, index) => ({
-      seq: index + 1,
-      key: `k-${index}`,
-      at: '',
-      kind: 'evidence',
-      by: 'tool',
-      data,
-    })),
-  });
   const criteria = [
     { id: 'SC1', changes: ['src/one.ts'], tests: ['tests/one.test.ts'] },
     { id: 'SC2', changes: ['src/two.ts'], tests: ['tests/two.test.ts'] },
@@ -441,7 +458,6 @@ describe('cleanup evidence rule', () => {
   const checkRows = [mkCheck('SC1'), mkCheck('SC2')];
 
   test('cleanup evidence accepts an earlier tree when declared paths are unchanged', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const fold = mkFold([mkRow('SC1', 'early-tree')]);
     const diffs = new Map([['early-tree', ['src/two.ts', 'tests/two.test.ts']]]);
     assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
@@ -451,7 +467,6 @@ describe('cleanup evidence rule', () => {
   });
 
   test('cleanup evidence is stale when a changes path changed', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const fold = mkFold([mkRow('SC1', 'early-tree')]);
     const diffs = new Map([['early-tree', ['src/one.ts']]]);
     assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
@@ -461,7 +476,6 @@ describe('cleanup evidence rule', () => {
   });
 
   test('cleanup evidence is stale when a path under a declared directory changed', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const dirCriteria = [
       { id: 'SC1', changes: ['skills/dispatch/references/'], tests: ['tests/one.test.ts'] },
       { id: 'SC2', changes: ['skills/dispatch/references-other/'], tests: [] },
@@ -480,7 +494,6 @@ describe('cleanup evidence rule', () => {
   });
 
   test('cleanup evidence is stale when an undeclared path changed', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const fold = mkFold([mkRow('SC1', 'early-tree')]);
     const diffs = new Map([['early-tree', ['tests/helpers/shared.ts']]]);
     assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
@@ -490,9 +503,8 @@ describe('cleanup evidence rule', () => {
   });
 
   test('cleanup evidence is stale when later evidence failed', async () => {
-    const { cleanupEvidence } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const fold = mkFold([mkRow('SC1', 'early-tree'), mkRow('SC1', 'mid-tree', { exit: 1 })]);
-    const diffs = new Map<string, string[]>([['early-tree', []]]);
+    const diffs = new Map<string, Array<string>>([['early-tree', []]]);
     assert.deepEqual(cleanupEvidence(fold, checkRows, criteria, ['SC1'], 'pre-cleanup-tree', diffs), {
       ok: false,
       stale: ['SC1'],
@@ -500,7 +512,6 @@ describe('cleanup evidence rule', () => {
   });
 
   test('cleanup evidence status names the evidence tree', async () => {
-    const { criterionStatuses, verifiedStage } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const fold = mkFold([mkRow('SC1', 'early-tree'), mkRow('SC2', 'target-tree')]);
     const binding = {
       from: 'cleanup-base-commit',
@@ -519,15 +530,13 @@ describe('cleanup evidence rule', () => {
   });
 
   test('gitPaths preserves leading whitespace on NUL-delimited filenames', async () => {
-    const { gitPaths, gitOk, gitRaw } = await import('../../../skills/dispatch/scripts/toolkit/git.ts');
-    const { cleanupEvidence, matchesDeclared } = await import('../../../skills/dispatch/scripts/toolkit/evidence.ts');
     const calls: Array<{ stdin?: string }> = [];
-    const deps = {
-      run: async (_argv: string[], opts: { stdin?: string }) => {
+    const deps: Parameters<typeof gitPaths>[0] = {
+      run: async (_argv, opts) => {
         calls.push(opts);
         return { exit: 0, stdout: ' foo.ts\0src/two.ts\0', stderr: '' };
       },
-    } as unknown as Parameters<typeof gitPaths>[0];
+    };
     const paths = await gitPaths(deps, '.', ['diff', '--name-only', '--no-renames', '-z']);
     assert.deepEqual(paths, [' foo.ts', 'src/two.ts']);
     assert.equal('stdin' in calls[0]!, false);

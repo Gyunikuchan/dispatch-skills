@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
-import { OVERLAY_ROOT, scanOverlay, type FileTable } from './scan.ts';
+import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
+import type { FileTable } from './scan.ts';
 
-// Count the real Git/subprocess suites and their shared repository helper.
-// NOTE: 18 covers commit-phase refusals and hooks, which need real Git, toolkit-fix-review-lite (listing, diff and consumer search), and toolkit-input (Windows PowerShell 5.1 & POSIX shell quoting e2e matrix).
-export const E2E_CAP = 18;
+// Count the real Git/subprocess suites and their shared test helpers.
+// NOTE: 20 covers commit-phase refusals and hooks, toolkit-fix-review-lite, toolkit-input, plus shared helpers audit-modules.ts and json.ts.
+export const E2E_CAP = 20;
 const e2eFiles = () =>
   scanOverlay(path.join(OVERLAY_ROOT, 'tests/e2e')).map((file) => ({ ...file, path: 'tests/e2e/' + file.path }));
 
-export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
+export function checkE2eCap(files: FileTable, cap = E2E_CAP): Array<string> {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));
   return e2e.length > cap
     ? [
@@ -20,7 +21,7 @@ export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
 
 test('tests/e2e/ stays within the cap and exceeding it fails with the rule and the fix', () => {
   const files = e2eFiles();
-  assert.equal(files.filter((file) => file.path.startsWith('tests/e2e/')).length, 18);
+  assert.equal(files.filter((file) => file.path.startsWith('tests/e2e/')).length, 20);
   assert.deepEqual(checkE2eCap(files), []);
   const over = ['a', 'b', 'c', 'd'].map((name) => ({ path: `tests/e2e/${name}.test.ts`, text: '' }));
   assert.deepEqual(checkE2eCap(over, 3), [

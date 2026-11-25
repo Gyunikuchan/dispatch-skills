@@ -9,8 +9,14 @@ import { reviewIdentity } from '../../../skills/dispatch/scripts/toolkit/review-
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
 import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { rejectionRequest, type RejectionRequest } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
+import type { HandlerContext } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
+import { rejectionRequest } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
+import type { RejectionRequest } from '../../../skills/dispatch/scripts/toolkit/confirmations.ts';
 import type { Finding } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
+import type { LedgerRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import { refusal } from './helpers/json.ts';
+const gitOutput = (stdout = '') => ({ exit: 0, stdout, stderr: '' });
+
 const source = [
   '# Work',
   '## Task Map',
@@ -30,7 +36,7 @@ const source = [
   '### Automated Tests',
   '- `node contract`',
 ].join('\n');
-test('review identity keeps unexpected read errors', async () => {
+test('review identity keeps unexpected read errors', async (t) => {
   const f = sessionFixture({ memory: true });
   try {
     f.artifact('work.spec.md', '# Work');
@@ -45,30 +51,28 @@ test('review identity keeps unexpected read errors', async () => {
     const reviewRoot = path.join(f.session, '.state/reviews/code-integration'),
       roundDir = path.join(reviewRoot, 'round-1');
     fs.mkdirSync(roundDir, { recursive: true });
-    const ctx = {
+    const ctx: HandlerContext = {
       session: f.session,
       manifest: readManifest(f.session),
       args: [],
       values: {},
       deps: f.deps,
-    } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+    };
     const identity = () => reviewIdentity(ctx, foldLedger(f.session), f.root, head, base);
     const roundFile = path.join(roundDir, 'round.json');
     fs.writeFileSync(roundFile, '{}');
     const readFile = fs.readFileSync;
-    fs.readFileSync = ((file: fs.PathLike, ...args: unknown[]) => {
-      if (String(file) === roundFile)
+    const read = t.mock.method(fs, 'readFileSync', (...args: Parameters<typeof readFile>) => {
+      const [file] = args;
+      if (String(file) === roundFile) {
         throw Object.assign(new Error('Review artifact storage unavailable'), { code: 'EACCES' });
-      return Reflect.apply(readFile, fs, [file, ...args]);
-    }) as typeof fs.readFileSync;
+      }
+      return readFile(...args);
+    });
     try {
-      await assert.rejects(identity, (error) => {
-        assert.equal((error as NodeJS.ErrnoException).code, 'EACCES');
-        assert.match((error as Error).message, /Review artifact storage unavailable/);
-        return true;
-      });
+      await assert.rejects(identity, { code: 'EACCES', message: /Review artifact storage unavailable/ });
     } finally {
-      fs.readFileSync = readFile;
+      read.mock.restore();
     }
     fs.writeFileSync(roundFile, '{invalid');
     await assert.rejects(identity, { reason: 'review-required' });
@@ -164,20 +168,25 @@ test('cap-ending SHOULD fixes bound their verified commit chain by ruling paths'
     let commits = [[head, baseline]],
       changed = ['src/file.ts', 'src/helper.ts'];
     f.deps.run = async (argv) => {
-      const args = argv.slice(1),
-        output = (stdout = '') => ({ exit: 0, stdout, stderr: '' });
-      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents')
-        return output(commits.map((row) => row.join(' ')).join('\n') + '\n');
-      if (args[0] === 'diff-tree' && args.includes(head)) return output(changed.join('\0') + '\0');
-      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === head)
-        return output(message);
+      const args = argv.slice(1);
+      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents') {
+        return gitOutput(commits.map((row) => row.join(' ')).join('\n') + '\n');
+      }
+      if (args[0] === 'diff-tree' && args.includes(head)) {
+        return gitOutput(changed.join('\0') + '\0');
+      }
+      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === head) {
+        return gitOutput(message);
+      }
       throw new Error('Unexpected Git argv: ' + JSON.stringify(argv));
     };
-    const ctx = {
+    const ctx: HandlerContext = {
       session: f.session,
       manifest,
+      args: [],
+      values: {},
       deps: f.deps,
-    } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+    };
     const correction = {
       ...ruling,
       seq: 3,
@@ -228,12 +237,12 @@ test('cap-ending SHOULD fixes bound their verified commit chain by ruling paths'
     );
     changed = ['src/file.ts', 'src/other.ts'];
     await assert.rejects(
-      reviewIdentity(ctx, { records: [bind, ruling, fix] as any, lastSeq: 3, torn: null }, f.root, head, base),
+      reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base),
       { reason: 'review-required' },
     );
     changed = [' src/file.ts', 'src/helper.ts'];
     await assert.rejects(
-      reviewIdentity(ctx, { records: [bind, ruling, fix] as any, lastSeq: 3, torn: null }, f.root, head, base),
+      reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base),
       { reason: 'review-required' },
     );
     changed = ['src/file.ts'];
@@ -242,10 +251,15 @@ test('cap-ending SHOULD fixes bound their verified commit chain by ruling paths'
       [head, 'd'.repeat(40)],
     ];
     await assert.rejects(
-      reviewIdentity(ctx, { records: [bind, ruling, fix] as any, lastSeq: 3, torn: null }, f.root, head, base),
+      reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base),
       { reason: 'review-required' },
     );
     commits = [[head, baseline]];
+    fs.writeFileSync(path.join(reviewDir, 'findings.json'), '{');
+    await assert.rejects(
+      reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base),
+      { reason: 'review-required' },
+    );
     fs.writeFileSync(
       path.join(reviewDir, 'findings.json'),
       JSON.stringify({
@@ -256,7 +270,7 @@ test('cap-ending SHOULD fixes bound their verified commit chain by ruling paths'
       }),
     );
     await assert.rejects(
-      reviewIdentity(ctx, { records: [bind, ruling, fix] as any, lastSeq: 3, torn: null }, f.root, head, base),
+      reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base),
       { reason: 'review-required' },
     );
     fs.writeFileSync(
@@ -322,12 +336,14 @@ test('review identity accepts a narrowed re-review round', async () => {
       path.join(dir, 'gen-1/slots/reviewer.json'),
       JSON.stringify({ slot: 'reviewer', state: 'done', text: '{"status":"CLEAN","findings":[]}' }),
     );
-    const ctx = {
+    const ctx: HandlerContext = {
       session: f.session,
       manifest: readManifest(f.session),
+      args: [],
+      values: {},
       deps: f.deps,
-    } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
-    const result = await reviewIdentity(ctx, { records: [bind] as any, lastSeq: 1, torn: null }, f.root, head, base);
+    };
+    const result = await reviewIdentity(ctx, { records: [bind], lastSeq: 1, torn: null }, f.root, head, base);
     assert.equal(result.round, 2);
   } finally {
     f.cleanup();
@@ -348,7 +364,7 @@ async function correctedGate(
       head = 'b'.repeat(40),
       base = 'c'.repeat(40),
       commitReason = 'repair accepted SHOULD';
-    const bind = {
+    const bind: LedgerRecord = {
       kind: 'bind',
       seq: 1,
       key: 'bind',
@@ -357,7 +373,7 @@ async function correctedGate(
       data: { spec: 'work.spec.md', plan: 'work.plan.md' },
     };
     const reviewFix = { review: 'code-integration', round: 3, generation: 1, findings: ['R3-F001'], from: baseline };
-    const ruling = {
+    const ruling: LedgerRecord = {
       kind: 'ruling',
       seq: 2,
       key: 'ruling',
@@ -370,7 +386,7 @@ async function correctedGate(
         ...(correction ?? {}),
       },
     };
-    const fix = {
+    const fix: LedgerRecord = {
       kind: 'integrate',
       seq: 3,
       key: 'fix',
@@ -423,29 +439,28 @@ async function correctedGate(
         '',
       ].join('\n');
     f.deps.run = async (argv) => {
-      const args = argv.slice(1),
-        output = (stdout = '') => ({ exit: 0, stdout, stderr: '' });
-      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents')
-        return output(head + ' ' + baseline + '\n');
-      if (args[0] === 'diff-tree' && args.includes(head)) return output('src/file.ts\0');
-      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === head)
-        return output(message);
+      const args = argv.slice(1);
+      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents') {
+        return gitOutput(head + ' ' + baseline + '\n');
+      }
+      if (args[0] === 'diff-tree' && args.includes(head)) {
+        return gitOutput('src/file.ts\0');
+      }
+      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === head) {
+        return gitOutput(message);
+      }
       throw new Error('Unexpected Git argv: ' + JSON.stringify(argv));
     };
-    const ctx = {
+    const ctx: HandlerContext = {
       session: f.session,
       manifest,
+      args: [],
+      values: {},
       deps: f.deps,
-    } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
-    return await reviewIdentity(
-      ctx,
-      { records: [bind, ruling, fix] as any, lastSeq: 3, torn: null },
-      f.root,
-      head,
-      base,
-    ).then(
+    };
+    return await reviewIdentity(ctx, { records: [bind, ruling, fix], lastSeq: 3, torn: null }, f.root, head, base).then(
       (value) => ({ ok: true as const, value }),
-      (error) => ({ ok: false as const, reason: (error as { reason?: string }).reason }),
+      (error: unknown) => ({ ok: false as const, reason: refusal(error) ? error.reason : undefined }),
     );
   } finally {
     f.cleanup();
@@ -484,13 +499,13 @@ type CoverageRound = {
   n: number;
   scope?: string;
   base?: string;
-  done: string[];
-  failed: string[];
+  done: Array<string>;
+  failed: Array<string>;
   coverage?: 'open' | 'full';
 };
 async function coverageIdentity(
-  rounds: CoverageRound[],
-  extra: (seq: number) => object[] = () => [],
+  rounds: Array<CoverageRound>,
+  extra: (seq: number) => Array<LedgerRecord> = () => [],
   prepare?: (dir: string) => void,
   opened = false,
 ) {
@@ -532,51 +547,56 @@ async function coverageIdentity(
               ? 'Full review'
               : `Re-review round ${item.n} (coverage) — changed paths: src/file.ts; comparison: ${base}..${head}`),
           roster: [...item.done, ...item.failed].map((slot) => ({ slot, reserve: false })),
-          ...(item.coverage ? { coverage: item.coverage } : {}),
+          ...(item.coverage && { coverage: item.coverage }),
         }),
       );
       fs.writeFileSync(
         path.join(dir, 'findings.json'),
         JSON.stringify({ review: 'code-integration', round: item.n, findings: [], failed: [] }),
       );
-      for (const slot of item.done)
+      for (const slot of item.done) {
         fs.writeFileSync(
           path.join(slots, slot + '.json'),
           JSON.stringify({ slot, state: 'done', text: '{"status":"CLEAN","findings":[]}' }),
         );
-      for (const slot of item.failed)
+      }
+      for (const slot of item.failed) {
         fs.writeFileSync(
           path.join(slots, slot + '.json'),
           JSON.stringify({ slot, state: 'failed', cls: 'timeout', reason: 'slow' }),
         );
-      if (item.failed.length)
+      }
+      if (item.failed.length) {
         fs.writeFileSync(
           path.join(dir, 'gen-1/attempts.json'),
           JSON.stringify(item.failed.map((slot) => ({ slot, seq: 2, wholeTarget: whole, outcome: 'timeout' }))),
         );
+      }
     }
     prepare?.(root);
-    const records = [
+    const records: Array<LedgerRecord> = [
       bind,
       ...(opened
         ? [{ kind: 'integrate', seq: 2, key: 'opened', at: '', by: 'tool', data: { phase: 'opened', base } }]
         : []),
       ...extra(10),
-    ] as any[];
-    const ctx = {
+    ];
+    const ctx: HandlerContext = {
       session: f.session,
       manifest: readManifest(f.session),
+      args: [],
+      values: {},
       deps: f.deps,
-    } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+    };
     return await reviewIdentity(ctx, { records, lastSeq: 20, torn: null }, f.root, head, base).then(
       (value) => ({ ok: true as const, value }),
-      (error) => ({ ok: false as const, reason: (error as { reason?: string }).reason }),
+      (error: unknown) => ({ ok: false as const, reason: refusal(error) ? error.reason : undefined }),
     );
   } finally {
     f.cleanup();
   }
 }
-const accept = (seq: number, slots: string[]) => ({
+const accept = (seq: number, slots: Array<string>) => ({
   seq,
   key: 'coverage:code-integration:' + seq,
   at: '',
@@ -585,7 +605,7 @@ const accept = (seq: number, slots: string[]) => ({
   quote: 'accept it',
   data: { id: 'coverage:code-integration:' + seq, state: 'resolved', summary: 'accept: ' + slots.join(', ') },
 });
-const rerunRounds: CoverageRound[] = [
+const rerunRounds: Array<CoverageRound> = [
   { n: 1, done: [B, C], failed: [A] },
   { n: 2, coverage: 'full', done: [B, C], failed: [A] },
 ];
@@ -637,7 +657,7 @@ test('review identity reads coverage decision: rerun, user and unreadable state 
 });
 
 test('review identity reads coverage decision: failures outside the applicable rounds are ignored', async () => {
-  const rounds: CoverageRound[] = [
+  const rounds: Array<CoverageRound> = [
     { n: 1, base: 'c'.repeat(40), done: [B, C], failed: [A] },
     { n: 2, coverage: 'open', done: [B, C], failed: [] },
   ];
@@ -657,19 +677,19 @@ type IdentitySeed = {
   scope: string;
   head: string;
   startSeq: number;
-  findings: object[];
+  findings: Array<object>;
   roster?: typeof identityRoster;
-  requests?: RejectionRequest[];
-  confirmations?: object[];
+  requests?: Array<RejectionRequest>;
+  confirmations?: Array<object>;
   slotText?: string;
   responder?: object;
 };
 const seedIdentityRounds = (
   f: ReturnType<typeof sessionFixture>,
   base: string,
-  artifacts: Record<string, string>,
+  artifacts: ReturnType<typeof currentHashes>,
   spec: { path: string; hash: string },
-  rounds: readonly IdentitySeed[],
+  rounds: ReadonlyArray<IdentitySeed>,
 ) => {
   const root = path.join(f.session, '.state/reviews/code-integration');
   for (const item of rounds) {
@@ -689,7 +709,7 @@ const seedIdentityRounds = (
         spec,
         scope: item.scope,
         roster,
-        ...(item.requests ? { requests: item.requests } : {}),
+        ...(item.requests && { requests: item.requests }),
       }),
     );
     fs.writeFileSync(
@@ -699,19 +719,20 @@ const seedIdentityRounds = (
         round: item.n,
         findings: item.findings,
         failed: [],
-        ...(item.confirmations ? { confirmations: item.confirmations } : {}),
+        ...(item.confirmations && { confirmations: item.confirmations }),
       }),
     );
-    for (const slot of roster.filter((entry) => !entry.reserve))
+    for (const slot of roster.filter((entry) => !entry.reserve)) {
       fs.writeFileSync(
         path.join(slots, slot.slot + '.json'),
         JSON.stringify({
           slot: slot.slot,
           state: 'done',
           text: item.slotText ?? '{"status":"CLEAN","findings":[]}',
-          ...(item.responder ? { responder: item.responder } : {}),
+          ...(item.responder && { responder: item.responder }),
         }),
       );
+    }
   }
 };
 const confirmationOf = (request: RejectionRequest, rationale: string) => {
@@ -750,7 +771,7 @@ test('confirmation-only round preserves substantive review identity and rejects 
         { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 'work.spec.md', plan: 'work.plan.md' } },
         f.deps,
       );
-      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind')) as Record<string, string>;
+      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
       const base = 'c'.repeat(40),
         first = 'a'.repeat(40),
         second = 'b'.repeat(40);
@@ -838,11 +859,13 @@ test('confirmation-only round preserves substantive review identity and rejects 
           responder: confirmation.reply.responder,
         },
       ]);
-      const ctx = {
+      const ctx: HandlerContext = {
         session: f.session,
         manifest: readManifest(f.session),
+        args: [],
+        values: {},
         deps: f.deps,
-      } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+      };
       const identity = await reviewIdentity(ctx, foldLedger(f.session), f.root, second, base);
       assert.equal(identity.baseline, second);
       assert.deepEqual(
@@ -874,7 +897,7 @@ test('confirmation-only round preserves substantive review identity and rejects 
         { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 'work.spec.md', plan: 'work.plan.md' } },
         f.deps,
       );
-      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind')) as Record<string, string>;
+      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
       const base = 'c'.repeat(40),
         head = 'a'.repeat(40);
       await appendRecord(
@@ -914,7 +937,7 @@ test('confirmation-only round preserves substantive review identity and rejects 
         f.deps,
       );
       const claim = reviewClaim('R1-F002', 'Retries are unbounded'),
-        spec = { path: path.resolve(f.root, 'work.spec.md'), hash: artifacts['spec']! };
+        spec = { path: path.resolve(f.root, 'work.spec.md'), hash: artifacts.spec! };
       const request = rejectionRequest({
         review: 'code-integration',
         finding: 'R1-F002',
@@ -946,11 +969,13 @@ test('confirmation-only round preserves substantive review identity and rejects 
           responder: confirmation.reply.responder,
         },
       ]);
-      const ctx = {
+      const ctx: HandlerContext = {
         session: f.session,
         manifest: readManifest(f.session),
+        args: [],
+        values: {},
         deps: f.deps,
-      } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+      };
       await assert.rejects(reviewIdentity(ctx, foldLedger(f.session), f.root, head, base), {
         reason: 'review-required',
       });
@@ -969,7 +994,7 @@ test('confirmation-only round preserves substantive review identity and rejects 
         { kind: 'bind', by: 'orchestrator', key: 'bind', data: { spec: 'work.spec.md', plan: 'work.plan.md' } },
         f.deps,
       );
-      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind')) as Record<string, string>;
+      const artifacts = currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
       const base = 'c'.repeat(40),
         first = 'a'.repeat(40),
         second = 'b'.repeat(40);
@@ -1057,11 +1082,13 @@ test('confirmation-only round preserves substantive review identity and rejects 
           responder: confirmation.reply.responder,
         },
       ]);
-      const ctx = {
+      const ctx: HandlerContext = {
         session: f.session,
         manifest: readManifest(f.session),
+        args: [],
+        values: {},
         deps: f.deps,
-      } as import('../../../skills/dispatch/scripts/toolkit/cli.ts').HandlerContext;
+      };
       await assert.rejects(reviewIdentity(ctx, foldLedger(f.session), f.root, second, base), {
         reason: 'review-required',
       });

@@ -7,38 +7,46 @@ import {
   interRoundSection,
   qualityBar,
   settledSection,
-  type InterRound,
-  type Settled,
-  type SettledEntry,
-  type UserDecision,
 } from './domain/prompt.ts';
+import type { InterRound, SettledEntry, UserDecision } from './domain/prompt.ts';
 import { REVIEW_TAGS_BY_KIND } from './domain/report.ts';
 import type { RejectionRequest } from './confirmations.ts';
 import type { ReviewKind } from './domain/types.ts';
 import type { ReviewTarget } from './review-state.ts';
 import { EXECUTION_STATUS_TITLE, RESOLUTION_TITLE } from './domain/document-lint.ts';
 import { structuralLines } from './domain/markdown-structure.ts';
+import { present } from './narrow.ts';
 
 export { settledSection, type Settled } from './domain/prompt.ts';
 
-const managedSections = [RESOLUTION_TITLE, EXECUTION_STATUS_TITLE];
+const managedSections = new Set([RESOLUTION_TITLE, EXECUTION_STATUS_TITLE]);
+
+interface PromptValues {
+  [placeholder: string]: string;
+}
 
 function sections(source: string, subsections: boolean): Map<string, string> {
   const sections = new Map<string, string>();
   let heading = '',
-    body: string[] = [],
+    body: Array<string> = [],
     ignored = false;
   const save = () => {
-    if (heading) sections.set(heading, body.join('\n').trim());
+    if (heading) {
+      sections.set(heading, body.join('\n').trim());
+    }
   };
   for (const line of structuralLines(source)) {
     const match = !line.fenced ? /^(#{2,3})\s+(.+?)\s*$/.exec(line.text) : null;
-    if (subsections && match?.[1] === '##') ignored = managedSections.includes(match[2]!);
+    if (subsections && match?.[1] === '##') {
+      ignored = managedSections.has(present(match[2], 'the heading text'));
+    }
     if (match && (subsections || match[1] === '##')) {
       save();
-      heading = ignored ? '' : match[2]!;
+      heading = ignored ? '' : present(match[2], 'the heading text');
       body = [];
-    } else if (!ignored) body.push(line.original);
+    } else if (!ignored) {
+      body.push(line.original);
+    }
   }
   save();
   return sections;
@@ -48,11 +56,11 @@ export function artifactSections(source: string): Map<string, string> {
   return sections(source, false);
 }
 
-export function changedHeadings(before: string, after: string): string[] {
+export function changedHeadings(before: string, after: string): Array<string> {
   const previous = sections(before, true),
     current = sections(after, true);
   return [...new Set([...current.keys(), ...previous.keys()])].filter(
-    (heading) => !managedSections.includes(heading) && previous.get(heading) !== current.get(heading),
+    (heading) => !managedSections.has(heading) && previous.get(heading) !== current.get(heading),
   );
 }
 
@@ -67,9 +75,9 @@ export function reviewPrompt(
     scope: string;
     turnTarget: number;
     contextMapPath?: string;
-    settled?: readonly SettledEntry[];
+    settled?: ReadonlyArray<SettledEntry>;
     interRound?: InterRound;
-    requests?: readonly RejectionRequest[];
+    requests?: ReadonlyArray<RejectionRequest>;
     rotation?: number;
     round: number;
   },
@@ -95,7 +103,9 @@ export function reviewPrompt(
     `## preregister\n\n${preregisterBody}`,
   ]);
   const renderedTags = new Set(
-    [...template.template.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map((match) => match[1]!).concat('standards', 'adjacent'),
+    [...template.template.matchAll(/^- \*\*([^*]+)\*\* —/gm)]
+      .map((match) => present(match[1], 'the review tag'))
+      .concat('standards', 'adjacent'),
   );
   if (
     renderedTags.size !== REVIEW_TAGS_BY_KIND[kind].size ||
@@ -107,7 +117,7 @@ export function reviewPrompt(
   const contextMap = context.contextMapPath
     ? `\n- Context Map: ${context.contextMapPath} — pre-change locator, not a completeness claim: verify claims at source, and run your own consumer and caller search for each contract the artifact changes.`
     : '';
-  const values: Record<string, string> = {
+  const values: PromptValues = {
     'Spec Path': context.spec.path,
     'Spec Hash': context.spec.hash,
     'Review Scope': context.scope,
@@ -148,8 +158,8 @@ export function confirmationPrompt(
     taskSummary?: string;
     scope: string;
     interRound?: InterRound;
-    requests: readonly RejectionRequest[];
-    settled?: readonly UserDecision[];
+    requests: ReadonlyArray<RejectionRequest>;
+    settled?: ReadonlyArray<UserDecision>;
   },
 ): string {
   const revision =

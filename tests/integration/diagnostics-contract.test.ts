@@ -8,7 +8,7 @@ const read = (name: string) => fs.readFileSync(path.join(OVERLAY_ROOT, 'skills/d
 
 test('phase prose records bounded retro observations as a JSON array', () => {
   const instruction = read('references/diagnostics.md');
-  assert.ok(Buffer.byteLength(instruction.replace(/\r?\n/g, '\r\n')) <= DIAGNOSTIC_LIMITS.instructionBytes);
+  assert.ok(Buffer.byteLength(instruction.replaceAll(/\r?\n/g, '\r\n')) <= DIAGNOSTIC_LIMITS.instructionBytes);
   assert.match(instruction, /merge your terse notes into the JSON array at `<session>\/\.state\/retro\.json` yourself/);
   assert.match(instruction, /Without notes, add nothing; if no file, write `\[\]`/);
   assert.match(instruction, /Then run `diagnostics render`/);
@@ -18,19 +18,23 @@ test('phase prose records bounded retro observations as a JSON array', () => {
   assert.ok(instruction.includes('{id,component,category,evidence,impact,proposedFix}'));
   assert.ok(instruction.includes('unique ids'));
   assert.ok(instruction.includes('1-48 A-Za-z0-9_- chars'));
-  for (const key of Object.keys(CATEGORIES)) assert.ok(instruction.includes('`' + key + '`'), key);
+  for (const key of Object.keys(CATEGORIES)) {
+    assert.ok(instruction.includes('`' + key + '`'), key);
+  }
   assert.ok(instruction.includes('at most ' + DIAGNOSTIC_LIMITS.fieldBytes + ' bytes'));
   assert.match(instruction, /Exclude repository, toolchain, and user-work issues/);
   assert.match(instruction, /Fixes must hold on any repository and machine/);
   assert.match(instruction, /no user source, objective, absolute paths, URLs, emails, UUIDs, or secrets/);
-  for (const term of ['valid empty', 'missing', 'unreadable', 'malformed', 'non-array', 'workflow gate'])
+  for (const term of ['valid empty', 'missing', 'unreadable', 'malformed', 'non-array', 'workflow gate']) {
     assert.ok(instruction.includes(term), term);
+  }
   assert.ok(read('SKILL.md').includes('returned `instructions`'));
 });
 
 test('phase prose completes the report before cleaning owned worktrees', () => {
-  for (const name of ['SKILL.md', 'references/worktree-cleanup.md'])
+  for (const name of ['SKILL.md', 'references/worktree-cleanup.md']) {
     assert.match(read(name), /report complete[\s\S]*worktree cleanup/);
+  }
   assert.match(read('references/worktree-cleanup.md'), /unrelated/);
 });
 
@@ -69,8 +73,9 @@ test('diagnostics retain privacy and measurement guidance', () => {
     'No findings does not prove complete collection',
     'zero unpriced units',
     'matched input and event columns',
-  ])
+  ]) {
     assert.ok(human.includes(term), term);
+  }
 });
 
 test('diagnostics instructions specify grounding retro items and yield format', () => {

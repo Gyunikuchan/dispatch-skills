@@ -15,10 +15,8 @@ import {
   normalizeSkillLink,
   slug,
   validatePathLinks,
-  type Figures,
-  type PathManifest,
-  type PathName,
 } from '../../scripts/path-bytes.ts';
+import type { Figures, PathManifest, PathName } from '../../scripts/path-bytes.ts';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const skillDir = path.join(root, 'skills/dispatch');
@@ -29,33 +27,35 @@ const toolkit = readFile('references/toolkit.md');
 
 type Occurrence = { target: string; stepText: string | null; sentence: string; clause: string; line: string };
 
-function guideOccurrences(name: string, text = readFile(`references/verbs/${name}.md`)): Occurrence[] {
+function guideOccurrences(name: string, text = readFile(`references/verbs/${name}.md`)): Array<Occurrence> {
   const stepStart = text.indexOf('## Step reads');
-  const found: Occurrence[] = [];
+  const found: Array<Occurrence> = [];
   let offset = 0;
-  for (const line of text.replace(/([^\n])\n(?=[^\n|#])/g, '$1 ').split('\n')) {
+  for (const line of text.replaceAll(/([^\n])\n(?=[^\n|#])/g, '$1 ').split('\n')) {
     const inSteps = stepStart >= 0 && offset > stepStart;
     const isRow = inSteps && line.startsWith('| ') && !line.startsWith('| Step') && !line.startsWith('| ---');
     const stepText = isRow ? line.split('|')[1]!.trim() : null;
-    const pieces: { start: number; end: number }[] = [];
+    const pieces: Array<{ start: number; end: number }> = [];
     let from = 0;
     for (const match of line.matchAll(/\.\s+/g)) {
-      pieces.push({ start: from, end: match.index! + 1 });
-      from = match.index! + match[0].length;
+      pieces.push({ start: from, end: match.index + 1 });
+      from = match.index + match[0].length;
     }
     pieces.push({ start: from, end: line.length });
     for (const match of line.matchAll(/\]\(([^)\s]+)\)/g)) {
       const target = normalizeSkillLink(`references/verbs/${name}.md`, match[1]!);
-      if (target === null) continue;
-      const piece = pieces.find((candidate) => match.index! >= candidate.start && match.index! < candidate.end)!;
+      if (target === null) {
+        continue;
+      }
+      const piece = pieces.find((candidate) => match.index >= candidate.start && match.index < candidate.end)!;
       found.push({
         target,
         stepText,
         sentence: line.slice(piece.start, piece.end),
         clause: line.slice(
-          Math.max(piece.start, line.lastIndexOf(';', match.index!) + 1),
+          Math.max(piece.start, line.lastIndexOf(';', match.index) + 1),
           (() => {
-            const end = line.indexOf(';', match.index!);
+            const end = line.indexOf(';', match.index);
             return end < 0 ? piece.end : Math.min(end, piece.end);
           })(),
         ),
@@ -73,11 +73,15 @@ function toolkitHeadings(): Map<string, Heading> {
   let group = '';
   for (const line of toolkit.split('\n')) {
     const match = /^(#{2,3})\s+(.*?)\s*$/.exec(line);
-    if (!match) continue;
+    if (!match) {
+      continue;
+    }
     if (match[1] === '##') {
       group = match[2]!;
       map.set(slug(group), { title: group, group, level: 2 });
-    } else map.set(slug(match[2]!), { title: match[2]!, group, level: 3 });
+    } else {
+      map.set(slug(match[2]!), { title: match[2]!, group, level: 3 });
+    }
   }
   return map;
 }
@@ -154,16 +158,17 @@ test('path link classes follow the step text and the stated conditions', () => {
           (candidate) => candidate.stepText === null && !rows.some((row) => !/\b(when|only)\b/i.test(row.stepText!)),
         )) {
           assert.ok(
-            item.sentence.toLowerCase().includes(entry.when!.toLowerCase()),
+            item.sentence.toLowerCase().includes(entry.when.toLowerCase()),
             `${name}: ${target} paragraph carries its condition "${entry.when}": ${item.sentence}`,
           );
         }
       } else if (!rows.length) {
-        for (const item of own)
+        for (const item of own) {
           assert.ok(
             !/^\W*(when|if|for)\b/i.test(item.sentence) && !/\bonly (on|when|if|for)\b/i.test(item.clause),
             `${name}: ${target} is unconditional but its sentence states a condition: ${item.sentence}`,
           );
+        }
       }
     }
   }
@@ -175,7 +180,9 @@ test('path call sequences cover every toolkit anchor of their guides', () => {
     const headings = toolkitHeadings();
     for (const [target, entry] of Object.entries(links)) {
       const anchor = /^references\/toolkit\.md#(.+)$/.exec(target)?.[1];
-      if (!anchor) continue;
+      if (!anchor) {
+        continue;
+      }
       const heading = headings.get(anchor);
       assert.ok(heading, `${name}: ${target} resolves to a toolkit heading`);
       if (heading.level === 2) {
@@ -190,9 +197,11 @@ test('path call sequences cover every toolkit anchor of their guides', () => {
               (item) => item.action === heading.title && (heading.title === 'ledger append' || item.kind === undefined),
             );
       assert.ok(call, `${name}: ${target} is in the call sequence`);
-      if (entry.class === 'conditional')
+      if (entry.class === 'conditional') {
         assert.equal(call.count, 0, `${name}: ${target} is conditional, so it counts 0`);
-      else assert.ok(call.count > 0, `${name}: ${target} is unconditional, so it counts at least 1`);
+      } else {
+        assert.ok(call.count > 0, `${name}: ${target} is unconditional, so it counts at least 1`);
+      }
     }
   }
 });
@@ -203,7 +212,7 @@ test('path ledger calls name a record kind and other calls name a tool action', 
     for (const call of MANIFEST[name].calls) {
       if (call.action === 'ledger append') {
         assert.ok(
-          call.kind && (KINDS as readonly string[]).includes(call.kind),
+          call.kind && (KINDS as ReadonlyArray<string>).includes(call.kind),
           `${name}: ledger append names a record kind: ${call.kind}`,
         );
         assert.equal(headings.get(slug(call.kind))?.group, 'Ledger records');
@@ -221,19 +230,27 @@ test('path ledger calls name a record kind and other calls name a tool action', 
 
 // SECTION: Measure formulas
 
-function file(...sections: [string, number][]): string {
+function file(...sections: Array<[string, number]>): string {
   return sections.map(([title, size]) => `### ${title}\n${'x'.repeat(size)}`).join('\n') + '\n';
 }
 const sectionSize = (title: string, size: number) => `### ${title}`.length + 1 + size;
 
 test('measure counts each section per call before and once per run after', () => {
-  const files: Record<string, string> = {
-    'SKILL.md': 'S'.repeat(100),
-    'references/verbs/p.md': 'G'.repeat(200),
-    'references/a.md': 'A'.repeat(300),
-    'references/templates/quality-bar.md': file(['plan', 50]),
-    'references/toolkit.md': file(['call table', 10], ['do it', 20], ['ledger append', 30], ['k', 40], ['unused', 99]),
-  };
+  const files = new Map(
+    Object.entries({
+      'SKILL.md': 'S'.repeat(100),
+      'references/verbs/p.md': 'G'.repeat(200),
+      'references/a.md': 'A'.repeat(300),
+      'references/templates/quality-bar.md': file(['plan', 50]),
+      'references/toolkit.md': file(
+        ['call table', 10],
+        ['do it', 20],
+        ['ledger append', 30],
+        ['k', 40],
+        ['unused', 99],
+      ),
+    }),
+  );
   const manifest: Record<'p', PathManifest> = {
     p: {
       guide: 'references/verbs/p.md',
@@ -256,11 +273,14 @@ test('measure counts each section per call before and once per run after', () =>
     append = sectionSize('ledger append', 30),
     kind = sectionSize('k', 40),
     table = sectionSize('call table', 10);
-  const read = (rel: string) => files[rel] ?? assert.fail(`unexpected read ${rel}`);
+  const read = (rel: string) => files.get(rel) ?? assert.fail(`unexpected read ${rel}`);
 
-  files['references/toolkit.md'] = files['references/toolkit.md']!.replace(
-    '### do it\n' + 'x'.repeat(20),
-    '### do it\n<!-- GENERATED: action:do-it -->' + 'x'.repeat(20) + '<!-- END GENERATED: action:do-it -->',
+  files.set(
+    'references/toolkit.md',
+    read('references/toolkit.md').replace(
+      '### do it\n' + 'x'.repeat(20),
+      '### do it\n<!-- GENERATED: action:do-it -->' + 'x'.repeat(20) + '<!-- END GENERATED: action:do-it -->',
+    ),
   );
   const before = measure(read, 'before', manifest).p;
   assert.equal(before.distinct, reads + doIt + append + kind);
@@ -297,8 +317,8 @@ test('measure counts a section once when its whole file is already read', () => 
         'SKILL.md#routing': { class: 'unconditional' },
       },
     },
-  } as const;
-  const figures = measure(read, 'before', manifest as unknown as Record<'p', PathManifest>).p;
+  } satisfies Record<'p', PathManifest>;
+  const figures = measure(read, 'before', manifest).p;
   assert.equal(figures.distinct, 1 + 1 + Buffer.byteLength(file(['one', 5], ['two', 7])));
 });
 
@@ -348,7 +368,7 @@ test('the report prints distinct, workload and editable bytes with reductions fo
     implement: { distinct: 110, workload: 151, editableDistinct: 50, editableWorkload: 100 },
   };
   assert.equal(
-    formatReport({ plan: synthetic.plan, implement: synthetic.implement } as Record<PathName, Figures>, baseline),
+    formatReport({ plan: synthetic.plan, implement: synthetic.implement }, baseline),
     [
       'plan distinct: 90 bytes (baseline 100, 10.0%)',
       'plan workload: 150 bytes (baseline 200, 25.0%)',
@@ -366,7 +386,8 @@ test('the report prints distinct, workload and editable bytes with reductions fo
 });
 
 test('SKILL_LINKS flags count only normal-path reads', () => {
-  const original = structuredClone(SKILL_LINKS);
+  const entries = Object.entries<Record<PathName, boolean>>(SKILL_LINKS);
+  const original = entries.map(([target, cells]) => ({ target, cells, flags: { ...cells } }));
   const fakeManifest = Object.fromEntries(
     GUIDES.map((name) => [
       name,
@@ -376,10 +397,14 @@ test('SKILL_LINKS flags count only normal-path reads', () => {
         calls: [],
       },
     ]),
-  ) as unknown as Record<PathName, PathManifest>;
+  );
   try {
-    for (const cells of Object.values(SKILL_LINKS)) for (const name of GUIDES) cells[name] = false;
-    for (const [target, flags] of Object.entries(original)) {
+    for (const [, cells] of entries) {
+      for (const name of GUIDES) {
+        cells[name] = false;
+      }
+    }
+    for (const { target, cells, flags } of original) {
       const [file, anchor] = target.split('#');
       const heading = anchor ? `## ${anchor}\n` : '';
       const body = heading + 'x'.repeat(10) + (file === 'references/toolkit.md' ? '\n## call table\ntable' : '');
@@ -387,15 +412,22 @@ test('SKILL_LINKS flags count only normal-path reads', () => {
         rel === file ? body : rel === 'references/toolkit.md' ? '## call table\ntable' : '';
       const size = Buffer.byteLength(anchor ? (heading + 'x'.repeat(10)).trimEnd() : body);
       const empty = measure(read, 'after', fakeManifest);
-      Object.assign(SKILL_LINKS[target]!, flags);
+      Object.assign(cells, flags);
       const actual = measure(read, 'after', fakeManifest);
       for (const name of GUIDES) {
-        assert.equal(actual[name].workload - empty[name].workload, flags[name] ? size : 0, `${name}: ${target}`);
+        const before = empty[name];
+        const after = actual[name];
+        assert.ok(before && after);
+        assert.equal(after.workload - before.workload, flags[name] ? size : 0, `${name}: ${target}`);
       }
-      for (const name of GUIDES) SKILL_LINKS[target]![name] = false;
+      for (const name of GUIDES) {
+        cells[name] = false;
+      }
     }
   } finally {
-    for (const [target, flags] of Object.entries(original)) Object.assign(SKILL_LINKS[target]!, flags);
+    for (const { cells, flags } of original) {
+      Object.assign(cells, flags);
+    }
   }
 });
 
@@ -429,75 +461,73 @@ test('a read that SKILL.md mandates counts once on each path that makes it', () 
   assert.equal(outside.implement.workload - base.implement.workload, 0);
 });
 
+const unknownCommit = () => {
+  throw new Error('unknown commit');
+};
+
+const showCommit = (args: Array<string>) => {
+  if (args[0] === 'rev-parse') {
+    return 'resolved-object\n';
+  }
+  assert.ok(args[1]!.startsWith('resolved-object:skills/dispatch/'));
+  return readFile(args[1]!.split(':skills/dispatch/')[1]!);
+};
+
+const showIncompleteCommit = (args: Array<string>) => {
+  if (args[0] === 'rev-parse') {
+    return 'ok';
+  }
+  const rel = args[1]!.split(':skills/dispatch/')[1]!;
+  if (rel === 'references/verbs/ask.md') {
+    throw new Error('absent file');
+  }
+  const text = readFile(rel);
+  return rel === 'references/grounding.md' ? text.replace('## Check and recover', '## Removed section') : text;
+};
+
 test('path bytes main refuses unknown arguments and commits', () => {
   let output = '',
     errors = '';
-  const stdout = process.stdout.write,
-    stderr = process.stderr.write;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += String(chunk);
-    return true;
-  }) as typeof stdout;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    errors += String(chunk);
-    return true;
-  }) as typeof stderr;
-  try {
-    for (const args of [['--bad'], ['--at']]) {
-      errors = '';
-      assert.equal(main(args), 2);
-      assert.match(errors, /Usage:/);
-    }
+  const capture = {
+    stdout(text: string) {
+      output += text;
+    },
+    stderr(text: string) {
+      errors += text;
+    },
+  };
+  for (const args of [['--bad'], ['--at']]) {
     errors = '';
-    assert.equal(
-      main(['--at', 'missing'], () => {
-        throw new Error('unknown commit');
-      }),
-      2,
-    );
-    assert.match(errors, /unknown commit/);
-    assert.equal(output, '');
-  } finally {
-    process.stdout.write = stdout;
-    process.stderr.write = stderr;
+    assert.equal(main(args, undefined, undefined, capture), 2);
+    assert.match(errors, /Usage:/);
   }
+  errors = '';
+  assert.equal(main(['--at', 'missing'], unknownCommit, undefined, capture), 2);
+  assert.match(errors, /unknown commit/);
+  assert.equal(output, '');
 });
 
 test('path bytes measures a commit through git show', () => {
-  const git = (args: string[]) => {
-    if (args[0] === 'rev-parse') return 'resolved-object\n';
-    assert.ok(args[1]!.startsWith('resolved-object:skills/dispatch/'));
-    return readFile(args[1]!.split(':skills/dispatch/')[1]!);
-  };
   let output = '';
-  const write = process.stdout.write;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += String(chunk);
-    return true;
-  }) as typeof write;
-  try {
-    assert.equal(main(['--at', 'fake'], git), 0);
-    assert.match(output, /ask distinct:/);
-    output = '';
-    const missing = (args: string[]) => {
-      if (args[0] === 'rev-parse') return 'ok';
-      const rel = args[1]!.split(':skills/dispatch/')[1]!;
-      if (rel === 'references/verbs/ask.md') throw new Error('absent file');
-      const text = readFile(rel);
-      return rel === 'references/grounding.md' ? text.replace('## Check and recover', '## Removed section') : text;
-    };
-    assert.equal(main(['--at', 'fake'], missing), 0);
-    assert.match(output, /ask: missing absent file/);
-    assert.match(output, /plan: missing .*no section/);
-    assert.doesNotMatch(output, /ask distinct:|plan distinct:/);
-    assert.match(output, /review distinct:/);
-  } finally {
-    process.stdout.write = write;
-  }
+  const capture = {
+    stdout(text: string) {
+      output += text;
+    },
+    stderr: assert.fail,
+  };
+  assert.equal(main(['--at', 'fake'], showCommit, undefined, capture), 0);
+  assert.match(output, /ask distinct:/);
+  output = '';
+  assert.equal(main(['--at', 'fake'], showIncompleteCommit, undefined, capture), 0);
+  assert.match(output, /ask: missing absent file/);
+  assert.match(output, /plan: missing .*no section/);
+  assert.doesNotMatch(output, /ask distinct:|plan distinct:/);
+  assert.match(output, /review distinct:/);
 });
 
 test('path bytes check baseline fails on any figure mismatch', () => {
-  const git = (args: string[]) => (args[0] === 'rev-parse' ? 'ok' : readFile(args[1]!.split(':skills/dispatch/')[1]!));
+  const git = (args: Array<string>) =>
+    args[0] === 'rev-parse' ? 'ok' : readFile(args[1]!.split(':skills/dispatch/')[1]!);
   const current = measure(readFile, 'preload');
   assert.equal(main(['--check-baseline'], git, current), 0);
   for (const [key, delta] of [
@@ -518,32 +548,27 @@ test('path bytes resolves one archived repair brief only when the live section i
   const current = measure(readFile, 'preload');
   const checkout = (heading: string) => (rel: string) =>
     rel === 'references/toolkit.md' ? toolkit.replace(liveHeading, heading) : readFile(rel);
-  const stdout = process.stdout.write,
-    stderr = process.stderr.write;
   let output = '';
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += String(chunk);
-    return true;
-  }) as typeof stdout;
-  process.stderr.write = (() => true) as typeof stderr;
+  const capture = {
+    stdout(text: string) {
+      output += text;
+    },
+    stderr() {},
+  };
   const check = (heading: string) => {
     output = '';
     return main(
       ['--check-baseline'],
       (args) => (args[0] === 'rev-parse' ? 'ok' : checkout(heading)(args[1]!.split(':skills/dispatch/')[1]!)),
       current,
+      capture,
     );
   };
-  try {
-    assert.equal(check(archivedHeading), 0);
-    assert.throws(() => measure(checkout(archivedHeading), 'preload'), /no section "brief fix-review-lite"/);
-    assert.equal(check('### archived other action'), 1);
-    assert.match(output, /0 archived repair brief sections/);
-    assert.equal(check(archivedHeading + '\n\n### brief fix-second'), 1);
-    assert.match(output, /2 archived repair brief sections/);
-    assert.equal(check(archivedHeading + '\n\n### brief fix-second\n\n' + liveHeading), 0);
-  } finally {
-    process.stdout.write = stdout;
-    process.stderr.write = stderr;
-  }
+  assert.equal(check(archivedHeading), 0);
+  assert.throws(() => measure(checkout(archivedHeading), 'preload'), /no section "brief fix-review-lite"/);
+  assert.equal(check('### archived other action'), 1);
+  assert.match(output, /0 archived repair brief sections/);
+  assert.equal(check(archivedHeading + '\n\n### brief fix-second'), 1);
+  assert.match(output, /2 archived repair brief sections/);
+  assert.equal(check(archivedHeading + '\n\n### brief fix-second\n\n' + liveHeading), 0);
 });

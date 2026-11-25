@@ -3,6 +3,8 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { flag, listOf, narrow, optional, readJson, shape, text } from '../helpers/json.ts';
 
 import {
   askPrompt,
@@ -13,13 +15,16 @@ import {
   qualityBar,
   qualityCriteria,
   qualitySections,
-  type QualityConsumer,
 } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import type { QualityConsumer } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 import { confirmationPrompt, reviewPrompt } from '../../../../skills/dispatch/scripts/toolkit/prompts.ts';
 import { REVIEW_PROMPT_INPUTS } from '../../../fixtures/review-prompt-inputs.ts';
-import { settledSection, type Settled } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import { settledSection } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
+import type { Settled } from '../../../../skills/dispatch/scripts/toolkit/domain/prompt.ts';
 
 const settledRows = (section: string) => section.split('\n').filter((line) => line.startsWith('- '));
+const rawConsumer = (value: string): QualityConsumer =>
+  narrow(value, (candidate): candidate is QualityConsumer => typeof candidate === 'string');
 
 test('settled rows render accepted, duplicate, rejected and unconfirmed rulings', () => {
   const pending = {
@@ -147,7 +152,9 @@ test('settled rows render accepted, duplicate, rejected and unconfirmed rulings'
       settledSection([{ id, locus: '§ Tasks', defect: 'A repeated defect.', ruling: 'duplicate', reason }]),
     )[0]!;
     assert.equal(row, expected, id);
-    if (absent) assert.doesNotMatch(row, absent, id);
+    if (absent) {
+      assert.doesNotMatch(row, absent, id);
+    }
   }
 
   assert.deepEqual(
@@ -203,25 +210,56 @@ test('settled rows render accepted, duplicate, rejected and unconfirmed rulings'
     reason: 'Deferred as a follow-up.',
   };
   const section = settledSection([rejected, deferred]);
-  for (const entry of [rejected, deferred])
+  for (const entry of [rejected, deferred]) {
     assert.ok(
       section.includes(`- ${entry.id} ${entry.locus}: ${entry.defect} — ${entry.ruling}: ${entry.reason}`),
       entry.id,
     );
+  }
   assert.ok(!section.includes('…'), 'ruled rows keep the full text');
 });
 
 // Rendered size of this fixture under the pre-compaction row format, recorded before the format changed.
-const SETTLED_ROUND_7_BASELINE_BYTES = 25570;
+const SETTLED_ROUND_7_BASELINE_BYTES = 25_570;
 
 test('settled section stays within its round-7 budget', () => {
-  const settled = JSON.parse(
-    readFileSync(new URL('./fixtures/settled-round-7.json', import.meta.url), 'utf8'),
-  ) as Settled[];
+  const settled: Array<Settled> = readJson(
+    fileURLToPath(new URL('./fixtures/settled-round-7.json', import.meta.url)),
+    listOf(
+      shape({
+        id: text,
+        locus: text,
+        defect: text,
+        ruling: text,
+        reason: text,
+        revision: optional(text),
+        severity: optional(text),
+        rejectionConfirmed: optional(flag),
+      }),
+    ),
+  ).map((row) => {
+    const entry: Settled = {
+      id: row.id,
+      locus: row.locus,
+      defect: row.defect,
+      ruling: row.ruling,
+      reason: row.reason,
+    };
+    if (row.revision !== undefined) {
+      entry.revision = row.revision;
+    }
+    if (row.severity !== undefined) {
+      entry.severity = row.severity;
+    }
+    if (row.rejectionConfirmed !== undefined) {
+      entry.rejectionConfirmed = row.rejectionConfirmed;
+    }
+    return entry;
+  });
   assert.equal(settled.length, 49, 'fixture keeps the recorded settled set');
   const bytes = Buffer.byteLength(settledSection(settled), 'utf8');
   // Accepted ruling rationales add bytes to the compact settled rows.
-  assert.ok(bytes <= 16500 && bytes < SETTLED_ROUND_7_BASELINE_BYTES, `${bytes} B exceeds the round-7 budget`);
+  assert.ok(bytes <= 16_500 && bytes < SETTLED_ROUND_7_BASELINE_BYTES, `${bytes} B exceeds the round-7 budget`);
 });
 
 const DECISION = { id: 'ceiling:plan-x.plan:4', summary: 're-author: Keep the compact stdout line', quote: 'approve' };
@@ -229,14 +267,14 @@ const DECISION_ROW =
   '- ceiling:plan-x.plan:4 — user decision: re-author: Keep the compact stdout line — quote: "approve"';
 const CLOSED =
   'Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided.';
-const confirmation = (settled?: readonly (typeof DECISION)[]) =>
+const confirmation = (settled?: ReadonlyArray<typeof DECISION>) =>
   confirmationPrompt('plan', {
     spec: { path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64) },
     artifact: 'work.plan.md',
     target: { base: 'b'.repeat(40), head: 'c'.repeat(40) },
     scope: 'Re-review round 2 (confirmation-only)',
     requests: [],
-    ...(settled ? { settled } : {}),
+    ...(settled && { settled }),
   });
 
 test('user decision: settled rows render the resolution summary and quote after ruling rows', () => {
@@ -367,7 +405,7 @@ const familyOrder = {
   plan: ['architecture', 'decomposition'],
   design: ['architecture', 'testing', 'decomposition'],
 } as const;
-const rotateExpected = <T>(items: readonly T[], by: number): T[] => {
+const rotateExpected = <T>(items: ReadonlyArray<T>, by: number): Array<T> => {
   const shift = items.length ? ((by % items.length) + items.length) % items.length : 0;
   return [...items.slice(shift), ...items.slice(0, shift)];
 };
@@ -375,17 +413,18 @@ const reviewContext = (kind: (typeof reviewKinds)[number], rotation = 0) => ({
   skillRoot: path.resolve('skills/dispatch'),
   spec: { path: REVIEW_PROMPT_INPUTS[kind]['Spec Path']!, hash: REVIEW_PROMPT_INPUTS[kind]['Spec Hash']! },
   artifact: REVIEW_PROMPT_INPUTS[kind][kind === 'design' ? 'Design Path' : 'Plan Path']!,
-  ...(kind === 'code'
-    ? { planPath: REVIEW_PROMPT_INPUTS.code['Plan Path']!, taskSummary: REVIEW_PROMPT_INPUTS.code['Task Summary']! }
-    : {}),
+  ...(kind === 'code' && {
+    planPath: REVIEW_PROMPT_INPUTS.code['Plan Path']!,
+    taskSummary: REVIEW_PROMPT_INPUTS.code['Task Summary']!,
+  }),
   scope: REVIEW_PROMPT_INPUTS[kind]['Review Scope']!,
   turnTarget: 10,
   rotation,
   round: 1,
 });
-const familyBullets = (prompt: string): string[] =>
+const familyBullets = (prompt: string): Array<string> =>
   [...prompt.matchAll(/^- \*\*([^*]+)\*\* —/gm)].map((match) => match[1]!);
-const linePositions = (prompt: string, marker: string): number[] =>
+const linePositions = (prompt: string, marker: string): Array<number> =>
   prompt.split('\n').flatMap((line, index) => (line.includes(marker) ? [index] : []));
 
 test('review voices receive identical guidance in rotated axis order', () => {
@@ -411,7 +450,7 @@ test('review voices receive identical guidance in rotated axis order', () => {
       ...(kind === 'design' ? ['- Shared criteria:'] : []),
       ...(kind === 'plan' || kind === 'design' ? ['- Visuals, summaries, and callouts:'] : []),
     ];
-    const familySections = qualitySections[kind] as readonly (keyof typeof familyOrder)[];
+    const familySections = qualitySections[kind] as ReadonlyArray<keyof typeof familyOrder>;
     const familyCounts = familySections.map((section) => familyOrder[section].length);
     const cycle = familyCounts.reduce<number>((left, right) => (left / gcd(left, right)) * right, 1);
     for (const rotation of [0, 1, 2, cycle]) {
@@ -429,8 +468,8 @@ test('review voices receive identical guidance in rotated axis order', () => {
         offset += count;
       }
       assert.deepEqual(
-        [...prompt.split('\n')].sort(),
-        [...base.split('\n')].sort(),
+        prompt.split('\n').sort(),
+        base.split('\n').sort(),
         `${kind}: line multiset at rotation ${rotation}`,
       );
       for (const marker of fixedLines) {
@@ -438,7 +477,9 @@ test('review voices receive identical guidance in rotated axis order', () => {
         assert.ok(positions.length, `${kind}: missing fixed line ${marker}`);
         assert.deepEqual(linePositions(prompt, marker), positions, `${kind}: fixed line ${marker}`);
       }
-      if (rotation === cycle) assert.equal(prompt, base, `${kind}: wraparound`);
+      if (rotation === cycle) {
+        assert.equal(prompt, base, `${kind}: wraparound`);
+      }
     }
   }
 });
@@ -455,7 +496,9 @@ test('design prompt calibrates altitude, severity, and advisory Grounding leads'
 });
 
 function gcd(left: number, right: number): number {
-  while (right) [left, right] = [right, left % right];
+  while (right) {
+    [left, right] = [right, left % right];
+  }
   return left;
 }
 
@@ -519,7 +562,7 @@ test('all kinds share an identical severity rubric', () => {
 
 // SECTION: Grounding, tooling, and reuse rules
 
-const flat = (kind: QualityConsumer) => assembled(kind).replace(/\s+/g, ' ');
+const flat = (kind: QualityConsumer) => assembled(kind).replaceAll(/\s+/g, ' ');
 
 test('review prompts: every kind grounds findings and reports a defective local convention once', () => {
   for (const kind of ['code', 'design', 'plan'] as const) {
@@ -529,13 +572,14 @@ test('review prompts: every kind grounds findings and reports a defective local 
       "Preference is not a finding; between technically equivalent approaches, the author's choice stands.",
       'Simplicity findings name the cost removed: concepts, files, or code paths.',
       'A pattern that matches established local convention is not a finding; when the convention itself is defective, report it once and name the other instances in `defect`.',
-    ])
+    ]) {
       assert.ok(text.includes(rule), `${kind}: ${rule}`);
+    }
   }
 });
 
 const ruleText = (kind: QualityConsumer) =>
-  qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage).replace(/\s+/g, ' ');
+  qualityBar(read(templates, 'quality-bar.md'), kind, 0, specStage).replaceAll(/\s+/g, ' ');
 
 test('quality selection covers every consumer and includes each selected rule once', () => {
   for (const kind of ['code', 'plan', 'design'] as const) {
@@ -559,8 +603,9 @@ test('quality selection covers every consumer and includes each selected rule on
       'index new filter or sort columns',
       'object ownership',
       'sensitive data in logs',
-    ])
+    ]) {
       assert.ok(ruleText(kind).includes(term), `${kind}: ${term}`);
+    }
   }
   const bar = read(templates, 'quality-bar.md');
   const sectionMarkers = [
@@ -578,7 +623,7 @@ test('quality selection covers every consumer and includes each selected rule on
     for (const [section, marker] of sectionMarkers) {
       assert.equal(
         prompt.split(marker).length - 1,
-        (qualitySections[kind] as readonly string[]).includes(section) ? 1 : 0,
+        (qualitySections[kind] as ReadonlyArray<string>).includes(section) ? 1 : 0,
         `${kind}: ${section}`,
       );
     }
@@ -599,37 +644,41 @@ test('quality selection and audience filtering fail closed and hide tags', () =>
   };
   assert.deepEqual(qualitySections, expected);
   const bar = compliantBar();
-  for (const [consumer] of Object.entries(expected)) {
-    const rendered = qualityBar(bar, consumer as QualityConsumer, 0, specStage);
+  const consumers: ReadonlyArray<QualityConsumer> = [
+    'code',
+    'writer',
+    'plan',
+    'design',
+    'cleanup',
+    'verifier',
+    'explorer',
+  ];
+  for (const consumer of consumers) {
+    const rendered = qualityBar(bar, consumer, 0, specStage);
     assert.doesNotMatch(rendered, /for:/, `${consumer}: no audience tag leaks`);
     assert.doesNotMatch(rendered, /<!--/, `${consumer}: no comment leaks`);
   }
-  for (const consumer of Object.keys(expected)) {
-    for (const section of (expected as Record<string, readonly string[]>)[consumer]!) {
+  for (const consumer of consumers) {
+    for (const section of expected[consumer]) {
       const missingBar = removeSection(bar, section);
-      assert.throws(() => qualityBar(missingBar, consumer as QualityConsumer, 0, specStage), {
+      assert.throws(() => qualityBar(missingBar, consumer, 0, specStage), {
         message: `Missing quality section: ${section}`,
       });
       const emptyBar = emptySection(bar, section);
-      assert.throws(
-        () => qualityBar(emptyBar, consumer as QualityConsumer, 0, specStage),
-        /Empty quality section|Tagged bullet count/,
-      );
+      assert.throws(() => qualityBar(emptyBar, consumer, 0, specStage), /Empty quality section|Tagged bullet count/);
     }
   }
   assert.throws(() => qualityBar(bar + '\n## shared\nagain', 'code', 0, specStage), /declares section "shared" twice/);
-  for (const consumer of ['ask', '__proto__', 'toString'])
-    assert.throws(() => qualityBar(bar, consumer as QualityConsumer, 0, specStage), {
+  for (const consumer of ['ask', '__proto__', 'toString']) {
+    assert.throws(() => qualityBar(bar, rawConsumer(consumer), 0, specStage), {
       message: `Unknown quality consumer: ${consumer}`,
     });
+  }
   assert.ok(qualityBar(fencedBar(), 'code', 0, specStage).includes('real'), 'fenced heading does not split sections');
 
   const criteriaBar = compliantBar();
   for (const consumer of ['ask', 'bogus', '__proto__'] as const) {
-    assert.throws(
-      () => qualityCriteria(criteriaBar, consumer as QualityConsumer, 0, specStage),
-      /Unknown quality consumer/,
-    );
+    assert.throws(() => qualityCriteria(criteriaBar, rawConsumer(consumer), 0, specStage), /Unknown quality consumer/);
   }
   assert.throws(
     () => qualityCriteria(criteriaBar.replace('<!-- for: all -->', '<!-- for: bogus -->'), 'code', 0, specStage),
@@ -781,19 +830,23 @@ function compliantBar(): string {
 
 function removeSection(bar: string, section: string): string {
   const lines = bar.split('\n');
-  const out: string[] = [];
+  const out: Array<string> = [];
   let skipping = false;
   for (const line of lines) {
     const heading = /^##\s+(\S.*?)\s*$/.exec(line)?.[1];
-    if (heading) skipping = heading === section;
-    if (!skipping) out.push(line);
+    if (heading) {
+      skipping = heading === section;
+    }
+    if (!skipping) {
+      out.push(line);
+    }
   }
   return out.join('\n');
 }
 
 function emptySection(bar: string, section: string): string {
   const lines = bar.split('\n');
-  const out: string[] = [];
+  const out: Array<string> = [];
   let inside = false;
   for (const line of lines) {
     const heading = /^##\s+(\S.*?)\s*$/.exec(line)?.[1];
@@ -802,7 +855,9 @@ function emptySection(bar: string, section: string): string {
       out.push(line);
       continue;
     }
-    if (inside) continue;
+    if (inside) {
+      continue;
+    }
     out.push(line);
   }
   return out.join('\n');
@@ -867,8 +922,9 @@ test('review prompts: host rules take precedence over dispatch defaults in every
 
 test('quality selection keeps artifact finding loci in review kind blocks', () => {
   const bar = read(templates, 'quality-bar.md');
-  for (const consumer of ['code', 'writer', 'plan', 'design'] as const)
+  for (const consumer of ['code', 'writer', 'plan', 'design'] as const) {
     assert.doesNotMatch(qualityBar(bar, consumer, 0, specStage), /Adjacent findings|nearest plan|nearest design/);
+  }
   for (const consumer of ['plan', 'design'] as const) {
     const kindBlock = read(templates, `review-prompt-${consumer}.md`);
     assert.match(kindBlock, new RegExp(`nearest ${consumer} heading as locus`));
@@ -881,7 +937,7 @@ test('plan authors and reviewers share the binding decision standard', () => {
   const planSection = bar.split(/^## plan$/m)[1]!.split(/^## design$/m)[0]!;
   const standards = planSection.split('\n').filter((line) => line.startsWith('- Plan standard:'));
   assert.equal(standards.length, 1, 'one canonical plan standard');
-  const standard = standards[0]!.replace(/\s+/g, ' ');
+  const standard = standards[0]!.replaceAll(/\s+/g, ' ');
   for (const term of [
     'observable outcomes',
     'binding interfaces and invariants',
@@ -890,11 +946,14 @@ test('plan authors and reviewers share the binding decision standard', () => {
     'failure behavior',
     'verification',
     'exact algorithm',
-  ])
+  ]) {
     assert.ok(standard.includes(term), term);
+  }
   // Reviewers receive the standard once; other kinds do not.
   assert.equal(flat('plan').split(standard).length - 1, 1, 'plan review prompt');
-  for (const kind of ['code', 'design'] as const) assert.ok(!flat(kind).includes(standard), kind);
+  for (const kind of ['code', 'design'] as const) {
+    assert.ok(!flat(kind).includes(standard), kind);
+  }
   // Authors read it through pointers, without a second copy.
   for (const name of ['plan.md', '../verbs/plan.md']) {
     const author = read(templates, name);
@@ -913,8 +972,9 @@ test('writer quality criteria omit prune directive while code and plan keep it',
   const bar = read(templates, 'quality-bar.md');
   const cleanup = read(templates, 'test-cleanup-brief.md');
   const writer = qualityCriteria(bar, 'writer', 0, specStage);
-  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:'])
+  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:']) {
     assert.ok(writer.includes(gate), `writer: ${gate}`);
+  }
   assert.ok(writer.includes('Shape:'), 'writer: Shape');
   assert.ok(writer.includes('Naming:'), 'writer: Naming');
   assert.ok(writer.includes('Writer focus'), 'writer: Writer focus');
@@ -931,8 +991,9 @@ test('writer quality criteria omit prune directive while code and plan keep it',
   assert.doesNotMatch(writer, /disposable/);
 
   const verifier = qualityCriteria(bar, 'verifier', 0, specStage);
-  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:'])
+  for (const gate of ['Contract:', 'Defect:', 'Oracle:', 'Unique kill:']) {
     assert.ok(verifier.includes(gate), `verifier: ${gate}`);
+  }
   assert.ok(verifier.includes('Shape:'), 'verifier: Shape');
   assert.ok(verifier.includes('Naming:'), 'verifier: Naming');
   assert.ok(
@@ -978,17 +1039,34 @@ test('writer quality criteria omit prune directive while code and plan keep it',
 
 test('reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned', () => {
   for (const kind of reviewKinds) {
-    for (const context of [reviewContext(kind), { ...reviewContext(kind), requests: [] }])
+    for (const context of [reviewContext(kind), { ...reviewContext(kind), requests: [] }]) {
       assert.doesNotMatch(reviewPrompt(kind, context), /Pending MUST rejection confirmation|confirmations/);
-    const request = {
+    }
+    const request: NonNullable<Parameters<typeof reviewPrompt>[1]['requests']>[number] = {
       requestId: 'R1-F001',
+      review: kind === 'code' ? 'code-integration' : `${kind}-work.${kind}`,
       finding: 'F001',
-      claim: { locus: 'src/api.ts:L1', defect: 'Unbounded writes', requiredChange: 'Bound writes' },
+      rulingSeq: 1,
+      claim: {
+        id: 'F001',
+        severity: 'MUST',
+        impact: 'blocks',
+        trigger: 'realistic',
+        category: 'correctness',
+        locus: 'src/api.ts:L1',
+        defect: 'Unbounded writes',
+        requiredChange: 'Bound writes',
+        sources: ['reviewer'],
+        scope: 'in',
+      },
       rationale: 'The caller supplies the bound',
+      target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
+      spec: { path: 'mission.spec.md', hash: 'sha256:' + 'a'.repeat(64) },
+      sourceSlots: ['reviewer'],
     };
     const prompt = reviewPrompt(kind, {
       ...reviewContext(kind),
-      requests: [request as unknown as NonNullable<Parameters<typeof reviewPrompt>[1]['requests']>[number]],
+      requests: [request],
     });
     for (const rule of [
       'Pending MUST rejection confirmation',
@@ -1006,8 +1084,9 @@ test('reviewPrompt renders MUST rejection confirmation instructions only when re
       request.claim.defect,
       request.claim.requiredChange,
       request.rationale,
-    ])
+    ]) {
       assert.ok(prompt.includes(rule), `${kind}: ${rule}`);
+    }
   }
 });
 

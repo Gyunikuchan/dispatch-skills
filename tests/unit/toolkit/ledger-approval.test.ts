@@ -10,9 +10,9 @@ import {
   foldLedger,
   gate,
   latest,
-  queryLedger,
 } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { KINDS } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import type { JsonObject } from './helpers/json.ts';
+import { narrow, refusal } from './helpers/json.ts';
 
 test('design-stage bindings retain revisions and block plan-dependent effects until a complete rebind', async () => {
   const f = sessionFixture({ memory: true });
@@ -38,7 +38,7 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
       effects++;
       throw new Error('No delegate without a usable review target');
     };
-    const add = (kind: string, data: object, extra: object = {}) =>
+    const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
       appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'design-' + key++, ...extra }, f.deps);
     f.artifact('mission.spec.md', '# Mission\n');
     const design = f.artifact('strategy.design.md', '# Strategy\n');
@@ -68,7 +68,7 @@ test('design-stage bindings retain revisions and block plan-dependent effects un
     await assert.rejects(add('bind', { spec: 'mission.spec.md', design: 'missing.design.md' }), {
       reason: 'invalid-record',
     });
-    const call = async (args: string[]) => {
+    const call = async (args: Array<string>) => {
       f.lines.length = 0;
       const hostSensitive =
         (args[0] === 'doctor' && args[1] === 'run') ||
@@ -238,7 +238,9 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
       const fold = foldLedger(f.session);
       return gate(fold, currentHashes(f.root, latest(fold, 'bind')));
     };
-    for (const kind of kinds) f.artifact(names[kind], plain[kind]);
+    for (const kind of kinds) {
+      f.artifact(names[kind], plain[kind]);
+    }
     assert.equal(
       (await appendRecord(f.session, { kind: 'bind', key: 'bind', by: 'orchestrator', data: names }, f.deps)).seq > 0,
       true,
@@ -255,7 +257,9 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
       f.deps,
     );
     assert.deepEqual(verdict(), { allowed: true });
-    for (const kind of kinds) f.artifact(names[kind], formatted[kind]);
+    for (const kind of kinds) {
+      f.artifact(names[kind], formatted[kind]);
+    }
     assert.deepEqual(currentHashes(f.root, latest(foldLedger(f.session), 'bind')), approved);
     assert.deepEqual(verdict(), { allowed: true });
     for (const kind of kinds) {
@@ -276,49 +280,51 @@ test('approval survives formatting-only artifact rewrites and refuses meaning ch
   }
 });
 
-test('approval accepts a recorded non-intent chain and stale approvals list current hashes', async () => {
-  const boundPlan = async () => {
-    const f = sessionFixture({ memory: true });
-    let n = 0;
-    const add = (kind: string, data: object, extra: object = {}) =>
-      appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'approval-chain-' + n++, ...extra }, f.deps);
-    const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
-    const edit = (before: string, after: string, editClass = 'non-intent') =>
-      add('edit', {
-        artifact: 'plan',
-        before,
-        after,
-        class: editClass,
-        affects: [],
-        rationale: 'Record the plan edit',
-        diffRef: 'test diff',
-      });
-    const approve = (data: object) => add('approval', data, { by: 'user', quote: 'I approve the plan I reviewed' });
-    f.artifact('s.spec.md', 'Spec');
-    f.artifact('p.plan.md', 'A');
-    await add('bind', { spec: 's.spec.md', plan: 'p.plan.md' });
-    await add('confirm', { spec: hashes().spec }, { by: 'user', quote: 'I confirm the spec' });
-    return { f, hashes, edit, approve };
-  };
-  const scenario = async (exercise: (context: Awaited<ReturnType<typeof boundPlan>>) => Promise<void>) => {
-    const context = await boundPlan();
-    try {
-      await exercise(context);
-    } finally {
-      context.f.cleanup();
-    }
-  };
-  const assertStale = async (append: () => Promise<unknown>, current: ReturnType<typeof currentHashes>) => {
-    await assert.rejects(append(), (error: unknown) => {
-      const failure = error as { reason?: string; message?: string };
-      assert.equal(failure.reason, 'approval-stale');
-      for (const [artifact, hash] of Object.entries(current)) {
-        assert.ok(failure.message?.includes(`current: ${artifact} ${hash}`), failure.message);
-      }
-      return true;
+const boundPlan = async () => {
+  const f = sessionFixture({ memory: true });
+  let n = 0;
+  const add = (kind: string, data: JsonObject, extra: JsonObject = {}) =>
+    appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'approval-chain-' + n++, ...extra }, f.deps);
+  const hashes = () => currentHashes(f.root, latest(foldLedger(f.session), 'bind'));
+  const edit = (before: string, after: string, editClass = 'non-intent') =>
+    add('edit', {
+      artifact: 'plan',
+      before,
+      after,
+      class: editClass,
+      affects: [],
+      rationale: 'Record the plan edit',
+      diffRef: 'test diff',
     });
-  };
+  const approve = (data: JsonObject) => add('approval', data, { by: 'user', quote: 'I approve the plan I reviewed' });
+  f.artifact('s.spec.md', 'Spec');
+  f.artifact('p.plan.md', 'A');
+  await add('bind', { spec: 's.spec.md', plan: 'p.plan.md' });
+  await add('confirm', { spec: hashes().spec }, { by: 'user', quote: 'I confirm the spec' });
+  return { f, hashes, edit, approve };
+};
 
+const assertStale = async (append: () => Promise<{ seq: number }>, current: ReturnType<typeof currentHashes>) => {
+  await assert.rejects(append(), (error: unknown) => {
+    const failure = narrow(error, refusal);
+    assert.equal(failure.reason, 'approval-stale');
+    for (const [artifact, hash] of Object.entries(current)) {
+      assert.ok(failure.message?.includes(`current: ${artifact} ${hash}`), failure.message);
+    }
+    return true;
+  });
+};
+
+const scenario = async (exercise: (context: Awaited<ReturnType<typeof boundPlan>>) => Promise<void>) => {
+  const context = await boundPlan();
+  try {
+    await exercise(context);
+  } finally {
+    context.f.cleanup();
+  }
+};
+
+test('approval accepts a recorded non-intent chain and stale approvals list current hashes', async () => {
   await scenario(async ({ f, hashes, edit, approve }) => {
     const approved = hashes();
     f.artifact('p.plan.md', 'B');
@@ -405,7 +411,7 @@ test('integrate verification records validate outcomes and cycle identity', asyn
   const f = sessionFixture({ memory: true });
   try {
     let n = 0;
-    const add = (kind: string, data: object) =>
+    const add = (kind: string, data: JsonObject) =>
       appendRecord(f.session, { kind, data, by: 'orchestrator', key: 'verification-' + n++ }, f.deps);
     const valid = {
       phase: 'verification',
@@ -426,16 +432,18 @@ test('integrate verification records validate outcomes and cycle identity', asyn
       { report: undefined },
       { open: ['bad'] },
       { cycle: undefined },
-    ])
+    ]) {
       await assert.rejects(add('integrate', { ...valid, ...change }), { reason: 'invalid-record' });
+    }
     await assert.rejects(add('integrate', { ...valid, outcome: 'no-op', open: ['1:V1'] }), {
       reason: 'invalid-record',
     });
     await assert.rejects(add('integrate', { ...valid, outcome: 'partial', report: undefined }), {
       reason: 'invalid-record',
     });
-    for (const cycle of [1, 2])
+    for (const cycle of [1, 2]) {
       await add('ruling', { subject: `verification:${cycle}:V1`, ruling: 'accepted', rationale: 'valid' });
+    }
     await assert.rejects(add('ruling', { subject: 'verification:1:V1', ruling: 'unknown', rationale: 'invalid' }), {
       reason: 'invalid-record',
     });

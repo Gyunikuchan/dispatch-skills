@@ -1,15 +1,16 @@
 import path from 'node:path';
 import { validSessionId } from '../session.ts';
 import { count, note, readErrorReason, readTranscript, row, stageAt } from './read.ts';
-import {
-  type CopilotEvidence,
-  type HostNotes,
-  type HostRole,
-  type HostUsageAdapter,
-  type HostUsageFs,
-  type HostUsageQuery,
-  type HostUsageResult,
-  type UsageRow,
+import type { Row } from './read.ts';
+import type {
+  CopilotEvidence,
+  HostNotes,
+  HostRole,
+  HostUsageAdapter,
+  HostUsageFs,
+  HostUsageQuery,
+  HostUsageResult,
+  UsageRow,
 } from './rows.ts';
 
 type Link = { parent?: string };
@@ -17,16 +18,18 @@ type Receipt = {
   atMs: number;
   actor?: string;
   actorSupplied: boolean;
-  usage: Record<string, unknown>;
+  usage: Row;
   signature: string;
   conflict?: true;
 };
 const identity = (v: unknown): string | undefined =>
   typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,256}$/.test(v) ? v : undefined;
 const receiptId = (v: unknown): string | undefined =>
-  typeof v === 'string' && v.length > 0 && Buffer.byteLength(v) <= 1024 && /^[\x21-\x7e]+$/.test(v) ? v : undefined;
+  typeof v === 'string' && v.length > 0 && Buffer.byteLength(v) <= 1024 && /^[\u0021-\u007e]+$/.test(v) ? v : undefined;
 const configuration = (v: unknown): string | undefined =>
   typeof v === 'string' && v.length <= 256 && !/[\s`|<>]/.test(v) ? v : undefined;
+
+const TOTAL_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite', 'reasoning'] as const;
 
 export const copilot: HostUsageAdapter = {
   sessionEnv: ['COPILOT_AGENT_SESSION_ID', 'COPILOT_CLI_SESSION_ID'],
@@ -38,17 +41,22 @@ export function collectCopilotUsage(
   fs: HostUsageFs,
   options: { rootRole?: 'host' | 'delegate' } = {},
 ): HostUsageResult {
-  if (!validSessionId(query.sessionId)) return { rows: [], unavailable: 'invalid host id' };
+  if (!validSessionId(query.sessionId)) {
+    return { rows: [], unavailable: 'invalid host id' };
+  }
   const file = path.join(query.home, '.copilot', 'session-state', query.sessionId, 'events.jsonl');
   const notes: HostNotes = {};
   let text: string | undefined;
   try {
-    if (!fs.stat(file)) return { rows: [], unavailable: 'host id file missing' };
+    if (!fs.stat(file)) {
+      return { rows: [], unavailable: 'host id file missing' };
+    }
     const read = readTranscript(fs, file, query.budget);
-    if (read.stop)
+    if (read.stop) {
       return read.stop === 'budget'
         ? { rows: [], notes: { host: { 'read budget reached': 1 } } }
         : { rows: [], unavailable: 'transcript over size cap' };
+    }
     text = read.text;
   } catch (error) {
     return { rows: [], unavailable: readErrorReason(error) };
@@ -60,21 +68,26 @@ export function collectCopilotUsage(
   const conflicting = new Set<string>();
   const rootRole = options.rootRole ?? 'host';
   for (const line of (text ?? '').split('\n')) {
-    if (!line.trim()) continue;
-    // Parse only telemetry/lifecycle lines; conversation fields never become retained facts.
-    if (!/"(?:session\.usage_record|assistant\.usage|subagent\.started)"/.test(line)) {
-      if (!/"type"\s*:\s*"[^"]+"/.test(line) || /"type"\s*:\s*"[^"]*usage[^"]*"/.test(line))
-        note(notes, 'host', 'unparsed lines');
+    if (!line.trim()) {
       continue;
     }
-    let event: Record<string, unknown> | null;
+    // Parse only telemetry/lifecycle lines; conversation fields never become retained facts.
+    if (!/"(?:session\.usage_record|assistant\.usage|subagent\.started)"/.test(line)) {
+      if (!/"type"\s*:\s*"[^"]+"/.test(line) || /"type"\s*:\s*"[^"]*usage[^"]*"/.test(line)) {
+        note(notes, 'host', 'unparsed lines');
+      }
+      continue;
+    }
+    let event: Row | null;
     try {
       event = row(JSON.parse(line));
     } catch {
       note(notes, 'host', 'unparsed lines');
       continue;
     }
-    if (!event) continue;
+    if (!event) {
+      continue;
+    }
     const data = row(event['data']);
     if (event['type'] === 'subagent.started' && data) {
       const actor = identity(event['agentId']);
@@ -89,7 +102,9 @@ export function collectCopilotUsage(
         continue;
       }
       const link: Link = parent ? { parent } : {};
-      if (links.has(actor) && JSON.stringify(links.get(actor)) !== JSON.stringify(link)) conflicting.add(actor);
+      if (links.has(actor) && JSON.stringify(links.get(actor)) !== JSON.stringify(link)) {
+        conflicting.add(actor);
+      }
       links.set(actor, link);
       continue;
     }
@@ -107,7 +122,7 @@ export function collectCopilotUsage(
     const source = identity(accounting?.['sourceSessionId']),
       id = receiptId(accounting?.['usageId']),
       sequence = accounting?.['sequence'];
-    const atMs = typeof event['timestamp'] === 'string' ? Date.parse(event['timestamp']) : NaN;
+    const atMs = typeof event['timestamp'] === 'string' ? Date.parse(event['timestamp']) : Number.NaN;
     if (!source || !id || !count(sequence) || !Number.isFinite(atMs)) {
       note(notes, 'host', 'unparsed lines');
       continue;
@@ -134,10 +149,13 @@ export function collectCopilotUsage(
     const prior = receipts.get(key);
     // Receipt identity precedes window filtering, including later-timestamp replays.
     if (prior) {
-      if (prior.signature !== signature) prior.conflict = true;
-      else prior.atMs = Math.min(prior.atMs, atMs);
+      if (prior.signature !== signature) {
+        prior.conflict = true;
+      } else {
+        prior.atMs = Math.min(prior.atMs, atMs);
+      }
     } else {
-      const receipt: Receipt = { atMs, ...(actor ? { actor } : {}), actorSupplied, usage, signature };
+      const receipt: Receipt = { atMs, ...(actor && { actor }), actorSupplied, usage, signature };
       const usageIdentity = JSON.stringify([source, id]);
       const sequenceIdentity = JSON.stringify([source, sequence]);
       const conflicts = new Set(
@@ -147,28 +165,37 @@ export function collectCopilotUsage(
       );
       for (const conflictKey of conflicts) {
         const conflict = receipts.get(conflictKey);
-        if (conflict) conflict.conflict = true;
+        if (conflict) {
+          conflict.conflict = true;
+        }
         receipt.conflict = true;
       }
-      if (!sourceUsageIds.has(usageIdentity)) sourceUsageIds.set(usageIdentity, key);
-      if (!sourceSequences.has(sequenceIdentity)) sourceSequences.set(sequenceIdentity, key);
+      if (!sourceUsageIds.has(usageIdentity)) {
+        sourceUsageIds.set(usageIdentity, key);
+      }
+      if (!sourceSequences.has(sequenceIdentity)) {
+        sourceSequences.set(sequenceIdentity, key);
+      }
       receipts.set(key, receipt);
     }
   }
   type Lineage = { depth?: number; parent?: string };
   const lineageCache = new Map<string, Lineage>([[query.sessionId, { depth: 0 }]]);
   const lineage = (actor: string): Lineage => {
-    const trail: { actor: string; parent: string }[] = [];
+    const trail: Array<{ actor: string; parent: string }> = [];
     const seen = new Set<string>();
     let current = actor,
       result: Lineage = {};
     while (true) {
-      if (lineageCache.has(current)) {
-        result = lineageCache.get(current)!;
+      const cached = lineageCache.get(current);
+      if (cached) {
+        result = cached;
         break;
       }
       const link = links.get(current);
-      if (seen.has(current) || conflicting.has(current) || !link) break;
+      if (seen.has(current) || conflicting.has(current) || !link) {
+        break;
+      }
       seen.add(current);
       if (!link.parent) {
         result = { depth: 1, parent: query.sessionId };
@@ -189,7 +216,9 @@ export function collectCopilotUsage(
   const tokenLimited = new Set<HostRole>();
   const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
   for (const receipt of receipts.values()) {
-    if (receipt.atMs < query.startMs || receipt.atMs > query.endMs) continue;
+    if (receipt.atMs < query.startMs || receipt.atMs > query.endMs) {
+      continue;
+    }
     const actor = receipt.actor;
     const role = !receipt.actorSupplied || actor === query.sessionId ? rootRole : 'subagent';
     const noteRole: HostRole = role === 'delegate' ? 'host' : role;
@@ -220,23 +249,25 @@ export function collectCopilotUsage(
     const counters = {
       input: input - read - write,
       output,
-      ...(u['cacheReadTokens'] === undefined ? {} : { cacheRead: read }),
-      ...(u['cacheWriteTokens'] === undefined ? {} : { cacheWrite: write }),
-      ...(u['reasoningTokens'] === undefined ? {} : { reasoning }),
+      ...(!(u['cacheReadTokens'] === undefined) && { cacheRead: read }),
+      ...(!(u['cacheWriteTokens'] === undefined) && { cacheWrite: write }),
+      ...(!(u['reasoningTokens'] === undefined) && { reasoning }),
     };
     if (
-      Object.keys(totals).some(
-        (k) => !Number.isSafeInteger(totals[k as keyof typeof totals] + (counters[k as keyof typeof counters] ?? 0)),
-      ) ||
+      TOTAL_KEYS.some((k) => !Number.isSafeInteger(totals[k] + (counters[k] ?? 0))) ||
       !Number.isSafeInteger(input + output) ||
       !Number.isSafeInteger(totals.input + totals.cacheRead + totals.cacheWrite + totals.output + input + output)
     ) {
       note(notes, noteRole, 'unparsed lines');
       continue;
     }
-    for (const k of Object.keys(totals) as (keyof typeof totals)[]) totals[k] += counters[k] ?? 0;
+    for (const k of TOTAL_KEYS) {
+      totals[k] += counters[k] ?? 0;
+    }
     const graph = role === 'subagent' ? (actor ? lineage(actor) : {}) : { depth: 0 };
-    if (graph.depth === undefined) note(notes, 'subagent', 'unverified candidates');
+    if (graph.depth === undefined) {
+      note(notes, 'subagent', 'unverified candidates');
+    }
     const nano = row(u['copilotUsage'])?.['totalNanoAiu'];
     const status = configuration(u['aiCreditsStatus']);
     const multiplier = u['cost'];
@@ -244,9 +275,9 @@ export function collectCopilotUsage(
     const billing: CopilotEvidence['billing'] = {
       coverage:
         count(nano) && status === 'complete' && validMultiplier ? 'complete' : count(nano) ? 'partial' : 'unknown',
-      ...(count(nano) ? { totalNanoAiu: nano } : {}),
-      ...(status ? { statuses: [status] } : {}),
-      ...(validMultiplier ? { multipliers: [multiplier] } : {}),
+      ...(count(nano) && { totalNanoAiu: nano }),
+      ...(status && { statuses: [status] }),
+      ...(validMultiplier && { multipliers: [multiplier] }),
     };
     const model = configuration(u['model']) ?? '';
     const effort = configuration(u['reasoningEffort']) ?? null;
@@ -260,7 +291,7 @@ export function collectCopilotUsage(
       reasoningInOutput: true,
       turns: 1,
       ...(actor ? { responseActor: actor } : !receipt.actorSupplied ? { responseActor: query.sessionId } : {}),
-      ...(graph.parent ? { parentActor: graph.parent } : {}),
+      ...(graph.parent && { parentActor: graph.parent }),
       copilot: {
         tokenCoverage: model ? 'complete' : 'partial',
         lineageCoverage: graph.depth === undefined ? 'unknown' : 'complete',
@@ -271,18 +302,22 @@ export function collectCopilotUsage(
     };
     rows.push(r);
   }
-  for (const r of rows)
+  for (const r of rows) {
     if (
-      notes[r.role === 'subagent' ? 'subagent' : 'host']?.['unparsed lines'] ||
-      tokenLimited.has(r.role === 'subagent' ? 'subagent' : 'host')
+      r.copilot &&
+      (notes[r.role === 'subagent' ? 'subagent' : 'host']?.['unparsed lines'] ||
+        tokenLimited.has(r.role === 'subagent' ? 'subagent' : 'host'))
     ) {
-      r.copilot!.tokenCoverage = 'partial';
-      if (r.copilot!.billing.coverage === 'complete') r.copilot!.billing.coverage = 'partial';
+      r.copilot.tokenCoverage = 'partial';
+      if (r.copilot.billing.coverage === 'complete') {
+        r.copilot.billing.coverage = 'partial';
+      }
     }
+  }
   return {
     rows,
-    ...(query.collectResponses ? { response: { basis: 'copilot-usage-record' as const } } : {}),
-    ...(rows.length ? {} : { unavailable: 'no usage records' as const }),
-    ...(Object.keys(notes).length ? { notes } : {}),
+    ...(query.collectResponses && { response: { basis: 'copilot-usage-record' as const } }),
+    ...(!rows.length && { unavailable: 'no usage records' as const }),
+    ...(Object.keys(notes).length && { notes }),
   };
 }

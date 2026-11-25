@@ -8,23 +8,25 @@ const REQS =
   '### REQ-1 — Lint specs\n- Acceptance: lint runs.\n\n### REQ-2 — Name IDs\nSee SC1 and T2 in the plan.\n- Acceptance: IDs parse.\n';
 const DECS = '### DEC-1 — Format (user)\n- Choice: hybrid\n';
 
-function spec(parts: Partial<Record<string, string | null>> = {}, order?: readonly string[]): string {
-  const bodies: Record<string, string | null> = {
-    'At a Glance': '- Specs explain the work.',
-    'Intent & Problem': 'Why.',
-    Background: 'Facts.',
-    Requirements: REQS,
-    'Non-goals': '- none',
-    Constraints: '- portable',
-    Decisions: DECS,
-    'Discussion Record': '- agreed',
-    'Open Questions': '- none',
-    ...parts,
-  };
-  const headings = order ?? Object.keys(bodies);
+function spec(parts: Partial<Record<string, string | null>> = {}, order?: ReadonlyArray<string>): string {
+  const bodies = new Map<string, string | null>(
+    Object.entries({
+      'At a Glance': '- Specs explain the work.',
+      'Intent & Problem': 'Why.',
+      Background: 'Facts.',
+      Requirements: REQS,
+      'Non-goals': '- none',
+      Constraints: '- portable',
+      Decisions: DECS,
+      'Discussion Record': '- agreed',
+      'Open Questions': '- none',
+      ...parts,
+    }),
+  );
+  const headings = order ?? [...bodies.keys()];
   return `# Spec\n\n> **Status:** draft\n\n${headings
-    .filter((h) => bodies[h] !== null)
-    .map((h) => section(h, bodies[h]!))
+    .filter((h) => bodies.get(h) !== null && bodies.get(h) !== undefined)
+    .map((h) => section(h, bodies.get(h) ?? ''))
     .join('\n')}`;
 }
 
@@ -91,9 +93,10 @@ test('spec lint reports invalid IDs, missing acceptance, and malformed headings 
   const source = `${spec()}\n## Requirements\n### T9 — Shadow\n- Acceptance: hidden.\n\n### REQ-3 — Unchecked\nNo check.\n`;
   const result = parseSpec(source);
   assert.ok(!result.ok);
-  const found: string[] = [...result.defects, ...result.warnings].map((d) => d.code);
-  for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance'])
+  const found: Array<string> = [...result.defects, ...result.warnings].map((d) => d.code);
+  for (const code of ['duplicate-section', 'colliding-id', 'missing-acceptance']) {
     assert.ok(found.includes(code), `${code} in ${found.join(',')}`);
+  }
   assert.ok(result.warnings.some((d) => d.code === 'missing-acceptance' && d.message.startsWith('REQ-3 ')));
 
   const decSource = `${spec()}\n## Decisions\n### Decision two\n- Choice: x\n`;

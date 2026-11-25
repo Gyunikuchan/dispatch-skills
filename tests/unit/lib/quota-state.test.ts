@@ -24,7 +24,7 @@ function setup() {
     now: new Date('2026-10-19T00:00:00Z'),
   }).path;
   const options = { sessionDir, repositoryRoot: repo, bucketWidth: H };
-  const capture = (keys: QuotaKey[] = [key], clock = now) => {
+  const capture = (keys: Array<QuotaKey> = [key], clock = now) => {
     const state = readQuotaState(options, keys, clock);
     return { ...state, snapshot: quotaSnapshot(keys, state.generations, state.observations, clock) };
   };
@@ -66,7 +66,9 @@ test('reprobe race: Windows can replace the generation after a prolonged sharing
   renameRetrying('pending.json', 'generation.json', {
     platform: 'win32',
     rename() {
-      if (waited < 3200) throw sharingViolation;
+      if (waited < 3200) {
+        throw sharingViolation;
+      }
       generation = 'new';
     },
   });
@@ -77,8 +79,9 @@ test('old bucket volume cannot hide valid current and previous bucket evidence',
   const f = setup();
   try {
     const generation = f.capture().generations[0]!.generation;
-    for (let bucket = 1; bucket <= 10; bucket++)
+    for (let bucket = 1; bucket <= 10; bucket++) {
       assert.equal(publishQuotaFailure(f.options, key, generation, bucket * H).published, true);
+    }
     const at = 100 * H - 1;
     publishQuotaFailure(f.options, key, generation, at);
     publishQuotaFailure(f.options, key, generation, 100 * H);
@@ -146,7 +149,9 @@ test('linked state and records cannot redirect reads or writes', () => {
                 ? path.join(f.quotaDir(), 'generation.json')
                 : path.join(f.quotaDir(), marker.generation + '.' + Math.floor(now / H) + '.json');
       const isFile = locus === 'generation' || locus === 'observation';
-      if (fs.existsSync(target)) fs.rmSync(target, { recursive: !isFile });
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: !isFile });
+      }
       fs.symlinkSync(
         isFile ? sentinel : outside,
         target,
@@ -156,7 +161,9 @@ test('linked state and records cannot redirect reads or writes', () => {
       assert.equal(state.snapshot.decisions[0]!.skipped, false, locus);
       assert.equal(state.warnings.length, 1, locus);
       assert.equal(publishQuotaFailure(f.options, key, marker.generation, now).published, false, locus);
-      if (locus !== 'observation') assert.throws(() => reprobeQuota(f.options, key), locus);
+      if (locus !== 'observation') {
+        assert.throws(() => reprobeQuota(f.options, key), locus);
+      }
       assert.equal(fs.readFileSync(sentinel, 'utf8'), 'intact');
       assert.deepEqual(fs.readdirSync(outside), ['sentinel']);
     } finally {

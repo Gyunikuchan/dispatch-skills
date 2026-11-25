@@ -11,9 +11,9 @@ export type { PlatformEnv } from '../lib/platform.ts';
 
 export type ProviderId = ProviderKey;
 export type ModeId = 'cli' | 'desktop' | 'vscode';
-export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
+export const MODE_IDS: ReadonlyArray<ModeId> = ['cli', 'desktop', 'vscode'];
 
-type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
+type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => ReadonlyArray<string> };
 
 export type UsageBaseline = 'cumulative' | 'none';
 
@@ -41,7 +41,7 @@ export type DelegateRequest = {
   targetSlot?: string;
   timeoutMs: number;
   outputCapBytes: number;
-  attachments: readonly string[];
+  attachments: ReadonlyArray<string>;
   /** Slot log (stdout stream); the spill brief is written beside it. */
   logPath: string;
   /** Spill target when the prompt cannot ride on argv. */
@@ -54,7 +54,7 @@ export type DelegateRequest = {
   readOnlyBestEffort?: boolean;
   configSelectors?: Readonly<Record<string, string>>;
   /** Host read-command prefixes from config; providers with command allowlists permit them. */
-  readCommands?: readonly string[];
+  readCommands?: ReadonlyArray<string>;
 };
 
 /** What `argv` receives: the request plus the runner-prepared prompt and resolved binary. */
@@ -70,7 +70,7 @@ export type LaunchRequest = DelegateRequest & {
 };
 
 export type Launch = {
-  argv: readonly string[];
+  argv: ReadonlyArray<string>;
   stdin: string | null;
   env: Readonly<Record<string, string>>;
   cwd: string;
@@ -120,17 +120,17 @@ export type Invocation = {
   endMs?: number;
   outcome: string;
   usage?: DiagnosticUsage;
-  responses?: DelegateResponse[];
-  coverage?: CoverageReason[];
+  responses?: Array<DelegateResponse>;
+  coverage?: Array<CoverageReason>;
   usageBaseline?: UsageBaseline;
   usageWindowEndMs?: number;
-  lifecycleSteps?: LifecycleStep[];
+  lifecycleSteps?: Array<LifecycleStep>;
   /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true;
   /** Set on the wrap-up resume launch. */ wrapUp?: true;
 };
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
-export type RunResult = { outcome: RunOutcome; invocations: Invocation[] };
+export type RunResult = { outcome: RunOutcome; invocations: Array<Invocation> };
 
 export type Prelaunch =
   | { kind: 'launch'; env: Readonly<Record<string, string>>; release: () => void | Promise<void> }
@@ -138,14 +138,14 @@ export type Prelaunch =
 
 export type PreparePorts = {
   /** GET `<endpoint>/models`: model ids, or null when the server is offline. */
-  fetchModels(endpoint: string): Promise<readonly string[] | null>;
+  fetchModels(endpoint: string): Promise<ReadonlyArray<string> | null>;
   /** Acquires the local GPU concurrency lock; resolves to its release. */
   acquireGpuLock(): Promise<() => void | Promise<void>>;
 };
 
 type SandboxSpec = {
   /** Flags `argv` adds only when `sandbox: true`. */
-  flags: readonly string[];
+  flags: ReadonlyArray<string>;
   /** Output signature meaning the sandbox did not take effect. */
   inactive: RegExp;
   supported(env: PlatformEnv): boolean;
@@ -157,7 +157,7 @@ export type ProviderUsageContext = {
   platform: PlatformEnv;
   env: Readonly<Record<string, string | undefined>>;
   appDataDir?: string;
-  readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null;
+  readSqliteGenMetadata?: (dbPath: string) => ReadonlyArray<Uint8Array> | null;
   /** Epoch ms immediately before the launch and after its teardown. */
   launchStartMs?: number;
   launchEndMs?: number;
@@ -171,9 +171,9 @@ export type ProviderUsageContext = {
 
 export type ProviderSpec = {
   id: ProviderId;
-  modes: readonly ModeSpec[];
+  modes: ReadonlyArray<ModeSpec>;
   /** Read-only controls `argv` always includes. */
-  readOnlyFlags: readonly string[];
+  readOnlyFlags: ReadonlyArray<string>;
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
   /** Process-tree ownership requires bounded settlement and optional lifecycle evidence. */
@@ -205,7 +205,7 @@ export type ProviderSpec = {
   /** Host platform whose native subagents can serve this provider's targets. */
   native?: ProviderId;
   /** Classes that advance to the next mode (spec §6.4). */
-  modeCascadeOn: readonly FailureClass[];
+  modeCascadeOn: ReadonlyArray<FailureClass>;
   resumeCommand(id: string): string;
   /** True when argv sets `--session-id <sessionPreset>` on a fresh launch. */
   presetsSession?: true;

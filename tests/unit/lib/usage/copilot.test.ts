@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { JsonObject } from '../../../../skills/dispatch/scripts/lib/config.ts';
 import test from 'node:test';
 import { readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
 import { collectCopilotUsage } from '../../../../skills/dispatch/scripts/lib/usage/copilot.ts';
@@ -70,10 +71,10 @@ test('Copilot receipts preserve canonical counters and verified or unknown linea
   assert.ok(!JSON.stringify(result).includes('accounting'));
 });
 
-const receipt = (sequence: number, over: Record<string, unknown> = {}, actor?: string) => ({
+const receipt = (sequence: number, over: JsonObject = {}, actor?: string) => ({
   type: 'session.usage_record',
   timestamp: new Date(1000 + sequence).toISOString(),
-  ...(actor ? { agentId: actor } : {}),
+  ...(actor && { agentId: actor }),
   data: {
     usage: {
       accounting: { sourceSessionId: 'accounting', usageId: `receipt-${sequence}`, sequence },
@@ -111,12 +112,13 @@ test('Copilot rejects corrupt receipts but retains measured partial tokens and b
   assert.ok(result.notes?.host?.['unverified candidates']);
 });
 
+const start = (actor: string, task: string, parent: string) => ({
+  type: 'subagent.started',
+  agentId: actor,
+  data: { toolCallId: task, parentId: parent },
+});
+
 test('Copilot orphan, cyclic and conflicting links never become root work', () => {
-  const start = (actor: string, task: string, parent: string) => ({
-    type: 'subagent.started',
-    agentId: actor,
-    data: { toolCallId: task, parentId: parent },
-  });
   const result = collectCopilotUsage(
     query,
     memoryFs({
@@ -224,14 +226,15 @@ test('Copilot opaque nested accounting receipts preserve exact bounded dedupe id
   assert.equal(resumed.rows.length, 0);
 });
 
+const accounted = (timestampSequence: number, sequence: number, usageId: string) =>
+  receipt(timestampSequence, {
+    accounting: { sourceSessionId: 'source', sequence, usageId },
+    copilotUsage: { totalNanoAiu: 50 },
+    aiCreditsStatus: 'complete',
+    cost: 2,
+  });
+
 test('Copilot conflicting sequences for one source receipt remain unmeasured', () => {
-  const accounted = (timestampSequence: number, sequence: number, usageId: string) =>
-    receipt(timestampSequence, {
-      accounting: { sourceSessionId: 'source', sequence, usageId },
-      copilotUsage: { totalNanoAiu: 50 },
-      aiCreditsStatus: 'complete',
-      cost: 2,
-    });
   const result = collectCopilotUsage(
     query,
     memoryFs({
@@ -251,13 +254,6 @@ test('Copilot conflicting sequences for one source receipt remain unmeasured', (
 });
 
 test('Copilot conflicting usage IDs for one source sequence remain unmeasured', () => {
-  const accounted = (timestampSequence: number, sequence: number, usageId: string) =>
-    receipt(timestampSequence, {
-      accounting: { sourceSessionId: 'source', sequence, usageId },
-      copilotUsage: { totalNanoAiu: 50 },
-      aiCreditsStatus: 'complete',
-      cost: 2,
-    });
   const result = collectCopilotUsage(
     query,
     memoryFs({
@@ -278,7 +274,7 @@ test('Copilot conflicting usage IDs for one source sequence remain unmeasured', 
 
 test('Copilot malformed envelope actors retain unnamed partial subagent usage', () => {
   const root = receipt(1);
-  const malformedNumber = { ...receipt(2), agentId: 424242 };
+  const malformedNumber = { ...receipt(2), agentId: 424_242 };
   const malformedString = { ...receipt(3), agentId: 'bad actor' };
   const transcript = lines(root, malformedNumber, malformedString);
   const file = '/home/.copilot/session-state/host/events.jsonl';

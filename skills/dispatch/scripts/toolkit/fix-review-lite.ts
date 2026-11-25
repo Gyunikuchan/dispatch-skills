@@ -13,7 +13,8 @@ import {
 import { artifactHash, artifactKind } from './artifacts.ts';
 import { reviewId } from './confirmations.ts';
 import { DEFAULT_RESEARCH_REPLY_LIMIT } from './domain/context.ts';
-import { addedCitations, consumerSearchText, safePathspec, type Citation } from './domain/fix-review-lite.ts';
+import { addedCitations, consumerSearchText, safePathspec } from './domain/fix-review-lite.ts';
+import type { Citation } from './domain/fix-review-lite.ts';
 import { governedDesignText } from './domain/design.ts';
 import { governedPlanText } from './domain/plan.ts';
 import { qualityCriteria } from './domain/prompt.ts';
@@ -25,13 +26,19 @@ import { safeRepoPath, within } from './lint.ts';
 import { clipBytes, ToolError } from './output.ts';
 import { line } from './review-findings.ts';
 import { findSensitiveMatch } from '../providers/runner.ts';
+import { isRecord } from '../lib/config.ts';
+import { parseJson } from '../lib/integrity.ts';
+import type { JsonObject } from '../lib/integrity.ts';
+import { present } from './narrow.ts';
 
-type Round = { number: number; dir: string; metadata: Record<string, any>; findings: Record<string, any>[] };
+type Round = { number: number; dir: string; metadata: JsonObject; findings: Array<JsonObject> };
+
+const isSeverity = (value: string): value is Severity => value in RANK;
 
 const toPosix = (file: string): string => file.split(path.sep).join('/');
 // Reviewer and path text must not add placeholders or relative links, which assertFilled refuses.
 const safeText = (value: string): string =>
-  value.replace(/\{\{/g, '{ {').replace(/\}\}/g, '} }').replace(/\]\(/g, '] (');
+  value.replaceAll('{{', '{ {').replaceAll('}}', '} }').replaceAll('](', '] (');
 const canonical = (file: string): string => {
   try {
     return fs.realpathSync.native(file);
@@ -53,10 +60,11 @@ const readText = (file: string): string | null => {
     return null;
   }
 };
-const readJson = (file: string): Record<string, any> | null => {
+const readJson = (file: string): JsonObject | null => {
   const text = readText(file);
   try {
-    return text === null ? null : (JSON.parse(text) as Record<string, any>);
+    const parsed = text === null ? null : parseJson(text);
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -67,31 +75,41 @@ const span = (citation: Citation): string =>
     : citation.start === citation.end
       ? `${citation.path}:${citation.start}`
       : `${citation.path}:${citation.start}-${citation.end}`;
-const list = (items: readonly string[]): string => (items.length ? items.join('\n') : '- None.');
+const list = (items: ReadonlyArray<string>): string => (items.length ? items.join('\n') : '- None.');
 
 // Completed rounds of one review, newest first; a round without findings.json is still running.
-function completedRounds(reviewDir: string): Round[] {
-  if (!fs.existsSync(reviewDir)) return [];
-  const rounds: Round[] = [];
+function completedRounds(reviewDir: string): Array<Round> {
+  if (!fs.existsSync(reviewDir)) {
+    return [];
+  }
+  const rounds: Array<Round> = [];
   for (const name of fs.readdirSync(reviewDir)) {
     const number = reviewRoundNumber(name);
-    if (number === undefined) continue;
+    if (number === undefined) {
+      continue;
+    }
     const dir = path.join(reviewDir, name);
     const metadata = readJson(reviewRoundFile(dir));
     const findings = readJson(reviewFindingsFile(dir))?.['findings'];
-    if (!metadata || !Array.isArray(findings)) continue;
-    rounds.push({ number, dir, metadata, findings });
+    if (!metadata || !Array.isArray(findings)) {
+      continue;
+    }
+    rounds.push({ number, dir, metadata, findings: findings.filter(isRecord) });
   }
   return rounds.sort((a, b) => b.number - a.number);
 }
 
 export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<HandlerResult> {
-  if (ctx.args.length !== 1) throw new ToolError(1, 'invalid-input', 'One plan or design artifact path is required');
+  const [target] = ctx.args;
+  if (ctx.args.length !== 1 || target === undefined) {
+    throw new ToolError(1, 'invalid-input', 'One plan or design artifact path is required');
+  }
   const root = canonical(ctx.manifest.repositoryRoot);
-  const artifact = path.resolve(ctx.manifest.repositoryRoot, ctx.args[0]!);
+  const artifact = path.resolve(ctx.manifest.repositoryRoot, target);
   const kind = artifactKind(artifact);
-  if (kind !== 'plan' && kind !== 'design')
+  if (kind !== 'plan' && kind !== 'design') {
     throw new ToolError(1, 'invalid-input', 'fix-review-lite reviews a plan or design artifact only');
+  }
 
   // NOTE: selection by recorded artifactPath, not the bind, so a same-basename artifact or an unbound session never picks the wrong round.
   const review = reviewId(kind, artifact);
@@ -102,46 +120,61 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
       typeof candidate.metadata['artifactPath'] === 'string' &&
       canonical(candidate.metadata['artifactPath']) === artifactReal,
   );
-  if (!round) throw new ToolError(4, 'nothing-to-review', 'No completed review round reviewed ' + artifact);
+  if (!round) {
+    throw new ToolError(4, 'nothing-to-review', 'No completed review round reviewed ' + artifact);
+  }
 
   const fold = foldLedger(ctx.session);
-  const questions: string[] = [];
+  const questions: Array<string> = [];
   for (const finding of round.findings) {
-    if (typeof finding['id'] !== 'string') continue;
+    const id = finding['id'];
+    if (typeof id !== 'string') {
+      continue;
+    }
     const history = fold.records.filter(
-      (record) => record.kind === 'ruling' && record.data['subject'] === `review:${review}:${finding['id']}`,
+      (record) => record.kind === 'ruling' && record.data['subject'] === `review:${review}:${id}`,
     );
     const ruling = history.at(-1);
-    if (!ruling || ruling.data['ruling'] !== 'accepted') continue;
+    if (!ruling || ruling.data['ruling'] !== 'accepted') {
+      continue;
+    }
     const stored = typeof finding['severity'] === 'string' ? finding['severity'] : 'unknown';
-    const severity = stored in RANK ? effectiveSeverity(finding as { severity: Severity }, history) : stored;
+    const severity = isSeverity(stored) ? effectiveSeverity({ severity: stored }, history) : stored;
     const rationale = typeof ruling.data['rationale'] === 'string' ? ruling.data['rationale'] : '';
     questions.push(
       clipBytes(
         safeText(
-          `- ${line(finding['id'])} ${line(severity)} ${line(finding['locus'])}: ${line(finding['defect'])}` +
+          `- ${line(id)} ${line(severity)} ${line(finding['locus'])}: ${line(finding['defect'])}` +
             ` — required: ${line(finding['requiredChange'])} — ruling: ${line(rationale)}`,
         ),
         400,
       ),
     );
   }
-  if (!questions.length) throw new ToolError(4, 'nothing-to-review', 'No accepted finding in the reviewed round');
+  if (!questions.length) {
+    throw new ToolError(4, 'nothing-to-review', 'No accepted finding in the reviewed round');
+  }
 
-  const specMeta = round.metadata['spec'] as { path?: unknown; hash?: unknown } | undefined;
-  const specPath = specMeta?.path;
-  const specHash = specMeta?.hash;
-  if (typeof specPath !== 'string' || typeof specHash !== 'string')
+  const specMeta = round.metadata['spec'];
+  const specPath = isRecord(specMeta) ? specMeta['path'] : undefined;
+  const specHash = isRecord(specMeta) ? specMeta['hash'] : undefined;
+  if (typeof specPath !== 'string' || typeof specHash !== 'string') {
     throw new ToolError(1, 'invalid-input', 'Round records no spec path and hash');
+  }
   const specText = readText(specPath);
-  if (specText === null) throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);
+  if (specText === null) {
+    throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);
+  }
   const source = readText(artifact);
-  if (source === null) throw new ToolError(1, 'invalid-input', 'Cannot read artifact ' + artifact);
+  if (source === null) {
+    throw new ToolError(1, 'invalid-input', 'Cannot read artifact ' + artifact);
+  }
 
   const snapshot = path.join(round.dir, 'spec.snapshot.md');
   let specLine: string;
-  if (artifactHash('spec', specText) === specHash) specLine = `Governing spec: \`${specPath}\`.`;
-  else {
+  if (artifactHash('spec', specText) === specHash) {
+    specLine = `Governing spec: \`${specPath}\`.`;
+  } else {
     const reviewed = readText(snapshot);
     specLine =
       reviewed !== null && artifactHash('spec', reviewed) === specHash
@@ -168,7 +201,7 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
   const governedFile = base + '.governed.md';
   const diffFile = base + '.diff';
   const inputFile = path.join(reviewDir, `round-${round.number}.input.md`);
-  const written: string[] = [];
+  const written: Array<string> = [];
   try {
     fs.writeFileSync(governedFile, kind === 'plan' ? governedPlanText(source) : governedDesignText(source));
     written.push(governedFile);
@@ -181,41 +214,61 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
       inputFile,
       governedFile,
     ]);
-    if (diff.exit === 0) throw new ToolError(4, 'nothing-to-review', 'No change since the reviewed round input');
+    if (diff.exit === 0) {
+      throw new ToolError(4, 'nothing-to-review', 'No change since the reviewed round input');
+    }
     // --no-index also exits 1 on an unreadable path, so exit 1 needs output.
-    if (diff.exit !== 1 || !diff.stdout) throw new ToolError(2, 'fault', diff.stderr || 'git diff exited ' + diff.exit);
+    if (diff.exit !== 1 || !diff.stdout) {
+      throw new ToolError(2, 'fault', diff.stderr || 'git diff exited ' + diff.exit);
+    }
     fs.writeFileSync(diffFile, diff.stdout);
     written.push(diffFile);
 
     const kept = new Set<string>();
-    const unresolved: string[] = [];
-    const withheld: string[] = [];
+    const unresolved: Array<string> = [];
+    const withheld: Array<string> = [];
     const seen = new Set<string>();
     const unrenderable = new Set<string>();
     const citationReason = (rel: string): string | null => {
       // Names must fit a Markdown list line and pass template validation.
-      if (/[\r\n`]|\{\{|\}\}|\]\(/.test(rel)) return 'unrenderable name';
+      if (/[\r\n`]|\{\{|\}\}|\]\(/.test(rel)) {
+        return 'unrenderable name';
+      }
       const abs = path.resolve(root, rel);
-      if (!safeRepoPath(rel) || !within(root, abs)) return 'outside repository';
-      if (inSessions(rel) && !ownSession(rel)) return 'session';
+      if (!safeRepoPath(rel) || !within(root, abs)) {
+        return 'outside repository';
+      }
+      if (inSessions(rel) && !ownSession(rel)) {
+        return 'session';
+      }
       const real = realpathOrNull(abs);
-      if (real === null) return 'no match';
-      if (!within(root, real)) return 'outside repository';
-      if (!fs.statSync(real, { throwIfNoEntry: false })?.isFile()) return 'not a file';
-      if (findSensitiveMatch(abs, realpathOrNull)) return 'sensitive';
+      if (real === null) {
+        return 'no match';
+      }
+      if (!within(root, real)) {
+        return 'outside repository';
+      }
+      if (!fs.statSync(real, { throwIfNoEntry: false })?.isFile()) {
+        return 'not a file';
+      }
+      if (findSensitiveMatch(abs, realpathOrNull)) {
+        return 'sensitive';
+      }
       return listed.has(rel) ? null : 'not listed';
     };
     for (const citation of addedCitations(diff.stdout)) {
       // NOTE: normalize to the repository-relative POSIX path so `./a.ts:1` and `a.ts:1` share one entry and one check.
       const normalized: Citation = { ...citation, path: path.posix.normalize(citation.path) };
       const key = span(normalized);
-      if (seen.has(key)) continue;
+      if (seen.has(key)) {
+        continue;
+      }
       seen.add(key);
       let reason = citationReason(normalized.path);
       if (reason === 'no match') {
         const matches = [...listed].filter((rel) => rel === normalized.path || rel.endsWith('/' + normalized.path));
         if (matches.length === 1) {
-          const match = matches[0]!;
+          const match = present(matches[0], 'citation match');
           const real = realpathOrNull(path.resolve(root, match));
           if (real !== null && fs.statSync(real, { throwIfNoEntry: false })?.isFile()) {
             normalized.path = match;
@@ -224,27 +277,40 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
         } else if (matches.length > 1) {
           const readable = matches.filter((rel) => citationReason(rel) === null);
           const shown = readable.slice(0, 5);
-          if (readable.length > 5) shown.push(`+${readable.length - 5} more`);
+          if (readable.length > 5) {
+            shown.push(`+${readable.length - 5} more`);
+          }
           unresolved.push(`- \`${normalized.path}\`: several matches${shown.length ? ': ' + shown.join(', ') : ''}`);
           continue;
         }
       }
-      if (reason === null) kept.add('- `' + span(normalized) + '`');
-      else if (reason === 'no match' || reason === 'not a file') unresolved.push(`- \`${normalized.path}\`: ${reason}`);
-      else {
-        const display = normalized.path.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/`/g, '%60');
+      if (reason === null) {
+        kept.add('- `' + span(normalized) + '`');
+      } else if (reason === 'no match' || reason === 'not a file') {
+        unresolved.push(`- \`${normalized.path}\`: ${reason}`);
+      } else {
+        const display = normalized.path
+          .replaceAll('\r', String.raw`\r`)
+          .replaceAll('\n', String.raw`\n`)
+          .replaceAll('`', '%60');
         withheld.push(safeText(`- \`${display}\`: ${reason}`));
-        if (reason === 'unrenderable name') unrenderable.add(normalized.path);
+        if (reason === 'unrenderable name') {
+          unrenderable.add(normalized.path);
+        }
       }
     }
 
     // Flagged listed paths drop out of the search: sensitive ones and listed ones cited as unrenderable are excludes (glob-rendered when unsafe); an unsafe sensitive one is also withheld.
-    const excludes: string[] = sessionsInside ? [sessionsRootRel] : [];
+    const excludes: Array<string> = sessionsInside ? [sessionsRootRel] : [];
     for (const rel of listing) {
       const sensitive = findSensitiveMatch(path.resolve(root, rel), realpathOrNull);
-      if (inSessions(rel) || !(sensitive || unrenderable.has(rel))) continue;
+      if (inSessions(rel) || !(sensitive || unrenderable.has(rel))) {
+        continue;
+      }
       excludes.push(rel);
-      if (sensitive && !safePathspec(rel)) withheld.push(safeText(`- \`${rel}\`: sensitive`));
+      if (sensitive && !safePathspec(rel)) {
+        withheld.push(safeText(`- \`${rel}\`: sensitive`));
+      }
     }
     const consumerSearch = consumerSearchText(excludes);
 
@@ -271,12 +337,14 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
     const evidence = qualityCriteria(bar, 'explorer', 0, specStage)
       .split('\n')
       .find((text) => text.startsWith('- Evidence:'));
-    if (evidence === undefined) throw new ToolError(2, 'fault', 'Quality bar has no Evidence line');
+    if (evidence === undefined) {
+      throw new ToolError(2, 'fault', 'Quality bar has no Evidence line');
+    }
     const template = fs.readFileSync(
       path.join(ctx.deps.skillRoot, 'references', 'templates', 'fix-review-lite-brief.md'),
       'utf8',
     );
-    const slots: Record<string, string> = {
+    const slots = {
       questions: questions.join('\n'),
       repositoryRoot: safeText(root),
       diffPath: safeText(diffFile),
@@ -322,7 +390,9 @@ export async function renderFixReviewLiteBrief(ctx: HandlerContext): Promise<Han
       postFold: fold,
     };
   } catch (error) {
-    for (const file of written) fs.rmSync(file, { force: true });
+    for (const file of written) {
+      fs.rmSync(file, { force: true });
+    }
     throw error;
   }
 }

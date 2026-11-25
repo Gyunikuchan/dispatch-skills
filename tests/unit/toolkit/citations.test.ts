@@ -14,7 +14,7 @@ function repoReader(files: Record<string, string | null>) {
 }
 
 test('lintCitations validates governed line references', () => {
-  const baseFiles: Record<string, string | null> = {
+  const baseFiles = {
     'src/app.ts': 'line1\nline2\nline3\n',
     'src/empty.ts': '',
     'src/single-nl.ts': '\n',
@@ -131,9 +131,9 @@ test('lintCitations validates governed line references', () => {
     'Missing hyphenated spaced path: `docs/Missing - Guide.md:1`.',
     'Missing extensionless spaced path: `docs/Project Guide:1`.',
   ].join('\n');
-  const removedFiles = { ...baseFiles };
-  delete removedFiles['LICENSE'];
-  delete removedFiles['configure'];
+  const removedFiles = Object.fromEntries(
+    Object.entries(baseFiles).filter(([key]) => key !== 'LICENSE' && key !== 'configure'),
+  );
   const invalidDefects = lintCitations(invalidRefsPlan, 'plan', repoReader(removedFiles));
   assert.deepEqual(
     invalidDefects.map((d) => d.line),

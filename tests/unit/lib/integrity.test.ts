@@ -43,7 +43,7 @@ test('integrity accepts a skill checked out with CRLF line endings against an LF
   assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
 });
 
-const SKILL_FILES: Record<string, string> = {
+const SKILL_FILES = {
   'SKILL.md': '# skill\n\nUse *emphasis* here.\n',
   'scripts/a.ts': 'export {};\n',
   'references/guide.md': 'Use the plan.\n\n| a | b |\n| - | - |\n| c | d |\n',
@@ -61,7 +61,7 @@ function skillWith(files: Record<string, string>): string {
 }
 
 test('integrity drift reports ts whitespace and markdown or json meaning changes', () => {
-  const cases: Array<[file: string, changed: string]> = [
+  const cases: Array<[file: keyof typeof SKILL_FILES, changed: string]> = [
     ['scripts/a.ts', 'export  {};\n'],
     ['references/guide.md', 'Use the plans.\n\n| a | b |\n| - | - |\n| c | d |\n'],
     ['references/data.json', '{"b": 1, "a": [1, 3]}\n'],
@@ -82,7 +82,7 @@ test('integrity drift reports ts whitespace and markdown or json meaning changes
   }
   for (const [file, changed] of cases) {
     const target = path.join(skill, file);
-    const original = SKILL_FILES[file]!;
+    const original = SKILL_FILES[file];
     fs.writeFileSync(target, changed);
     assert.deepEqual(checkIntegrity(skill), { status: 'drift', violations: [file] }, file);
     fs.writeFileSync(target, original);

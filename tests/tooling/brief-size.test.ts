@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const loadBriefSize = () => import('../../scripts/brief-size.ts');
+import { measureBrief, runBriefSize } from '../../scripts/brief-size.ts';
 
 test('brief size reports preserve exact UTF-8 section accounting', async () => {
-  const { measureBrief } = await loadBriefSize();
   const text = [
     '\uFEFFPreamble λ\r\n',
     '## Intro\r\n',
@@ -45,14 +44,15 @@ test('brief size reports preserve exact UTF-8 section accounting', async () => {
 });
 
 test('brief size command reports inputs and errors without writes', async () => {
-  const { runBriefSize } = await loadBriefSize();
-  const reads: string[] = [],
-    stdout: string[] = [],
-    stderr: string[] = [];
+  const reads: Array<string> = [],
+    stdout: Array<string> = [],
+    stderr: Array<string> = [];
   const io = {
     readText(file: string) {
       reads.push(file);
-      if (file === 'missing.md') throw new Error('file unavailable');
+      if (file === 'missing.md') {
+        throw new Error('file unavailable');
+      }
       return file === 'first.md' ? '## First\nα' : 'Preamble';
     },
     writeStdout(text: string) {

@@ -4,9 +4,12 @@
 import type { Level, SlotId } from '../toolkit/types.ts';
 import type { RosterSlot } from '../toolkit/domain/types.ts';
 
-export const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const LEVELS: ReadonlyArray<Level> = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+interface ProviderAliases {
+  readonly [alias: string]: string | undefined;
+}
+const PROVIDER_ALIASES: ProviderAliases = {
   opencode: 'opencode',
   agy: 'agy',
   antigravity: 'agy',
@@ -27,7 +30,7 @@ export const normalizeProvider = (key: string): string => PROVIDER_ALIASES[key.t
 export type LevelMap<T> = Partial<Record<Level, T>>;
 
 /** Exact level, else the nearest defined below, else the lowest defined above. */
-function selectLevel(defined: readonly Level[], level: Level): Level | undefined {
+function selectLevel(defined: ReadonlyArray<Level>, level: Level): Level | undefined {
   const requested = LEVELS.indexOf(level);
   const ordered = [...defined].sort((a, b) => LEVELS.indexOf(a) - LEVELS.indexOf(b));
   return (
@@ -37,7 +40,9 @@ function selectLevel(defined: readonly Level[], level: Level): Level | undefined
 }
 
 export function resolveLevel<T>(map: LevelMap<T> | undefined, level: Level): T | undefined {
-  if (!map) return undefined;
+  if (!map) {
+    return undefined;
+  }
   const chosen = selectLevel(
     LEVELS.filter((item) => map[item] !== undefined),
     level,
@@ -47,8 +52,8 @@ export function resolveLevel<T>(map: LevelMap<T> | undefined, level: Level): T |
 
 // SECTION: Utility subagent
 
-export type SubagentEntry = { model: string | string[]; effort?: string };
-export type ResolvedSubagent = { models: string[]; effort: string | null };
+export type SubagentEntry = { model: string | Array<string>; effort?: string };
+export type ResolvedSubagent = { models: Array<string>; effort: string | null };
 
 export const resolveSubagent = (entry: SubagentEntry): ResolvedSubagent => ({
   models: typeof entry.model === 'string' ? [entry.model] : entry.model,
@@ -71,23 +76,34 @@ export function resolveUtility(utility: Record<string, UtilityEntry>): Record<st
 
 // SECTION: Pins
 
-export type Pins = { kind: 'providers'; keys: readonly string[] } | { kind: 'count'; count: number } | { kind: 'all' };
+export type Pins =
+  | { kind: 'providers'; keys: ReadonlyArray<string> }
+  | { kind: 'count'; count: number }
+  | { kind: 'all' };
 
 /** Parses `(a,b)`, `(3)`, or `(all)`; a count or `all` must stand alone. */
 export function parsePins(text: string): Pins {
   const inner = /^\(\s*(.*?)\s*\)$/.exec(text.trim())?.[1];
-  if (inner === undefined || !inner) throw new Error(`Pins must be (a,b), (<count>), or (all); got ${text}`);
+  if (inner === undefined || !inner) {
+    throw new Error(`Pins must be (a,b), (<count>), or (all); got ${text}`);
+  }
   const items = inner
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
   const special = items.some((item) => /^-?\d+$/.test(item) || item.toLowerCase() === 'all');
   if (special) {
-    if (items.length > 1) throw new Error(`A count or "all" pin must stand alone: ${items.join(', ')}`);
+    if (items.length > 1) {
+      throw new Error(`A count or "all" pin must stand alone: ${items.join(', ')}`);
+    }
     const only = items[0] ?? '';
-    if (only.toLowerCase() === 'all') return { kind: 'all' };
+    if (only.toLowerCase() === 'all') {
+      return { kind: 'all' };
+    }
     const count = Number(only);
-    if (!Number.isSafeInteger(count) || count < 1) throw new Error('A count pin must be a positive integer');
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new Error('A count pin must be a positive integer');
+    }
     return { kind: 'count', count };
   }
   return { kind: 'providers', keys: [...new Set(items.map(normalizeProvider))] };
@@ -95,13 +111,17 @@ export function parsePins(text: string): Pins {
 
 // SECTION: Roster
 
-type TargetEntry = { model?: string | readonly string[]; effort?: string };
+type TargetEntry = { model?: string | ReadonlyArray<string>; effort?: string };
 export type ReadDelegate = {
-  targets?: readonly LevelMap<TargetEntry>[];
+  targets?: ReadonlyArray<LevelMap<TargetEntry>>;
   nativeSubagentsOnly?: boolean;
   sandbox?: boolean;
 };
-export type PhasePolicy = { targets?: LevelMap<number | 'all'>; rounds?: LevelMap<number>; only?: readonly string[] };
+export type PhasePolicy = {
+  targets?: LevelMap<number | 'all'>;
+  rounds?: LevelMap<number>;
+  only?: ReadonlyArray<string>;
+};
 type Overrides = { model?: string; effort?: string };
 export type Orchestrator = { platform: string };
 
@@ -123,59 +143,77 @@ export type Underfill = {
   host: string | null;
   configured: number | 'all';
   resolved: number;
-  excluded: string[];
-  sandboxUnsupported?: string[];
+  excluded: Array<string>;
+  sandboxUnsupported?: Array<string>;
 };
 /** `underfill` is present when native-only providers were excluded, sandbox-unsupported providers were dropped or breadth fell short of a numeric configuration. */
 export type Roster = {
   rounds: number;
-  targets: readonly RosterSlot[];
-  reserves: readonly RosterSlot[];
+  targets: ReadonlyArray<RosterSlot>;
+  reserves: ReadonlyArray<RosterSlot>;
   underfill?: Underfill;
 };
 
 type Candidate = Omit<RosterSlot, 'slot' | 'index' | 'reserve'>;
 
-function candidates(input: RosterInput): Candidate[] {
+function candidates(input: RosterInput): Array<Candidate> {
   const only = input.policy?.only ? new Set(input.policy.only.map(normalizeProvider)) : null;
   return Object.entries(input.readDelegates).flatMap(([key, delegate]) => {
     const provider = normalizeProvider(key);
-    if (only && !only.has(provider)) return [];
+    if (only && !only.has(provider)) {
+      return [];
+    }
     const sandbox = SANDBOX_PROVIDERS.has(provider) ? (delegate.sandbox ?? true) : undefined;
     return (delegate.targets ?? []).map((map): Candidate => {
       const entry = resolveLevel(map, input.level) ?? {};
       const candidate: Candidate = { provider, native: delegate.nativeSubagentsOnly === true };
-      if (entry.model !== undefined) candidate.model = entry.model;
-      if (entry.effort !== undefined) candidate.effort = entry.effort;
-      if (sandbox !== undefined) candidate.sandbox = sandbox;
+      if (entry.model !== undefined) {
+        candidate.model = entry.model;
+      }
+      if (entry.effort !== undefined) {
+        candidate.effort = entry.effort;
+      }
+      if (sandbox !== undefined) {
+        candidate.sandbox = sandbox;
+      }
       return candidate;
     });
   });
 }
 
 /** Alternatives first, then the orchestrator platform; config order preserved. */
-function demote(list: readonly Candidate[], orchestrator: Orchestrator | null): Candidate[] {
-  if (!orchestrator) return [...list];
+function demote(list: ReadonlyArray<Candidate>, orchestrator: Orchestrator | null): Array<Candidate> {
+  if (!orchestrator) {
+    return [...list];
+  }
   const own = (item: Candidate) => item.provider === orchestrator.platform;
   return [...list.filter((item) => !own(item)), ...list.filter(own)];
 }
 
 /** `-m`/`-e` collapse each platform to its first candidate carrying the override. */
-function collapse(list: readonly Candidate[], overrides: Overrides | undefined): Candidate[] {
-  if (overrides?.model === undefined && overrides?.effort === undefined) return [...list];
+function collapse(list: ReadonlyArray<Candidate>, overrides: Overrides | undefined): Array<Candidate> {
+  if (overrides?.model === undefined && overrides?.effort === undefined) {
+    return [...list];
+  }
   const seen = new Set<string>();
   return list.flatMap((item) => {
-    if (seen.has(item.provider)) return [];
+    if (seen.has(item.provider)) {
+      return [];
+    }
     seen.add(item.provider);
     const next: Candidate = { ...item };
-    if (overrides.model !== undefined) next.model = overrides.model;
-    if (overrides.effort !== undefined) next.effort = overrides.effort;
+    if (overrides.model !== undefined) {
+      next.model = overrides.model;
+    }
+    if (overrides.effort !== undefined) {
+      next.effort = overrides.effort;
+    }
     return [next];
   });
 }
 
 /** Positional identity `${provider}[${index}]`, counted per provider across targets then reserves. */
-function identify(targets: readonly Candidate[], reserves: readonly Candidate[]): Roster['targets'][] {
+function identify(targets: ReadonlyArray<Candidate>, reserves: ReadonlyArray<Candidate>): Array<Roster['targets']> {
   const counters = new Map<string, number>();
   const slot =
     (reserve: boolean) =>
@@ -193,11 +231,17 @@ export function nativeFirstRoute(
   readDelegates: Readonly<Record<string, ReadDelegate>>,
   orchestrator: Orchestrator | null,
 ): boolean {
-  if (!orchestrator) return false;
+  if (!orchestrator) {
+    return false;
+  }
   const host = normalizeProvider(orchestrator.platform);
-  if (normalizeProvider(provider) !== host) return false;
+  if (normalizeProvider(provider) !== host) {
+    return false;
+  }
   const delegate = Object.entries(readDelegates).find(([key]) => normalizeProvider(key) === host)?.[1];
-  if (delegate?.nativeSubagentsOnly === true) return false;
+  if (delegate?.nativeSubagentsOnly === true) {
+    return false;
+  }
   return true;
 }
 
@@ -214,7 +258,9 @@ export function resolveRoster(input: RosterInput): Roster {
           ? (resolveLevel(policy.targets, input.level) ?? 0)
           : 1;
   // `targets: 0` disables the phase like `rounds: 0`, unless a pin overrides breadth.
-  if (rounds <= 0 || (!pins && wanted === 0)) return { rounds: 0, targets: [], reserves: [] };
+  if (rounds <= 0 || (!pins && wanted === 0)) {
+    return { rounds: 0, targets: [], reserves: [] };
+  }
 
   const orchestrator = input.orchestrator
     ? { ...input.orchestrator, platform: normalizeProvider(input.orchestrator.platform) }
@@ -225,7 +271,9 @@ export function resolveRoster(input: RosterInput): Roster {
 
   if (pins?.kind === 'providers') {
     const unknown = pins.keys.filter((key) => !usable.some((item) => item.provider === key));
-    if (unknown.length) throw new Error(`Pinned platform not available: ${unknown.join(', ')}`);
+    if (unknown.length) {
+      throw new Error(`Pinned platform not available: ${unknown.join(', ')}`);
+    }
     const pinned = pins.keys.flatMap((key) => usable.filter((item) => item.provider === key));
     const [targets = []] = identify(collapse(pinned, input.overrides), []);
     return { rounds, targets, reserves: [] };
@@ -269,8 +317,8 @@ export function resolveRoster(input: RosterInput): Roster {
           configured: wanted,
           resolved: count,
           excluded,
-          ...(sandboxUnsupported.length ? { sandboxUnsupported } : {}),
+          ...(sandboxUnsupported.length && { sandboxUnsupported }),
         }
       : undefined;
-  return { rounds, targets, reserves, ...(underfill ? { underfill } : {}) };
+  return { rounds, targets, reserves, ...(underfill && { underfill }) };
 }

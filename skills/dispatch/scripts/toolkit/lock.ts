@@ -1,8 +1,11 @@
+import { isRecord } from '../lib/config.ts';
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ToolError } from './output.ts';
 
 type LockOwner = { pid: number; host: string; at: string; tool?: string };
+type BreakerSlot = { file: string; bytes: string | null };
 export type LockDeps = {
   pid: number;
   host: string;
@@ -15,25 +18,27 @@ function read(file: string): string | null {
   try {
     return fs.readFileSync(file, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return null;
+    }
     throw error;
   }
 }
 
+const isLockOwner = (value: unknown): value is LockOwner =>
+  isRecord(value) &&
+  typeof value['pid'] === 'number' &&
+  Number.isSafeInteger(value['pid']) &&
+  value['pid'] > 0 &&
+  typeof value['host'] === 'string' &&
+  !!value['host'].trim() &&
+  typeof value['at'] === 'string' &&
+  !!value['at'].trim();
+
 function owner(bytes: string): LockOwner | null {
   try {
-    const value = JSON.parse(bytes);
-    return value &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      Number.isSafeInteger(value.pid) &&
-      value.pid > 0 &&
-      typeof value.host === 'string' &&
-      value.host.trim() &&
-      typeof value.at === 'string' &&
-      value.at.trim()
-      ? value
-      : null;
+    const value: unknown = JSON.parse(bytes);
+    return isLockOwner(value) ? value : null;
   } catch {
     return null;
   }
@@ -44,19 +49,23 @@ function create(file: string, bytes: string): boolean {
     fs.writeFileSync(file, bytes, { flag: 'wx', mode: 0o600 });
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    if (nodeErrorCode(error) === 'EEXIST') {
+      return false;
+    }
     throw error;
   }
 }
 
 // Breaker slots are `lock.break`, `lock.break.1`, ... A breaker that died mid-break never removes its slot, so contenders
 // skip dead slots instead of deleting them; removing one could displace a live breaker that replaced it.
-function activeBreaker(breaker: string, deps: LockDeps): { file: string; bytes: string | null } {
+function activeBreaker(breaker: string, deps: LockDeps): BreakerSlot {
   for (let n = 0; ; n++) {
     const file = n === 0 ? breaker : breaker + '.' + n;
     const bytes = read(file);
     const dead = bytes === null ? null : owner(bytes);
-    if (dead && dead.host === deps.host && !deps.isAlive(dead.pid)) continue;
+    if (dead && dead.host === deps.host && !deps.isAlive(dead.pid)) {
+      continue;
+    }
     return { file, bytes };
   }
 }
@@ -67,7 +76,7 @@ export async function withLock<T>(
   deps: LockDeps,
   fn: (broken: LockOwner | null) => Promise<T>,
 ): Promise<T> {
-  return withLockFile(path.join(session, '.state', 'lock'), tool, deps, 10000, fn);
+  return withLockFile(path.join(session, '.state', 'lock'), tool, deps, 10_000, fn);
 }
 
 export async function withLockFile<T>(
@@ -86,7 +95,9 @@ export async function withLockFile<T>(
   while (true) {
     const slot = activeBreaker(breaker, deps);
     let held = slot.bytes ?? read(lock);
-    if (slot.bytes === null && held === null && create(lock, ours)) break;
+    if (slot.bytes === null && held === null && create(lock, ours)) {
+      break;
+    }
     if (slot.bytes === null && held !== null) {
       const stale = owner(held);
       if (stale && stale.host === deps.host && !deps.isAlive(stale.pid) && create(slot.file, ours)) {
@@ -99,7 +110,9 @@ export async function withLockFile<T>(
             }
           }
         } finally {
-          if (read(slot.file) === ours) fs.unlinkSync(slot.file);
+          if (read(slot.file) === ours) {
+            fs.unlinkSync(slot.file);
+          }
         }
       }
     }
@@ -120,6 +133,8 @@ export async function withLockFile<T>(
   try {
     return await fn(broken);
   } finally {
-    if (read(lock) === ours) fs.unlinkSync(lock);
+    if (read(lock) === ours) {
+      fs.unlinkSync(lock);
+    }
   }
 }

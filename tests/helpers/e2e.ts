@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+
 import { hashes } from '../../scripts/generate-hashes.ts';
-import { completedLaunch, recordedLaunches, type Scenario } from './stub-provider.ts';
+import { completedLaunch, recordedLaunches } from './stub-provider.ts';
+import type { Scenario } from './stub-provider.ts';
 import { SPEC_SOURCE } from './spec-fixture.ts';
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const ROOT = path.resolve(import.meta.dirname, '../..');
 const STUB = path.resolve(ROOT, 'tests/helpers/stub-provider.ts');
 export const CLEAN = { status: 'CLEAN', findings: [] };
 
@@ -15,14 +16,17 @@ let baseOverlayTemplate: string | null = null;
 
 function getBaseRepoTemplate(): string {
   if (!baseRepoTemplate) {
-    baseRepoTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-repo-'));
+    const created = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-repo-'));
+    baseRepoTemplate = created;
     process.on('exit', () => {
       try {
-        fs.rmSync(baseRepoTemplate!, { recursive: true, force: true });
-      } catch {}
+        fs.rmSync(created, { recursive: true, force: true });
+      } catch {
+        /* NOTE: a held Windows handle leaves it for the OS. */
+      }
     });
-    const git = (...args: string[]) =>
-      execFileSync('git', args, { cwd: baseRepoTemplate!, encoding: 'utf8', windowsHide: true });
+    const git = (...args: Array<string>) =>
+      execFileSync('git', args, { cwd: created, encoding: 'utf8', windowsHide: true });
     git('init', '-q');
     fs.appendFileSync(
       path.join(baseRepoTemplate, '.git/config'),
@@ -40,11 +44,14 @@ function getBaseRepoTemplate(): string {
 
 function getBaseOverlayTemplate(): string {
   if (!baseOverlayTemplate) {
-    baseOverlayTemplate = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-overlay-'));
+    const created = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-base-overlay-'));
+    baseOverlayTemplate = created;
     process.on('exit', () => {
       try {
-        fs.rmSync(baseOverlayTemplate!, { recursive: true, force: true });
-      } catch {}
+        fs.rmSync(created, { recursive: true, force: true });
+      } catch {
+        /* NOTE: a held Windows handle leaves it for the OS. */
+      }
     });
     fs.cpSync(path.join(ROOT, 'skills/dispatch'), path.join(baseOverlayTemplate, 'skills/dispatch'), {
       recursive: true,
@@ -59,11 +66,11 @@ function getBaseOverlayTemplate(): string {
         copilot: { low: { model: 'stub' } },
       },
       'utility-subagents': {
-        claude: { model: 'native-stub', effort: 'low', 'context-limit': 150000 },
-        codex: { model: 'native-stub', effort: 'low', 'context-limit': 300000 },
-        opencode: { model: 'stub', 'context-limit': 300000 },
-        agy: { model: 'stub', 'context-limit': 300000 },
-        copilot: { model: 'stub', 'context-limit': 300000 },
+        claude: { model: 'native-stub', effort: 'low', 'context-limit': 150_000 },
+        codex: { model: 'native-stub', effort: 'low', 'context-limit': 300_000 },
+        opencode: { model: 'stub', 'context-limit': 300_000 },
+        agy: { model: 'stub', 'context-limit': 300_000 },
+        copilot: { model: 'stub', 'context-limit': 300_000 },
       },
       phases: {
         'plan-review': { rounds: { low: 1 }, targets: { low: 1 } },
@@ -76,6 +83,8 @@ function getBaseOverlayTemplate(): string {
   return baseOverlayTemplate;
 }
 
+const shellQuote = (value: string) => `'${value.replaceAll("'", String.raw`'\''`)}'`;
+
 export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-e2e-')),
     repo = path.join(dir, 'repo'),
@@ -87,23 +96,24 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     scenarioPath = path.join(dir, 'scenario.json');
   fs.mkdirSync(bin);
   fs.writeFileSync(scenarioPath, JSON.stringify(scenario));
-  const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const shim =
     process.platform === 'win32'
       ? `@echo off\r\n"${process.execPath}" "${STUB}" "${scenarioPath}" %*\r\n`
       : `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(STUB)} ${shellQuote(scenarioPath)} "$@"\n`;
   fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'opencode.cmd' : 'opencode'), shim, { mode: 0o700 });
   fs.cpSync(getBaseRepoTemplate(), repo, { recursive: true });
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
-  const env = {
+  const git = (...args: Array<string>) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true });
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}`,
     NODE_OPTIONS: '',
     NODE_TEST_CONTEXT: '',
   };
-  for (const key of Object.keys(env))
-    if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key))
-      delete (env as Record<string, string | undefined>)[key];
+  for (const key of Object.keys(env)) {
+    if (/^DISPATCH_|^CLAUDE|^CODEX_THREAD|^ANTIGRAVITY|^COPILOT|^OPENCODE/.test(key)) {
+      delete env[key];
+    }
+  }
   const entry = path.join(skill, 'scripts/dispatch.ts');
   const running = new Set<ReturnType<typeof spawn>>();
   const HOST_SENSITIVE = new Set([
@@ -115,12 +125,16 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     'brief test-cleanup',
     'brief fix-review-lite',
   ]);
-  function withHost(args: readonly string[]): readonly string[] {
-    if (args.includes('--host')) return args;
-    if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) return args;
+  function withHost(args: ReadonlyArray<string>): ReadonlyArray<string> {
+    if (args.includes('--host')) {
+      return args;
+    }
+    if (!HOST_SENSITIVE.has(args[0] + ' ' + args[1])) {
+      return args;
+    }
     return [...args, '--host', 'codex'];
   }
-  function launch(args: readonly string[]) {
+  function launch(args: ReadonlyArray<string>) {
     const child = spawn(process.execPath, [entry, ...withHost(args)], {
       cwd: repo,
       env,
@@ -156,14 +170,18 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   }
   const launches = () => recordedLaunches(scenarioPath);
   function cleanup() {
-    for (const child of running) child.kill('SIGKILL');
-    for (const row of launches())
-      if (!completedLaunch(scenarioPath, row))
+    for (const child of running) {
+      child.kill('SIGKILL');
+    }
+    for (const row of launches()) {
+      if (!completedLaunch(scenarioPath, row)) {
         try {
           process.kill(row.pid, 'SIGKILL');
         } catch {
           /* completed */
         }
+      }
+    }
     // Fixture roots are isolated and owned by this harness.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }

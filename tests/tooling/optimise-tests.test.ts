@@ -7,7 +7,19 @@ import type { FileEntry, Inventory } from '../../.agents/skills/optimise-tests/s
 import type { EventLine } from '../../.agents/skills/optimise-tests/scripts/timing-reporter.ts';
 
 // NOTE: literal dynamic imports keep each leaf test independently failing before implementation updates.
-const loadInventory = () => import('../../.agents/skills/optimise-tests/scripts/inventory.ts');
+import {
+  COVERAGE_INCLUDE,
+  EXCLUDE_FROM_WRITERS,
+  SLOW_TEST_MS,
+  BUDGET_OVERRUN_THRESHOLD_MS,
+  DENSE_FILE_TEST_THRESHOLD,
+  discoverTestFiles,
+  buildInventory,
+  withExitStatus,
+  formatDelta,
+  findCandidates,
+  collectFailures,
+} from '../../.agents/skills/optimise-tests/scripts/inventory.ts';
 
 const file = (filePath: string, extra: Partial<FileEntry> = {}): FileEntry => ({
   path: filePath,
@@ -18,7 +30,7 @@ const file = (filePath: string, extra: Partial<FileEntry> = {}): FileEntry => ({
   ...extra,
 });
 
-function inventory(files: FileEntry[], extra: Partial<Inventory> = {}): Inventory {
+function inventory(files: Array<FileEntry>, extra: Partial<Inventory> = {}): Inventory {
   return {
     totals: { files: files.length, tests: files.reduce((sum, entry) => sum + entry.tests.length, 0), durationMs: 50 },
     files,
@@ -39,19 +51,6 @@ function inventory(files: FileEntry[], extra: Partial<Inventory> = {}): Inventor
 // SECTION: Dynamic discovery and before/after deltas
 
 test('discovers tests dynamically and formats before/after deltas without config or ledger', async (t) => {
-  const mod = await loadInventory();
-  const {
-    COVERAGE_INCLUDE,
-    EXCLUDE_FROM_WRITERS,
-    SLOW_TEST_MS,
-    BUDGET_OVERRUN_THRESHOLD_MS,
-    DENSE_FILE_TEST_THRESHOLD,
-    discoverTestFiles,
-    buildInventory,
-    withExitStatus,
-    formatDelta,
-  } = mod;
-
   assert.deepEqual(COVERAGE_INCLUDE, ['skills/**/*.ts', 'scripts/**/*.ts', '.agents/skills/**/scripts/**']);
   assert.deepEqual(EXCLUDE_FROM_WRITERS, ['tests/helpers/**', 'tests/fixtures/**', 'tests/unit/*/fixtures/**']);
   assert.equal(SLOW_TEST_MS, 100);
@@ -79,7 +78,7 @@ test('discovers tests dynamically and formats before/after deltas without config
   assert.deepEqual(discoverTestFiles(root, ['tests/unit']), ['tests/unit/a.test.ts']);
   assert.deepEqual(discoverTestFiles(root, ['tests/helpers']), []);
 
-  const events: EventLine[] = [
+  const events: Array<EventLine> = [
     {
       kind: 'test',
       status: 'pass',
@@ -151,7 +150,6 @@ test('discovers tests dynamically and formats before/after deltas without config
 // SECTION: findCandidates
 
 test('findCandidates reports a test title shared by two files with each location', async () => {
-  const { findCandidates } = await loadInventory();
   const shared = { name: 'rejects an empty plan', durationMs: 1, line: 4 };
   const { duplicateTitles } = findCandidates([
     file('tests/unit/core/a.test.ts', { tests: [shared] }),
@@ -169,7 +167,6 @@ test('findCandidates reports a test title shared by two files with each location
 });
 
 test('findCandidates groups test files that import the same production module set', async () => {
-  const { findCandidates } = await loadInventory();
   const { sharedImports } = findCandidates([
     file('tests/unit/core/a.test.ts', { imports: ['skills/dispatch/x.ts', 'skills/dispatch/y.ts'] }),
     file('tests/unit/core/b.test.ts', { imports: ['skills/dispatch/y.ts', 'skills/dispatch/x.ts'] }),
@@ -184,7 +181,6 @@ test('findCandidates groups test files that import the same production module se
 });
 
 test('findCandidates groups 3 or more tests with repetitive prefixes into mergeClusters', async () => {
-  const { findCandidates } = await loadInventory();
   const tests = [
     { name: 'rejects invalid id', durationMs: 1, line: 2 },
     { name: 'rejects invalid name', durationMs: 1, line: 4 },
@@ -205,10 +201,10 @@ test('findCandidates groups 3 or more tests with repetitive prefixes into mergeC
   ]);
 });
 
+const makeTests = (count: number) =>
+  Array.from({ length: count }, (_, i) => ({ name: `test ${i}`, durationMs: 1, line: i + 1 }));
+
 test('findCandidates identifies files with duration >= 800ms as budgetOverruns', async () => {
-  const { findCandidates } = await loadInventory();
-  const makeTests = (count: number) =>
-    Array.from({ length: count }, (_, i) => ({ name: `test ${i}`, durationMs: 1, line: i + 1 }));
   const slow = file('tests/unit/core/slow.test.ts', { durationMs: 950 });
   const boundary = file('tests/unit/core/boundary.test.ts', { durationMs: 800, tests: makeTests(15) });
   const under = file('tests/unit/core/fast.test.ts', { durationMs: 799, tests: makeTests(3) });
@@ -225,20 +221,20 @@ test('findCandidates identifies files with duration >= 800ms as budgetOverruns',
   ]);
 });
 
+const at = (name: string, nesting: number, line: number, status: 'pass' | 'fail', suite: boolean) => ({
+  kind: 'test' as const,
+  status,
+  file: 'tests/tooling/a.test.ts',
+  name,
+  nesting,
+  line,
+  durationMs: 1,
+  suite,
+});
+
 // SECTION: collectFailures
 
 test('collectFailures records a suite hook failure after its leaf tests pass', async () => {
-  const { collectFailures } = await loadInventory();
-  const at = (name: string, nesting: number, line: number, status: 'pass' | 'fail', suite: boolean) => ({
-    kind: 'test' as const,
-    status,
-    file: 'tests/tooling/a.test.ts',
-    name,
-    nesting,
-    line,
-    durationMs: 1,
-    suite,
-  });
   const failures = collectFailures([
     at('leaf one', 1, 2, 'pass', false),
     at('leaf two', 1, 3, 'pass', false),

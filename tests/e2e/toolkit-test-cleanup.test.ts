@@ -6,6 +6,10 @@ import { toolkitRepo, planSource, captureIntegrationReview } from './helpers/too
 import { foldLedger } from '../../skills/dispatch/scripts/toolkit/ledger.ts';
 import { readManifest } from '../../skills/dispatch/scripts/lib/session.ts';
 import { checks, loadPlan } from '../../skills/dispatch/scripts/toolkit/plan-view.ts';
+import type { JsonObject } from '../../skills/dispatch/scripts/lib/config.ts';
+import { arrayOf, isNumber, isString, maybe, narrow, objectWith } from './helpers/json.ts';
+
+const isStatuses = arrayOf(objectWith({ criterion: isString, state: isString, reason: maybe(isString) }));
 
 const target = 'tests/step.test.ts';
 const source = planSource
@@ -60,30 +64,32 @@ async function integrated(verify = true, plan = source) {
   await r.level();
   const made = await r.run(['worktree', 'create', 'T1']);
   assert.equal(made.output.ok, true, JSON.stringify(made));
-  const writer = path.join(r.session, made.value.path);
+  const writer = path.join(r.session, narrow(made.value, objectWith({ path: isString })).path);
   fs.mkdirSync(path.join(writer, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(writer, target), 'step\n');
   assert.equal((await r.run(['worktree', 'submit', 'T1'])).exit, 0);
   assert.equal((await r.run(['worktree', 'integrate', 'T1'])).exit, 0);
-  if (verify) assert.equal((await r.run(['check', 'run'])).output.ok, true);
+  if (verify) {
+    assert.equal((await r.run(['check', 'run'])).output.ok, true);
+  }
   return r;
 }
 async function integrateTaskTwo(r: Repo) {
   const made = await r.run(['worktree', 'create', 'T2']);
   assert.equal(made.output.ok, true, JSON.stringify(made));
-  const writer = path.join(r.session, made.value.path);
+  const writer = path.join(r.session, narrow(made.value, objectWith({ path: isString })).path);
   fs.mkdirSync(path.join(writer, 'tests'), { recursive: true });
   fs.writeFileSync(path.join(writer, 'src/other.ts'), 'other\n');
   fs.writeFileSync(path.join(writer, 'tests/other.test.ts'), 'other test\n');
   assert.equal((await r.run(['worktree', 'submit', 'T2'])).exit, 0);
   assert.equal((await r.run(['worktree', 'integrate', 'T2'])).exit, 0);
 }
-const cleanupFile = (r: Repo, data: object) => {
+const cleanupFile = (r: Repo, data: JsonObject) => {
   const file = path.join(r.session, 'cleanup.json');
   fs.writeFileSync(file, JSON.stringify(data));
   return file;
 };
-const commit = (r: Repo, data: object, hook?: Parameters<Repo['run']>[1]) =>
+const commit = (r: Repo, data: JsonObject, hook?: Parameters<Repo['run']>[1]) =>
   r.run(['worktree', 'commit', '--reason', 'remove step tests', '--test-cleanup', cleanupFile(r, data)], hook);
 const cleanups = (r: Repo) => foldLedger(r.session).records.filter((row) => row.data['phase'] === 'test-cleanup');
 const removal = { removed: ['SC1'], deleted: 2, merged: 1 };
@@ -184,7 +190,9 @@ test('an interrupted test cleanup commit with split trailers records on retry wi
     const before = r.git(['rev-parse', 'HEAD'], r.integration);
     fs.rmSync(path.join(r.integration, target));
     const crashed = await commit(r, data, (point) => {
-      if (point === 'commit:after-commit') throw Error('crash');
+      if (point === 'commit:after-commit') {
+        throw Error('crash');
+      }
     });
     assert.equal(crashed.exit, 2);
     assert.equal(cleanups(r).length, 0);
@@ -212,7 +220,9 @@ test('verify skips criteria whose tests cleanup removed and refuses to select th
     const all = await r.run(['check', 'run']);
     assert.equal(all.output.ok, true, JSON.stringify(all));
     assert.deepEqual(
-      all.value.checks.map((row: { criterion: string }) => row.criterion),
+      narrow(all.value, objectWith({ checks: arrayOf(objectWith({ criterion: isString })) })).checks.map(
+        (row) => row.criterion,
+      ),
       ['contract'],
     );
     const named = await r.run(['check', 'run', '--criteria', 'SC1']);
@@ -240,33 +250,48 @@ test('test cleanup commit accepts evidence from an unchanged earlier tree; statu
     assert.equal(record!.data['fromTree'], beforeTree);
     assert.deepEqual(record!.data['trees'], { SC1: earlyTree });
     const stale = await r.run(['status', 'show']);
-    assert.deepEqual(stale.value.criteria, ['SC2', 'contract']);
+    assert.deepEqual(narrow(stale.value, objectWith({ criteria: arrayOf(isString) })).criteria, ['SC2', 'contract']);
     assert.equal((await r.run(['check', 'run'])).output.ok, true);
     const status = await r.run(['status', 'show']);
-    assert.deepEqual(status.value.criteria, []);
-    assert.deepEqual(status.value.testCleanup, {
+    const statusVal = narrow(
+      status.value,
+      objectWith({
+        criteria: arrayOf(isString),
+        testCleanup: objectWith({
+          from: isString,
+          trees: objectWith({ SC1: isString }),
+          removed: arrayOf(isString),
+          deleted: isNumber,
+          merged: isNumber,
+        }),
+        criterionStatuses: isStatuses,
+      }),
+    );
+    assert.deepEqual(statusVal.criteria, []);
+    assert.deepEqual(statusVal.testCleanup, {
       from: before,
       trees: { SC1: earlyTree },
       removed: ['SC1'],
       deleted: 2,
       merged: 1,
     });
-    const row = status.value.criterionStatuses.find((entry: { criterion: string }) => entry.criterion === 'SC1');
-    assert.equal(row.state, 'verified');
+    const row = statusVal.criterionStatuses.find((entry) => entry.criterion === 'SC1');
+    assert.equal(row?.state, 'verified');
     assert.equal(row.reason, 'verified at ' + earlyTree + '; tests removed in cleanup');
     captureIntegrationReview(r);
     const delivered = await r.run(['worktree', 'deliver']);
     assert.equal(delivered.output.ok, true, JSON.stringify(delivered));
     const report = await r.run(['report', 'complete']);
     assert.equal(report.output.ok, true, JSON.stringify(report));
-    const walkthrough = fs.readFileSync(path.join(r.session, report.value.path), 'utf8');
+    const reportVal = narrow(report.value, objectWith({ path: isString, statuses: isStatuses }));
+    const walkthrough = fs.readFileSync(path.join(r.session, reportVal.path), 'utf8');
     assert.ok(
       walkthrough.includes(
         '**Test cleanup:** deleted 2 · merged 1 tests; criteria with tests removed: SC1 at ' + earlyTree.slice(0, 12),
       ),
     );
-    const reported = report.value.statuses.find((entry: { criterion: string }) => entry.criterion === 'SC1');
-    assert.equal(reported.state, 'verified');
+    const reported = reportVal.statuses.find((entry) => entry.criterion === 'SC1');
+    assert.equal(reported?.state, 'verified');
     assert.equal(reported.reason, 'verified at ' + earlyTree + '; tests removed in cleanup');
   } finally {
     r.cleanup();
@@ -274,7 +299,7 @@ test('test cleanup commit accepts evidence from an unchanged earlier tree; statu
 });
 
 test('test cleanup commit refuses after a declared, renamed, or undeclared path changed', async () => {
-  const cases: { label: string; change: (r: Repo) => void }[] = [
+  const cases: Array<{ label: string; change: (r: Repo) => void }> = [
     {
       label: 'changes path',
       change: (r) => {
@@ -315,7 +340,9 @@ test('test cleanup commit refuses after a declared, renamed, or undeclared path 
       assert.equal((await r.run(['check', 'run', '--criteria', 'SC1'])).output.ok, true, label);
       change(r);
       const head = r.git(['rev-parse', 'HEAD'], r.integration);
-      if (label !== 'renamed tests path') fs.rmSync(path.join(r.integration, target));
+      if (label !== 'renamed tests path') {
+        fs.rmSync(path.join(r.integration, target));
+      }
       const refused = await commit(r, removal);
       assert.equal(refused.output.reason, 'test-cleanup-evidence-required', label);
       assert.match(refused.output.summary, /\bSC1\b/, label);

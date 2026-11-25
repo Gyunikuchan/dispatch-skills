@@ -15,6 +15,13 @@ import {
 import { memoryFs, query } from './helpers/memory-fs.ts';
 import { lines } from './helpers/memory-fs.ts';
 
+const env = (name: string) =>
+  name === 'COPILOT_AGENT_SESSION_ID'
+    ? 'agent-session'
+    : name === 'COPILOT_CLI_SESSION_ID'
+      ? 'wrong-session'
+      : undefined;
+
 test('Copilot host folding preserves bounded actors and unknown effort', () => {
   const records = Array.from({ length: 35 }, (_, i) => ({
     type: 'session.usage_record',
@@ -33,12 +40,6 @@ test('Copilot host folding preserves bounded actors and unknown effort', () => {
     },
   }));
   const fs = memoryFs({ '/home/.copilot/session-state/agent-session/events.jsonl': lines(...records) });
-  const env = (name: string) =>
-    name === 'COPILOT_AGENT_SESSION_ID'
-      ? 'agent-session'
-      : name === 'COPILOT_CLI_SESSION_ID'
-        ? 'wrong-session'
-        : undefined;
   const result = readHostUsage('copilot', { ...query, env }, fs);
   assert.equal(
     result.rows.reduce((sum, r) => sum + r.input, 0),
@@ -65,7 +66,7 @@ test('registry requires a registered host and its declared safe session id', () 
     'no host id',
   );
   assert.equal(readHostUsage('codex', { ...input, env: () => '../host' }, fs).unavailable, 'invalid host id');
-  const invalidStart = readHostUsage('codex', { ...input, startMs: NaN, env: () => 'host' }, fs);
+  const invalidStart = readHostUsage('codex', { ...input, startMs: Number.NaN, env: () => 'host' }, fs);
   assert.equal(invalidStart.unavailable, 'invalid session start');
   assert.deepEqual(fs.reads, []);
   const result = readHostUsage('codex', { ...input, env: () => 'host' }, fs, {
@@ -175,16 +176,17 @@ test('reader caps growing plain files and decoded compressed data', () => {
   assert.equal(readTranscript(overflowFs, 'c.zst', overflowBudget).stop, 'budget');
 });
 
-test('adapter exceptions expose allowlisted codes without their messages', () => {
-  const invoke = (code: string) =>
-    readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
-      codex: {
-        sessionEnv: ['CODEX_THREAD_ID'],
-        read: () => {
-          throw Object.assign(new Error('secret'), { code });
-        },
+const invoke = (code: string) =>
+  readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
+    codex: {
+      sessionEnv: ['CODEX_THREAD_ID'],
+      read: () => {
+        throw Object.assign(new Error('secret'), { code });
       },
-    });
+    },
+  });
+
+test('adapter exceptions expose allowlisted codes without their messages', () => {
   assert.equal(invoke('EACCES').unavailable, 'read-error:EACCES');
   assert.equal(invoke('SECRET').unavailable, 'read-error:EUNKNOWN');
   assert.ok(!JSON.stringify(invoke('SECRET')).includes('secret'));
@@ -280,23 +282,25 @@ test('agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageF
     try {
       db.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
       // Build protobuf blob: Tag 1.4 (input: 120, output: 15, cacheRead: 30, reasoning: 10), Tag 1.19, Tag 1.20, Tag 1.21
-      const tag14 = [
-        ...[0x10, 120], // tag 2, varint 120
-        ...[0x18, 15], // tag 3, varint 15
-        ...[0x28, 30], // tag 5, varint 30
-        ...[0x48, 10], // tag 9, varint 10
-      ];
-      const kv = [...[0x0a, 15], ...Buffer.from('last_step_index', 'utf8'), ...[0x12, 1], ...Buffer.from('1', 'utf8')];
+      const tag14 = [16, 120, 24, 15, 40, 30, 72, 10];
+      const kv = [0x0a, 15, ...Buffer.from('last_step_index', 'utf8'), 0x12, 1, ...Buffer.from('1', 'utf8')];
       const modelSlug = Buffer.from('gemini-4-argon-trial', 'utf8');
       const dispName = Buffer.from('Gemini 4 Argon (Medium)', 'utf8');
       const tag1 = [
-        ...[0x22, tag14.length],
+        0x22,
+        tag14.length,
         ...tag14,
-        ...[0x9a, 0x01, modelSlug.length],
+        0x9a,
+        0x01,
+        modelSlug.length,
         ...modelSlug,
-        ...[0xa2, 0x01, kv.length],
+        0xa2,
+        0x01,
+        kv.length,
         ...kv,
-        ...[0xaa, 0x01, dispName.length],
+        0xaa,
+        0x01,
+        dispName.length,
         ...dispName,
       ];
       const blob = new Uint8Array([0x0a, tag1.length, ...tag1]);
@@ -436,19 +440,19 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
         { phase: 'phase-b', atMs: 2000 },
         { phase: 'phase-a', atMs: 3000 },
       ],
-    } as never,
+    },
     memoryFs({}),
     {
       codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows }) },
     },
   );
   assert.equal(result.rows.length, 3);
-  assert.equal((result.rows[0] as { phase?: string }).phase, undefined);
-  assert.equal((result.rows[1] as { phase?: string }).phase, 'phase-a');
+  assert.equal(result.rows[0]!.phase, undefined);
+  assert.equal(result.rows[1]!.phase, 'phase-a');
   assert.equal(result.rows[1]?.input, 60);
-  assert.equal((result.rows[2] as { phase?: string }).phase, 'phase-b');
+  assert.equal(result.rows[2]!.phase, 'phase-b');
   assert.equal(result.rows[2]?.input, 30);
-  assert.ok((result.rows[1] as { bands?: unknown }).bands);
+  assert.ok(result.rows[1].bands);
   assert.equal(
     stageAt(
       [

@@ -9,6 +9,20 @@ import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-
 import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
 import { fakeGit } from './helpers/fake-git.ts';
 import { sessionFixture } from './helpers/session.ts';
+import {
+  anything,
+  flag,
+  listOf,
+  nullable,
+  optional,
+  parseJson,
+  readJson,
+  shape,
+  text as jsonText,
+} from './helpers/json.ts';
+import type { JsonObject } from './helpers/json.ts';
+
+const gitOutput = (stdout = '') => ({ exit: 0, stdout, stderr: '' });
 
 const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -78,13 +92,16 @@ async function fixture(count = 4, source = planSource(count)) {
   return { ...f, skillRoot };
 }
 
-async function invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
+async function invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: Array<string>) {
   f.lines.splice(0);
   const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
   assert.equal(f.lines.length, 1);
   return {
     exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
+    output: parseJson(
+      f.lines[0]!,
+      shape({ ok: flag, reason: optional(jsonText), summary: jsonText, path: nullable(jsonText) }),
+    ),
   };
 }
 
@@ -97,8 +114,8 @@ async function completeFixture(f: Awaited<ReturnType<typeof fixture>>, head = HE
     head,
     tree,
     testedTree: tree,
-    changes: [] as { status: string; path: string }[],
-    calls: [] as { argv: string[]; locked: boolean }[],
+    changes: [] as Array<{ status: string; path: string }>,
+    calls: [] as Array<{ argv: Array<string>; locked: boolean }>,
   };
   f.deps.run = fakeGit(state);
   await appendRecord(
@@ -535,10 +552,13 @@ test('review fix status: no current verification leaves the fix not verified', a
     );
     const result = await invoke(f, 'report', 'render');
     assert.equal(result.exit, 0);
-    const value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as {
-      reviewFixes: { commit: string; metadata: typeof reviewFix; status: string }[];
-      reviewedCodeBaseline?: string;
-    };
+    const value = readJson(
+      result.output.path!,
+      shape({
+        reviewFixes: listOf(shape({ commit: jsonText, metadata: anything, status: jsonText })),
+        reviewedCodeBaseline: optional(jsonText),
+      }),
+    );
     assert.equal(value.reviewFixes.length, 1);
     assert.equal(value.reviewFixes[0]!.commit, 'd'.repeat(40));
     assert.deepEqual(value.reviewFixes[0]!.metadata, reviewFix);
@@ -734,7 +754,7 @@ test('review fix status: completed re-review retains earlier fixes and their pat
       { kind: 'integrate', by: 'tool', data: { phase: 'fix', commit, reason, reviewFix } },
       f.deps,
     );
-    for (const check of checks(loadPlan(f.session, readManifest(f.session))))
+    for (const check of checks(loadPlan(f.session, readManifest(f.session)))) {
       await appendRecord(
         f.session,
         {
@@ -753,6 +773,7 @@ test('review fix status: completed re-review retains earlier fixes and their pat
         },
         f.deps,
       );
+    }
     const metadata = reviewFixIdentity(reviewFix),
       message = [
         `fix(dispatch): ${reason}`,
@@ -764,25 +785,36 @@ test('review fix status: completed re-review retains earlier fixes and their pat
       ].join('\n');
     const git = fakeGit(state);
     f.deps.run = async (argv, options) => {
-      const args = argv.slice(1),
-        output = (stdout = '') => ({ exit: 0, stdout, stderr: '' });
+      const args = argv.slice(1);
       if (args[0] === 'merge-base' && args[1] === '--is-ancestor') {
         assert.equal(options?.cwd, readManifest(f.session).repositoryRoot);
         return { exit: args[2] === args[3] ? 0 : 1, stdout: '', stderr: '' };
       }
-      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents')
-        return output(`${commit} ${baseline}\n`);
-      if (args[0] === 'diff-tree' && args.includes(commit)) return output('src/task-1.ts\0src/shared.ts\0');
-      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === commit)
-        return output(message);
+      if (args[0] === 'rev-list' && args[1] === '--reverse' && args[2] === '--parents') {
+        return gitOutput(`${commit} ${baseline}\n`);
+      }
+      if (args[0] === 'diff-tree' && args.includes(commit)) {
+        return gitOutput('src/task-1.ts\0src/shared.ts\0');
+      }
+      if (args[0] === 'log' && args[1] === '-1' && args[2] === '--format=%B' && args[3] === commit) {
+        return gitOutput(message);
+      }
       return git(argv);
     };
     const result = await invoke(f, 'report', 'render');
     assert.equal(result.exit, 0);
-    const value = JSON.parse(fs.readFileSync(result.output.path!, 'utf8')) as {
-      reviewedCodeBaseline?: string;
-      reviewFixes: { status: string; verification?: { criteria: string[]; contract: string[]; tree: string } }[];
-    };
+    const value = readJson(
+      result.output.path!,
+      shape({
+        reviewedCodeBaseline: optional(jsonText),
+        reviewFixes: listOf(
+          shape({
+            status: jsonText,
+            verification: optional(shape({ criteria: listOf(jsonText), contract: listOf(jsonText), tree: jsonText })),
+          }),
+        ),
+      }),
+    );
     assert.equal(value.reviewedCodeBaseline, baseline);
     assert.equal(value.reviewFixes[0]!.status, 'verified but not re-reviewed');
     assert.deepEqual(value.reviewFixes[0]!.verification?.criteria, ['SC1']);
@@ -805,22 +837,22 @@ test('review fix status: completed re-review retains earlier fixes and their pat
     );
     assert.match(deviations, /- Follow-up: deferred review-alpha:R1-F002/);
     const visuals = text.slice(text.indexOf('## Visuals'), text.indexOf('## Review Focus'));
-    assert.ok(visuals.includes('[design visuals]('));
-    assert.ok(!visuals.includes('| Component | Boundary |'));
+    assert.match(visuals, /\[design visuals\]\(/);
+    assert.doesNotMatch(visuals, /\| Component \| Boundary \|/);
     const bind = latest(foldLedger(f.session), 'bind')!;
     const hashes = currentHashes(f.root, bind),
       appendix = text.slice(text.indexOf('## Appendix'));
     assert.ok(
-      appendix.includes(
+      appendix.indexOf(
         `Spec: [brief.spec.md](${path.relative(f.session, path.join(f.root, 'brief.spec.md')).replaceAll('\\', '/')}) · sha256:${hashes.spec!.slice(7, 19)}`,
-      ),
+      ) !== -1,
     );
     assert.ok(
-      appendix.includes(
+      appendix.indexOf(
         `Plan: [report.plan.md](${path.relative(f.session, path.join(f.root, 'report.plan.md')).replaceAll('\\', '/')}) · sha256:${hashes.plan!.slice(7, 19)}`,
-      ),
+      ) !== -1,
     );
-    assert.ok(!appendix.includes('Review Fixes'));
+    assert.doesNotMatch(appendix, /Review Fixes/);
     const nextDir = path.join(f.session, '.state/reviews/code-integration/round-4');
     writeJson(path.join(nextDir, 'round.json'), {
       round: 4,
@@ -860,7 +892,9 @@ test('review fix status: completed re-review retains earlier fixes and their pat
       scope: 'Re-review round 5 (full)',
     });
     for (const removed of [false, true]) {
-      if (removed) fs.rmSync(path.join(f.session, '.state/worktrees/integration'), { recursive: true });
+      if (removed) {
+        fs.rmSync(path.join(f.session, '.state/worktrees/integration'), { recursive: true });
+      }
       const rendered = await invoke(f, 'report', 'render');
       assert.equal(rendered.exit, 0, rendered.output.summary);
       const value = JSON.parse(fs.readFileSync(rendered.output.path!, 'utf8'));
@@ -953,7 +987,9 @@ for (const roundKind of ['unfinished', 'all-failed', 'confirmation-only'] as con
         scope: roundKind === 'confirmation-only' ? 'Re-review round 2 (confirmation-only)' : 'Re-review round 2 (full)',
         roster,
       });
-      if (roundKind !== 'unfinished') writeJson(path.join(dir, 'findings.json'), { findings: [], failed: [] });
+      if (roundKind !== 'unfinished') {
+        writeJson(path.join(dir, 'findings.json'), { findings: [], failed: [] });
+      }
       for (const generation of [1, 2]) {
         const outcome =
           generation === 2 && roundKind === 'all-failed'
@@ -964,7 +1000,8 @@ for (const roundKind of ['unfinished', 'all-failed', 'confirmation-only'] as con
       const status = async () => {
         const result = await invoke(f, 'report', 'render');
         assert.equal(result.exit, 0, result.output.summary);
-        return JSON.parse(fs.readFileSync(result.output.path!, 'utf8')).reviewFixes[0]?.status;
+        return readJson(result.output.path!, shape({ reviewFixes: listOf(shape({ status: jsonText })) })).reviewFixes[0]
+          ?.status;
       };
       assert.equal(await status(), 'verified but not re-reviewed');
       if (roundKind === 'unfinished') {
@@ -1047,7 +1084,7 @@ test('report render shows runtime proof', async () => {
   const f = await fixture();
   try {
     await completeFixture(f);
-    const add = (data: object) => appendRecord(f.session, { kind: 'integrate', by: 'orchestrator', data }, f.deps);
+    const add = (data: JsonObject) => appendRecord(f.session, { kind: 'integrate', by: 'orchestrator', data }, f.deps);
     await add({
       phase: 'verification',
       cycle: 1,
@@ -1170,8 +1207,8 @@ test('reportFacts reports missing after a later failure on the same tree', async
       head: HEAD,
       tree: TREE,
       testedTree: TREE,
-      changes: [] as { status: string; path: string }[],
-      calls: [] as { argv: string[]; locked: boolean }[],
+      changes: [] as Array<{ status: string; path: string }>,
+      calls: [] as Array<{ argv: Array<string>; locked: boolean }>,
     };
     f.deps.run = fakeGit(state);
     await appendRecord(

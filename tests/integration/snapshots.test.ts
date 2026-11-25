@@ -1,21 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scanOverlay, type FileTable } from './scan.ts';
+import { scanOverlay } from './scan.ts';
+import type { FileTable } from './scan.ts';
 
 export const GOLDEN_DIR = 'tests/fixtures/review-prompt-golden/';
 
 /** Snapshots, golden files, and expected-output `.md` fixtures live only in the review-prompt golden dir. */
-export function checkSnapshots(files: FileTable): string[] {
-  const errors: string[] = [];
+export function checkSnapshots(files: FileTable): Array<string> {
+  const errors: Array<string> = [];
   for (const { path: file } of files) {
-    if (file.startsWith(GOLDEN_DIR)) continue;
+    if (file.startsWith(GOLDEN_DIR)) {
+      continue;
+    }
     const name = file.split('/').pop() ?? '';
     const snapshot =
       name.endsWith('.snap') || name.includes('.golden.') || (file.startsWith('tests/') && name.endsWith('.md'));
-    if (snapshot)
+    if (snapshot) {
       errors.push(
         `snapshot rule: ${file} is a full-file snapshot; assert observable fields inline instead, or move a review-prompt golden file under ${GOLDEN_DIR}`,
       );
+    }
   }
   return errors;
 }

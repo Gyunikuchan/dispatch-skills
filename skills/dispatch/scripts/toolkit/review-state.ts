@@ -1,3 +1,4 @@
+import { nodeErrorCode } from '../lib/fs-ext.ts';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,11 +32,16 @@ export function reviewRoundNumber(name: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-export function reviewRoundEntries(names: readonly string[], format?: 'canonical'): { name: string; number: number }[] {
+export function reviewRoundEntries(
+  names: ReadonlyArray<string>,
+  format?: 'canonical',
+): Array<{ name: string; number: number }> {
   return names
     .flatMap((name) => {
       const number = reviewRoundNumber(name);
-      if (number === undefined || (format === 'canonical' && !/^round-[1-9]\d*$/.test(name))) return [];
+      if (number === undefined || (format === 'canonical' && !/^round-[1-9]\d*$/.test(name))) {
+        return [];
+      }
       return [{ name, number }];
     })
     .sort((left, right) => left.number - right.number);
@@ -46,9 +52,12 @@ export const reviewPointer = (session: string, file: string): string =>
 
 export function readStoredJson<T>(file: string): T | null {
   try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- generic boundary reader; callers specify the persisted schema type
     return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    if (nodeErrorCode(error) === 'ENOENT') {
+      return null;
+    }
     throw error;
   }
 }
@@ -67,7 +76,7 @@ export type Round = ReviewSnapshot & {
   cap: number;
   level: Level;
   pins?: string | null;
-  roster: RosterSlot[];
+  roster: Array<RosterSlot>;
   scope: string;
   startSeq: number;
   underfill?: Underfill;
@@ -76,7 +85,7 @@ export type Round = ReviewSnapshot & {
   coverage?: 'open' | 'full';
   coverageUse?: 'free' | 'grant';
   interRound?: InterRound;
-  requests?: RejectionRequest[];
+  requests?: Array<RejectionRequest>;
   rulingSnapshot?: string;
 };
 
@@ -87,7 +96,11 @@ export const sameReviewCapture = (round: ReviewSnapshot, capture: ReviewSnapshot
   JSON.stringify(round.target) === JSON.stringify(capture.target) &&
   JSON.stringify(round.artifacts) === JSON.stringify(capture.artifacts);
 
-export function reviewRulingSnapshot(review: string, prior: FindingsValue[], rows: readonly LedgerRecord[]): string {
+export function reviewRulingSnapshot(
+  review: string,
+  prior: Array<FindingsValue>,
+  rows: ReadonlyArray<LedgerRecord>,
+): string {
   const matches = (row: LedgerRecord, id: string) => row.data['subject'] === 'review:' + review + ':' + id;
   return JSON.stringify(
     prior.flatMap((value) =>

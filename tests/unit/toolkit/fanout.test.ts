@@ -1,12 +1,30 @@
+import type { FanOutInput } from '../../../skills/dispatch/scripts/toolkit/fanout/state.ts';
+import { createHash } from 'node:crypto';
+import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
+import { resolveRoster } from '../../../skills/dispatch/scripts/policy/roster.ts';
+import {
+  cliWaveState,
+  fanOut,
+  fanOutComplete,
+  parsePinsFlag,
+  resolveSlots,
+  underfillNote,
+} from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { test } from 'node:test';
+import type { DiagnosticEvent } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sessionFixture } from './helpers/session.ts';
 import type { RosterSlot } from '../../../skills/dispatch/scripts/toolkit/domain/types.ts';
-import type { Validation } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
+import type { SlotOutcome, Validation } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 
-const slot = (provider: string, model: string | string[] = 'good', reserve = false, native = false): RosterSlot => ({
+const slot = (
+  provider: string,
+  model: string | Array<string> = 'good',
+  reserve = false,
+  native = false,
+): RosterSlot => ({
   slot: provider + '[0]',
   provider,
   index: 0,
@@ -20,14 +38,38 @@ const validate = (text: string) =>
     : { ok: false as const, cls: 'empty-output' as const, reason: 'empty' };
 const quota = { schemaVersion: 1 as const, policyVersion: 1 as const, decidedAt: 0, decisions: [] };
 
+function gate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((release) => {
+    resolve = release;
+  });
+  return { promise, resolve };
+}
+
+function nativeOf(outcome: SlotOutcome | undefined) {
+  assert.equal(outcome?.state, 'native');
+  return outcome;
+}
+
+function hasBlockedReason(outcome: unknown, reasonHash: string): boolean {
+  return (
+    !!outcome &&
+    typeof outcome === 'object' &&
+    'blocked' in outcome &&
+    Array.isArray(outcome.blocked) &&
+    outcome.blocked.some(
+      (entry: unknown) =>
+        !!entry && typeof entry === 'object' && 'reasonHash' in entry && entry.reasonHash === reasonHash,
+    )
+  );
+}
+
 test('Copilot native effort follows physical launches and saved replay', async () => {
-  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   for (const nativeOnly of [true, false]) {
     const f = sessionFixture({ memory: true });
     try {
       f.deps.orchestrator = { platform: 'copilot', model: null };
-      const events: import('../../../skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts').DiagnosticEvent[] =
-        [];
+      const events: Array<DiagnosticEvent> = [];
       f.deps.diagnostics = (event) => {
         events.push(event);
       };
@@ -60,7 +102,7 @@ test('Copilot native effort follows physical launches and saved replay', async (
   try {
     f.deps.orchestrator = { platform: 'copilot', model: null };
     f.script('claude', 'logical-model', { status: 'fail', cls: 'auth', detail: 'unavailable' });
-    const events: import('../../../skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts').DiagnosticEvent[] = [];
+    const events: Array<DiagnosticEvent> = [];
     f.deps.diagnostics = (e) => {
       events.push(e);
     };
@@ -92,10 +134,9 @@ test('Copilot native effort follows physical launches and saved replay', async (
 });
 
 test('rejected MUST validation retains logical source across direct reserve native and replay', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
-    const seen: string[] = [];
+    const seen: Array<string> = [];
     const check = (text: string, source: string) => {
       seen.push(source);
       return validate(text);
@@ -124,10 +165,9 @@ test('rejected MUST validation retains logical source across direct reserve nati
 });
 
 test('diagnostics retain terminal routing and unlaunched failure classes', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
-    const events: unknown[] = [];
+    const events: Array<unknown> = [];
     f.deps.diagnostics = (e) => {
       events.push(e);
     };
@@ -158,23 +198,26 @@ test('diagnostics retain terminal routing and unlaunched failure classes', async
 });
 
 test('fan-out launches concurrent slots in roster order and persists before hooks', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, '.state', 'fanout');
-    const waiting: (() => void)[] = [];
+    const waiting: Array<() => void> = [];
     f.deps.delegate = async (_provider, request) => {
       assert.equal(fs.readFileSync(request.promptPath, 'utf8'), 'question');
       await new Promise<void>((resolve) => {
         waiting.push(resolve);
-        if (waiting.length === 3) waiting.forEach((done) => done());
+        if (waiting.length === 3) {
+          waiting.forEach((done) => done());
+        }
       });
       return { outcome: { status: 'ok', text: 'answer', resume: null, sessionId: null }, invocations: [] };
     };
     let hooks = 0;
     f.deps.hook = () => {
       hooks++;
-      if (hooks === 1) throw new Error('crash');
+      if (hooks === 1) {
+        throw new Error('crash');
+      }
     };
     await assert.rejects(
       fanOut({ dir, slots: [slot('claude'), slot('agy'), slot('codex')], prompt: 'question', validate, quota }, f.deps),
@@ -201,7 +244,6 @@ test('fan-out launches concurrent slots in roster order and persists before hook
 });
 
 test('fan-out cascades validation models modes quota and one reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture();
   try {
     f.script('claude', 'bad', { status: 'fail', cls: 'model-not-found', detail: 'missing' });
@@ -250,7 +292,6 @@ test('fan-out cascades validation models modes quota and one reserve', async () 
 });
 
 test('fan-out reruns failed slots and only missing crash outcomes', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, 'fanout'),
@@ -282,7 +323,6 @@ test('fan-out reruns failed slots and only missing crash outcomes', async () => 
 });
 
 test('fan-out native-only roster remains available on its host', async () => {
-  const { resolveSlots } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const skillRoot = path.join(f.root, 'skill');
@@ -307,8 +347,6 @@ test('fan-out native-only roster remains available on its host', async () => {
 });
 
 test('resolveSlots applies pins and maps invalid pin errors to invalid-input', async () => {
-  const { resolveSlots, parsePinsFlag } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const { ToolError } = await import('../../../skills/dispatch/scripts/toolkit/output.ts');
   const f = sessionFixture({ memory: true });
   try {
     const skillRoot = path.join(f.root, 'skill');
@@ -348,10 +386,9 @@ test('resolveSlots applies pins and maps invalid pin errors to invalid-input', a
 });
 
 test('voice deadline: targets share the wave budget across validation retries', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
-    const budgets: number[] = [];
+    const budgets: Array<number> = [];
     let now = 0;
     f.deps.clock = () => now;
     f.deps.delegate = async (_provider, request) => {
@@ -380,14 +417,13 @@ test('voice deadline: targets share the wave budget across validation retries', 
         responder: { slot: 'claude[0]', provider: 'claude', model: 'good', native: false },
       },
     ]);
-    assert.deepEqual(budgets, [1800000, 1799900]);
+    assert.deepEqual(budgets, [1_800_000, 1_799_900]);
   } finally {
     f.cleanup();
   }
 });
 
 test('no-report resume retries the session report, defers other verdicts, resets per model and honors the voice deadline', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, 'no-report');
@@ -410,7 +446,7 @@ test('no-report resume retries the session report, defers other verdicts, resets
             effort: null,
             launched: true,
             outcome: 'ok',
-            ...(index === 0 ? {} : { nudge: true as const }),
+            ...(!(index === 0) && { nudge: true as const }),
           },
           ...(index < 2
             ? [
@@ -524,7 +560,7 @@ test('no-report resume retries the session report, defers other verdicts, resets
             effort: null,
             launched: true,
             outcome: 'ok',
-            ...(request.resume ? { nudge: true as const } : {}),
+            ...(request.resume && { nudge: true as const }),
           },
           {
             provider,
@@ -600,12 +636,11 @@ test('no-report resume retries the session report, defers other verdicts, resets
 });
 
 test('reserve deadline gives a CLI reserve its own 30 minutes after the wave deadline', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     let now = 0;
     f.deps.clock = () => now;
-    const budgets: number[] = [];
+    const budgets: Array<number> = [];
     f.deps.delegate = async (provider, request, mode) => {
       f.launches.push({ provider, request, mode });
       budgets.push(request.timeoutMs);
@@ -633,7 +668,7 @@ test('reserve deadline gives a CLI reserve its own 30 minutes after the wave dea
     );
     assert.deepEqual(
       budgets,
-      [1800000, 1800000],
+      [1_800_000, 1_800_000],
       'the reserve starts after the wave deadline with a fresh 30-minute budget',
     );
 
@@ -659,14 +694,13 @@ test('reserve deadline gives a CLI reserve its own 30 minutes after the wave dea
       f.deps,
     );
     assert.equal(targeted[0]?.state, 'done');
-    assert.deepEqual(budgets, [1800000, 1740000], 'targets keep the shared wave deadline');
+    assert.deepEqual(budgets, [1_800_000, 1_740_000], 'targets keep the shared wave deadline');
   } finally {
     f.cleanup();
   }
 });
 
 test('voice deadline: a reserve started at minute 20 gets a fresh budget', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     let now = 0;
@@ -690,14 +724,13 @@ test('voice deadline: a reserve started at minute 20 gets a fresh budget', async
       f.deps,
     );
     const reserve = f.launches.find((launch) => launch.provider === 'copilot');
-    assert.equal(reserve?.request.timeoutMs, 1800000);
+    assert.equal(reserve?.request.timeoutMs, 1_800_000);
   } finally {
     f.cleanup();
   }
 });
 
 test('terminal failures take no reserve and publish no cooldown', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture();
   try {
     f.script('claude', 'good', { status: 'fail', cls: 'config', detail: 'bad config' });
@@ -710,7 +743,7 @@ test('terminal failures take no reserve and publish no cooldown', async () => {
         validate,
         quota,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(terminal.find((outcome) => outcome.slot === 'claude[0]')?.state, 'failed');
@@ -723,7 +756,7 @@ test('terminal failures take no reserve and publish no cooldown', async () => {
     f.deps.delegate = async (provider, request, mode) => {
       f.launches.push({ provider, request, mode });
       return {
-        outcome: { status: 'fail', cls: 'capacity', detail: 'at capacity', retryAfterMs: 30000 },
+        outcome: { status: 'fail', cls: 'capacity', detail: 'at capacity', retryAfterMs: 30_000 },
         invocations: [],
       };
     };
@@ -745,11 +778,9 @@ test('terminal failures take no reserve and publish no cooldown', async () => {
 });
 
 test('diagnostics observe validation routing and native replay without changing slots', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
-    const delegate = f.deps.delegate;
-    const events: unknown[] = [];
+    const events: Array<DiagnosticEvent> = [];
     f.deps.diagnostics = (e) => {
       events.push(e);
     };
@@ -757,24 +788,20 @@ test('diagnostics observe validation routing and native replay without changing 
       slots = [slot('claude', 'good', false, true)];
     const pending = await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
     assert.equal(pending[0]?.state, 'native');
-    assert.ok(events.some((e: any) => e.kind === 'native' && e.state === 'pending'));
+    assert.ok(events.some((e) => e.kind === 'native' && e.state === 'pending'));
     fs.writeFileSync(path.join(dir, 'replies', 'claude[0].md'), ' ');
     await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
-    assert.ok(events.some((e: any) => e.kind === 'native' && e.state === 'invalid'));
+    assert.ok(events.some((e) => e.kind === 'native' && e.state === 'invalid'));
     fs.writeFileSync(path.join(dir, 'replies', 'claude[0].md'), 'answer');
     const done = await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
     assert.equal(done[0]?.state, 'done');
-    assert.ok(events.some((e: any) => e.kind === 'native' && e.state === 'completed'));
-    f.deps.delegate = async () => ({
-      outcome: { status: 'ok', text: '', resume: null, sessionId: null },
-      invocations: [],
-    });
+    assert.ok(events.some((e) => e.kind === 'native' && e.state === 'completed'));
+    f.script('claude', 'good', '');
     await fanOut(
       { dir: path.join(f.session, 'invalid-output'), slots: [slot('claude')], prompt: 'question', validate, quota },
       f.deps,
     );
-    assert.ok(events.some((e: any) => e.kind === 'validation' && e.outcome === 'empty-output'));
-    f.deps.delegate = delegate;
+    assert.ok(events.some((e) => e.kind === 'validation' && e.outcome === 'empty-output'));
     f.script('opencode', 'good', { status: 'fail', cls: 'auth', detail: 'private' });
     f.script('copilot', 'good', 'reserve answer');
     const reserved = await fanOut(
@@ -788,7 +815,7 @@ test('diagnostics observe validation routing and native replay without changing 
       f.deps,
     );
     assert.equal(reserved[0]?.state, 'done');
-    assert.ok(events.some((e: any) => e.kind === 'slot' && e.targetSlot === 'opencode[0]'));
+    assert.ok(events.some((e) => e.kind === 'slot' && e.targetSlot === 'opencode[0]'));
     f.deps.orchestrator = { platform: 'agy', model: null };
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'private' });
     const fallback = await fanOut(
@@ -796,7 +823,7 @@ test('diagnostics observe validation routing and native replay without changing 
       f.deps,
     );
     assert.equal(fallback[0]?.state, 'failed');
-    assert.ok(events.some((e: any) => e.kind === 'routing' && e.state === 'stop'));
+    assert.ok(events.some((e) => e.kind === 'routing' && e.state === 'stop'));
     f.deps.diagnostics = () => {
       throw new Error('observer');
     };
@@ -807,7 +834,6 @@ test('diagnostics observe validation routing and native replay without changing 
 });
 
 test('fan-out forwards session root and read commands to delegate request', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.artifact(
@@ -837,7 +863,6 @@ test('fan-out forwards session root and read commands to delegate request', asyn
   }
 });
 test('blocked attempt metadata is preserved across alias, reserve, and retry fallbacks', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const check = (text: string): Validation =>
@@ -913,7 +938,6 @@ test('blocked attempt metadata is preserved across alias, reserve, and retry fal
   }
 });
 test('blocked evidence deduplicates retries and keeps long alias chains', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const check = (text: string): Validation =>
@@ -965,7 +989,6 @@ test('blocked evidence deduplicates retries and keeps long alias chains', async 
   }
 });
 test('reserve attempts carry target slot', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'unavailable' });
@@ -988,14 +1011,13 @@ test('reserve attempts carry target slot', async () => {
 });
 
 test('coverage round failure evidence is written before the failed slot file, including retries', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'unavailable' });
     f.script('agy', 'good', 'answer');
     const dir = path.join(f.session, 'coverage'),
       file = path.join(dir, 'slots', 'claude[0].json'),
-      seen: string[] = [];
+      seen: Array<string> = [];
     const input = {
       dir,
       slots: [slot('claude'), slot('agy')],
@@ -1024,7 +1046,6 @@ test('coverage round failure evidence is written before the failed slot file, in
 });
 
 test('native-first launch defers CLI work and consume replays its saved result', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1032,9 +1053,11 @@ test('native-first launch defers CLI work and consume replays its saved result',
     f.script('agy', 'good', 'cli answer');
     const dir = path.join(f.session, 'launch-order');
     const slots = [slot('claude'), slot('agy')];
-    const replayed: string[] = [];
+    const replayed: Array<string> = [];
     f.deps.diagnostics = (event) => {
-      if (event.kind === 'slot' && event.state === 'done' && event.replay) replayed.push(event.slot);
+      if (event.kind === 'slot' && event.state === 'done' && event.replay) {
+        replayed.push(event.slot);
+      }
     };
     const input = {
       dir,
@@ -1077,7 +1100,6 @@ test('native-first launch defers CLI work and consume replays its saved result',
 });
 
 test('native-first failure on host change runs the cli cascade', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1093,17 +1115,14 @@ test('native-first failure on host change runs the cli cascade', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const pending = first.find((outcome) => outcome.state === 'native');
     assert.ok(pending?.state === 'native');
     fs.writeFileSync((pending as { replyPath: string }).replyPath, 'valid answer');
     f.deps.orchestrator = { platform: 'agy', model: null };
-    const second = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
-      f.deps,
-    );
+    const second = await fanOut({ dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] }, f.deps);
     assert.ok(f.launches.length > 0);
     assert.equal(second.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
     assert.ok(
@@ -1116,7 +1135,6 @@ test('native-first failure on host change runs the cli cascade', async () => {
 });
 
 test('native descriptor carries cwd model effort and guarded prompt', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1144,16 +1162,17 @@ test('native descriptor carries cwd model effort and guarded prompt', async () =
         cwd: f.root,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const native = first.find((outcome) => outcome.state === 'native') as unknown as Record<string, unknown>;
+    const native = first.find((outcome) => outcome.state === 'native');
+    assert.ok(native?.state === 'native');
     assert.ok(native);
     assert.equal(native['cwd'], f.root);
     assert.deepEqual(native['model'], ['a', 'b']);
     assert.equal(native['effort'], 'high');
-    assert.ok(typeof native['attempt'] === 'string' && (native['attempt'] as string).startsWith('claude[0]#'));
-    const promptText = fs.readFileSync(native['promptPath'] as string, 'utf8');
+    assert.ok(typeof native['attempt'] === 'string' && native['attempt'].startsWith('claude[0]#'));
+    const promptText = fs.readFileSync(native.promptPath, 'utf8');
     assert.match(promptText, /\[PRIMARY WORKSPACE\]/);
     assert.match(promptText, /\[SESSION ARTIFACTS\]/);
     const baseText = fs.readFileSync(path.join(dir, 'prompts', 'claude[0].md'), 'utf8');
@@ -1164,7 +1183,6 @@ test('native descriptor carries cwd model effort and guarded prompt', async () =
 });
 
 test('stale and replayed reports are ignored without ending a later launch', async () => {
-  const { fanOut, cliWaveState } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1172,7 +1190,7 @@ test('stale and replayed reports are ignored without ending a later launch', asy
     f.script('agy', 'good', 'cli answer');
     const dir = path.join(f.session, 'stale');
     const slots = [slot('claude'), slot('agy')];
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const first = await fanOut(
       {
         dir,
@@ -1186,18 +1204,16 @@ test('stale and replayed reports are ignored without ending a later launch', asy
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(ignored, ['claude[0]#deadbe']);
     assert.equal(first.filter((outcome) => outcome.state === 'native').length, 1);
     assert.equal(cliWaveState(dir), 'pending');
-    const native = first.find((outcome) => outcome.state === 'native') as unknown as {
-      attempt: string;
-      replyPath: string;
-    };
-    const waveIgnored: string[] = [];
-    const second = await fanOut(
+    const native = first.find((outcome) => outcome.state === 'native');
+    assert.ok(native?.state === 'native');
+    const waveIgnored: Array<string> = [];
+    await fanOut(
       {
         dir,
         slots,
@@ -1210,13 +1226,13 @@ test('stale and replayed reports are ignored without ending a later launch', asy
         onIgnoredReport: (attempt: string) => {
           waveIgnored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(waveIgnored, ['claude[0]#deadbe']);
     assert.equal(cliWaveState(dir), 'done');
     fs.writeFileSync(native.replyPath, 'valid answer');
-    const doneIgnored: string[] = [];
+    const doneIgnored: Array<string> = [];
     const third = await fanOut(
       {
         dir,
@@ -1230,12 +1246,12 @@ test('stale and replayed reports are ignored without ending a later launch', asy
         onIgnoredReport: (attempt: string) => {
           doneIgnored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.equal(third.find((outcome) => outcome.slot === 'claude[0]')?.state, 'failed');
     assert.ok(!f.launches.some((launch) => launch.provider === 'claude'), 'no host CLI launches');
-    const replayIgnored: string[] = [];
+    const replayIgnored: Array<string> = [];
     await fanOut(
       {
         dir,
@@ -1249,7 +1265,7 @@ test('stale and replayed reports are ignored without ending a later launch', asy
         onIgnoredReport: (attempt: string) => {
           replayIgnored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(replayIgnored, [native.attempt]);
@@ -1260,15 +1276,11 @@ test('stale and replayed reports are ignored without ending a later launch', asy
 });
 
 test('cli-only roster reports no wave state', async () => {
-  const { fanOut, cliWaveState } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('claude', 'good', 'answer');
     const dir = path.join(f.session, 'cli-only');
-    const outcomes = await fanOut(
-      { dir, slots: [slot('claude')], prompt: 'question', validate, quota } as never,
-      f.deps,
-    );
+    const outcomes = await fanOut({ dir, slots: [slot('claude')], prompt: 'question', validate, quota }, f.deps);
     assert.equal(outcomes[0]?.state, 'done');
     assert.equal(cliWaveState(dir), undefined);
   } finally {
@@ -1277,7 +1289,6 @@ test('cli-only roster reports no wave state', async () => {
 });
 
 test('blocked report shares one identity with a native reply and wins over the file', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1293,18 +1304,15 @@ test('blocked report shares one identity with a native reply and wins over the f
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.state === 'native') as unknown as {
-      attempt: string;
-      replyPath: string;
-    };
+    const pending = first.find((outcome) => outcome.state === 'native');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     fs.writeFileSync(pending.replyPath, 'valid answer');
-    const crypto = await import('node:crypto');
     const raw = 'denied access';
-    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    const hash = createHash('sha256').update(raw).digest('hex');
     await fanOut(
       {
         dir,
@@ -1314,10 +1322,10 @@ test('blocked report shares one identity with a native reply and wins over the f
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const third = await fanOut(
       {
         dir,
@@ -1331,7 +1339,7 @@ test('blocked report shares one identity with a native reply and wins over the f
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(ignored, []);
@@ -1345,26 +1353,19 @@ test('blocked report shares one identity with a native reply and wins over the f
 });
 
 test('cli-only failed slot retries its cli and retakes a free reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     const dir = path.join(f.session, 'cli-retake');
     const slots = [slot('agy'), { ...slot('claude'), reserve: true }];
-    const first = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
-      f.deps,
-    );
+    const first = await fanOut({ dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] }, f.deps);
     assert.equal(first.find((outcome) => outcome.slot === 'agy[0]')?.state, 'failed');
     assert.equal(f.launches.length, 2, 'the failed substitute spends the reserve once');
     f.launches.length = 0;
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
-    const second = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
-      f.deps,
-    );
+    const second = await fanOut({ dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] }, f.deps);
     assert.equal(
       second.find((outcome) => outcome.slot === 'agy[0]')?.state,
       'failed',
@@ -1381,7 +1382,6 @@ test('cli-only failed slot retries its cli and retakes a free reserve', async ()
 });
 
 test('non-host target consumes a host reserve reply under its logical slot', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1399,17 +1399,17 @@ test('non-host target consumes a host reserve reply under its logical slot', asy
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     const pending = first.find((outcome) => outcome.slot === 'agy[0]');
     assert.ok(pending?.state === 'native');
-    assert.equal((pending as unknown as { provider: string }).provider, 'claude');
-    const attempt = (pending as unknown as { attempt: string }).attempt;
+    assert.equal(pending.provider, 'claude');
+    const attempt = pending.attempt;
     assert.ok(attempt.startsWith('claude[0]#'));
     const { reserveUsedBy, nativeLaunched } = JSON.parse(fs.readFileSync(path.join(dir, 'fanout.json'), 'utf8'));
     assert.deepEqual({ reserveUsedBy, nativeLaunched }, { reserveUsedBy: 'agy[0]', nativeLaunched: true });
-    const replyPath = (pending as unknown as { replyPath: string }).replyPath;
+    const replyPath = pending.replyPath;
     const waved = await fanOut(
       {
         dir,
@@ -1419,7 +1419,7 @@ test('non-host target consumes a host reserve reply under its logical slot', asy
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     assert.equal(waved.find((outcome) => outcome.slot === 'agy[0]')?.state, 'native');
@@ -1433,24 +1433,20 @@ test('non-host target consumes a host reserve reply under its logical slot', asy
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     const finished = done.find((entry) => entry.slot === 'agy[0]');
     assert.equal(finished?.state, 'done');
-    assert.equal((finished as unknown as { text: string }).text, 'reserve answer');
-    assert.equal(
-      (finished as unknown as { responder: { provider: string; model: string; native: boolean } }).responder.provider,
-      'claude',
-    );
-    assert.equal((finished as unknown as { responder: { slot: string } }).responder.slot, 'agy[0]');
+    assert.equal(finished.text, 'reserve answer');
+    assert.equal(finished.responder?.provider, 'claude');
+    assert.equal(finished.responder?.slot, 'agy[0]');
   } finally {
     f.cleanup();
   }
 });
 
 test('host change while a native reserve is pending runs the reserve cli', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1467,7 +1463,7 @@ test('host change while a native reserve is pending runs the reserve cli', async
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const pending = first.find((outcome) => outcome.slot === 'agy[0]');
@@ -1484,12 +1480,12 @@ test('host change while a native reserve is pending runs the reserve cli', async
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['opencode'],
-      } as never,
+      },
       f.deps,
     );
     const outcome = second.find((entry) => entry.slot === 'agy[0]');
     assert.equal(outcome?.state, 'done');
-    assert.equal((outcome as unknown as { text: string }).text, 'reserve fallback answer');
+    assert.equal(outcome.text, 'reserve fallback answer');
     assert.ok(f.launches.some((launch) => launch.provider === 'claude' && launch.request.targetSlot === 'agy[0]'));
   } finally {
     f.cleanup();
@@ -1501,27 +1497,21 @@ for (const [title, nativeFirstProviders] of [
   ['native wave concurrent failures claim one reserve', ['codex']],
 ] as const) {
   test(title, async () => {
-    const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
     const f = sessionFixture({ memory: true });
     try {
       const dir = path.join(f.session, 'concurrent-reserve');
       const slots = [slot('agy'), slot('claude'), slot('copilot', 'good', true)];
-      if (nativeFirstProviders.length) slots.push(slot('codex'));
+      if (nativeFirstProviders.length) {
+        slots.push(slot('codex'));
+      }
 
       f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
       f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
       f.script('copilot', 'good', 'reserve answer');
-      const gate = () => {
-        let release!: () => void;
-        const promise = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        return { promise, release };
-      };
       const secondTargetStarted = gate();
       const ownerReserveStarted = gate();
       const contenderFinished = gate();
-      const ownersAtLaunch: (string | undefined)[] = [];
+      const ownersAtLaunch: Array<string | undefined> = [];
       const delegate = f.deps.delegate;
       f.deps.delegate = async (provider, request, mode) => {
         if (provider === 'copilot') {
@@ -1530,16 +1520,21 @@ for (const [title, nativeFirstProviders] of [
           ownersAtLaunch.push(saved?.reserveUsedBy);
         }
         const result = await delegate(provider, request, mode);
-        if (provider === 'agy') await secondTargetStarted.promise;
+        if (provider === 'agy') {
+          await secondTargetStarted.promise;
+        }
         if (provider === 'claude') {
-          secondTargetStarted.release();
+          secondTargetStarted.resolve();
           await ownerReserveStarted.promise;
         }
         if (provider === 'copilot') {
-          ownerReserveStarted.release();
+          ownerReserveStarted.resolve();
           // Keep the owner's substitute pending until the contender has tried the reserve.
-          if (request.targetSlot === 'agy[0]') await contenderFinished.promise;
-          else contenderFinished.release();
+          if (request.targetSlot === 'agy[0]') {
+            await contenderFinished.promise;
+          } else {
+            contenderFinished.resolve();
+          }
         }
         return result;
       };
@@ -1552,7 +1547,9 @@ for (const [title, nativeFirstProviders] of [
         quota,
         nativeFirstProviders,
         onFailed: (logical: string) => {
-          if (logical === 'claude[0]') contenderFinished.release();
+          if (logical === 'claude[0]') {
+            contenderFinished.resolve();
+          }
         },
       };
       if (nativeFirstProviders.length) {
@@ -1580,7 +1577,6 @@ for (const [title, nativeFirstProviders] of [
 }
 
 test('interrupted reservation resumes for its recorded owner only', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
@@ -1591,7 +1587,7 @@ test('interrupted reservation resumes for its recorded owner only', async () => 
     // between persisting reserveUsedBy and launching the substitute.
     await assert.rejects(
       fanOut(
-        { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
+        { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] },
         f.deps,
       ),
       /Unscripted delegate/,
@@ -1610,7 +1606,7 @@ test('interrupted reservation resumes for its recorded owner only', async () => 
         validate,
         quota,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(second.find((outcome) => outcome.slot === 'agy[0]')?.state, 'done');
@@ -1625,8 +1621,7 @@ test('interrupted reservation resumes for its recorded owner only', async () => 
 
 // Crash state after the native prompt and owner record, before the descriptor save.
 async function interruptedNativeReserve(f: ReturnType<typeof sessionFixture>, dir: string) {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const run = (slots: RosterSlot[]) =>
+  const run = (slots: Array<RosterSlot>) =>
     fanOut(
       {
         dir,
@@ -1636,7 +1631,7 @@ async function interruptedNativeReserve(f: ReturnType<typeof sessionFixture>, di
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
   f.script('agy', 'good', { status: 'fail', cls: 'config', detail: 'bad config' });
@@ -1652,7 +1647,8 @@ test('interrupted native reservation resumes for its recorded owner', async () =
   try {
     const run = await interruptedNativeReserve(f, path.join(f.session, 'interrupted-owner'));
     const resumed = await run([slot('agy'), { ...slot('claude'), reserve: true }]);
-    const owner = resumed.find((entry) => entry.slot === 'agy[0]') as unknown as { state: string; provider: string };
+    const owner = resumed.find((entry) => entry.slot === 'agy[0]');
+    assert.ok(owner?.state === 'native');
     assert.deepEqual(
       [owner?.state, owner?.provider],
       ['native', 'claude'],
@@ -1667,7 +1663,8 @@ test('interrupted native reservation resumes for its recorded owner', async () =
     g.script('codex', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     // The other target checks the reserve before the owner's retry saves its outcome.
     const second = await run([slot('codex'), slot('agy'), { ...slot('claude'), reserve: true }]);
-    const owner = second.find((entry) => entry.slot === 'agy[0]') as unknown as { state: string; provider: string };
+    const owner = second.find((entry) => entry.slot === 'agy[0]');
+    assert.ok(owner?.state === 'native');
     assert.deepEqual(
       [owner?.state, owner?.provider],
       ['native', 'claude'],
@@ -1685,7 +1682,6 @@ test('interrupted native reservation resumes for its recorded owner', async () =
 });
 
 test('late write from an earlier attempt is not read as the reserve reply', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1702,13 +1698,11 @@ test('late write from an earlier attempt is not read as the reserve reply', asyn
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.state === 'native') as unknown as {
-      attempt: string;
-      replyPath: string;
-    };
+    const pending = first.find((outcome) => outcome.state === 'native');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     // Reporting the launch attempt failed falls back to the CLI, which fails,
     // so the host reserve takes a native descriptor with its own reply path.
@@ -1722,15 +1716,11 @@ test('late write from an earlier attempt is not read as the reserve reply', asyn
         sessionRoot: f.session,
         nativeFirstProviders: providers,
         nativeFailures: [{ attempt: pending.attempt, reason: 'stale voice', reasonHash: 'h1' }],
-      } as never,
+      },
       f.deps,
     );
-    const reserve = waved.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      attempt: string;
-      replyPath: string;
-    };
-    assert.equal(reserve.state, 'native');
+    const reserve = waved.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(reserve?.state === 'native');
     assert.notEqual(reserve.attempt, pending.attempt);
     assert.notEqual(reserve.replyPath, pending.replyPath);
     // A late write lands at the earlier attempt's path after the reserve wrote.
@@ -1744,7 +1734,7 @@ test('late write from an earlier attempt is not read as the reserve reply', asyn
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     const outcome = consumed.find((entry) => entry.slot === 'claude[0]')!;
@@ -1761,19 +1751,18 @@ test('late write from an earlier attempt is not read as the reserve reply', asyn
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     const finished = done.find((entry) => entry.slot === 'claude[0]');
     assert.equal(finished?.state, 'done');
-    assert.equal((finished as unknown as { text: string }).text, 'reserve answer');
+    assert.equal(finished.text, 'reserve answer');
   } finally {
     f.cleanup();
   }
 });
 
 test('underfill names the sandbox gap through resolveSlots and the note', async () => {
-  const { resolveSlots, underfillNote } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const skillRoot = path.join(f.root, 'skill');
@@ -1804,21 +1793,17 @@ test('underfill names the sandbox gap through resolveSlots and the note', async 
 });
 
 test('cli-only native-only report returns failed without minting a fresh descriptor', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, 'native-only-report');
     const slots = [slot('codex', 'good', false, true)];
-    const first = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
-      f.deps,
-    );
+    const first = await fanOut({ dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] }, f.deps);
     const pending = first.find((outcome) => outcome.slot === 'codex[0]');
     assert.ok(pending?.state === 'native');
-    const attempt = (pending as unknown as { attempt: string }).attempt;
-    const replyPath = (pending as unknown as { replyPath: string }).replyPath;
+    const attempt = pending.attempt;
+    const replyPath = pending.replyPath;
     fs.writeFileSync(replyPath, 'partial');
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const second = await fanOut(
       {
         dir,
@@ -1831,7 +1816,7 @@ test('cli-only native-only report returns failed without minting a fresh descrip
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(ignored, []);
@@ -1839,18 +1824,14 @@ test('cli-only native-only report returns failed without minting a fresh descrip
     assert.equal(failed?.state, 'failed');
     assert.ok(!fs.existsSync(replyPath), 'report quarantines the partial reply');
     assert.ok(fs.existsSync(replyPath + '.invalid-1'), 'report quarantines the partial reply as .invalid-1');
-    const third = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
-      f.deps,
-    );
+    const third = await fanOut({ dir, slots, prompt: 'question', validate, quota, nativeFirstProviders: [] }, f.deps);
     assert.equal(third.find((outcome) => outcome.slot === 'codex[0]')?.state, 'native');
   } finally {
     f.cleanup();
   }
 });
 
-test('reply quarantine failure preserves evidence or surfaces instead of silently continuing', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+test('reply quarantine failure preserves evidence or surfaces instead of silently continuing', async (t) => {
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1866,13 +1847,11 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
-      const pending = first.find((outcome) => outcome.state === 'native') as unknown as {
-        attempt: string;
-        replyPath: string;
-      };
+      const pending = first.find((outcome) => outcome.state === 'native');
+      assert.ok(pending?.state === 'native');
       assert.ok(pending);
       fs.writeFileSync(pending.replyPath, '   ');
       await fanOut(
@@ -1884,18 +1863,20 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       return pending;
     };
-    const realRename = fs.renameSync as unknown as (source: string, target: string) => void;
-    const failReplies = (source: string, target: string) => {
-      if (source.includes('replies')) throw new Error('locked by another process');
+    const realRename = fs.renameSync;
+    const failReplies = (source: fs.PathLike, target: fs.PathLike) => {
+      if (String(source).includes('replies')) {
+        throw new Error('locked by another process');
+      }
       realRename(source, target);
     };
     const pending = await launch(path.join(f.session, 'quarantine-copy'));
-    (fs as unknown as { renameSync: (source: string, target: string) => void }).renameSync = failReplies;
+    const copyRename = t.mock.method(fs, 'renameSync', failReplies);
     try {
       const done = await fanOut(
         {
@@ -1906,7 +1887,7 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(done.find((outcome) => outcome.slot === 'claude[0]')?.state, 'failed');
@@ -1914,15 +1895,17 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
       assert.equal(fs.readFileSync(pending.replyPath + '.invalid-1', 'utf8'), '   ');
       assert.ok(!fs.existsSync(pending.replyPath));
     } finally {
-      (fs as unknown as { renameSync: (source: string, target: string) => void }).renameSync = realRename;
+      copyRename.mock.restore();
     }
     const pending2 = await launch(path.join(f.session, 'quarantine-surfaces'));
-    const realRm = fs.rmSync.bind(fs);
-    (fs as unknown as { renameSync: (source: string, target: string) => void }).renameSync = failReplies;
-    (fs as unknown as { rmSync: typeof fs.rmSync }).rmSync = ((target: string, ...rest: unknown[]) => {
-      if (target.includes('replies')) throw new Error('permission denied');
-      return (realRm as (...args: unknown[]) => unknown)(target, ...rest);
-    }) as typeof fs.rmSync;
+    const realRm = fs.rmSync;
+    const failingRename = t.mock.method(fs, 'renameSync', failReplies);
+    const remove = t.mock.method(fs, 'rmSync', (...args: Parameters<typeof realRm>) => {
+      if (String(args[0]).includes('replies')) {
+        throw new Error('permission denied');
+      }
+      realRm(...args);
+    });
     try {
       await assert.rejects(
         fanOut(
@@ -1934,14 +1917,14 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
             quota,
             sessionRoot: f.session,
             nativeFirstProviders: ['claude'],
-          } as never,
+          },
           f.deps,
         ),
         /Cannot quarantine rejected reply/,
       );
     } finally {
-      (fs as unknown as { renameSync: (source: string, target: string) => void }).renameSync = realRename;
-      (fs as unknown as { rmSync: typeof fs.rmSync }).rmSync = realRm as typeof fs.rmSync;
+      remove.mock.restore();
+      failingRename.mock.restore();
     }
     assert.ok(pending2);
   } finally {
@@ -1950,7 +1933,6 @@ test('reply quarantine failure preserves evidence or surfaces instead of silentl
 });
 
 test('wave consumes a report for a reserve substitute under a non-first target', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -1968,7 +1950,7 @@ test('wave consumes a report for a reserve substitute under a non-first target',
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.ok(first.find((outcome) => outcome.slot === 'claude[0]')?.state === 'native');
@@ -1984,16 +1966,17 @@ test('wave consumes a report for a reserve substitute under a non-first target',
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       ),
       /Unscripted delegate/,
     );
     const substitute = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'agy[0].json'), 'utf8'));
     assert.equal(substitute.state, 'native');
-    assert.ok((substitute.attempt as string).startsWith('claude[1]#'), JSON.stringify(substitute.attempt));
+    const attempt: unknown = substitute.attempt;
+    assert.ok(typeof attempt === 'string' && attempt.startsWith('claude[1]#'), JSON.stringify(attempt));
     f.script('codex', 'good', 'codex answer');
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const third = await fanOut(
       {
         dir,
@@ -2007,7 +1990,7 @@ test('wave consumes a report for a reserve substitute under a non-first target',
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     const done = third.find((outcome) => outcome.slot === 'agy[0]');
@@ -2025,7 +2008,6 @@ test('wave consumes a report for a reserve substitute under a non-first target',
 });
 
 test('report on a native reserve attempt saves failed without host CLI', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2043,12 +2025,12 @@ test('report on a native reserve attempt saves failed without host CLI', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(pending?.state, 'native');
-    const ignored: string[] = [];
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
+    const ignored: Array<string> = [];
     const second = await fanOut(
       {
         dir,
@@ -2062,7 +2044,7 @@ test('report on a native reserve attempt saves failed without host CLI', async (
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     const done = second.find((outcome) => outcome.slot === 'agy[0]');
@@ -2075,7 +2057,6 @@ test('report on a native reserve attempt saves failed without host CLI', async (
 });
 
 test('host change while a native-only reserve is pending saves failed without a new descriptor', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -2083,11 +2064,11 @@ test('host change while a native-only reserve is pending saves failed without a 
     const dir = path.join(f.session, 'native-only-host-change');
     const slots = [slot('agy'), { ...slot('codex'), reserve: true, native: true }];
     const first = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] } as never,
+      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending.attempt.startsWith('codex[0]#'));
     const { reserveUsedBy, nativeLaunched } = JSON.parse(fs.readFileSync(path.join(dir, 'fanout.json'), 'utf8'));
     assert.deepEqual({ reserveUsedBy, nativeLaunched }, { reserveUsedBy: 'agy[0]', nativeLaunched: true });
@@ -2102,20 +2083,19 @@ test('host change while a native-only reserve is pending saves failed without a 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['opencode'],
-      } as never,
+      },
       f.deps,
     );
     const failed = second.find((outcome) => outcome.slot === 'agy[0]');
     assert.equal(failed?.state, 'failed');
     assert.equal(f.launches.length, 0, 'neither the logical nor the reserve cli runs');
-    assert.ok(!('attempt' in (failed as unknown as Record<string, unknown>)), 'no fresh descriptor minted');
+    assert.ok(!('attempt' in failed), 'no fresh descriptor minted');
   } finally {
     f.cleanup();
   }
 });
 
 test('reported native-only reserve stays failed across retries', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -2123,11 +2103,11 @@ test('reported native-only reserve stays failed across retries', async () => {
     const dir = path.join(f.session, 'native-only-stays-failed');
     const slots = [slot('agy'), { ...slot('codex'), reserve: true, native: true }];
     const first = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] } as never,
+      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
     const second = await fanOut(
       {
         dir,
@@ -2138,19 +2118,15 @@ test('reported native-only reserve stays failed across retries', async () => {
         sessionRoot: f.session,
         nativeFirstProviders: [],
         nativeFailures: [{ attempt: pending.attempt, reason: 'launch gone', reasonHash: 'h1' }],
-      } as never,
+      },
       f.deps,
     );
     const failed = second.find((outcome) => outcome.slot === 'agy[0]');
     assert.equal(failed?.state, 'failed');
-    assert.equal(
-      (failed as unknown as { cliOnly?: boolean }).cliOnly,
-      undefined,
-      'native history bars the cli-only retake marker',
-    );
+    assert.equal(failed.cliOnly, undefined, 'native history bars the cli-only retake marker');
     const launchesBefore = f.launches.length;
     const third = await fanOut(
-      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] } as never,
+      { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] },
       f.deps,
     );
     assert.equal(third.find((outcome) => outcome.slot === 'agy[0]')?.state, 'failed');
@@ -2162,7 +2138,6 @@ test('reported native-only reserve stays failed across retries', async () => {
 });
 
 test('cli-only failed slot releases its reserve for another target after recovering', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
@@ -2170,7 +2145,7 @@ test('cli-only failed slot releases its reserve for another target after recover
     const dir = path.join(f.session, 'cli-retake-cross-owner');
     const reserve = { ...slot('copilot'), reserve: true };
     const first = await fanOut(
-      { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
+      { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'agy[0]')?.state, 'failed');
@@ -2185,13 +2160,13 @@ test('cli-only failed slot releases its reserve for another target after recover
         validate,
         quota,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(second.find((outcome) => outcome.slot === 'agy[0]')?.state, 'done');
     const served = second.find((outcome) => outcome.slot === 'codex[0]');
     assert.equal(served?.state, 'done');
-    assert.equal((served as unknown as { text: string }).text, 'reserve answer');
+    assert.equal(served.text, 'reserve answer');
     assert.ok(f.launches.some((launch) => launch.provider === 'copilot' && launch.request.targetSlot === 'codex[0]'));
   } finally {
     f.cleanup();
@@ -2199,7 +2174,6 @@ test('cli-only failed slot releases its reserve for another target after recover
 });
 
 test('consume runs independent fallback cascades concurrently', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'opencode', model: null };
@@ -2215,7 +2189,7 @@ test('consume runs independent fallback cascades concurrently', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.filter((outcome) => outcome.state === 'native').length, 2);
@@ -2228,19 +2202,24 @@ test('consume runs independent fallback cascades concurrently', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
-    const attempts = (first as unknown as { slot: string; attempt: string }[])
-      .filter((outcome) => outcome.slot === 'claude[0]' || outcome.slot === 'agy[0]')
-      .map((outcome) => outcome.attempt);
+    const attempts = first.flatMap((outcome) => {
+      if (outcome.slot !== 'claude[0]' && outcome.slot !== 'agy[0]') {
+        return [];
+      }
+      assert.equal(outcome.state, 'native');
+      return [outcome.attempt];
+    });
     // The gate fails a cascade that runs alone: only concurrent cascades both pass.
-    const arrivals: string[] = [];
+    const arrivals: Array<string> = [];
     f.deps.delegate = async (provider) => {
       arrivals.push(provider);
       await Promise.resolve();
-      if (arrivals.length < 2)
+      if (arrivals.length < 2) {
         return { outcome: { status: 'fail', cls: 'auth', detail: 'gated' } as const, invocations: [] };
+      }
       return { outcome: { status: 'ok', text: provider + ' answer', resume: null, sessionId: null }, invocations: [] };
     };
     const third = await fanOut(
@@ -2253,7 +2232,7 @@ test('consume runs independent fallback cascades concurrently', async () => {
         sessionRoot: f.session,
         nativeFirstProviders: providers,
         nativeFailures: attempts.map((attempt) => ({ attempt, reason: 'launch gone', reasonHash: 'h1' })),
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(
@@ -2267,7 +2246,6 @@ test('consume runs independent fallback cascades concurrently', async () => {
 });
 
 test('last-pending-settles retry carries forward saved blocked evidence', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2293,7 +2271,7 @@ test('last-pending-settles retry carries forward saved blocked evidence', async 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     assert.ok(first.find((outcome) => outcome.slot === 'claude[0]')?.state === 'native');
@@ -2306,10 +2284,11 @@ test('last-pending-settles retry carries forward saved blocked evidence', async 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as { replyPath: string };
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     fs.writeFileSync(pending.replyPath, 'valid answer');
     f.script('agy', 'good', 'answer');
     const third = await fanOut(
@@ -2321,7 +2300,7 @@ test('last-pending-settles retry carries forward saved blocked evidence', async 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       f.deps,
     );
     const done = third.find((outcome) => outcome.slot === 'agy[0]');
@@ -2335,12 +2314,11 @@ test('last-pending-settles retry carries forward saved blocked evidence', async 
 });
 
 test('a failed-slot retry rewrites a base prompt modified by a native-only reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
-    const seen: string[] = [];
+    const seen: Array<string> = [];
     const delegate = f.deps.delegate;
     f.deps.delegate = async (provider, request, mode) => {
       seen.push(fs.readFileSync(request.promptPath, 'utf8'));
@@ -2359,14 +2337,13 @@ test('a failed-slot retry rewrites a base prompt modified by a native-only reser
       sessionRoot: f.session,
       nativeFirstProviders: providers,
     };
-    const launched = await fanOut(waveInput as never, f.deps);
-    const nativeClaude = launched.find((outcome) => outcome.slot === 'claude[0]') as unknown as { replyPath: string };
+    const launched = await fanOut(waveInput, f.deps);
+    const nativeClaude = launched.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(nativeClaude?.state === 'native');
     assert.equal(launched.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
-    const waved = await fanOut(waveInput as never, f.deps);
-    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      attempt: string;
-    };
+    const waved = await fanOut(waveInput, f.deps);
+    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(substitute?.state === 'native');
     assert.equal(substitute?.state, 'native', 'the cli failure mints the host native-only reserve');
     assert.ok(substitute.attempt.startsWith('codex[0]#'));
     assert.match(
@@ -2375,7 +2352,7 @@ test('a failed-slot retry rewrites a base prompt modified by a native-only reser
       'the reserve mint appends the native reply section to the base prompt',
     );
     fs.writeFileSync(nativeClaude.replyPath, 'native answer');
-    const consumed = await fanOut(waveInput as never, f.deps);
+    const consumed = await fanOut(waveInput, f.deps);
     assert.equal(consumed.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
     assert.equal(consumed.find((outcome) => outcome.slot === 'agy[0]')?.state, 'native');
     // A plain report ends the pending substitute; the next call retries it.
@@ -2383,21 +2360,22 @@ test('a failed-slot retry rewrites a base prompt modified by a native-only reser
       {
         ...waveInput,
         nativeFailures: [{ attempt: substitute.attempt, reason: 'launch gone', reasonHash: 'h-rewrite' }],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(reported.find((outcome) => outcome.slot === 'agy[0]')?.state, 'failed');
     f.script('agy', 'good', 'recovered');
     seen.length = 0;
-    const retried = await fanOut(waveInput as never, f.deps);
+    const retried = await fanOut(waveInput, f.deps);
     assert.equal(retried.find((outcome) => outcome.slot === 'agy[0]')?.state, 'done');
     assert.ok(seen.length > 0, 'the retry relaunches the cli');
-    for (const prompt of seen)
+    for (const prompt of seen) {
       assert.doesNotMatch(
         prompt,
         /## Native reply/,
         'the retry hands the cli the base prompt, not the reserve-modified file',
       );
+    }
     assert.ok(seen.some((prompt) => prompt === 'question'));
   } finally {
     f.cleanup();
@@ -2405,7 +2383,6 @@ test('a failed-slot retry rewrites a base prompt modified by a native-only reser
 });
 
 test('interrupted fallback with ownership resumes for its owner', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2422,13 +2399,11 @@ test('interrupted fallback with ownership resumes for its owner', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.state === 'native') as unknown as {
-      attempt: string;
-      replyPath: string;
-    };
+    const pending = first.find((outcome) => outcome.state === 'native');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     f.script('claude', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     const withReserve = [slot('claude'), { ...slot('copilot'), reserve: true }];
@@ -2443,7 +2418,7 @@ test('interrupted fallback with ownership resumes for its owner', async () => {
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
           nativeFailures: [{ attempt: pending.attempt, reason: 'gone', reasonHash: 'h1' }],
-        } as never,
+        },
         f.deps,
       ),
       /Unscripted delegate/,
@@ -2464,7 +2439,7 @@ test('interrupted fallback with ownership resumes for its owner', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.ok(f.launches.length > 0);
@@ -2475,7 +2450,6 @@ test('interrupted fallback with ownership resumes for its owner', async () => {
 });
 
 test('wave resumes a cli fallback marker without requiring the report', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2492,19 +2466,16 @@ test('wave resumes a cli fallback marker without requiring the report', async ()
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      attempt: string;
-      replyPath: string;
-      provider: string;
-    };
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     const saved = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'claude[0].json'), 'utf8'));
     const withFallback = { ...saved, cliFallback: true, nativeError: 'gone' };
     fs.writeFileSync(path.join(dir, 'slots', 'claude[0].json'), JSON.stringify(withFallback));
-    fs.writeFileSync((pending as unknown as { replyPath: string }).replyPath, 'stale');
+    fs.writeFileSync(pending.replyPath, 'stale');
     f.launches.length = 0;
     const noReport = await fanOut(
       {
@@ -2515,7 +2486,7 @@ test('wave resumes a cli fallback marker without requiring the report', async ()
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(f.launches.filter((launch) => launch.provider === 'claude').length, 0, 'no host CLI launches');
@@ -2526,7 +2497,6 @@ test('wave resumes a cli fallback marker without requiring the report', async ()
 });
 
 test('wave runs fallback cascades alongside cli targets', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2544,10 +2514,11 @@ test('wave runs fallback cascades alongside cli targets', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as { attempt: string };
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     const second = await fanOut(
       {
@@ -2559,7 +2530,7 @@ test('wave runs fallback cascades alongside cli targets', async () => {
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
         nativeFailures: [{ attempt: pending.attempt, reason: 'gone', reasonHash: 'h1' }],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(second.find((outcome) => outcome.slot === 'claude[0]')?.state, 'failed');
@@ -2574,7 +2545,6 @@ test('wave runs fallback cascades alongside cli targets', async () => {
 });
 
 test('completed substitute does not release the reserve to a second target', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
@@ -2582,12 +2552,12 @@ test('completed substitute does not release the reserve to a second target', asy
     const dir = path.join(f.session, 'substitute-holds');
     const reserve = { ...slot('copilot'), reserve: true };
     const first = await fanOut(
-      { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] } as never,
+      { dir, slots: [slot('agy'), reserve], prompt: 'question', validate, quota, nativeFirstProviders: [] },
       f.deps,
     );
     const owned = first.find((outcome) => outcome.slot === 'agy[0]');
     assert.equal(owned?.state, 'done');
-    assert.equal((owned as unknown as { responder: { slot: string } }).responder.slot, 'copilot[0]');
+    assert.equal(owned.responder?.slot, 'copilot[0]');
     f.script('agy', 'good', 'recovered');
     f.script('codex', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     f.script('copilot', 'good', 'second answer');
@@ -2599,7 +2569,7 @@ test('completed substitute does not release the reserve to a second target', asy
         validate,
         quota,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(second.find((outcome) => outcome.slot === 'codex[0]')?.state, 'failed');
@@ -2625,20 +2595,16 @@ test('completed substitute does not release the reserve to a second target', asy
       quota,
       sessionRoot: g.session,
       nativeFirstProviders: providers,
-    } as never;
+    } satisfies FanOutInput;
     const first = await fanOut(input, g.deps);
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      attempt: string;
-      replyPath: string;
-    };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending.attempt.startsWith('claude[0]#'));
     fs.writeFileSync(pending.replyPath, 'reserve answer');
     const done = await fanOut(input, g.deps);
     const finished = done.find((entry) => entry.slot === 'agy[0]');
     assert.equal(finished?.state, 'done');
-    assert.deepEqual((finished as unknown as { responder: unknown }).responder, {
+    assert.deepEqual(finished.responder, {
       slot: 'agy[0]',
       provider: 'claude',
       model: 'good',
@@ -2654,7 +2620,7 @@ test('completed substitute does not release the reserve to a second target', asy
         quota,
         sessionRoot: g.session,
         nativeFirstProviders: providers,
-      } as never,
+      },
       g.deps,
     );
     assert.equal(third.find((outcome) => outcome.slot === 'codex[0]')?.state, 'failed');
@@ -2668,7 +2634,6 @@ test('completed substitute does not release the reserve to a second target', asy
 });
 
 test('interrupted cli fallback resumes without its report in the cli-only path', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.script('claude', 'good', 'fallback answer');
@@ -2704,12 +2669,12 @@ test('interrupted cli fallback resumes without its report in the cli-only path',
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const done = outcomes.find((outcome) => outcome.slot === 'agy[0]');
     assert.equal(done?.state, 'done');
-    assert.equal((done as unknown as { text: string }).text, 'fallback answer');
+    assert.equal(done.text, 'fallback answer');
     assert.ok(
       !fs.existsSync(replyPath) && fs.existsSync(replyPath + '.invalid-1'),
       'a late reply is quarantined, never consumed',
@@ -2721,7 +2686,6 @@ test('interrupted cli fallback resumes without its report in the cli-only path',
 });
 
 test('host change to a native-first logical slot runs the physical cli', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2737,11 +2701,11 @@ test('host change to a native-first logical slot runs the physical cli', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending.attempt.startsWith('claude[0]#'));
     f.deps.orchestrator = { platform: 'agy', model: null };
     f.script('claude', 'good', 'reserve cli answer');
@@ -2756,7 +2720,7 @@ test('host change to a native-first logical slot runs the physical cli', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     assert.ok(
@@ -2777,12 +2741,12 @@ test('host change to a native-first logical slot runs the physical cli', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     const done = third.find((entry) => entry.slot === 'agy[0]');
     assert.equal(done?.state, 'done');
-    assert.equal((done as unknown as { text: string }).text, 'reserve cli answer');
+    assert.equal(done.text, 'reserve cli answer');
     assert.ok(f.launches.some((launch) => launch.provider === 'claude' && launch.request.targetSlot === 'agy[0]'));
   } finally {
     f.cleanup();
@@ -2790,7 +2754,6 @@ test('host change to a native-first logical slot runs the physical cli', async (
 });
 
 test('consume keeps a host native-only reserve substitute pending', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -2823,7 +2786,7 @@ test('consume keeps a host native-only reserve substitute pending', async () => 
       quota,
       sessionRoot: f.session,
       nativeFirstProviders: ['claude'],
-    } as never;
+    } satisfies FanOutInput;
     const waved = await fanOut(waveInput, f.deps);
     assert.equal(
       waved.find((outcome) => outcome.slot === 'agy[0]')?.state,
@@ -2840,15 +2803,15 @@ test('consume keeps a host native-only reserve substitute pending', async () => 
       quota,
       sessionRoot: f.session,
       nativeFirstProviders: [],
-    } as never;
+    } satisfies FanOutInput;
     const outcomes = await fanOut(input, f.deps);
     assert.equal(outcomes.find((outcome) => outcome.slot === 'agy[0]')?.state, 'native');
     fs.writeFileSync(replyPath, 'reserve answer');
     const done = await fanOut(input, f.deps);
     const finished = done.find((entry) => entry.slot === 'agy[0]');
     assert.equal(finished?.state, 'done');
-    assert.equal((finished as unknown as { text: string }).text, 'reserve answer');
-    assert.deepEqual((finished as unknown as { responder: unknown }).responder, {
+    assert.equal(finished.text, 'reserve answer');
+    assert.deepEqual(finished.responder, {
       slot: 'agy[0]',
       provider: 'codex',
       model: 'good',
@@ -2860,7 +2823,6 @@ test('consume keeps a host native-only reserve substitute pending', async () => 
 });
 
 test('wave launches a newly native-first target that has no saved slot', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2876,7 +2838,7 @@ test('wave launches a newly native-first target that has no saved slot', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.length, 1);
@@ -2894,7 +2856,7 @@ test('wave launches a newly native-first target that has no saved slot', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(
@@ -2902,8 +2864,8 @@ test('wave launches a newly native-first target that has no saved slot', async (
       1,
       'the stale attempt never returns as pending: ' + JSON.stringify(waved.map((outcome) => outcome.slot)),
     );
-    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(fresh?.state, 'native');
+    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(fresh?.state === 'native');
     assert.ok(fresh.attempt.startsWith('agy[0]#'));
     assert.ok(
       !waved.some((outcome) => outcome.slot === 'claude[0]'),
@@ -2919,7 +2881,7 @@ test('wave launches a newly native-first target that has no saved slot', async (
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(settled.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
@@ -2929,7 +2891,6 @@ test('wave launches a newly native-first target that has no saved slot', async (
 });
 
 test('launch replays every saved outcome when the host changes past a pending reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -2948,16 +2909,17 @@ test('launch replays every saved outcome when the host changes past a pending re
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const savedCodex = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'codex[0].json'), 'utf8'));
     assert.equal(savedCodex.state, 'native');
-    assert.ok((savedCodex.attempt as string).startsWith('claude[0]#'));
+    const attempt: unknown = savedCodex.attempt;
+    assert.ok(typeof attempt === 'string' && attempt.startsWith('claude[0]#'));
     // The session moves to the agy host: agy turns native-first while codex
     // keeps its pending claude reserve attempt with a matching BLOCKED report.
     f.deps.orchestrator = { platform: 'agy', model: null };
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const second = await fanOut(
       {
         dir,
@@ -2971,7 +2933,7 @@ test('launch replays every saved outcome when the host changes past a pending re
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(ignored, [], 'the matching report is consumed, not ignored');
@@ -3002,14 +2964,11 @@ test('launch replays every saved outcome when the host changes past a pending re
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
-    const done = third.find((outcome) => outcome.slot === 'codex[0]') as unknown as {
-      state: string;
-      text: string;
-      blocked: { reasonHash: string }[];
-    };
+    const done = third.find((outcome) => outcome.slot === 'codex[0]');
+    assert.ok(done?.state === 'done');
     assert.equal(
       done?.state,
       'done',
@@ -3028,7 +2987,6 @@ test('launch replays every saved outcome when the host changes past a pending re
 });
 
 test('native responder keeps the launched model and effort when the roster changes before consumption', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3053,10 +3011,11 @@ test('native responder keeps the launched model and effort when the roster chang
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.state === 'native') as unknown as { replyPath: string };
+    const pending = first.find((outcome) => outcome.state === 'native');
+    assert.ok(pending?.state === 'native');
     assert.ok(pending);
     // The configured model and effort change while the native answer is pending.
     const changed = [
@@ -3079,7 +3038,7 @@ test('native responder keeps the launched model and effort when the roster chang
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(second.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -3093,12 +3052,12 @@ test('native responder keeps the launched model and effort when the roster chang
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const done = third.find((outcome) => outcome.slot === 'claude[0]');
     assert.equal(done?.state, 'done');
-    assert.deepEqual((done as unknown as { responder: unknown }).responder, {
+    assert.deepEqual(done.responder, {
       slot: 'claude[0]',
       provider: 'claude',
       model: 'launch-model',
@@ -3111,7 +3070,6 @@ test('native responder keeps the launched model and effort when the roster chang
 });
 
 test('cli wave mints a native descriptor for a host native-only reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -3129,7 +3087,7 @@ test('cli wave mints a native descriptor for a host native-only reserve', async 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -3142,16 +3100,11 @@ test('cli wave mints a native descriptor for a host native-only reserve', async 
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      provider: string;
-      attempt: string;
-      promptPath: string;
-      cwd: string;
-    };
+    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(substitute?.state === 'native');
     assert.equal(substitute?.state, 'native', JSON.stringify(waved));
     assert.equal(substitute.provider, 'codex');
     assert.ok(substitute.attempt.startsWith('codex[0]#'));
@@ -3171,7 +3124,6 @@ test('cli wave mints a native descriptor for a host native-only reserve', async 
 });
 
 test('launch applies a matching failure report to a saved native-only attempt', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'agy', model: null };
@@ -3197,7 +3149,7 @@ test('launch applies a matching failure report to a saved native-only attempt', 
       }),
     );
     const only = { ...slot('claude'), native: true };
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const outcomes = await fanOut(
       {
         dir,
@@ -3211,15 +3163,12 @@ test('launch applies a matching failure report to a saved native-only attempt', 
         onIgnoredReport: (attempt: string) => {
           ignored.push(attempt);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.deepEqual(ignored, [], 'the matching report is consumed, not ignored');
-    const saved = outcomes.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      cls: string;
-      blocked: { reasonHash: string }[];
-    };
+    const saved = outcomes.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(saved?.state === 'failed');
     assert.equal(saved?.state, 'failed', JSON.stringify(outcomes));
     assert.equal(saved.cls, 'blocked');
     assert.ok(
@@ -3232,7 +3181,6 @@ test('launch applies a matching failure report to a saved native-only attempt', 
 });
 
 test('wave creates a newly eligible native-only target after a host and roster change', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3247,7 +3195,7 @@ test('wave creates a newly eligible native-only target after a host and roster c
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -3264,14 +3212,11 @@ test('wave creates a newly eligible native-only target after a host and roster c
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['codex'],
-      } as never,
+      },
       f.deps,
     );
-    const fresh = waved.find((outcome) => outcome.slot === 'codex[0]') as unknown as {
-      state: string;
-      provider: string;
-      attempt: string;
-    };
+    const fresh = waved.find((outcome) => outcome.slot === 'codex[0]');
+    assert.ok(fresh?.state === 'native');
     assert.equal(
       fresh?.state,
       'native',
@@ -3289,7 +3234,7 @@ test('wave creates a newly eligible native-only target after a host and roster c
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['codex'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(settled.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
@@ -3300,7 +3245,6 @@ test('wave creates a newly eligible native-only target after a host and roster c
 });
 
 test('consume keeps a wave-created native-only reserve pending on blocked and invalid replies', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -3335,7 +3279,7 @@ test('consume keeps a wave-created native-only reserve pending on blocked and in
       quota,
       sessionRoot: f.session,
       nativeFirstProviders: ['claude'],
-    } as never;
+    } satisfies FanOutInput;
     fs.writeFileSync(replyPath, 'BLOCKED: host cannot write');
     const blocked = await fanOut(input, f.deps);
     assert.equal(
@@ -3377,7 +3321,6 @@ test('consume keeps a wave-created native-only reserve pending on blocked and in
 });
 
 test('a reported native-first attempt defers to the cli fallback instead of failing', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3392,19 +3335,16 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      attempt: string;
-    };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     // The host changes: agy becomes native-first with no saved slot while the
     // old claude attempt carries a matching BLOCKED report.
     f.deps.orchestrator = { platform: 'agy', model: null };
-    const ignored: string[] = [];
-    const failed: string[] = [];
+    const ignored: Array<string> = [];
+    const failed: Array<string> = [];
     const waved = await fanOut(
       {
         dir,
@@ -3421,7 +3361,7 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
         onFailed: (slot: string) => {
           failed.push(slot);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.equal(f.launches.length, 0, 'no cli launches before the new descriptors return');
@@ -3430,7 +3370,8 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
       undefined,
       'the wave stays recoverable',
     );
-    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
+    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(fresh?.state === 'native');
     assert.equal(fresh?.state, 'native', 'the new host voice is returned without waiting');
     assert.ok(fresh.attempt.startsWith('agy[0]#'));
     assert.ok(
@@ -3442,10 +3383,7 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
     const saved = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'claude[0].json'), 'utf8'));
     assert.equal(saved.cliFallback, true, 'the deferred fallback marker persists: ' + JSON.stringify(saved));
     assert.equal(saved.nativeError, 'BLOCKED: old host denied');
-    assert.ok(
-      (saved.blocked ?? []).some((entry: { reasonHash: string }) => entry.reasonHash === 'rh-early'),
-      'blocked evidence is retained: ' + JSON.stringify(saved.blocked),
-    );
+    assert.ok(hasBlockedReason(saved, 'rh-early'), 'blocked evidence is retained: ' + JSON.stringify(saved.blocked));
     assert.deepEqual(ignored, [], 'the matching report is consumed, not ignored');
     // The next call runs the deferred fallback through the cli.
     const resumed = await fanOut(
@@ -3457,7 +3395,7 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     const done = resumed.find((outcome) => outcome.slot === 'claude[0]');
@@ -3467,7 +3405,7 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
       'the wave runs the deferred fallback: ' +
         JSON.stringify(resumed.map((outcome) => outcome.slot + ':' + outcome.state)),
     );
-    assert.equal((done as unknown as { text: string }).text, 'cli answer');
+    assert.equal(done.text, 'cli answer');
     assert.ok(f.launches.some((launch) => launch.provider === 'claude'));
   } finally {
     f.cleanup();
@@ -3475,7 +3413,6 @@ test('a reported native-first attempt defers to the cli fallback instead of fail
 });
 
 test('early-wave blocked reports defer substitutes and fail native-only attempts without CLI', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3503,7 +3440,7 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
     const reserve = { slot: 'claude[1]', provider: 'claude', index: 1, model: 'good', reserve: true, native: false };
     // codex turns native-first with no saved slot while the agy substitute
     // carries a matching BLOCKED report.
-    const failed: string[] = [];
+    const failed: Array<string> = [];
     const waved = await fanOut(
       {
         dir,
@@ -3517,7 +3454,7 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
         onFailed: (slot: string) => {
           failed.push(slot);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.equal(f.launches.length, 0, 'no cli launches before the new descriptors return');
@@ -3531,10 +3468,7 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
     assert.deepEqual(failed, [], 'the deferred substitute marks no failure');
     const saved = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'agy[0].json'), 'utf8'));
     assert.equal(saved.cliFallback, true);
-    assert.ok(
-      (saved.blocked ?? []).some((entry: { reasonHash: string }) => entry.reasonHash === 'rh-sub'),
-      'blocked evidence is retained',
-    );
+    assert.ok(hasBlockedReason(saved, 'rh-sub'), 'blocked evidence is retained');
     const resumed = await fanOut(
       {
         dir,
@@ -3544,7 +3478,7 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['codex'],
-      } as never,
+      },
       f.deps,
     );
     const done = resumed.find((outcome) => outcome.slot === 'agy[0]');
@@ -3577,7 +3511,7 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
     );
     const onlyReserve = { slot: 'codex[1]', provider: 'codex', index: 1, model: 'good', reserve: true, native: true };
     const only = { ...slot('codex'), native: true };
-    const onlyFailed: string[] = [];
+    const onlyFailed: Array<string> = [];
     const onlyWaved = await fanOut(
       {
         dir: onlyDir,
@@ -3591,15 +3525,12 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
         onFailed: (slot: string) => {
           onlyFailed.push(slot);
         },
-      } as never,
+      },
       f.deps,
     );
     assert.equal(onlyWaved.find((outcome) => outcome.slot === 'codex[0]')?.state, 'native');
-    const onlyReported = onlyWaved.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      cls: string;
-      blocked: { reasonHash: string }[];
-    };
+    const onlyReported = onlyWaved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(onlyReported?.state === 'failed');
     assert.equal(
       onlyReported?.state,
       'failed',
@@ -3615,7 +3546,6 @@ test('early-wave blocked reports defer substitutes and fail native-only attempts
 });
 
 test('off-host retries keep the failed outcome without launching the wrong reserve', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -3632,7 +3562,7 @@ test('off-host retries keep the failed outcome without launching the wrong reser
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'agy[0]')?.state, 'failed');
@@ -3650,7 +3580,7 @@ test('off-host retries keep the failed outcome without launching the wrong reser
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     const retried = second.find((outcome) => outcome.slot === 'agy[0]');
@@ -3680,14 +3610,11 @@ test('off-host retries keep the failed outcome without launching the wrong reser
           quota,
           sessionRoot: g.session,
           nativeFirstProviders: [],
-        } as never,
+        },
         g.deps,
       );
-      const gpending = gfirst.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-        state: string;
-        attempt: string;
-      };
-      assert.equal(gpending?.state, 'native');
+      const gpending = gfirst.find((outcome) => outcome.slot === 'agy[0]');
+      assert.ok(gpending?.state === 'native');
       assert.ok(gpending.attempt.startsWith('codex[0]#'));
       g.deps.orchestrator = { platform: 'opencode', model: null };
       g.launches.length = 0;
@@ -3700,7 +3627,7 @@ test('off-host retries keep the failed outcome without launching the wrong reser
           quota,
           sessionRoot: g.session,
           nativeFirstProviders: ['opencode'],
-        } as never,
+        },
         g.deps,
       );
       const gfailed = gsecond.find((outcome) => outcome.slot === 'agy[0]');
@@ -3711,7 +3638,7 @@ test('off-host retries keep the failed outcome without launching the wrong reser
           JSON.stringify(gsecond.map((outcome) => outcome.slot + ':' + outcome.state)),
       );
       assert.equal(g.launches.length, 0, 'no cli runs under the wrong voice');
-      assert.ok(!('attempt' in (gfailed as unknown as Record<string, unknown>)), 'no fresh descriptor minted');
+      assert.ok(!('attempt' in gfailed), 'no fresh descriptor minted');
     } finally {
       g.cleanup();
     }
@@ -3721,7 +3648,6 @@ test('off-host retries keep the failed outcome without launching the wrong reser
 });
 
 test('wave early return omits a saved fallback marker and resumes it next call', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'agy', model: null };
@@ -3759,10 +3685,11 @@ test('wave early return omits a saved fallback marker and resumes it next call',
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
-    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
+    const fresh = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(fresh?.state === 'native');
     assert.equal(
       fresh?.state,
       'native',
@@ -3785,7 +3712,7 @@ test('wave early return omits a saved fallback marker and resumes it next call',
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(
@@ -3800,8 +3727,7 @@ test('wave early return omits a saved fallback marker and resumes it next call',
   }
 });
 
-test('deferred fallback persists its marker before quarantining the reply', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+test('deferred fallback persists its marker before quarantining the reply', async (t) => {
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3816,39 +3742,27 @@ test('deferred fallback persists its marker before quarantining the reply', asyn
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      attempt: string;
-      replyPath: string;
-    };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     fs.writeFileSync(pending.replyPath, 'partial answer');
     // Crash between the two durable operations: the marker write must already
     // persist when quarantining the reply fails.
     f.deps.orchestrator = { platform: 'agy', model: null };
-    const realRename = fs.renameSync,
-      realCopy = fs.copyFileSync;
-    const descriptor = (value: unknown) => ({ ...Object.getOwnPropertyDescriptor(fs, 'renameSync'), value });
+    const realRename = fs.renameSync;
     let renames = 0;
-    Object.defineProperty(
-      fs,
-      'renameSync',
-      descriptor((...args: any[]) => {
-        renames++;
-        if (renames >= 3) throw new Error('crash before quarantine');
-        return (realRename as (...args: any[]) => unknown)(...args);
-      }),
-    );
-    Object.defineProperty(
-      fs,
-      'copyFileSync',
-      descriptor(() => {
+    const rename = t.mock.method(fs, 'renameSync', (...args: Parameters<typeof realRename>) => {
+      renames++;
+      if (renames >= 3) {
         throw new Error('crash before quarantine');
-      }),
-    );
+      }
+      realRename(...args);
+    });
+    const copy = t.mock.method(fs, 'copyFileSync', () => {
+      throw new Error('crash before quarantine');
+    });
     const input = {
       dir,
       slots: [slot('claude'), slot('agy')],
@@ -3858,17 +3772,17 @@ test('deferred fallback persists its marker before quarantining the reply', asyn
       sessionRoot: f.session,
       nativeFirstProviders: ['agy'],
       nativeFailures: [{ attempt: pending.attempt, reason: 'BLOCKED: old host denied', reasonHash: 'rh-order' }],
-    } as never;
-    await assert.rejects(fanOut(input, f.deps), /crash before quarantine/);
-    Object.defineProperty(fs, 'renameSync', descriptor(realRename));
-    Object.defineProperty(fs, 'copyFileSync', descriptor(realCopy));
+    } satisfies FanOutInput;
+    try {
+      await assert.rejects(fanOut(input, f.deps), /crash before quarantine/);
+    } finally {
+      copy.mock.restore();
+      rename.mock.restore();
+    }
     const saved = JSON.parse(fs.readFileSync(path.join(dir, 'slots', 'claude[0].json'), 'utf8'));
     assert.equal(saved.cliFallback, true, 'the marker persists before the quarantine: ' + JSON.stringify(saved));
     assert.equal(saved.nativeError, 'BLOCKED: old host denied');
-    assert.ok(
-      (saved.blocked ?? []).some((entry: { reasonHash: string }) => entry.reasonHash === 'rh-order'),
-      'the reported evidence persists: ' + JSON.stringify(saved.blocked),
-    );
+    assert.ok(hasBlockedReason(saved, 'rh-order'), 'the reported evidence persists: ' + JSON.stringify(saved.blocked));
     assert.ok(fs.existsSync(pending.replyPath), 'the reply stays until the marker write survives');
     const resumed = await fanOut(
       {
@@ -3879,14 +3793,11 @@ test('deferred fallback persists its marker before quarantining the reply', asyn
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
-    const done = resumed.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      text: string;
-      blocked: { reasonHash: string }[];
-    };
+    const done = resumed.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(done?.state === 'done');
     assert.equal(
       done?.state,
       'done',
@@ -3905,7 +3816,6 @@ test('deferred fallback persists its marker before quarantining the reply', asyn
 });
 
 test('a launch with no launchable native falls through to the cli wave in the same call', async () => {
-  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -3933,7 +3843,7 @@ test('a launch with no launchable native falls through to the cli wave in the sa
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(outcomes.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
@@ -3953,7 +3863,6 @@ test('a launch with no launchable native falls through to the cli wave in the sa
 });
 
 test('a lowercase blocked report for a native-only reserve saves refusal without evidence', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'codex', model: null };
@@ -3970,7 +3879,7 @@ test('a lowercase blocked report for a native-only reserve saves refusal without
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -3983,14 +3892,11 @@ test('a lowercase blocked report for a native-only reserve saves refusal without
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      attempt: string;
-    };
-    assert.equal(substitute?.state, 'native');
+    const substitute = waved.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(substitute?.state === 'native');
     assert.ok(substitute.attempt.startsWith('codex[0]#'));
     const reported = await fanOut(
       {
@@ -4004,16 +3910,11 @@ test('a lowercase blocked report for a native-only reserve saves refusal without
         nativeFailures: [
           { attempt: substitute.attempt, reason: 'blocked: reserve denied', reasonHash: 'rh-wave-lower' },
         ],
-      } as never,
+      },
       f.deps,
     );
-    const failed = reported.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      cls: string;
-      reason: string;
-      blocked?: unknown[];
-    };
-    assert.equal(failed?.state, 'failed');
+    const failed = reported.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(failed?.state === 'failed');
     assert.equal(
       failed.cls,
       'refusal',
@@ -4037,7 +3938,6 @@ test('a lowercase blocked report for a native-only reserve saves refusal without
 });
 
 test('a launchable native returns before the cli wave when a saved orphan waits', async () => {
-  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -4066,7 +3966,7 @@ test('a launchable native returns before the cli wave when a saved orphan waits'
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(outcomes.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -4087,8 +3987,7 @@ test('a launchable native returns before the cli wave when a saved orphan waits'
   }
 });
 
-test('a last-pending retry carries saved blocked evidence into the reserve descriptor', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
+test('a last-pending retry carries saved blocked evidence into the reserve descriptor', async (t) => {
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -4128,15 +4027,17 @@ test('a last-pending retry carries saved blocked evidence into the reserve descr
     // Capture the slot file at every atomic write: the first agy write is
     // the reserve descriptor itself, before any later merge could persist.
     const realRename = fs.renameSync;
-    const writes: string[] = [];
-    (fs as unknown as { renameSync: typeof fs.renameSync }).renameSync = ((source: string, destination: string) => {
+    const writes: Array<string> = [];
+    const rename = t.mock.method(fs, 'renameSync', (source: fs.PathLike, destination: fs.PathLike) => {
       if (String(destination).endsWith('agy[0].json')) {
         try {
           writes.push(fs.readFileSync(source, 'utf8'));
-        } catch {}
+        } catch {
+          // No persisted bytes to capture when the temp file is already gone.
+        }
       }
-      return (realRename as (...args: [string, string]) => void)(source, destination);
-    }) as typeof fs.renameSync;
+      realRename(source, destination);
+    });
     try {
       const outcomes = await fanOut(
         {
@@ -4147,17 +4048,17 @@ test('a last-pending retry carries saved blocked evidence into the reserve descr
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(outcomes.find((outcome) => outcome.slot === 'agy[0]')?.state, 'native');
     } finally {
-      (fs as unknown as { renameSync: typeof fs.renameSync }).renameSync = realRename as typeof fs.renameSync;
+      rename.mock.restore();
     }
     assert.ok(writes.length >= 1, 'the retry persists the reserve descriptor');
     const descriptor = JSON.parse(writes[0]!);
     assert.ok(
-      (descriptor.blocked ?? []).some((entry: { reasonHash: string }) => entry.reasonHash === 'rh-prior'),
+      hasBlockedReason(descriptor, 'rh-prior'),
       'the persisted descriptor keeps earlier blocked evidence: ' + writes[0],
     );
   } finally {
@@ -4166,13 +4067,12 @@ test('a last-pending retry carries saved blocked evidence into the reserve descr
 });
 
 test('off-host native-only reserve stops routing in cli-only and wave paths', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
     f.script('agy', 'good', { status: 'fail', cls: 'auth', detail: 'denied' });
     f.script('codex', 'good', 'reserve cli answer');
-    const events: unknown[] = [];
+    const events: Array<unknown> = [];
     f.deps.diagnostics = (event: unknown) => {
       events.push(event);
     };
@@ -4186,7 +4086,7 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: [],
-      } as never,
+      },
       f.deps,
     );
     const cliRetried = cliOnly.find((outcome) => outcome.slot === 'agy[0]');
@@ -4202,11 +4102,11 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
       'no cli runs for the off-host native-only reserve',
     );
     assert.ok(
-      !(events as any[]).some(
+      !(events as Array<any>).some(
         (event) => event.kind === 'routing' && event.state === 'reserve' && event.slot === 'agy[0]',
       ),
       'an off-host reserve emits no reserve routing: ' +
-        JSON.stringify((events as any[]).filter((event) => event.kind === 'routing')),
+        JSON.stringify((events as Array<any>).filter((event) => event.kind === 'routing')),
     );
     events.length = 0;
     f.launches.length = 0;
@@ -4221,7 +4121,7 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(first.find((outcome) => outcome.slot === 'claude[0]')?.state, 'native');
@@ -4234,7 +4134,7 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
     const retried = waved.find((outcome) => outcome.slot === 'agy[0]');
@@ -4250,11 +4150,11 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
       'no cli runs for the off-host native-only reserve',
     );
     assert.ok(
-      !(events as any[]).some(
+      !(events as Array<any>).some(
         (event) => event.kind === 'routing' && event.state === 'reserve' && event.slot === 'agy[0]',
       ),
       'an off-host reserve emits no reserve routing: ' +
-        JSON.stringify((events as any[]).filter((event) => event.kind === 'routing')),
+        JSON.stringify((events as Array<any>).filter((event) => event.kind === 'routing')),
     );
   } finally {
     f.cleanup();
@@ -4262,7 +4162,6 @@ test('off-host native-only reserve stops routing in cli-only and wave paths', as
 });
 
 test('deferred ignores wait for reconciled orphans before reaching the callback', async () => {
-  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -4286,7 +4185,7 @@ test('deferred ignores wait for reconciled orphans before reaching the callback'
         model: 'good',
       }),
     );
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const input = {
       dir,
       slots: [slot('claude')],
@@ -4300,7 +4199,7 @@ test('deferred ignores wait for reconciled orphans before reaching the callback'
         ignored.push(attempt);
       },
     };
-    const first = await fanOutComplete(input as never, f.deps);
+    const first = await fanOutComplete(input, f.deps);
     assert.ok(
       first.some((outcome) => outcome.slot === 'claude[0]' && outcome.state === 'native'),
       'the launchable native returns: ' + JSON.stringify(first.map((outcome) => outcome.slot + ':' + outcome.state)),
@@ -4320,25 +4219,23 @@ test('deferred ignores wait for reconciled orphans before reaching the callback'
     );
     assert.equal(marked.nativeError, 'BLOCKED: gone');
     assert.ok(
-      (marked.blocked ?? []).some((entry: { reasonHash: string }) => entry.reasonHash === 'rh-orphan'),
+      hasBlockedReason(marked, 'rh-orphan'),
       'the marker keeps the reported evidence: ' + JSON.stringify(marked.blocked),
     );
     // A partial native reply present during the deferred wave call stays unread.
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as { replyPath: string };
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     fs.writeFileSync(pending.replyPath, 'partial answer');
     f.launches.length = 0;
-    const second = await fanOutComplete({ ...input, nativeFailures: [] } as never, f.deps);
+    const second = await fanOutComplete({ ...input, nativeFailures: [] }, f.deps);
     assert.equal(
       second.find((outcome) => outcome.slot === 'claude[0]')?.state,
       'native',
       'the wave never consumes a partial reply: ' +
         JSON.stringify(second.map((outcome) => outcome.slot + ':' + outcome.state)),
     );
-    const run = second.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      text: string;
-      blocked: { reasonHash: string }[];
-    };
+    const run = second.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(run?.state === 'done');
     assert.equal(
       run?.state,
       'done',
@@ -4364,13 +4261,10 @@ test('deferred ignores wait for reconciled orphans before reaching the callback'
     // Once the native answer lands, the next call consumes it and reconciles
     // the marked orphan through the deferred cascade with its evidence.
     fs.writeFileSync(pending.replyPath, 'native answer');
-    const third = await fanOutComplete({ ...input, nativeFailures: [] } as never, f.deps);
+    const third = await fanOutComplete({ ...input, nativeFailures: [] }, f.deps);
     assert.equal(third.find((outcome) => outcome.slot === 'claude[0]')?.state, 'done');
-    const reconciled = third.find((outcome) => outcome.slot === 'agy[0]') as unknown as {
-      state: string;
-      text: string;
-      blocked: { reasonHash: string }[];
-    };
+    const reconciled = third.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(reconciled?.state === 'done');
     assert.equal(
       reconciled?.state,
       'done',
@@ -4389,13 +4283,14 @@ test('deferred ignores wait for reconciled orphans before reaching the callback'
 });
 
 test('a launchable native returns first and defers unrelated orphans while forwarding stale reports', async () => {
-  const { fanOutComplete } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
     f.script('agy', 'good', 'cli answer');
     const dir = path.join(f.session, 'complete-stale-report');
-    for (const sub of ['slots', 'prompts', 'replies']) fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    for (const sub of ['slots', 'prompts', 'replies']) {
+      fs.mkdirSync(path.join(dir, sub), { recursive: true });
+    }
     fs.writeFileSync(
       path.join(dir, 'slots', 'agy[0].json'),
       JSON.stringify({
@@ -4409,7 +4304,7 @@ test('a launchable native returns first and defers unrelated orphans while forwa
         model: 'good',
       }),
     );
-    const ignored: string[] = [];
+    const ignored: Array<string> = [];
     const input = {
       dir,
       slots: [slot('claude')],
@@ -4423,7 +4318,7 @@ test('a launchable native returns first and defers unrelated orphans while forwa
         ignored.push(attempt);
       },
     };
-    const first = await fanOutComplete(input as never, f.deps);
+    const first = await fanOutComplete(input, f.deps);
     assert.ok(
       first.some((outcome) => outcome.slot === 'claude[0]' && outcome.state === 'native'),
       'the launchable native returns: ' + JSON.stringify(first.map((outcome) => outcome.slot + ':' + outcome.state)),
@@ -4437,14 +4332,11 @@ test('a launchable native returns first and defers unrelated orphans while forwa
 });
 
 test('host voice launches native for every nativeSubagentsOnly value', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const { resolveRoster } = await import('../../../skills/dispatch/scripts/policy/roster.ts');
   for (const only of [true, false, undefined] as const) {
-    const delegate: Record<string, unknown> = { targets: [{ low: { model: 'm' } }] };
-    if (only !== undefined) (delegate as Record<string, unknown>)['nativeSubagentsOnly'] = only;
+    const delegate = { targets: [{ low: { model: 'm' } }], ...(only !== undefined && { nativeSubagentsOnly: only }) };
     const roster = resolveRoster({
       level: 'low',
-      readDelegates: { claude: delegate as never, agy: { targets: [{ low: { model: 'a' } }] } },
+      readDelegates: { claude: delegate, agy: { targets: [{ low: { model: 'a' } }] } },
       policy: { rounds: { low: 1 }, targets: { low: 2 } },
       orchestrator: { platform: 'claude' },
       liveness: { claude: false, agy: true },
@@ -4468,7 +4360,7 @@ test('host voice launches native for every nativeSubagentsOnly value', async () 
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: nativeFirst,
-        } as never,
+        },
         f.deps,
       );
       assert.equal(outcomes[0]?.state, 'native', `native descriptor for only=${String(only)}`);
@@ -4480,7 +4372,6 @@ test('host voice launches native for every nativeSubagentsOnly value', async () 
 });
 
 test('host native failure routes by reserve presence without host CLI', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -4496,14 +4387,11 @@ test('host native failure routes by reserve presence without host CLI', async ()
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      attempt: string;
-    };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(pending?.state === 'native');
     const second = await fanOut(
       {
         dir,
@@ -4514,7 +4402,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
         nativeFailures: [{ attempt: pending.attempt, reason: 'launch gone', reasonHash: 'h1' }],
-      } as never,
+      },
       f.deps,
     );
     const outcome = second.find((entry) => entry.slot === 'claude[0]');
@@ -4523,16 +4411,8 @@ test('host native failure routes by reserve presence without host CLI', async ()
       'done',
       'reserve CLI: ' + JSON.stringify(second.map((entry) => entry.slot + ':' + entry.state)),
     );
-    assert.equal(
-      (outcome as unknown as { text: string }).text,
-      'reserve answer',
-      'reserve answer: ' + JSON.stringify(outcome),
-    );
-    assert.equal(
-      (outcome as unknown as { responder: { provider: string } }).responder.provider,
-      'copilot',
-      'reserve provider: ' + JSON.stringify(outcome),
-    );
+    assert.equal(outcome.text, 'reserve answer', 'reserve answer: ' + JSON.stringify(outcome));
+    assert.equal(outcome.responder?.provider, 'copilot', 'reserve provider: ' + JSON.stringify(outcome));
     assert.equal(f.launches.filter((launch) => launch.provider === 'claude').length, 0, 'no host CLI');
     const aloneDir = path.join(f.session, 'host-failure-noreserve');
     const aloneFirst = await fanOut(
@@ -4544,14 +4424,11 @@ test('host native failure routes by reserve presence without host CLI', async ()
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
-      } as never,
+      },
       f.deps,
     );
-    const alonePending = aloneFirst.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-      state: string;
-      attempt: string;
-    };
-    assert.equal(alonePending?.state, 'native');
+    const alonePending = aloneFirst.find((outcome) => outcome.slot === 'claude[0]');
+    assert.ok(alonePending?.state === 'native');
     const aloneSecond = await fanOut(
       {
         dir: aloneDir,
@@ -4562,7 +4439,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
         sessionRoot: f.session,
         nativeFirstProviders: ['claude'],
         nativeFailures: [{ attempt: alonePending.attempt, reason: 'launch gone', reasonHash: 'h2' }],
-      } as never,
+      },
       f.deps,
     );
     assert.equal(aloneSecond.find((entry) => entry.slot === 'claude[0]')?.state, 'failed', 'no reserve saves failed');
@@ -4587,14 +4464,11 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: [],
-        } as never,
+        },
         f.deps,
       );
-      const blockedPending = first.find((outcome) => outcome.slot === 'codex[0]') as unknown as {
-        state: string;
-        replyPath: string;
-      };
-      assert.equal(blockedPending?.state, 'native');
+      const blockedPending = first.find((outcome) => outcome.slot === 'codex[0]');
+      assert.ok(blockedPending?.state === 'native');
       fs.writeFileSync(blockedPending.replyPath, 'BLOCKED: host cannot write');
       const blockedDir = path.join(f.session, 'host-nativeonly-blocked-reserve');
       const blockedOutcomes = await fanOut(
@@ -4606,12 +4480,12 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: [],
-        } as never,
+        },
         f.deps,
       );
       const blockedOutcome = blockedOutcomes.find((entry) => entry.slot === 'codex[0]');
       assert.equal(blockedOutcome?.state, 'done', 'reserve takes over BLOCKED: ' + JSON.stringify(blockedOutcome));
-      assert.equal((blockedOutcome as unknown as { text: string }).text, 'reserve answer');
+      assert.equal(blockedOutcome.text, 'reserve answer');
       assert.equal(f.launches.filter((launch) => launch.provider === 'codex').length, 0, 'no host CLI');
       const reportDir = path.join(f.session, 'host-nativeonly-report-reserve');
       const reportFirst = await fanOut(
@@ -4623,14 +4497,11 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: [],
-        } as never,
+        },
         f.deps,
       );
-      const reportPending = reportFirst.find((outcome) => outcome.slot === 'codex[0]') as unknown as {
-        state: string;
-        attempt: string;
-      };
-      assert.equal(reportPending?.state, 'native');
+      const reportPending = reportFirst.find((outcome) => outcome.slot === 'codex[0]');
+      assert.ok(reportPending?.state === 'native');
       const second = await fanOut(
         {
           dir: reportDir,
@@ -4641,7 +4512,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           sessionRoot: f.session,
           nativeFirstProviders: [],
           nativeFailures: [{ attempt: reportPending.attempt, reason: 'BLOCKED: denied', reasonHash: 'rh1' }],
-        } as never,
+        },
         f.deps,
       );
       const outcome = second.find((entry) => entry.slot === 'codex[0]');
@@ -4680,7 +4551,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(aloneOutcomes.find((entry) => entry.slot === 'agy[0]')?.state, 'failed', 'no reserve saves failed');
@@ -4705,14 +4576,11 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
-      const pending = first.find((outcome) => outcome.slot === 'claude[0]') as unknown as {
-        state: string;
-        attempt: string;
-      };
-      assert.equal(pending?.state, 'native');
+      const pending = first.find((outcome) => outcome.slot === 'claude[0]');
+      assert.ok(pending?.state === 'native');
       const second = await fanOut(
         {
           dir,
@@ -4723,7 +4591,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
           nativeFailures: [{ attempt: pending.attempt, reason: 'launch gone', reasonHash: 'h3' }],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(second.find((entry) => entry.slot === 'claude[0]')?.state, 'failed');
@@ -4738,7 +4606,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(third.find((entry) => entry.slot === 'claude[0]')?.state, 'failed');
@@ -4762,7 +4630,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: [],
-        } as never,
+        },
         f.deps,
       );
       assert.equal(first.find((outcome) => outcome.slot === 'claude[0]')?.state, 'failed');
@@ -4780,7 +4648,7 @@ test('host native failure routes by reserve presence without host CLI', async ()
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['claude'],
-        } as never,
+        },
         f.deps,
       );
       const outcome = second.find((entry) => entry.slot === 'claude[0]');
@@ -4801,7 +4669,6 @@ test('host native failure routes by reserve presence without host CLI', async ()
 });
 
 test('off-host saved native attempt keeps CLI cascade', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     f.deps.orchestrator = { platform: 'claude', model: null };
@@ -4816,11 +4683,11 @@ test('off-host saved native attempt keeps CLI cascade', async () => {
         quota,
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
-      } as never,
+      },
       f.deps,
     );
-    const pending = first.find((outcome) => outcome.slot === 'agy[0]') as unknown as { state: string; attempt: string };
-    assert.equal(pending?.state, 'native');
+    const pending = first.find((outcome) => outcome.slot === 'agy[0]');
+    assert.ok(pending?.state === 'native');
     f.deps.orchestrator = { platform: 'opencode', model: null };
     f.launches.length = 0;
     f.script('agy', 'good', 'cli answer after host change');
@@ -4834,12 +4701,12 @@ test('off-host saved native attempt keeps CLI cascade', async () => {
         sessionRoot: f.session,
         nativeFirstProviders: ['agy'],
         nativeFailures: [{ attempt: pending.attempt, reason: 'launch gone', reasonHash: 'h1' }],
-      } as never,
+      },
       f.deps,
     );
     const outcome = second.find((entry) => entry.slot === 'agy[0]');
     assert.equal(outcome?.state, 'done', 'CLI cascade kept off host: ' + JSON.stringify(outcome));
-    assert.equal((outcome as unknown as { text: string }).text, 'cli answer after host change');
+    assert.equal(outcome.text, 'cli answer after host change');
     assert.deepEqual(
       f.launches.map((launch) => launch.provider),
       ['agy'],
@@ -4851,16 +4718,6 @@ test('off-host saved native attempt keeps CLI cascade', async () => {
 });
 
 test('native descriptors carry host-specific launchAs lines and normalize legacy saved outcomes', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
-  const nativeOf = (outcome: unknown) =>
-    outcome as {
-      state: string;
-      provider: string;
-      model?: unknown;
-      effort?: unknown;
-      launchAs?: string;
-      subagentModels?: unknown;
-    };
   // Native-only descriptor with effort carries opencode launchAs and no subagentModels.
   {
     const f = sessionFixture({ memory: true });
@@ -4878,7 +4735,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
           reserve: false,
         },
       ];
-      const first = await fanOut({ dir, slots, prompt: 'question', validate, quota } as never, f.deps);
+      const first = await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
       const native = nativeOf(first.find((outcome) => outcome.slot === 'opencode[0]'));
       assert.equal(native.state, 'native');
       assert.equal(native.model, 'prov/model');
@@ -4901,7 +4758,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
       const slots = [
         { slot: 'opencode[0]', provider: 'opencode', index: 0, model: ['a', 'b'], native: true, reserve: false },
       ];
-      const first = await fanOut({ dir, slots, prompt: 'question', validate, quota } as never, f.deps);
+      const first = await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
       const native = nativeOf(first.find((outcome) => outcome.slot === 'opencode[0]'));
       assert.equal(
         native.launchAs,
@@ -4922,7 +4779,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
             reserve: false,
           },
         ];
-        const aout = await fanOut({ dir: adir, slots: aslots, prompt: 'question', validate, quota } as never, g.deps);
+        const aout = await fanOut({ dir: adir, slots: aslots, prompt: 'question', validate, quota }, g.deps);
         const agyNative = nativeOf(aout.find((outcome) => outcome.slot === 'agy[0]'));
         assert.equal(
           agyNative.launchAs,
@@ -4962,7 +4819,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
           quota,
           sessionRoot: f.session,
           nativeFirstProviders: ['opencode'],
-        } as never,
+        },
         f.deps,
       );
       const native = nativeOf(first.find((outcome) => outcome.slot === 'opencode[0]'));
@@ -4994,7 +4851,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
       };
       const slots = [slot('agy'), reserve];
       const first = await fanOut(
-        { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] } as never,
+        { dir, slots, prompt: 'question', validate, quota, sessionRoot: f.session, nativeFirstProviders: [] },
         f.deps,
       );
       const pending = nativeOf(first.find((outcome) => outcome.slot === 'agy[0]'));
@@ -5046,7 +4903,7 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
           reserve: false,
         },
       ];
-      const replayed = await fanOut({ dir, slots, prompt: 'question', validate, quota } as never, f.deps);
+      const replayed = await fanOut({ dir, slots, prompt: 'question', validate, quota }, f.deps);
       const native = nativeOf(replayed.find((outcome) => outcome.slot === 'opencode[0]'));
       assert.equal(native.state, 'native');
       assert.equal(
@@ -5061,7 +4918,6 @@ test('native descriptors carry host-specific launchAs lines and normalize legacy
 });
 
 test('rerun starts fresh without resuming stale, retaken, interrupted or failed state', async (t) => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, 'resume-fail'),
@@ -5080,10 +4936,12 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
         sessionId: 'ses_abc',
       }),
     );
-    const calls: { resume: string | null; model: string | null }[] = [];
+    const calls: Array<{ resume: string | null; model: string | null }> = [];
     f.deps.delegate = async (_p, req) => {
       calls.push({ resume: req.resume, model: req.model });
-      if (req.resume) return { outcome: { status: 'fail', cls: 'auth', detail: 'failed' }, invocations: [] };
+      if (req.resume) {
+        return { outcome: { status: 'fail', cls: 'auth', detail: 'failed' }, invocations: [] };
+      }
       const state = JSON.parse(fs.readFileSync(path.join(logs, 'opencode[0].state.json'), 'utf8'));
       assert.match(state.restart, /failed cross-run resume/);
       return { outcome: { status: 'ok', text: 'answer', sessionId: 'new', resume: null }, invocations: [] };
@@ -5113,7 +4971,9 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
     f.deps.delegate = async (_p, req) => {
       throws++;
       assert.equal(req.model, 'good');
-      if (req.resume) throw new Error('spawn');
+      if (req.resume) {
+        throw new Error('spawn');
+      }
       assert.match(
         JSON.parse(fs.readFileSync(path.join(throwLogs, 'opencode[0].state.json'), 'utf8')).restart,
         /launch error/,
@@ -5156,7 +5016,7 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
             sessionId: 'old',
           }),
         );
-        const calls: { model: string | null; resume: string | null }[] = [];
+        const calls: Array<{ model: string | null; resume: string | null }> = [];
         f.deps.delegate = async (_provider, req) => {
           calls.push({ model: req.model, resume: req.resume });
           return { outcome: { status: 'ok', text: 'answer', sessionId: 'new', resume: null }, invocations: [] };
@@ -5227,7 +5087,7 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
           }),
         );
         fs.writeFileSync(logPath, 'partial output without the exit envelope');
-        const calls: { model: string | null; resume: string | null }[] = [];
+        const calls: Array<{ model: string | null; resume: string | null }> = [];
         f.deps.delegate = async (_provider, req) => {
           calls.push({ model: req.model, resume: req.resume });
           return { outcome: { status: 'ok', text: 'answer', sessionId: 'new-session', resume: null }, invocations: [] };
@@ -5313,12 +5173,17 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
             first = false;
             fs.writeFileSync(req.logPath, 'leftover');
             failPath = state;
-            if (provider === 'opencode') req.onResume?.('ses_abc', 1);
-            else req.onInvocation?.(usageRow);
+            if (provider === 'opencode') {
+              req.onResume?.('ses_abc', 1);
+            } else {
+              req.onInvocation?.(usageRow);
+            }
             throw new Error('interrupted');
           }
           assert.equal(req.resume, null, provider);
-          if (provider === 'codex') assert.equal(req.priorUsage, undefined, provider);
+          if (provider === 'codex') {
+            assert.equal(req.priorUsage, undefined, provider);
+          }
           return { outcome: { status: 'ok', text: 'answer', sessionId: 'new', resume: null }, invocations: [] };
         };
         const input = { dir, slots: [slot(provider)], prompt: 'question', validate, quota };
@@ -5334,7 +5199,6 @@ test('rerun starts fresh without resuming stale, retaken, interrupted or failed 
 });
 
 test('rerun resumes from its saved session, report prompt, stall and replaced checkpoint', async (t) => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   // an unfinished slot in its saved session
   {
     const f = sessionFixture({ memory: true });
@@ -5433,8 +5297,9 @@ test('rerun resumes from its saved session, report prompt, stall and replaced ch
       let call = 0;
       f.deps.delegate = async (_p, req) => {
         call++;
-        if (call === 1)
+        if (call === 1) {
           return { outcome: { status: 'ok', text: 'invalid', sessionId: 'ses_abc', resume: null }, invocations: [] };
+        }
         if (call === 2) {
           assert.match(req.promptPath, /no-report/);
           req.onResume?.('ses_abc', 1);
@@ -5499,7 +5364,6 @@ test('rerun resumes from its saved session, report prompt, stall and replaced ch
 });
 
 test('saved session usage: new-layer record resumes without counting saved session usage twice', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     for (const provenance of ['session', 'stdout'] as const) {
@@ -5570,10 +5434,9 @@ test('saved session usage: new-layer record resumes without counting saved sessi
 });
 
 test('saved session usage: pre-change, includes-cache, and missing-baseline slots take stale restart', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
-    const cases: Array<{ name: string; state: Record<string, unknown> }> = [
+    const cases = [
       {
         name: 'pre-change-provenance',
         state: {
@@ -5659,7 +5522,6 @@ test('saved session usage: pre-change, includes-cache, and missing-baseline slot
 });
 
 test('saved session usage: usageBaseline none resumes without restart and passes usageWindowEndMs to report resume', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const dir = path.join(f.session, 'baseline-none'),
@@ -5688,7 +5550,7 @@ test('saved session usage: usageBaseline none resumes without restart and passes
       assert.equal(req.priorUsage, undefined);
       assert.equal((req as { usageBaseline?: string }).usageBaseline, 'none');
       if (calls === 1) {
-        assert.equal((req as { usageWindowEndMs?: number }).usageWindowEndMs, 5000);
+        assert.equal(req.usageWindowEndMs, 5000);
         return {
           outcome: { status: 'ok', text: 'invalid', sessionId: 'thread_none', resume: null },
           invocations: [
@@ -5701,11 +5563,11 @@ test('saved session usage: usageBaseline none resumes without restart and passes
               outcome: 'ok',
               usageBaseline: 'none',
               usageWindowEndMs: 7777,
-            } as never,
+            },
           ],
         };
       }
-      assert.equal((req as { usageWindowEndMs?: number }).usageWindowEndMs, 7777);
+      assert.equal(req.usageWindowEndMs, 7777);
       return { outcome: { status: 'ok', text: 'answer', sessionId: 'thread_none', resume: null }, invocations: [] };
     };
     const check = (text: string): Validation =>
@@ -5722,7 +5584,6 @@ test('saved session usage: usageBaseline none resumes without restart and passes
 });
 
 test('wrap-up resume leaves the stall resume count unchanged', async () => {
-  const { fanOut } = await import('../../../skills/dispatch/scripts/toolkit/fanout.ts');
   const f = sessionFixture({ memory: true });
   try {
     const reason = 'uncovered-scope: no JSON report object found';

@@ -2,8 +2,10 @@ import path from 'node:path';
 import { RESOLUTION_HEADING, RESOLUTION_TITLE } from './domain/document-lint.ts';
 import { neutralizeComments } from './domain/sanitize.ts';
 import type { CoverageState } from './coverage.ts';
-import { criterionStatusCounts, type CriterionStatus } from './evidence.ts';
-import { renderFindingsSection, type RoundLink } from './review-findings.ts';
+import { criterionStatusCounts } from './evidence.ts';
+import type { CriterionStatus } from './evidence.ts';
+import { renderFindingsSection } from './review-findings.ts';
+import type { RoundLink } from './review-findings.ts';
 import type { ReviewFixReport } from './report.ts';
 
 type Status = CriterionStatus;
@@ -23,24 +25,24 @@ export type WalkthroughView = {
   glance?: { what: string; how?: string; visuals?: string } | null;
   /** Parent-design visuals used only when the bound plan has no At a Glance visuals. */
   visuals?: string;
-  focus?: { bullets?: readonly { text: string; evidence: string }[]; visual?: string } | null;
-  tasks?: readonly { id: string; title: string; outcome: string; behaviour?: readonly string[] }[];
-  statuses: readonly Status[];
-  changes: readonly { action: 'NEW' | 'MODIFY' | 'DELETE'; path: string; owners: readonly Owner[] }[];
-  edits: readonly {
+  focus?: { bullets?: ReadonlyArray<{ text: string; evidence: string }>; visual?: string } | null;
+  tasks?: ReadonlyArray<{ id: string; title: string; outcome: string; behaviour?: ReadonlyArray<string> }>;
+  statuses: ReadonlyArray<Status>;
+  changes: ReadonlyArray<{ action: 'NEW' | 'MODIFY' | 'DELETE'; path: string; owners: ReadonlyArray<Owner> }>;
+  edits: ReadonlyArray<{
     seq: number;
     artifact: string;
     class: string;
     rationale: string;
     diffRef: string;
-    affects: readonly string[];
-  }[];
-  unplannedPaths: readonly string[];
-  openEscalations: readonly { id: string; summary: string }[];
-  deferredRulings: readonly { review: string; finding: string }[];
-  deferredEscalations: readonly { id: string; summary: string }[];
-  userRecords: readonly { seq: number; kind: string; summary: string; quote: string }[];
-  reviewRows: readonly {
+    affects: ReadonlyArray<string>;
+  }>;
+  unplannedPaths: ReadonlyArray<string>;
+  openEscalations: ReadonlyArray<{ id: string; summary: string }>;
+  deferredRulings: ReadonlyArray<{ review: string; finding: string }>;
+  deferredEscalations: ReadonlyArray<{ id: string; summary: string }>;
+  userRecords: ReadonlyArray<{ seq: number; kind: string; summary: string; quote: string }>;
+  reviewRows: ReadonlyArray<{
     review: string;
     id: string;
     round: number;
@@ -48,15 +50,15 @@ export type WalkthroughView = {
     /** The reviewer's severity when a ruling correction lowered it. */
     downgradedFrom?: string;
     /** `model/effort` of each source slot, or the slot id when the roster lacks it. */
-    sources?: readonly string[];
+    sources?: ReadonlyArray<string>;
     ruling: 'accepted' | 'rejected' | 'duplicate' | 'deferred' | null;
     rationale: string;
     recurrence?: string;
     unresolved?: string;
     origin?: string;
-  }[];
-  reviewRounds: readonly RoundLink[];
-  reviewFixes?: readonly ReviewFixReport[];
+  }>;
+  reviewRounds: ReadonlyArray<RoundLink>;
+  reviewFixes?: ReadonlyArray<ReviewFixReport>;
   coverage?: CoverageState | 'unreadable';
   reviewedCodeBaseline?: string;
   runtimeProof?: {
@@ -64,15 +66,15 @@ export type WalkthroughView = {
     head: string;
     reason: string;
     report?: string;
-    artifacts?: string[];
+    artifacts?: Array<string>;
     dirty?: boolean;
-    fixes: { commit: string; reason: string; beforeLatest: boolean }[];
+    fixes: Array<{ commit: string; reason: string; beforeLatest: boolean }>;
   };
   /** Criteria whose tests the cleanup commit removed keep evidence at their recorded `trees` entry. */
   testCleanup?: {
     from: string;
     trees: Readonly<Record<string, string>>;
-    removed: readonly string[];
+    removed: ReadonlyArray<string>;
     deleted: number;
     merged: number;
   };
@@ -81,17 +83,17 @@ export type WalkthroughView = {
 const line = (value: unknown): string =>
   neutralizeComments(
     String(value ?? '')
-      .replace(/\r\n?/g, '\n')
-      .replace(/\n/g, ' ')
+      .replaceAll(/\r\n?/g, '\n')
+      .replaceAll('\n', ' ')
       .trim(),
   );
 const cell = (value: unknown): string =>
   neutralizeComments(
     String(value ?? '')
-      .replace(/\r\n?/g, '\n')
-      .replace(/\n/g, ' ')
-      .replace(/\\/g, '\\\\')
-      .replace(/\|/g, '\\|')
+      .replaceAll(/\r\n?/g, '\n')
+      .replaceAll('\n', ' ')
+      .replaceAll('\\', String.raw`\\`)
+      .replaceAll('|', String.raw`\|`)
       .trim(),
   );
 const code = (value: string): string => {
@@ -101,58 +103,67 @@ const code = (value: string): string => {
 };
 const visualLine = (value: string): string => {
   // Escaped comment openers are inert, so keep Mermaid arrows and similar `-->` text intact.
-  return neutralizeComments(value).replace(/--&gt;/g, '-->');
+  return neutralizeComments(value).replaceAll('--&gt;', '-->');
 };
-const markdownLines = (value: string): string[] =>
+const markdownLines = (value: string): Array<string> =>
   value
-    .replace(/\r\n?/g, '\n')
-    .replace(/^(?:\n)+|(?:\n)+$/g, '')
+    .replaceAll(/\r\n?/g, '\n')
+    .replaceAll(/^(?:\n)+|(?:\n)+$/g, '')
     .split('\n')
     .map(visualLine);
 const hashPrefix = (value: string | undefined): string => {
-  if (!value || value === 'unavailable') return 'unavailable';
+  if (!value || value === 'unavailable') {
+    return 'unavailable';
+  }
   const hex = value.replace(/^sha256:/, '');
   return `sha256:${hex.slice(0, 12)}`;
 };
 const reviewFixFindings = (fix: ReviewFixReport): string =>
   fix.metadata.findings.length ? fix.metadata.findings.map(line).join(', ') : line(fix.commit).slice(0, 12);
 
-function statusTable(statuses: readonly Status[], state: Status['state']): string[] {
+function statusTable(statuses: ReadonlyArray<Status>, state: Status['state']): Array<string> {
   const rows = statuses.filter((row) => row.state === state);
-  if (!rows.length) return ['None.'];
+  if (!rows.length) {
+    return ['None.'];
+  }
   const out = ['| SC | Evidence |', '| --- | --- |'];
   for (const row of rows) {
     let evidence = 'no eligible evidence';
-    if (row.state === 'verified')
+    if (row.state === 'verified') {
       evidence =
         (row.reason?.endsWith('tests removed in cleanup') && row.evidence
           ? '[source evidence](' + row.evidence + ')'
           : (row.evidence ?? 'verified evidence')) + (row.reason ? '; ' + row.reason : '');
+    }
     out.push(`| ${cell(row.criterion)} | ${cell(evidence)} |`);
   }
   return out;
 }
 
 function exceptionSection(
-  statuses: readonly Status[],
+  statuses: ReadonlyArray<Status>,
   state: Extract<Status['state'], 'manual' | 'waived' | 'missing'>,
-): string[] {
+): Array<string> {
   const rows = statuses.filter((row) => row.state === state);
-  if (!rows.length) return [];
-  const title = state[0]!.toUpperCase() + state.slice(1);
+  if (!rows.length) {
+    return [];
+  }
+  const title = state.charAt(0).toUpperCase() + state.slice(1);
   const details = rows.map((row) => {
-    if (row.state === 'manual')
+    if (row.state === 'manual') {
       return `- ${cell(row.criterion)} · User evidence: ${cell(row.evidence ?? 'not supplied')}; quote: ${cell(row.quote ?? '')}`;
-    if (row.state === 'waived')
+    }
+    if (row.state === 'waived') {
       return `- ${cell(row.criterion)} · Reason: ${cell(row.reason ?? '')}; quote: ${cell(row.quote ?? '')}`;
+    }
     return `- ${cell(row.criterion)} · ${cell(row.reason ?? 'no eligible evidence')}`;
   });
   return [`### ${title}`, '', ...details, ''];
 }
 
-function reviewFocus(view: WalkthroughView): string[] {
+function reviewFocus(view: WalkthroughView): Array<string> {
   const tier = view.risk ?? 'low';
-  const attention: string[] = [];
+  const attention: Array<string> = [];
   for (const item of view.openEscalations) {
     attention.push(`- Open escalation ${line(item.id)} — see Deviations & Follow-ups`);
   }
@@ -163,22 +174,27 @@ function reviewFocus(view: WalkthroughView): string[] {
     attention.push(`- Deferred escalation ${line(item.id)} — see Deviations & Follow-ups`);
   }
   for (const row of view.reviewRows) {
-    if (row.ruling === null)
+    if (row.ruling === null) {
       attention.push(
         `- Open finding ${line(row.review)}:${line(row.id)} (${line(row.severity)}) — see ${RESOLUTION_TITLE}`,
       );
+    }
   }
   for (const row of view.statuses) {
-    if (row.state === 'verified') continue;
-    const label = row.state[0]!.toUpperCase() + row.state.slice(1);
+    if (row.state === 'verified') {
+      continue;
+    }
+    const label = row.state.charAt(0).toUpperCase() + row.state.slice(1);
     attention.push(`- ${label} criterion ${line(row.criterion)} — see Verification`);
   }
   for (const fix of view.reviewFixes ?? []) {
-    if (fix.status !== 're-reviewed')
+    if (fix.status !== 're-reviewed') {
       attention.push(`- Review fix ${reviewFixFindings(fix)}: ${fix.status} — see Deviations & Follow-ups`);
+    }
   }
-  for (const file of view.unplannedPaths)
+  for (const file of view.unplannedPaths) {
     attention.push(`- Unplanned path ${line(file)} — see Deviations & Follow-ups`);
+  }
   for (const row of view.reviewRows) {
     if (row.ruling === 'rejected' && (row.severity === 'MUST' || row.severity === 'SHOULD')) {
       attention.push(
@@ -187,13 +203,16 @@ function reviewFocus(view: WalkthroughView): string[] {
     }
   }
   for (const row of view.reviewRows) {
-    if (row.downgradedFrom)
+    if (row.downgradedFrom) {
       attention.push(
         `- Downgraded finding ${line(row.review)}:${line(row.id)} (${line(row.downgradedFrom)} to ${line(row.severity)}) — see ${RESOLUTION_TITLE}`,
       );
+    }
   }
   for (const edit of view.edits) {
-    if (!['intent', 'dependency', 'discard'].includes(edit.class)) continue;
+    if (!['intent', 'dependency', 'discard'].includes(edit.class)) {
+      continue;
+    }
     const artifact = edit.artifact === 'plan' ? 'Plan' : edit.artifact === 'design' ? 'Design' : line(edit.artifact);
     attention.push(`- ${artifact} edit (${line(edit.class)}) seq ${edit.seq} — see Deviations & Follow-ups`);
   }
@@ -208,8 +227,10 @@ function reviewFocus(view: WalkthroughView): string[] {
   return lines;
 }
 
-function coverageLines(state: WalkthroughView['coverage']): string[] {
-  if (!state) return [];
+function coverageLines(state: WalkthroughView['coverage']): Array<string> {
+  if (!state) {
+    return [];
+  }
   const lines =
     state === 'unreadable'
       ? ['- Coverage state unreadable']
@@ -291,12 +312,14 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   };
   const changeLine = (change: WalkthroughView['changes'][number]) =>
     `- ${code(change.path)} · ${actionLabel[change.action]}`;
-  if (!tasks.length && !view.changes.length) out.push('None.', '');
+  if (!tasks.length && !view.changes.length) {
+    out.push('None.', '');
+  }
   for (const task of tasks) {
     out.push(`### ${line(task.id)} — ${line(task.title)}`, '');
     const fragment = `${line(task.id)} — ${line(task.title)}`
       .toLowerCase()
-      .replace(/[^\p{L}\p{N} _-]/gu, '')
+      .replaceAll(/[^\p{L}\p{N} _-]/gu, '')
       .replaceAll(' ', '-');
     out.push(`- ${line(task.outcome)} ([plan task](${planHref}#${fragment}))`, '', '<details>', '');
     const taskChanges = view.changes.filter((change) => change.owners.some((owner) => owner.id === task.id));
@@ -329,27 +352,33 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
       `- **Test cleanup:** deleted ${cleanup.deleted} · merged ${cleanup.merged} tests; criteria with tests removed: ${removed}`,
     );
   }
-  out.push('');
   out.push(
+    '',
     ...exceptionSection(statuses, 'manual'),
     ...exceptionSection(statuses, 'waived'),
     ...exceptionSection(statuses, 'missing'),
+    '## Runtime Proof',
+    '',
   );
-
-  out.push('## Runtime Proof', '');
-  if (!view.runtimeProof) out.push('Not recorded.', '');
-  else {
+  if (!view.runtimeProof) {
+    out.push('Not recorded.', '');
+  } else {
     const proof = view.runtimeProof;
     out.push(
       `- **Outcome:** ${line(proof.outcome)}`,
       `- **HEAD:** ${code(proof.head)}${proof.dirty ? ' plus uncommitted changes' : ''}`,
       `- **Reason:** ${line(proof.reason)}`,
     );
-    for (const link of [proof.report, ...(proof.artifacts ?? [])]) if (link) out.push(`- [${line(link)}](${link})`);
-    for (const fix of proof.fixes)
+    for (const link of [proof.report, ...(proof.artifacts ?? [])]) {
+      if (link) {
+        out.push(`- [${line(link)}](${link})`);
+      }
+    }
+    for (const fix of proof.fixes) {
       out.push(
         `- Fix ${code(fix.commit)}: ${line(fix.reason)}${fix.beforeLatest ? ' (before latest re-check; see report)' : ''}`,
       );
+    }
     out.push('');
   }
 
@@ -357,8 +386,8 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     (edit) =>
       `- Deviation: ${line(edit.artifact)} edit (${line(edit.class)}) seq ${edit.seq}: ${line(edit.rationale)}; diff ${line(edit.diffRef)}; affects ${edit.affects.length ? edit.affects.map(line).join(', ') : 'none'}`,
   );
-  deviations.push(...view.unplannedPaths.map((path) => `- Deviation: unplanned change ${line(path)}`));
   deviations.push(
+    ...view.unplannedPaths.map((path) => `- Deviation: unplanned change ${line(path)}`),
     ...(view.reviewFixes ?? []).map(
       (fix) =>
         `- Deviation: review fix ${reviewFixFindings(fix)}: ${fix.status}; commit ${line(fix.commit).slice(0, 12)}; paths ${fix.paths.length ? fix.paths.map(line).join(', ') : 'none'}`,
@@ -378,8 +407,10 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
         ? `${view.delivered.integrated} of ${view.delivered.total} tasks integrated; not delivered`
         : `source ${line(view.delivered.source)} · branch ${line(view.delivered.branch)} · ref ${line(view.delivered.ref)}`;
   out.push('## Deviations & Follow-ups', '');
-  if (followUps.length) out.push(...followUps, '');
-  if (deviations.length)
+  if (followUps.length) {
+    out.push(...followUps, '');
+  }
+  if (deviations.length) {
     out.push(
       '<details>',
       `<summary>Deviations (${deviations.length})</summary>`,
@@ -389,7 +420,10 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
       '</details>',
       '',
     );
-  if (!deviations.length && !followUps.length) out.push('None.', '');
+  }
+  if (!deviations.length && !followUps.length) {
+    out.push('None.', '');
+  }
 
   const findingCount = view.reviewRows.length;
   const findings = renderFindingsSection(view.reviewRows, view.reviewRounds, fromDir);
@@ -400,9 +434,11 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
     ...coverageLines(view.coverage),
     '',
   );
-  if (findingCount)
+  if (findingCount) {
     out.push('<details>', `<summary>Findings table (${findingCount})</summary>`, '', findings, '', '</details>', '');
-  else out.push(findings, '');
+  } else {
+    out.push(findings, '');
+  }
 
   out.push(
     '## Appendix',
@@ -429,10 +465,13 @@ export function renderWalkthrough(view: WalkthroughView, fromDir = '.'): string 
   );
   if (view.userRecords.length) {
     out.push('| Seq | Kind | Record | User quote |', '| --- | --- | --- | --- |');
-    for (const record of view.userRecords)
+    for (const record of view.userRecords) {
       out.push(`| ${record.seq} | ${cell(record.kind)} | ${cell(record.summary)} | ${cell(record.quote)} |`);
+    }
     out.push('');
-  } else out.push('None.', '');
+  } else {
+    out.push('None.', '');
+  }
   out.push('</details>');
   return `${out.join('\n').replace(/\s+$/, '')}\n`;
 }

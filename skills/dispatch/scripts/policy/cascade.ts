@@ -6,10 +6,10 @@ import type { FailureClass, SlotId } from '../toolkit/types.ts';
 export type Voice = {
   slot: SlotId;
   platform: string;
-  models: readonly (string | null)[];
-  modes: readonly string[];
+  models: ReadonlyArray<string | null>;
+  modes: ReadonlyArray<string>;
   /** Classes the provider declares mode-cascadable (agy: quota/context-overflow/…; copilot: quota). */
-  modeCascadeOn: readonly FailureClass[];
+  modeCascadeOn: ReadonlyArray<FailureClass>;
 };
 type Position = { model: number; mode: number };
 type WaveContext = { reserveAvailable: boolean };
@@ -61,36 +61,39 @@ export function next(
   wave: WaveContext = { reserveAvailable: false },
 ): CascadeDecision {
   const disposition = failureDisposition(cls);
-  if (disposition === 'terminal-run')
+  if (disposition === 'terminal-run') {
     return { kind: 'terminal', scope: 'run', reason: `${cls} is terminal for the run` };
+  }
   if (disposition === 'cascade') {
     // Every failure, auth and quota included, tries the next alias of the voice (ADR 0001): models maintain independent quotas.
-    if (position.model + 1 < voice.models.length)
+    if (position.model + 1 < voice.models.length) {
       return { kind: 'next-model', position: { model: position.model + 1, mode: position.mode } };
+    }
     if (voice.modeCascadeOn.includes(cls) && position.mode + 1 < voice.modes.length) {
       return { kind: 'next-mode', position: { model: 0, mode: position.mode + 1 } };
     }
   }
   // The voice is exhausted, or the sandbox gap makes its other models and modes pointless (D28).
-  if (wave.reserveAvailable) return { kind: 'reserve' };
+  if (wave.reserveAvailable) {
+    return { kind: 'reserve' };
+  }
   return { kind: 'terminal', scope: 'slot', reason: `${voice.slot} failed: ${cls}` };
 }
 
 // SECTION: Reserves
 
-type ReservePool = { order: readonly SlotId[]; used: readonly SlotId[]; records: readonly string[] };
+type ReservePool = { order: ReadonlyArray<SlotId>; used: ReadonlyArray<SlotId>; records: ReadonlyArray<string> };
+type ReserveTake = { pool: ReservePool; reserve: SlotId | null };
 
-export const reservePool = (order: readonly SlotId[]): ReservePool => ({ order, used: [], records: [] });
+export const reservePool = (order: ReadonlyArray<SlotId>): ReservePool => ({ order, used: [], records: [] });
 export const hasReserve = (pool: ReservePool): boolean => pool.order.some((slot) => !pool.used.includes(slot));
 
 /** Consumes the next unused ordered reserve (each at most once per fan-out directory) and records `<failed> → <reserve>: <reason>`. */
-export function takeReserve(
-  pool: ReservePool,
-  failed: SlotId,
-  reason: string,
-): { pool: ReservePool; reserve: SlotId | null } {
+export function takeReserve(pool: ReservePool, failed: SlotId, reason: string): ReserveTake {
   const reserve = pool.order.find((slot) => !pool.used.includes(slot));
-  if (reserve === undefined) return { pool, reserve: null };
+  if (reserve === undefined) {
+    return { pool, reserve: null };
+  }
   return {
     reserve,
     pool: {

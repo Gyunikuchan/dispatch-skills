@@ -1,47 +1,64 @@
-import {
-  BASE_OPTIONAL_COUNTER_KEYS,
-  type Counters,
-  type DiagnosticUsage,
-  type HostNote,
-  type HostNotes,
-  type HostRole,
-  type HostUnavailable,
-  type HostUsageFs,
-  type HostUsageResult,
-  type Milestone,
-  type PhaseMilestone,
-  type ReadBudget,
+import { isRecord } from '../config.ts';
+import { nodeErrorCode } from '../fs-ext.ts';
+import type { JsonObject } from '../integrity.ts';
+import { BASE_OPTIONAL_COUNTER_KEYS } from './rows.ts';
+import type {
+  Counters,
+  DiagnosticUsage,
+  HostNote,
+  HostNotes,
+  HostRole,
+  HostUnavailable,
+  HostUsageFs,
+  HostUsageResult,
+  Milestone,
+  PhaseMilestone,
+  ReadBudget,
 } from './rows.ts';
 
 export const MAX_FILE_BYTES = 64 * 1024 * 1024; // 64 MiB
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
-export function readTranscript(
-  fs: HostUsageFs,
-  file: string,
-  budget: ReadBudget,
-): { text?: string; stop?: 'file cap' | 'budget' | 'zstd' } {
+type TranscriptRead = { text?: string; stop?: 'file cap' | 'budget' | 'zstd' };
+
+export function readTranscript(fs: HostUsageFs, file: string, budget: ReadBudget): TranscriptRead {
   const stat = fs.stat(file);
-  if (!stat) return {};
+  if (!stat) {
+    return {};
+  }
   const limit = Math.min(MAX_FILE_BYTES, budget.remaining);
   const stop = () => {
     const reason = limit === MAX_FILE_BYTES ? 'file cap' : 'budget';
-    if (reason === 'budget') budget.remaining = 0;
+    if (reason === 'budget') {
+      budget.remaining = 0;
+    }
     return { stop: reason } as const;
   };
-  if (limit <= 0) return stop();
+  if (limit <= 0) {
+    return stop();
+  }
   const compressed = file.endsWith('.zst');
-  if (compressed && stat.size > MAX_FILE_BYTES * 2) return { stop: 'file cap' };
-  if (!compressed && stat.size > limit) return stop();
-  if (compressed && !fs.decompress) return { stop: 'zstd' };
+  if (compressed && stat.size > MAX_FILE_BYTES * 2) {
+    return { stop: 'file cap' };
+  }
+  if (!compressed && stat.size > limit) {
+    return stop();
+  }
+  if (compressed && !fs.decompress) {
+    return { stop: 'zstd' };
+  }
   const input = fs.read(file, compressed ? MAX_FILE_BYTES * 2 + 1 : limit + 1);
-  if (compressed && input.length > MAX_FILE_BYTES * 2) return { stop: 'file cap' };
-  if (!compressed && input.length > limit) return stop();
+  if (compressed && input.length > MAX_FILE_BYTES * 2) {
+    return { stop: 'file cap' };
+  }
+  if (!compressed && input.length > limit) {
+    return stop();
+  }
   let decoded: Buffer;
   try {
-    decoded = compressed ? fs.decompress!(input, limit) : input;
+    decoded = compressed && fs.decompress ? fs.decompress(input, limit) : input;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+    if (nodeErrorCode(error) === 'ERR_BUFFER_TOO_LARGE') {
       budget.remaining -= limit;
       return stop();
     }
@@ -64,36 +81,52 @@ export function readRoleTranscript(
 ): string | undefined {
   try {
     const { text, stop } = readTranscript(fs, file, budget);
-    if (text !== undefined) return text;
+    if (text !== undefined) {
+      return text;
+    }
     const notes = (result.notes ??= {});
-    if (stop === 'budget') note(notes, role, 'read budget reached');
-    else if (role === 'host')
+    if (stop === 'budget') {
+      note(notes, role, 'read budget reached');
+    } else if (role === 'host') {
       result.unavailable =
         stop === 'zstd' ? 'zstd unavailable' : stop ? 'transcript over size cap' : 'read-error:ENOENT';
-    else note(notes, role, stop === 'zstd' ? 'zstd unavailable' : stop ? oversizedSubagent : 'unreadable files');
+    } else {
+      note(notes, role, stop === 'zstd' ? 'zstd unavailable' : stop ? oversizedSubagent : 'unreadable files');
+    }
   } catch (error) {
-    if (role === 'host') result.unavailable = readErrorReason(error);
-    else note((result.notes ??= {}), role, 'unreadable files');
+    if (role === 'host') {
+      result.unavailable = readErrorReason(error);
+    } else {
+      note((result.notes ??= {}), role, 'unreadable files');
+    }
   }
   return undefined;
 }
 
-export function stageAt(stages: readonly Milestone[], ms: number) {
+export function stageAt(stages: ReadonlyArray<Milestone>, ms: number) {
   let selected = stages[0];
-  for (const stage of stages)
-    if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) selected = stage;
+  for (const stage of stages) {
+    if (stage.atMs <= ms && (!selected || stage.atMs >= selected.atMs || selected.atMs > ms)) {
+      selected = stage;
+    }
+  }
   return selected?.stage ?? 'spec';
 }
-export function phaseAt(phases: readonly PhaseMilestone[], ms: number): string | undefined {
+export function phaseAt(phases: ReadonlyArray<PhaseMilestone>, ms: number): string | undefined {
   let selected: PhaseMilestone | undefined;
-  for (const phase of phases) if (phase.atMs <= ms && (!selected || phase.atMs >= selected.atMs)) selected = phase;
+  for (const phase of phases) {
+    if (phase.atMs <= ms && (!selected || phase.atMs >= selected.atMs)) {
+      selected = phase;
+    }
+  }
   return selected?.phase;
 }
+const READ_ERROR_CODES = ['ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'EMFILE'] as const;
+
 export function readErrorReason(error: unknown): HostUnavailable {
-  const code = (error as NodeJS.ErrnoException)?.code;
-  return (
-    ['ENOENT', 'EACCES', 'EPERM', 'EBUSY', 'EMFILE'].includes(code ?? '') ? `read-error:${code}` : 'read-error:EUNKNOWN'
-  ) as HostUnavailable;
+  const code = nodeErrorCode(error);
+  const known = READ_ERROR_CODES.find((candidate) => candidate === code);
+  return known ? `read-error:${known}` : 'read-error:EUNKNOWN';
 }
 export function note(notes: HostNotes, role: HostRole, name: HostNote, count = 1) {
   const target = (notes[role] ??= {});
@@ -102,17 +135,23 @@ export function note(notes: HostNotes, role: HostRole, name: HostNote, count = 1
 export const counter = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
-export type Row = Record<string, unknown>;
-export const row = (v: unknown): Row | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Row) : null);
+export type Row = JsonObject;
+export const row = (v: unknown): Row | null => (isRecord(v) ? v : null);
 export const count = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
 export function baseCounters(value: unknown): Counters | undefined {
   const r = row(value);
-  if (!r || !count(r['input']) || !count(r['output'])) return undefined;
+  if (!r || !count(r['input']) || !count(r['output'])) {
+    return undefined;
+  }
   const out: Counters = { input: r['input'], output: r['output'] };
   for (const key of BASE_OPTIONAL_COUNTER_KEYS) {
     const n = r[key];
-    if (n === undefined) continue;
-    if (!count(n)) return undefined;
+    if (n === undefined) {
+      continue;
+    }
+    if (!count(n)) {
+      return undefined;
+    }
     out[key] = n;
   }
   const short = r['cacheWrite5m'],
@@ -123,8 +162,12 @@ export function baseCounters(value: unknown): Counters | undefined {
     (long === undefined || count(long)) &&
     (short ?? 0) + (long ?? 0) <= (out.cacheWrite ?? 0)
   ) {
-    if (short !== undefined) out.cacheWrite5m = short;
-    if (long !== undefined) out.cacheWrite1h = long;
+    if (short !== undefined) {
+      out.cacheWrite5m = short;
+    }
+    if (long !== undefined) {
+      out.cacheWrite1h = long;
+    }
   }
   return out;
 }
@@ -146,10 +189,19 @@ export function counters(
   inputSemantics: DiagnosticUsage['inputSemantics'],
 ): DiagnosticUsage | undefined {
   const r = row(value);
-  if (!r || !count(r[names['input']!]) || !count(r[names['output']!])) return undefined;
+  const inputName = names['input'],
+    outputName = names['output'];
+  if (!r || inputName === undefined || outputName === undefined) {
+    return undefined;
+  }
+  const input = r[inputName],
+    output = r[outputName];
+  if (!count(input) || !count(output)) {
+    return undefined;
+  }
   const out: DiagnosticUsage = {
-    input: r[names['input']!] as number,
-    output: r[names['output']!] as number,
+    input,
+    output,
     scope: 'invocation',
     provenance,
     inputSemantics,
@@ -157,7 +209,9 @@ export function counters(
   for (const key of BASE_OPTIONAL_COUNTER_KEYS) {
     const field = names[key];
     if (field && r[field] !== undefined) {
-      if (!count(r[field])) return undefined;
+      if (!count(r[field])) {
+        return undefined;
+      }
       out[key] = r[field];
     }
   }

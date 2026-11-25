@@ -1,5 +1,6 @@
+import { nodeErrorCode } from '../fs-ext.ts';
 import fs from 'node:fs';
-import * as zlib from 'node:zlib';
+import zlib from 'node:zlib';
 import type { ProviderKey } from '../platform.ts';
 import { readOpencodeMessages } from '../opencode-db.ts';
 import { validSessionId } from '../session.ts';
@@ -8,54 +9,54 @@ import { readAgySqliteGenMetadata } from './agy.ts';
 import { mergeCopilot } from './rows.ts';
 import { boundModels, foldRows, OTHER_KEY } from './bands.ts';
 import { MAX_TOTAL_BYTES, phaseAt, readErrorReason } from './read.ts';
-import {
-  HOST_ROLES,
-  MAX_RESPONSE_AGENTS,
-  splitUsageKey,
-  STAGE_ORDER,
-  usageKey,
-  type BandedCounters,
-  type Counters,
-  type HostResponseAggregate,
-  type HostRole,
-  type HostStage,
-  type HostUsageAdapter,
-  type HostUsageFacts,
-  type HostUsageFs,
-  type HostUsageRow,
-  type HostUsageResult,
-  type Milestone,
-  type PhaseMilestone,
-  type UsageRow,
+import { HOST_ROLES, MAX_RESPONSE_AGENTS, splitUsageKey, STAGE_ORDER, usageKey } from './rows.ts';
+import type {
+  BandedCounters,
+  HostResponseAggregate,
+  HostRole,
+  HostStage,
+  HostUsageAdapter,
+  HostUsageFacts,
+  HostUsageFs,
+  HostUsageRow,
+  HostUsageResult,
+  Milestone,
+  PhaseMilestone,
+  UsageRow,
 } from './rows.ts';
 
+// Host collection never yields delegate rows; they count with the host, as the Copilot notes do.
+const hostRoleOf = (role: UsageRow['role']): HostRole => (role === 'subagent' ? 'subagent' : 'host');
+
 function foldHostRows(
-  rows: readonly (UsageRow & { stage: HostStage })[],
-  phases: readonly PhaseMilestone[],
+  rows: ReadonlyArray<UsageRow & { stage: HostStage }>,
+  phases: ReadonlyArray<PhaseMilestone>,
   hostComplete: boolean,
   subagentComplete: boolean,
-): HostUsageRow[] {
+): Array<HostUsageRow> {
   const aliases = new Map<string, string>();
   const serial = { host: 0, subagent: 0 };
-  for (const r of rows)
-    if (r.copilot && r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS)
-      aliases.set(r.responseActor, `${r.role}-${++serial[r.role as HostRole]}`);
+  for (const r of rows) {
+    if (r.copilot && r.responseActor && !aliases.has(r.responseActor) && aliases.size < MAX_RESPONSE_AGENTS) {
+      aliases.set(r.responseActor, `${r.role}-${++serial[hostRoleOf(r.role)]}`);
+    }
+  }
   const groups = new Map<
     string,
-    { stage: HostStage; phase: string | undefined; role: HostRole; rows: UsageRow[]; agent?: string }
+    { stage: HostStage; phase: string | undefined; role: HostRole; rows: Array<UsageRow>; agent?: string }
   >();
   for (const r of rows) {
     const phase = phaseAt(phases, r.atMs);
-    const role = r.role as HostRole;
+    const role = hostRoleOf(r.role);
     const agent = r.copilot ? aliases.get(r.responseActor ?? '') : undefined;
     const gKey = `${r.stage}\0${phase ?? ''}\0${role}\0${agent ?? ''}`;
-    const group = groups.get(gKey) ?? { stage: r.stage, phase, role, rows: [], ...(agent ? { agent } : {}) };
+    const group = groups.get(gKey) ?? { stage: r.stage, phase, role, rows: [], ...(agent && { agent }) };
     group.rows.push(r);
     groups.set(gKey, group);
   }
-  const out: HostUsageRow[] = [];
+  const out: Array<HostUsageRow> = [];
   for (const group of groups.values()) {
-    const byKey = new Map<string, UsageRow[]>();
+    const byKey = new Map<string, Array<UsageRow>>();
     for (const r of group.rows) {
       const k = usageKey(r.model, r.effort);
       const list = byKey.get(k) ?? [];
@@ -65,10 +66,13 @@ function foldHostRows(
     const perKey: Record<string, BandedCounters & { reasoningInOutput?: boolean }> = {};
     for (const [k, list] of byKey) {
       const folded = foldRows(list);
-      const entry = folded.models[k]!;
+      const entry = folded.models[k];
+      if (!entry) {
+        continue;
+      }
       perKey[k] = {
         ...entry,
-        ...(folded.reasoningInOutput === undefined ? {} : { reasoningInOutput: folded.reasoningInOutput }),
+        ...(!(folded.reasoningInOutput === undefined) && { reasoningInOutput: folded.reasoningInOutput }),
       };
     }
     const bounded = boundModels(perKey);
@@ -79,25 +83,25 @@ function foldHostRows(
       const inputs =
         k === OTHER_KEY
           ? [...byKey].flatMap(([key, list]) => (key === OTHER_KEY || !Object.hasOwn(bounded, key) ? list : []))
-          : byKey.get(k)!;
+          : (byKey.get(k) ?? []);
       const active = inputs.filter((r) => !r.skipResponse);
       const turns =
         roleComplete && active.every((r) => r.turns !== undefined)
-          ? active.reduce((total, r) => total + r.turns!, 0)
+          ? active.reduce((total, r) => total + (r.turns ?? 0), 0)
           : undefined;
       const toolCalls =
         roleComplete && active.length > 0 && active.every((r) => r.toolCalls !== undefined)
-          ? active.reduce((total, r) => total + r.toolCalls!, 0)
+          ? active.reduce((total, r) => total + (r.toolCalls ?? 0), 0)
           : undefined;
       const toolTurns =
         roleComplete && active.length > 0 && active.every((r) => r.toolTurns !== undefined)
-          ? active.reduce((total, r) => total + r.toolTurns!, 0)
+          ? active.reduce((total, r) => total + (r.toolTurns ?? 0), 0)
           : undefined;
       const precise =
         inputs.every((r) => r.depth !== undefined) && (!inputs.some((r) => r.copilot) || group.agent !== undefined);
       const maxDepth =
         (roleComplete || inputs.every((r) => r.copilot)) && precise && group.role === 'subagent'
-          ? inputs.reduce((max, r) => Math.max(max, r.depth!), 0)
+          ? inputs.reduce((max, r) => Math.max(max, r.depth ?? 0), 0)
           : undefined;
       const copilot = mergeCopilot(inputs.map((r) => r.copilot));
       if (copilot && !group.agent) {
@@ -107,27 +111,27 @@ function foldHostRows(
       const parents = new Set(inputs.map((r) => (r.parentActor ? aliases.get(r.parentActor) : undefined)));
       const parent = parents.size === 1 ? [...parents][0] : undefined;
       const row: HostUsageRow = {
-        ...(turns === undefined ? {} : { turns }),
-        ...(toolCalls === undefined ? {} : { toolCalls }),
-        ...(toolTurns === undefined ? {} : { toolTurns }),
-        ...(maxDepth === undefined ? {} : { maxDepth }),
+        ...(!(turns === undefined) && { turns }),
+        ...(!(toolCalls === undefined) && { toolCalls }),
+        ...(!(toolTurns === undefined) && { toolTurns }),
+        ...(!(maxDepth === undefined) && { maxDepth }),
         stage: group.stage,
-        ...(group.agent ? { agent: group.agent } : {}),
-        ...(parent && group.agent ? { parent } : {}),
-        ...(copilot ? { copilot } : {}),
-        ...(group.phase === undefined ? {} : { phase: group.phase }),
+        ...(group.agent && { agent: group.agent }),
+        ...(parent && group.agent && { parent }),
+        ...(copilot && { copilot }),
+        ...(!(group.phase === undefined) && { phase: group.phase }),
         role: group.role,
         model,
         effort: effort ? effort : null,
         input: typed.input,
         output: typed.output,
-        ...(typed.cacheRead !== undefined ? { cacheRead: typed.cacheRead } : {}),
-        ...(typed.cacheWrite !== undefined ? { cacheWrite: typed.cacheWrite } : {}),
-        ...(typed.cacheWrite5m !== undefined ? { cacheWrite5m: typed.cacheWrite5m } : {}),
-        ...(typed.cacheWrite1h !== undefined ? { cacheWrite1h: typed.cacheWrite1h } : {}),
-        ...(typed.reasoning !== undefined ? { reasoning: typed.reasoning } : {}),
-        ...(typed.bands !== undefined ? { bands: typed.bands } : {}),
-        ...(typed.reasoningInOutput !== undefined ? { reasoningInOutput: typed.reasoningInOutput } : {}),
+        ...(typed.cacheRead !== undefined && { cacheRead: typed.cacheRead }),
+        ...(typed.cacheWrite !== undefined && { cacheWrite: typed.cacheWrite }),
+        ...(typed.cacheWrite5m !== undefined && { cacheWrite5m: typed.cacheWrite5m }),
+        ...(typed.cacheWrite1h !== undefined && { cacheWrite1h: typed.cacheWrite1h }),
+        ...(typed.reasoning !== undefined && { reasoning: typed.reasoning }),
+        ...(typed.bands !== undefined && { bands: typed.bands }),
+        ...(typed.reasoningInOutput !== undefined && { reasoningInOutput: typed.reasoningInOutput }),
       };
       out.push(row);
     }
@@ -141,9 +145,14 @@ function foldHostRows(
   );
 }
 
-function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]): HostResponseAggregate[] | undefined {
+function foldHostResponses(
+  result: HostUsageResult,
+  stages: ReadonlyArray<Milestone>,
+): Array<HostResponseAggregate> | undefined {
   const source = result.response;
-  if (!source) return undefined;
+  if (!source) {
+    return undefined;
+  }
   const firstMilestone = stages.reduce((first, stage) => Math.min(first, stage.atMs), Infinity);
   const aliases = new Map<string, string>();
   const serial = { host: 0, subagent: 0 };
@@ -159,7 +168,9 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
     }
   >();
   for (const row of result.rows) {
-    if (row.role === 'delegate' || row.skipResponse) continue;
+    if (row.role === 'delegate' || row.skipResponse) {
+      continue;
+    }
     const role = row.role;
     const stage = row.atMs >= firstMilestone ? row.stage : 'unattributed';
     const actor = row.responseActor === undefined ? undefined : `${role}\0${row.responseActor}`;
@@ -179,7 +190,7 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
           coverage,
           observed: 0,
           uncachedInput: 0,
-          ...(agent === undefined ? {} : { agent }),
+          ...(!(agent === undefined) && { agent }),
         },
         toolCalls: 0,
         toolTurns: 0,
@@ -190,18 +201,31 @@ function foldHostResponses(result: HostUsageResult, stages: readonly Milestone[]
     }
     const group = entry.aggregate;
     group.observed = (group.observed ?? 0) + 1;
-    const input = (group.uncachedInput ?? NaN) + row.input;
-    if (Number.isSafeInteger(input)) group.uncachedInput = input;
-    else delete group.uncachedInput;
-    if (row.toolCalls !== undefined) entry.toolCalls += row.toolCalls;
-    else entry.allToolCalls = false;
-    if (row.toolTurns !== undefined) entry.toolTurns += row.toolTurns;
-    else entry.allToolTurns = false;
+    const input = (group.uncachedInput ?? Number.NaN) + row.input;
+    if (Number.isSafeInteger(input)) {
+      group.uncachedInput = input;
+    } else {
+      delete group.uncachedInput;
+    }
+    if (row.toolCalls !== undefined) {
+      entry.toolCalls += row.toolCalls;
+    } else {
+      entry.allToolCalls = false;
+    }
+    if (row.toolTurns !== undefined) {
+      entry.toolTurns += row.toolTurns;
+    } else {
+      entry.allToolTurns = false;
+    }
   }
   const aggregates = [...groups.values()].map(({ aggregate, toolCalls, toolTurns, allToolCalls, allToolTurns }) => {
     if (aggregate.coverage === 'complete' && !hasHostNotes) {
-      if (allToolCalls) aggregate.toolCalls = toolCalls;
-      if (allToolTurns) aggregate.toolTurns = toolTurns;
+      if (allToolCalls) {
+        aggregate.toolCalls = toolCalls;
+      }
+      if (allToolTurns) {
+        aggregate.toolTurns = toolTurns;
+      }
     }
     return aggregate;
   });
@@ -227,8 +251,8 @@ type HostUsageInput = {
   endMs: number;
   home: string;
   env: (name: string) => string | undefined;
-  stages: readonly Milestone[];
-  phases?: readonly PhaseMilestone[];
+  stages: ReadonlyArray<Milestone>;
+  phases?: ReadonlyArray<PhaseMilestone>;
 };
 export function readHostUsage(
   platform: ProviderKey | null,
@@ -237,11 +261,19 @@ export function readHostUsage(
   adapters: Partial<Record<ProviderKey, HostUsageAdapter>> = USAGE_ADAPTERS,
 ): HostUsageFacts {
   const adapter = platform ? adapters[platform] : undefined;
-  if (!adapter) return { platform, rows: [], unavailable: 'no adapter' };
+  if (!adapter) {
+    return { platform, rows: [], unavailable: 'no adapter' };
+  }
   const sessionId = adapter.sessionEnv.map(input.env).find(Boolean);
-  if (!sessionId) return { platform, rows: [], unavailable: 'no host id' };
-  if (!validSessionId(sessionId)) return { platform, rows: [], unavailable: 'invalid host id' };
-  if (!Number.isFinite(input.startMs)) return { platform, rows: [], unavailable: 'invalid session start' };
+  if (!sessionId) {
+    return { platform, rows: [], unavailable: 'no host id' };
+  }
+  if (!validSessionId(sessionId)) {
+    return { platform, rows: [], unavailable: 'invalid host id' };
+  }
+  if (!Number.isFinite(input.startMs)) {
+    return { platform, rows: [], unavailable: 'invalid session start' };
+  }
   try {
     const res = adapter.read(
       { ...input, sessionId, collectResponses: true, budget: { remaining: MAX_TOTAL_BYTES } },
@@ -252,24 +284,24 @@ export function readHostUsage(
     const subagentComplete = hostComplete && Object.keys(notes?.subagent ?? {}).length === 0;
     const subagentRows = res.rows.filter((r) => r.role === 'subagent');
     const subagentActorsComplete = subagentComplete && subagentRows.every((r) => r.responseActor !== undefined);
-    const subagentCount = subagentActorsComplete ? new Set(subagentRows.map((r) => r.responseActor!)).size : undefined;
+    const subagentCount = subagentActorsComplete ? new Set(subagentRows.map((r) => r.responseActor)).size : undefined;
     const maxSubagentDepth =
       subagentActorsComplete && subagentRows.every((r) => r.depth !== undefined)
-        ? subagentRows.reduce((max, r) => Math.max(max, r.depth!), 0)
+        ? subagentRows.reduce((max, r) => Math.max(max, r.depth ?? 0), 0)
         : undefined;
     const responses = foldHostResponses(res, input.stages);
     return {
       platform,
       rows: foldHostRows(res.rows, input.phases ?? [], hostComplete, subagentComplete),
-      ...(hostComplete && res.userTurns !== undefined ? { userTurns: res.userTurns } : {}),
-      ...(hostComplete && res.userTurns !== undefined && res.userTurnsByStage !== undefined
-        ? { userTurnsByStage: res.userTurnsByStage }
-        : {}),
-      ...(subagentCount === undefined ? {} : { subagentCount }),
-      ...(maxSubagentDepth === undefined ? {} : { maxSubagentDepth }),
-      ...(unavailable === undefined ? {} : { unavailable }),
-      ...(notes === undefined ? {} : { notes }),
-      ...(responses === undefined ? {} : { responses }),
+      ...(hostComplete && res.userTurns !== undefined && { userTurns: res.userTurns }),
+      ...(hostComplete &&
+        res.userTurns !== undefined &&
+        res.userTurnsByStage !== undefined && { userTurnsByStage: res.userTurnsByStage }),
+      ...(!(subagentCount === undefined) && { subagentCount }),
+      ...(!(maxSubagentDepth === undefined) && { maxSubagentDepth }),
+      ...(!(unavailable === undefined) && { unavailable }),
+      ...(!(notes === undefined) && { notes }),
+      ...(!(responses === undefined) && { responses }),
     };
   } catch (error) {
     return { platform, rows: [], unavailable: readErrorReason(error) };
@@ -280,7 +312,9 @@ export const nodeHostUsageFs: HostUsageFs = {
     try {
       return fs.readdirSync(dir);
     } catch (error) {
-      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return [];
+      if (['ENOENT', 'ENOTDIR'].includes(nodeErrorCode(error) ?? '')) {
+        return [];
+      }
       throw error;
     }
   },
@@ -289,19 +323,23 @@ export const nodeHostUsageFs: HostUsageFs = {
       const s = fs.statSync(file);
       return { size: s.size, mtimeMs: s.mtimeMs };
     } catch (error) {
-      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return null;
+      if (['ENOENT', 'ENOTDIR'].includes(nodeErrorCode(error) ?? '')) {
+        return null;
+      }
       throw error;
     }
   },
   read(file, maxBytes) {
     const fd = fs.openSync(file, 'r');
     try {
-      const chunks: Buffer[] = [];
+      const chunks: Array<Buffer> = [];
       let total = 0;
       while (total < maxBytes) {
         const data = Buffer.allocUnsafe(Math.min(1024 * 1024, maxBytes - total));
         const count = fs.readSync(fd, data, 0, data.length, null);
-        if (!count) break;
+        if (!count) {
+          break;
+        }
         chunks.push(data.subarray(0, count));
         total += count;
       }

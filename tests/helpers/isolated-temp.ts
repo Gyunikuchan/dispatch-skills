@@ -7,9 +7,11 @@ import path from 'node:path';
 
 export const TEMP_ROOT_MARKER = 'DISPATCH_TEST_TEMP';
 
-function useTemp(dir: string): void {
+function applyTempDir(dir: string): void {
   // NOTE: os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows at call time.
-  for (const key of ['TMPDIR', 'TEMP', 'TMP']) process.env[key] = dir;
+  for (const key of ['TMPDIR', 'TEMP', 'TMP']) {
+    process.env[key] = dir;
+  }
 }
 
 function removeOnExit(dir: string): void {
@@ -27,16 +29,18 @@ if (!root) {
   // NOTE: .native expands Windows 8.3 short names (e.g. RUNNER~1) so paths match long-form paths.
   root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'dispatch-test-'));
   process.env[TEMP_ROOT_MARKER] = root;
-  for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_SESSION_TERMINAL']) delete process.env[key];
+  for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_SESSION_TERMINAL']) {
+    delete process.env[key];
+  }
   process.env['GIT_AUTHOR_NAME'] = 'Toolkit Test';
   process.env['GIT_AUTHOR_EMAIL'] = 'test@example.test';
   process.env['GIT_COMMITTER_NAME'] = 'Toolkit Test';
   process.env['GIT_COMMITTER_EMAIL'] = 'test@example.test';
   removeOnExit(root);
 }
-useTemp(root);
+applyTempDir(root);
 if (process.env['NODE_TEST_CONTEXT']) {
   const own = fs.mkdtempSync(path.join(root, `worker-${process.pid}-`));
-  useTemp(own);
+  applyTempDir(own);
   removeOnExit(own);
 }

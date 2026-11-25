@@ -4,7 +4,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-type Data = Record<string, unknown>;
+// Every `node --test` payload field read here; each stays unvalidated until narrowed at its use.
+interface Data {
+  file?: unknown;
+  name?: unknown;
+  nesting?: unknown;
+  line?: unknown;
+  duration_ms?: unknown;
+  details?: unknown;
+  type?: unknown;
+  summary?: unknown;
+  files?: unknown;
+  path?: unknown;
+  coveredLineCount?: unknown;
+  totalLineCount?: unknown;
+}
 export interface ReporterEvent {
   type: string;
   data?: Data;
@@ -22,7 +36,7 @@ export interface TestLine {
 }
 export interface CoverageLine {
   kind: 'coverage';
-  files: { path: string; covered: number; total: number }[];
+  files: Array<{ path: string; covered: number; total: number }>;
 }
 export interface SummaryLine {
   kind: 'summary';
@@ -30,7 +44,8 @@ export interface SummaryLine {
 }
 export type EventLine = TestLine | CoverageLine | SummaryLine;
 
-const record = (value: unknown): Data => (typeof value === 'object' && value !== null ? (value as Data) : {});
+const isData = (value: unknown): value is Data => typeof value === 'object' && value !== null;
+const record = (value: unknown): Data => (isData(value) ? value : {});
 const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
 
 // SECTION: Event mapping
@@ -38,7 +53,9 @@ const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
 export function toLine(type: string, data: Data): EventLine | undefined {
   if (type === 'test:pass' || type === 'test:fail') {
     const details = record(data['details']);
-    if (typeof data['file'] !== 'string') return undefined;
+    if (typeof data['file'] !== 'string') {
+      return undefined;
+    }
     return {
       kind: 'test',
       status: type === 'test:pass' ? 'pass' : 'fail',
@@ -52,7 +69,9 @@ export function toLine(type: string, data: Data): EventLine | undefined {
   }
   if (type === 'test:coverage') {
     const files = record(data['summary'])['files'];
-    if (!Array.isArray(files)) return undefined;
+    if (!Array.isArray(files)) {
+      return undefined;
+    }
     return {
       kind: 'coverage',
       files: files
@@ -65,8 +84,9 @@ export function toLine(type: string, data: Data): EventLine | undefined {
     };
   }
   // NOTE: only the run-level summary has no file; per-file summaries are skipped.
-  if (type === 'test:summary' && data['file'] === undefined)
+  if (type === 'test:summary' && data['file'] === undefined) {
     return { kind: 'summary', durationMs: num(data['duration_ms']) };
+  }
   return undefined;
 }
 
@@ -74,16 +94,23 @@ export function toLine(type: string, data: Data): EventLine | undefined {
 
 export default async function* timingReporter(source: AsyncIterable<ReporterEvent>): AsyncGenerator<string> {
   const out = process.env['OPTIMISE_TESTS_OUT'];
-  if (!out) throw new Error('timing-reporter: set OPTIMISE_TESTS_OUT to the events output path');
-  const lines: string[] = [];
+  if (!out) {
+    throw new Error('timing-reporter: set OPTIMISE_TESTS_OUT to the events output path');
+  }
+  const lines: Array<string> = [];
   let passed = 0;
   let failed = 0;
   for await (const { type, data = {} } of source) {
     const line = toLine(type, data);
-    if (!line) continue;
+    if (!line) {
+      continue;
+    }
     if (line.kind === 'test' && !line.suite) {
-      if (line.status === 'pass') passed++;
-      else failed++;
+      if (line.status === 'pass') {
+        passed++;
+      } else {
+        failed++;
+      }
     }
     lines.push(JSON.stringify(line));
   }

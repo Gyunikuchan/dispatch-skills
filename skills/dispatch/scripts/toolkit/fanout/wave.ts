@@ -1,35 +1,23 @@
 import { parseBlockedReply } from '../domain/blocker.ts';
 import fs from 'node:fs';
 import type { RosterSlot } from '../domain/types.ts';
-import {
-  atomic,
-  mergeBlocked,
-  persistDeferredMarker,
-  throwRejected,
-  type BlockedAttempt,
-  type Emit,
-  type FanOutInput,
-  type FanoutState,
-  type NativeFailure,
-  type SlotOutcome,
-  type slotFiles,
-} from './state.ts';
-import {
-  attemptOf,
-  blockedEntry,
-  firstModelOf,
-  isNativeFirstSlot,
-  reportEvidence,
-  type nativeVoice,
-} from './native.ts';
+import { atomic, mergeBlocked, persistDeferredMarker, throwRejected } from './state.ts';
+import type { BlockedAttempt, Emit, FanOutInput, FanoutState, NativeFailure, SlotOutcome, slotFiles } from './state.ts';
+import { attemptOf, blockedEntry, firstModelOf, isNativeFirstSlot, reportEvidence } from './native.ts';
+import type { nativeVoice } from './native.ts';
 import type { cliVoice } from './voice.ts';
+
+const isOnly = (slot: RosterSlot): boolean => slot.native === true;
+// Drops slots that have no outcome yet.
+const settled = (outcomes: ReadonlyArray<SlotOutcome | undefined>) =>
+  outcomes.flatMap((outcome) => (outcome ? [outcome] : []));
 
 export async function runNativeWave(
   input: Pick<FanOutInput, 'validate' | 'onIgnoredReport'>,
   ports: {
-    targets: readonly RosterSlot[];
-    nativeFirstProviders: readonly string[];
-    nativeFailures: readonly NativeFailure[];
+    targets: ReadonlyArray<RosterSlot>;
+    nativeFirstProviders: ReadonlyArray<string>;
+    nativeFailures: ReadonlyArray<NativeFailure>;
     files: Pick<ReturnType<typeof slotFiles>, 'basePathOf' | 'fileOfLogical' | 'readSaved' | 'saveLogical'>;
     native: ReturnType<typeof nativeVoice>;
     emit: Emit;
@@ -38,7 +26,7 @@ export async function runNativeWave(
     patchState: (patch: Pick<FanoutState, 'nativeFirst'>) => void;
     finishCliWave: () => void;
   },
-): Promise<SlotOutcome[]> {
+): Promise<Array<SlotOutcome>> {
   const {
     targets,
     nativeFirstProviders,
@@ -68,12 +56,13 @@ export async function runNativeWave(
     finishCliWave,
   } = ports;
   // Native wave: launch, CLI wave, consume.
-  const isOnly = (slot: RosterSlot): boolean => slot.native === true;
   const isFirst = (slot: RosterSlot): boolean => isNativeFirstSlot(slot, nativeFirstProviders);
 
   const notifyUnmatchedReports = (matchedReportAttempts: ReadonlySet<string>): void => {
     for (const report of nativeFailures) {
-      if (matchedReportAttempts.has(report.attempt)) continue;
+      if (matchedReportAttempts.has(report.attempt)) {
+        continue;
+      }
       const stillPending = targets.some((slot) => {
         const saved = readSaved(slot.slot);
         return (
@@ -82,14 +71,16 @@ export async function runNativeWave(
           !(saved as { cliFallback?: true }).cliFallback
         );
       });
-      if (stillPending) continue;
+      if (stillPending) {
+        continue;
+      }
       input.onIgnoredReport?.(report.attempt);
     }
   };
 
   // Launch: no state yet, native-first unsaved.
   if (!stateOf().nativeFirst) {
-    const outcomes: SlotOutcome[] = [];
+    const outcomes: Array<SlotOutcome> = [];
     const matchedReportAttempts = new Set<string>();
     // A matching failure report ends a saved native-only attempt with the
     // native-only classification (no cli cascade), mirroring the cli-only
@@ -174,9 +165,13 @@ export async function runNativeWave(
     // its physical provider like the first-slot branch above, so no saved
     // voice is omitted while a matching failure report is retained.
     for (const slot of targets) {
-      if (isOnly(slot) || isFirst(slot)) continue;
+      if (isOnly(slot) || isFirst(slot)) {
+        continue;
+      }
       const existing = readSaved(slot.slot);
-      if (!existing) continue;
+      if (!existing) {
+        continue;
+      }
       if (existing.state === 'done') {
         if (input.validate(existing.text, slot.slot).ok) {
           emit(slot, { kind: 'slot', state: 'done', replay: true });
@@ -206,20 +201,23 @@ export async function runNativeWave(
     patchState({ nativeFirst: true });
     // Reports that matched a saved host-changed attempt were consumed above;
     // only a truly stale report is ignored.
-    for (const report of nativeFailures)
-      if (!matchedReportAttempts.has(report.attempt)) input.onIgnoredReport?.(report.attempt);
+    for (const report of nativeFailures) {
+      if (!matchedReportAttempts.has(report.attempt)) {
+        input.onIgnoredReport?.(report.attempt);
+      }
+    }
     return outcomes;
   }
 
   // CLI wave: descriptors saved, cliWaveDone absent. Runs unsaved CLI and reported failures, reads no other reply.
   if (!stateOf().cliWaveDone) {
     const outcomes = new Map<string, SlotOutcome>();
-    const waveTasks: Promise<unknown>[] = [];
+    const waveTasks: Array<Promise<unknown>> = [];
     const queueFallback = (
       slot: RosterSlot,
       saved: Extract<SlotOutcome, { state: 'native' }>,
       reason: string,
-      extra?: BlockedAttempt[],
+      extra?: Array<BlockedAttempt>,
     ): void => {
       waveTasks.push(
         (async () => {
@@ -235,7 +233,9 @@ export async function runNativeWave(
     // targets with recoverable wave state.
     for (const canLaunch of [isFirst, isOnly]) {
       for (const slot of targets) {
-        if (!canLaunch(slot) || outcomes.has(slot.slot) || readSaved(slot.slot)) continue;
+        if (!canLaunch(slot) || outcomes.has(slot.slot) || readSaved(slot.slot)) {
+          continue;
+        }
         const created = isOnly(slot) ? createNativeOnly(slot) : createNativeFirst(slot, slot);
         outcomes.set(slot.slot, publishNative(slot, created));
       }
@@ -251,13 +251,19 @@ export async function runNativeWave(
       // deferred; unmatched reports are ignored only when no saved attempt
       // still holds them.
       for (const slot of targets) {
-        if (outcomes.has(slot.slot)) continue;
-        const saved = readSaved(slot.slot) as Extract<SlotOutcome, { state: 'native' }> | undefined;
+        if (outcomes.has(slot.slot)) {
+          continue;
+        }
+        const saved = readSaved(slot.slot);
         // A fallback already in flight stays with the deferred next call, which
         // resumes it with its recorded reason.
-        if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) continue;
+        if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) {
+          continue;
+        }
         const report = nativeFailures.find((entry) => entry.attempt === saved.attempt);
-        if (!report) continue;
+        if (!report) {
+          continue;
+        }
         matchedReportAttempts.add(report.attempt);
         const route = routeForNative(saved);
         const routeTrue = !slot.native && route.routeOk && route.first;
@@ -280,7 +286,9 @@ export async function runNativeWave(
       // cascade, so neither caller can list it as pending or failed meanwhile.
       notifyUnmatchedReports(matchedReportAttempts);
       for (const slot of targets) {
-        if (outcomes.has(slot.slot)) continue;
+        if (outcomes.has(slot.slot)) {
+          continue;
+        }
         const saved = readSaved(slot.slot);
         // Every saved fallback marker resumes in the CLI wave, including one
         // saved before this call: it never returns as a pending voice.
@@ -288,13 +296,15 @@ export async function runNativeWave(
           !saved ||
           deferredFallbacks.has(slot.slot) ||
           (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback)
-        )
+        ) {
           continue;
-        if (saved.state === 'native' && !routeForNative(saved as { attempt: string; provider: string }).routeOk)
+        }
+        if (saved.state === 'native' && !routeForNative(saved).routeOk) {
           continue;
+        }
         outcomes.set(slot.slot, saved);
       }
-      return targets.map((slot) => outcomes.get(slot.slot)!).filter(Boolean);
+      return settled(targets.map((slot) => outcomes.get(slot.slot)));
     }
     for (const slot of targets) {
       if (isOnly(slot) || isFirst(slot)) {
@@ -311,14 +321,18 @@ export async function runNativeWave(
             continue;
           }
         }
-        if (!saved || (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback)) continue;
+        if (!saved || (saved.state === 'native' && (saved as { cliFallback?: true }).cliFallback)) {
+          continue;
+        }
         if (isFirst(slot) && saved.state === 'native') {
           // Same physical-route gate as the consume path: a host change can
           // make the logical slot native-first under a stale attempt.
           if (!routeForNative(saved).routeOk) {
             // A matching report wins: the report loop below runs the same
             // fallback with the reported reason and evidence.
-            if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) continue;
+            if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) {
+              continue;
+            }
             queueFallback(slot, saved, 'host changed');
             continue;
           }
@@ -333,20 +347,32 @@ export async function runNativeWave(
     const waveInitial = new Map(targets.map((slot) => [slot.slot, readSaved(slot.slot)]));
     // Process reports for natives in this wave (fallback now, no reply read).
     for (const slot of targets) {
-      if (isOnly(slot)) continue;
-      const saved = readSaved(slot.slot) as Extract<SlotOutcome, { state: 'native' }> | undefined;
-      if (!saved || saved.state !== 'native' || !(saved as { cliFallback?: true }).cliFallback) continue;
+      if (isOnly(slot)) {
+        continue;
+      }
+      const saved = readSaved(slot.slot);
+      if (!saved || saved.state !== 'native' || !(saved as { cliFallback?: true }).cliFallback) {
+        continue;
+      }
       queueFallback(slot, saved, (saved as { nativeError?: string }).nativeError ?? 'failed');
     }
     // Route false takes the fallback even with a reply present, before any report handling.
     for (const slot of targets) {
-      if (isOnly(slot) || isFirst(slot)) continue;
-      const saved = readSaved(slot.slot) as Extract<SlotOutcome, { state: 'native' }> | undefined;
-      if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) continue;
-      if (routeForNative(saved).routeOk) continue;
+      if (isOnly(slot) || isFirst(slot)) {
+        continue;
+      }
+      const saved = readSaved(slot.slot);
+      if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) {
+        continue;
+      }
+      if (routeForNative(saved).routeOk) {
+        continue;
+      }
       // A matching report wins: the report loop below runs the same fallback
       // with the reported reason and evidence.
-      if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) continue;
+      if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) {
+        continue;
+      }
       queueFallback(slot, saved, 'host changed');
     }
     // Reports match any saved physical native attempt, not only first slots:
@@ -354,11 +380,17 @@ export async function runNativeWave(
     // physical reserve provider under the logical slot and no second reserve,
     // and a reported attempt is never returned as pending.
     for (const slot of targets) {
-      if (isOnly(slot)) continue;
-      const saved = readSaved(slot.slot) as Extract<SlotOutcome, { state: 'native' }> | undefined;
-      if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) continue;
+      if (isOnly(slot)) {
+        continue;
+      }
+      const saved = readSaved(slot.slot);
+      if (!saved || saved.state !== 'native' || (saved as { cliFallback?: true }).cliFallback) {
+        continue;
+      }
       const report = nativeFailures.find((entry) => entry.attempt === saved.attempt);
-      if (!report) continue;
+      if (!report) {
+        continue;
+      }
       matchedReportAttempts.add(report.attempt);
       queueFallback(slot, saved, report.reason, reportEvidence(saved, report));
     }
@@ -370,7 +402,9 @@ export async function runNativeWave(
     const cliTargets = targets.filter((slot) => !isOnly(slot) && !isFirst(slot));
     for (const slot of cliTargets) {
       const initial = waveInitial.get(slot.slot);
-      if (initial?.state === 'native') continue;
+      if (initial?.state === 'native') {
+        continue;
+      }
       waveTasks.push(
         (async () => {
           const saved = readSaved(slot.slot);
@@ -385,7 +419,9 @@ export async function runNativeWave(
           }
           // If saved failed from previous interrupted wave, rerun below.
           const promptPath = basePathOf(slot.slot);
-          if (!fs.existsSync(promptPath)) fs.writeFileSync(promptPath, baseTextOf(slot), { mode: 0o600 });
+          if (!fs.existsSync(promptPath)) {
+            fs.writeFileSync(promptPath, baseTextOf(slot), { mode: 0o600 });
+          }
           let outcome = await voiceCLI(slot, slot.slot, promptPath);
           if (outcome.state === 'failed') {
             const canReserve = reserveLaunchable(slot.slot, outcome.cls);
@@ -403,7 +439,9 @@ export async function runNativeWave(
           }
           const savedBlockedFor = readSaved(slot.slot)?.blocked;
           const blocked = mergeBlocked(savedBlockedFor, outcome.blocked);
-          if (blocked.length) outcome = { ...outcome, blocked };
+          if (blocked.length) {
+            outcome = { ...outcome, blocked };
+          }
           await saveLogical(slot, outcome);
           outcomes.set(slot.slot, outcome);
           return outcome;
@@ -415,7 +453,7 @@ export async function runNativeWave(
     finishCliWave();
     // Reports that matched nothing are ignored; others were consumed above.
     notifyUnmatchedReports(matchedReportAttempts);
-    return targets.map((slot) => outcomes.get(slot.slot) ?? readSaved(slot.slot)!).filter(Boolean);
+    return settled(targets.map((slot) => outcomes.get(slot.slot) ?? readSaved(slot.slot)));
   }
 
   // Consume: cliWaveDone present. Consumes replies, moves failed natives to CLI.
@@ -429,8 +467,8 @@ export async function runNativeWave(
     }
     const outcomes = new Map<string, SlotOutcome>();
     let pendingRemains = false;
-    const preExistingFailed: RosterSlot[] = [];
-    const consumeTasks: Promise<void>[] = [];
+    const preExistingFailed: Array<RosterSlot> = [];
+    const consumeTasks: Array<Promise<void>> = [];
     // Independent fallback cascades run concurrently in one batch (as the wave
     // does); the walk below decides and marks, tasks launch. Check and claim
     // stay adjacent with no await between, so concurrent cascades cannot
@@ -439,13 +477,15 @@ export async function runNativeWave(
       slot: RosterSlot,
       nativeSaved: Extract<SlotOutcome, { state: 'native' }>,
       nativeError: string,
-      extraBlocked?: BlockedAttempt[],
+      extraBlocked?: Array<BlockedAttempt>,
     ) => {
       consumeTasks.push(
         (async () => {
           const outcome = await fallbackToCli(slot, nativeSaved, nativeError, extraBlocked);
           outcomes.set(slot.slot, outcome);
-          if (outcome.state === 'native' && !(outcome as { cliFallback?: true }).cliFallback) pendingRemains = true;
+          if (outcome.state === 'native' && !(outcome as { cliFallback?: true }).cliFallback) {
+            pendingRemains = true;
+          }
         })(),
       );
     };
@@ -457,8 +497,12 @@ export async function runNativeWave(
             const launched = await takeReserve(slot, outcome, promptPath);
             if (launched) {
               outcomes.set(slot.slot, launched);
-              if (launched.state === 'native') pendingRemains = true;
-              if (launched.state === 'native') return;
+              if (launched.state === 'native') {
+                pendingRemains = true;
+              }
+              if (launched.state === 'native') {
+                return;
+              }
               outcome = launched;
             }
           }
@@ -472,15 +516,19 @@ export async function runNativeWave(
       const saved = readSaved(slot.slot);
       if (isOnly(slot)) {
         if (!saved || saved.state !== 'native') {
-          if (saved) outcomes.set(slot.slot, saved);
+          if (saved) {
+            outcomes.set(slot.slot, saved);
+          }
           continue;
         }
-        const nativeSaved = saved as Extract<SlotOutcome, { state: 'native' }>;
+        const nativeSaved = saved;
         const report = nativeFailures.find((entry) => entry.attempt === nativeSaved.attempt);
         if (report) {
           const reported = await saveReportFailure(slot, nativeSaved, report);
           outcomes.set(slot.slot, reported);
-          if (reported.state === 'native' && !(reported as { cliFallback?: true }).cliFallback) pendingRemains = true;
+          if (reported.state === 'native' && !(reported as { cliFallback?: true }).cliFallback) {
+            pendingRemains = true;
+          }
           continue;
         }
         if (fs.existsSync(nativeSaved.replyPath)) {
@@ -526,8 +574,7 @@ export async function runNativeWave(
       }
       if (isFirst(slot) || saved?.state === 'native') {
         // Native-first consume, including route-false fallback.
-        const nativeSaved =
-          saved?.state === 'native' ? (saved as Extract<SlotOutcome, { state: 'native' }>) : undefined;
+        const nativeSaved = saved?.state === 'native' ? saved : undefined;
         if (!nativeSaved) {
           // No saved native: could be done/failed already, or unsaved (new). If done/failed, handle below as CLI.
           if (saved) {
@@ -598,7 +645,7 @@ export async function runNativeWave(
             }
             const entry = blockedEntry(
               nativeSaved.provider,
-              firstModelOf({ model: (nativeSaved as { model?: string | readonly string[] }).model }),
+              firstModelOf({ model: (nativeSaved as { model?: string | ReadonlyArray<string> }).model }),
               raw,
             );
             emit(attemptOf(slot, nativeSaved), { kind: 'validation', surface: 'native', outcome: 'blocked' });
@@ -608,7 +655,7 @@ export async function runNativeWave(
             const pending = {
               ...nativeSaved,
               error: 'blocked: ' + entry.reason,
-              ...(blocked.length ? { blocked } : {}),
+              ...(blocked.length && { blocked }),
             };
             atomic(fileOfLogical(slot.slot), pending);
             outcomes.set(slot.slot, pending);
@@ -638,7 +685,7 @@ export async function runNativeWave(
           if (isBlocked) {
             const entry = blockedEntry(
               nativeSaved.provider,
-              firstModelOf({ model: (nativeSaved as { model?: string | readonly string[] }).model }),
+              firstModelOf({ model: (nativeSaved as { model?: string | ReadonlyArray<string> }).model }),
               raw,
             );
             emit(attemptOf(slot, nativeSaved), { kind: 'validation', surface: 'native', outcome: 'blocked' });
@@ -668,7 +715,7 @@ export async function runNativeWave(
               ? [
                   {
                     provider: nativeSaved.provider,
-                    model: firstModelOf({ model: (nativeSaved as { model?: string | readonly string[] }).model }),
+                    model: firstModelOf({ model: (nativeSaved as { model?: string | ReadonlyArray<string> }).model }),
                     ...checked.blocked,
                   },
                 ]
@@ -703,14 +750,16 @@ export async function runNativeWave(
       }
       // Unsaved CLI in consume (should not happen after wave, but run now).
       const promptPath = basePathOf(slot.slot);
-      if (!fs.existsSync(promptPath)) fs.writeFileSync(promptPath, baseTextOf(slot), { mode: 0o600 });
+      if (!fs.existsSync(promptPath)) {
+        fs.writeFileSync(promptPath, baseTextOf(slot), { mode: 0o600 });
+      }
       runPlainCli(slot, promptPath);
     }
     throwRejected(await Promise.allSettled(consumeTasks));
 
     // A saved failed slot retries once in the call where the last native reply settles.
     if (!pendingRemains && preExistingFailed.length) {
-      const retryTasks: Promise<void>[] = [];
+      const retryTasks: Array<Promise<void>> = [];
       for (const slot of preExistingFailed) {
         retryTasks.push(
           (async () => {
@@ -727,22 +776,25 @@ export async function runNativeWave(
             if (isCurrentHost(slot.provider)) {
               retryOutcome =
                 savedFailed?.state === 'failed'
-                  ? (savedFailed as Extract<SlotOutcome, { state: 'failed' }>)
-                  : ({
+                  ? savedFailed
+                  : {
                       slot: slot.slot,
                       state: 'failed',
                       cls: 'refusal',
                       reason: 'refusal: host voice unavailable',
-                      ...(priorBlocked?.length ? { blocked: priorBlocked } : {}),
-                    } as Extract<SlotOutcome, { state: 'failed' }>);
+                      ...(priorBlocked?.length && { blocked: priorBlocked }),
+                    };
             } else {
               retryOutcome = await voiceCLI(slot, slot.slot, baseFile);
-              if (priorBlocked?.length)
+              if (priorBlocked?.length) {
                 retryOutcome = { ...retryOutcome, blocked: mergeBlocked(priorBlocked, retryOutcome.blocked) };
+              }
             }
             if (retryOutcome.state === 'failed' && reserveAllowed(slot.slot, retryOutcome.cls)) {
               const launched = await takeReserve(slot, retryOutcome, baseFile);
-              if (launched) retryOutcome = launched;
+              if (launched) {
+                retryOutcome = launched;
+              }
             }
             await saveLogical(slot, retryOutcome);
             outcomes.set(slot.slot, retryOutcome);
@@ -754,8 +806,10 @@ export async function runNativeWave(
 
     // Stale or replayed reports never matched a pending native at call start.
     for (const report of nativeFailures) {
-      if (!startAttempts.has(report.attempt)) input.onIgnoredReport?.(report.attempt);
+      if (!startAttempts.has(report.attempt)) {
+        input.onIgnoredReport?.(report.attempt);
+      }
     }
-    return targets.map((slot) => outcomes.get(slot.slot) ?? readSaved(slot.slot)!).filter(Boolean);
+    return settled(targets.map((slot) => outcomes.get(slot.slot) ?? readSaved(slot.slot)));
   }
 }

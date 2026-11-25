@@ -4,7 +4,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+
 import { parseArgs } from 'node:util';
 import type { EventLine, TestLine } from './timing-reporter.ts';
 
@@ -24,10 +24,10 @@ export interface TestEntry {
 }
 export interface FileEntry {
   path: string;
-  tests: TestEntry[];
+  tests: Array<TestEntry>;
   durationMs: number;
   lines: number;
-  imports: string[];
+  imports: Array<string>;
 }
 export interface Failure {
   file: string;
@@ -36,16 +36,16 @@ export interface Failure {
 }
 export interface DuplicateTitle {
   name: string;
-  files: { path: string; line: number }[];
+  files: Array<{ path: string; line: number }>;
 }
 export interface SharedImports {
-  imports: string[];
-  files: string[];
+  imports: Array<string>;
+  files: Array<string>;
 }
 export interface MergeCluster {
   file: string;
   prefix: string;
-  tests: { name: string; line: number }[];
+  tests: Array<{ name: string; line: number }>;
 }
 export interface BudgetOverrun {
   path: string;
@@ -62,65 +62,78 @@ export interface SlowTest {
   durationMs: number;
 }
 export interface Candidates {
-  duplicateTitles: DuplicateTitle[];
-  sharedImports: SharedImports[];
-  mergeClusters: MergeCluster[];
-  budgetOverruns: BudgetOverrun[];
-  denseFiles: DenseFile[];
-  slowestTests: SlowTest[];
+  duplicateTitles: Array<DuplicateTitle>;
+  sharedImports: Array<SharedImports>;
+  mergeClusters: Array<MergeCluster>;
+  budgetOverruns: Array<BudgetOverrun>;
+  denseFiles: Array<DenseFile>;
+  slowestTests: Array<SlowTest>;
 }
 export interface Inventory {
   totals: { files: number; tests: number; durationMs: number };
-  files: FileEntry[];
+  files: Array<FileEntry>;
   coverage: Record<string, { covered: number; total: number }>;
   candidates: Candidates;
-  failures: Failure[];
+  failures: Array<Failure>;
 }
 
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SCRIPT_DIR = import.meta.dirname;
 export const REPO_ROOT = path.resolve(SCRIPT_DIR, '../../../..');
-const toPosix = (file: string) => file.replace(/\\/g, '/');
+const toPosix = (file: string) => file.replaceAll('\\', '/');
 const lexicalCompare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
 // SECTION: Discovery
 
 const EXCLUDE_PATTERNS = EXCLUDE_FROM_WRITERS.map((glob) => {
   const escaped = glob
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '\u0000')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\u0000/g, '.*');
+    .replaceAll(/[.+?^${}()|[\]\\]/g, String.raw`\$&`)
+    .replaceAll('**', '\u0000')
+    .replaceAll('*', '[^/]*')
+    .replaceAll('\0', '.*');
   return new RegExp(`^${escaped}$`);
 });
 
 const isExcluded = (relPosix: string): boolean => EXCLUDE_PATTERNS.some((re) => re.test(relPosix));
 
 /** Recursively discovers `*.test.ts` files under `tests/` or `paths`, excluding shared helpers and fixtures. */
-export function discoverTestFiles(root: string, paths?: readonly string[]): string[] {
+export function discoverTestFiles(root: string, paths?: ReadonlyArray<string>): Array<string> {
   const targets = paths?.length ? paths : ['tests'];
   const out = new Set<string>();
   const walk = (dir: string) => {
-    if (!fs.existsSync(dir)) return;
+    if (!fs.existsSync(dir)) {
+      return;
+    }
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        if (entry.name === '.git' || entry.name === 'node_modules') {
+          continue;
+        }
         walk(path.join(dir, entry.name));
       } else if (entry.name.endsWith('.test.ts')) {
         const rel = toPosix(path.relative(root, path.join(dir, entry.name)));
-        if (!isExcluded(rel)) out.add(rel);
+        if (!isExcluded(rel)) {
+          out.add(rel);
+        }
       }
     }
   };
   for (const raw of targets) {
     const clean = toPosix(raw.trim()).replace(/\/+$/, '');
-    if (!clean) continue;
+    if (!clean) {
+      continue;
+    }
     const resolved = path.isAbsolute(clean) ? clean : path.resolve(root, clean);
-    if (!fs.existsSync(resolved)) continue;
+    if (!fs.existsSync(resolved)) {
+      continue;
+    }
     const stat = fs.statSync(resolved);
-    if (stat.isDirectory()) walk(resolved);
-    else if (stat.isFile() && resolved.endsWith('.test.ts')) {
+    if (stat.isDirectory()) {
+      walk(resolved);
+    } else if (stat.isFile() && resolved.endsWith('.test.ts')) {
       const rel = toPosix(path.relative(root, resolved));
-      if (!rel.startsWith('..') && !isExcluded(rel)) out.add(rel);
+      if (!rel.startsWith('..') && !isExcluded(rel)) {
+        out.add(rel);
+      }
     }
   }
   return [...out].sort(lexicalCompare);
@@ -135,34 +148,40 @@ function clusterPrefixOf(name: string): string | undefined {
   const colon = trimmed.indexOf(':');
   if (colon > 0 && colon < 30) {
     const head = trimmed.slice(0, colon).trim().toLowerCase();
-    const words = trimmed
+    const [first, second] = trimmed
       .slice(colon + 1)
       .trim()
       .split(/\s+/)
       .filter(Boolean);
-    if (words.length >= 2) return `${head}: ${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}`;
-    if (words[0]) return `${head}: ${words[0]!.toLowerCase()}`;
+    if (first && second) {
+      return `${head}: ${first.toLowerCase()} ${second.toLowerCase()}`;
+    }
+    if (first) {
+      return `${head}: ${first.toLowerCase()}`;
+    }
     return head;
   }
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  return words.length >= 2 ? `${words[0]!.toLowerCase()} ${words[1]!.toLowerCase()}` : undefined;
+  const [first, second] = trimmed.split(/\s+/).filter(Boolean);
+  return first && second ? `${first.toLowerCase()} ${second.toLowerCase()}` : undefined;
 }
 
-export function findCandidates(files: readonly FileEntry[], slowTestMs: number = SLOW_TEST_MS): Candidates {
-  const titles = new Map<string, { path: string; line: number }[]>();
+export function findCandidates(files: ReadonlyArray<FileEntry>, slowTestMs: number = SLOW_TEST_MS): Candidates {
+  const titles = new Map<string, Array<{ path: string; line: number }>>();
   for (const file of files) {
-    for (const test of file.tests)
+    for (const test of file.tests) {
       titles.set(test.name, [...(titles.get(test.name) ?? []), { path: file.path, line: test.line }]);
+    }
   }
   const duplicateTitles = [...titles]
-    .filter(([, at]) => at.length > 1)
-    .map(([name, at]) => ({ name, files: at }))
+    .flatMap(([name, at]) => (at.length > 1 ? [{ name, files: at }] : []))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const groups = new Map<string, SharedImports>();
   for (const file of files) {
     const imports = importSet(file);
-    if (!imports.length) continue;
+    if (!imports.length) {
+      continue;
+    }
     const key = imports.join('\n');
     const group = groups.get(key) ?? { imports, files: [] };
     group.files.push(file.path);
@@ -172,33 +191,35 @@ export function findCandidates(files: readonly FileEntry[], slowTestMs: number =
     .filter((group) => group.files.length > 1)
     .sort((a, b) => (a.files[0] ?? '').localeCompare(b.files[0] ?? ''));
 
-  const mergeClusters: MergeCluster[] = [];
+  const mergeClusters: Array<MergeCluster> = [];
   for (const file of files) {
-    const byPrefix = new Map<string, { name: string; line: number }[]>();
+    const byPrefix = new Map<string, Array<{ name: string; line: number }>>();
     for (const test of file.tests) {
       const prefix = clusterPrefixOf(test.name);
-      if (!prefix) continue;
+      if (!prefix) {
+        continue;
+      }
       const list = byPrefix.get(prefix) ?? [];
       list.push({ name: test.name, line: test.line });
       byPrefix.set(prefix, list);
     }
     for (const [prefix, clusterTests] of byPrefix) {
-      if (clusterTests.length >= 3) mergeClusters.push({ file: file.path, prefix, tests: clusterTests });
+      if (clusterTests.length >= 3) {
+        mergeClusters.push({ file: file.path, prefix, tests: clusterTests });
+      }
     }
   }
   mergeClusters.sort((a, b) => a.file.localeCompare(b.file) || a.prefix.localeCompare(b.prefix));
 
-  const budgetOverruns: BudgetOverrun[] = files
-    .filter((file) => file.durationMs >= BUDGET_OVERRUN_THRESHOLD_MS)
-    .map((file) => ({ path: file.path, durationMs: file.durationMs }))
+  const budgetOverruns: Array<BudgetOverrun> = files
+    .flatMap(({ path, durationMs }) => (durationMs >= BUDGET_OVERRUN_THRESHOLD_MS ? [{ path, durationMs }] : []))
     .sort((a, b) => b.durationMs - a.durationMs || a.path.localeCompare(b.path));
 
-  const denseFiles: DenseFile[] = files
-    .filter((file) => file.tests.length > DENSE_FILE_TEST_THRESHOLD)
-    .map((file) => ({ path: file.path, testCount: file.tests.length }))
+  const denseFiles: Array<DenseFile> = files
+    .flatMap(({ path, tests }) => (tests.length > DENSE_FILE_TEST_THRESHOLD ? [{ path, testCount: tests.length }] : []))
     .sort((a, b) => b.testCount - a.testCount || a.path.localeCompare(b.path));
 
-  const slowestTests: SlowTest[] = files
+  const slowestTests: Array<SlowTest> = files
     .flatMap((file) => file.tests.map((test) => ({ file: file.path, ...test })))
     .filter((test) => test.durationMs >= slowTestMs)
     .sort((a, b) => b.durationMs - a.durationMs || a.file.localeCompare(b.file) || a.line - b.line)
@@ -212,28 +233,45 @@ export function findCandidates(files: readonly FileEntry[], slowTestMs: number =
 const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g;
 
 /** Extracts production modules a test imports: relative specifiers resolving outside `tests/`. */
-export function productionImports(file: string, text: string): string[] {
+export function productionImports(file: string, text: string): Array<string> {
   const found = new Set<string>();
   for (const match of text.matchAll(IMPORT_RE)) {
     const specifier = match[1] ?? '';
-    if (!specifier.startsWith('.')) continue;
+    if (!specifier.startsWith('.')) {
+      continue;
+    }
     const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(toPosix(file)), specifier));
-    if (!resolved.startsWith('tests/') && !resolved.startsWith('../')) found.add(resolved);
+    if (!resolved.startsWith('tests/') && !resolved.startsWith('../')) {
+      found.add(resolved);
+    }
   }
   return [...found].sort();
 }
 
 // Failed leaf tests, plus failed suites with no failed descendant leaf (e.g. a suite hook that fails after its tests pass).
 // NOTE: node reports a suite after its descendants, so they are the contiguous deeper events just before it in the same file.
-export function collectFailures(tests: readonly TestLine[], rel: (file: string) => string = toPosix): Failure[] {
+export function collectFailures(
+  tests: ReadonlyArray<TestLine>,
+  rel: (file: string) => string = toPosix,
+): Array<Failure> {
   const failed = tests.filter((event, index) => {
-    if (event.status !== 'fail') return false;
-    if (!event.suite) return true;
+    if (event.status !== 'fail') {
+      return false;
+    }
+    if (!event.suite) {
+      return true;
+    }
     for (let at = index - 1; at >= 0; at--) {
       const prior = tests[at];
-      if (!prior || prior.file !== event.file) continue;
-      if (prior.nesting <= event.nesting) break;
-      if (prior.status === 'fail' && !prior.suite) return false;
+      if (!prior || prior.file !== event.file) {
+        continue;
+      }
+      if (prior.nesting <= event.nesting) {
+        break;
+      }
+      if (prior.status === 'fail' && !prior.suite) {
+        return false;
+      }
     }
     return true;
   });
@@ -242,23 +280,29 @@ export function collectFailures(tests: readonly TestLine[], rel: (file: string) 
 
 // A nonzero test-run exit with no recorded failure still marks the snapshot failed.
 export function withExitStatus(
-  failures: readonly Failure[],
+  failures: ReadonlyArray<Failure>,
   status: number | null,
   signal: string | null = null,
-): Failure[] {
-  if (status === 0 || failures.length) return [...failures];
+): Array<Failure> {
+  if (status === 0 || failures.length) {
+    return [...failures];
+  }
   return [{ file: '', name: `node --test exited ${status ?? signal ?? 'abnormally'}`, line: 0 }];
 }
 
-export function buildInventory(root: string, testFiles: readonly string[], events: readonly EventLine[]): Inventory {
+export function buildInventory(
+  root: string,
+  testFiles: ReadonlyArray<string>,
+  events: ReadonlyArray<EventLine>,
+): Inventory {
   const rel = (file: string) => toPosix(path.isAbsolute(file) ? path.relative(root, file) : file);
   const tests = events.filter((event): event is TestLine => event.kind === 'test');
-  const files: FileEntry[] = testFiles.map((file) => {
+  const files: Array<FileEntry> = testFiles.map((file) => {
     const text = fs.readFileSync(path.join(root, file), 'utf8');
     const own = tests.filter((event) => rel(event.file) === file);
     return {
       path: file,
-      tests: own.filter((event) => !event.suite).map(({ name, durationMs, line }) => ({ name, durationMs, line })),
+      tests: own.flatMap(({ name, durationMs, line, suite }) => (suite ? [] : [{ name, durationMs, line }])),
       // NOTE: a file's top-level tests run serially, so their summed durations approximate its wall time.
       durationMs: own.filter((event) => event.nesting === 0).reduce((sum, event) => sum + event.durationMs, 0),
       lines: text.split('\n').length,
@@ -267,8 +311,12 @@ export function buildInventory(root: string, testFiles: readonly string[], event
   });
   const coverage: Inventory['coverage'] = {};
   for (const event of events) {
-    if (event.kind !== 'coverage') continue;
-    for (const file of event.files) coverage[rel(file.path)] = { covered: file.covered, total: file.total };
+    if (event.kind !== 'coverage') {
+      continue;
+    }
+    for (const file of event.files) {
+      coverage[rel(file.path)] = { covered: file.covered, total: file.total };
+    }
   }
   const summary = events.find((event) => event.kind === 'summary');
   return {
@@ -303,7 +351,7 @@ export function formatDelta(before: Inventory, after: Inventory): string {
   const beforeFiles = new Map(before.files.map((file) => [file.path, file]));
   const afterFiles = new Map(after.files.map((file) => [file.path, file]));
   const allPaths = [...new Set([...beforeFiles.keys(), ...afterFiles.keys()])].sort(lexicalCompare);
-  const fileChanges: string[] = [];
+  const fileChanges: Array<string> = [];
   for (const filePath of allPaths) {
     const prev = beforeFiles.get(filePath);
     const next = afterFiles.get(filePath);
@@ -363,10 +411,38 @@ export function formatDelta(before: Inventory, after: Inventory): string {
 
 // SECTION: CLI
 
+// Shape gate over the containers `formatDelta` reads from a saved inventory.json.
+function isInventory(value: unknown): value is Inventory {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'totals' in value &&
+    typeof value.totals === 'object' &&
+    value.totals !== null &&
+    'files' in value &&
+    Array.isArray(value.files) &&
+    'failures' in value &&
+    Array.isArray(value.failures) &&
+    'coverage' in value &&
+    typeof value.coverage === 'object' &&
+    value.coverage !== null
+  );
+}
+
+// The timing reporter is the only writer, so the discriminant identifies a line.
+function isEventLine(value: unknown): value is EventLine {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'kind' in value &&
+    (value.kind === 'test' || value.kind === 'coverage' || value.kind === 'summary')
+  );
+}
+
 const USAGE =
   'usage: node <skill>/scripts/inventory.ts --out <dir> [--coverage] [--paths <dir,...>] [--compare <before-inventory.json>]';
 
-export function main(argv: string[]): number {
+export function main(argv: Array<string>): number {
   let values: {
     out?: string | undefined;
     coverage?: boolean | undefined;
@@ -396,7 +472,11 @@ export function main(argv: string[]): number {
   let beforeInventory: Inventory | undefined;
   if (values.compare) {
     try {
-      beforeInventory = JSON.parse(fs.readFileSync(path.resolve(values.compare), 'utf8')) as Inventory;
+      const saved: unknown = JSON.parse(fs.readFileSync(path.resolve(values.compare), 'utf8'));
+      if (!isInventory(saved)) {
+        throw new Error('not an inventory.json');
+      }
+      beforeInventory = saved;
     } catch (error) {
       process.stderr.write(
         `unreadable --compare ${values.compare}: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -447,7 +527,10 @@ export function main(argv: string[]): number {
     .readFileSync(eventsPath, 'utf8')
     .split('\n')
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as EventLine);
+    .flatMap((line) => {
+      const event: unknown = JSON.parse(line);
+      return isEventLine(event) ? [event] : [];
+    });
   const inventory = buildInventory(REPO_ROOT, testFiles, events);
   inventory.failures = withExitStatus(inventory.failures, run.status, run.signal);
   fs.writeFileSync(path.join(out, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`);
@@ -471,5 +554,6 @@ export function main(argv: string[]): number {
   return 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   process.exitCode = main(process.argv.slice(2));
+}

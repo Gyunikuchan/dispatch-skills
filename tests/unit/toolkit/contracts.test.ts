@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { describe, test } from 'node:test';
-import * as entry from '../../../skills/dispatch/scripts/dispatch.ts';
+import { main } from '../../../skills/dispatch/scripts/dispatch.ts';
 import { parseCommand, SESSION_ACTIONS } from '../../../skills/dispatch/scripts/lib/cli.ts';
 import { TOOL_ACTIONS } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import {
@@ -11,17 +11,22 @@ import {
   SESSION_CONTRACTS,
 } from '../../../skills/dispatch/scripts/toolkit/contracts.ts';
 import { KINDS, recordSchemas, validateRecord } from '../../../skills/dispatch/scripts/toolkit/records.ts';
+import type { JsonValue } from './helpers/json.ts';
 import { sessionFixture } from './helpers/session.ts';
 
 const HASH = 'sha256:' + 'a'.repeat(64);
 const COMMIT = 'b'.repeat(40);
 
-function sampleField(kind: string, phase: string | undefined, field: string): unknown {
+function sampleField(kind: string, phase: string | undefined, field: string): JsonValue {
   if (field === 'spec' || field === 'plan' || field === 'design') {
     return kind === 'bind' ? `${field}.md` : HASH;
   }
-  if (field === 'before' || field === 'after') return kind === 'evidence' ? COMMIT : HASH;
-  if (field === 'commandDigest' || field === 'taskSection') return HASH;
+  if (field === 'before' || field === 'after') {
+    return kind === 'evidence' ? COMMIT : HASH;
+  }
+  if (field === 'commandDigest' || field === 'taskSection') {
+    return HASH;
+  }
   if (
     field === 'tree' ||
     field === 'commit' ||
@@ -31,32 +36,81 @@ function sampleField(kind: string, phase: string | undefined, field: string): un
     field === 'source' ||
     field === 'head' ||
     field === 'candidate'
-  )
+  ) {
     return COMMIT;
-  if (field === 'base') return phase === 'launched' ? { commit: COMMIT, taskSection: HASH, seq: 0 } : COMMIT;
-  if (field === 'dest') return { branch: 'main', path: 'repo' };
-  if (field === 'artifacts') return kind === 'evidence' ? { spec: HASH, plan: HASH } : ['reports/out.md'];
-  if (field === 'reviewFix') return { review: 'code-1', round: 1, generation: 1, findings: ['R1-F001'], from: COMMIT };
-  if (field === 'bullets') return [{ text: 'Check boundary', evidence: 'src/index.ts' }];
-  if (field === 'trees') return { SC1: COMMIT };
-  if (field === 'removed') return ['SC1'];
-  if (kind === 'ruling' && field === 'paths') return ['src/file.ts', 'tests/file.test.ts'];
-  if (field === 'affects' || field === 'paths' || field === 'differing') return ['T1'];
-  if (field === 'open') return [];
-  if (field === 'clean' || field === 'dirty' || field === 'noop') return field === 'clean';
-  if (field === 'seq' || field === 'deleted' || field === 'merged' || field === 'exit') return 0;
-  if (field === 'launch' || field === 'cycle') return 1;
-  if (field === 'level') return 'medium';
-  if (field === 'state') return 'open';
-  if (field === 'artifact') return 'plan';
-  if (field === 'class') return 'non-intent';
-  if (field === 'outcome') return 'no-op';
-  if (field === 'mode') return 'uncommitted';
-  if (field === 'ruling') return 'accepted';
-  if (field === 'impact') return 'degrades';
-  if (field === 'trigger') return 'realistic';
-  if (field === 'subject') return 'note:check';
-  if (field === 'report') return 'reports/verify.md';
+  }
+  if (field === 'base') {
+    return phase === 'launched' ? { commit: COMMIT, taskSection: HASH, seq: 0 } : COMMIT;
+  }
+  if (field === 'dest') {
+    return { branch: 'main', path: 'repo' };
+  }
+  if (field === 'artifacts') {
+    return kind === 'evidence' ? { spec: HASH, plan: HASH } : ['reports/out.md'];
+  }
+  if (field === 'reviewFix') {
+    return { review: 'code-1', round: 1, generation: 1, findings: ['R1-F001'], from: COMMIT };
+  }
+  if (field === 'bullets') {
+    return [{ text: 'Check boundary', evidence: 'src/index.ts' }];
+  }
+  if (field === 'trees') {
+    return { SC1: COMMIT };
+  }
+  if (field === 'removed') {
+    return ['SC1'];
+  }
+  if (kind === 'ruling' && field === 'paths') {
+    return ['src/file.ts', 'tests/file.test.ts'];
+  }
+  if (field === 'affects' || field === 'paths' || field === 'differing') {
+    return ['T1'];
+  }
+  if (field === 'open') {
+    return [];
+  }
+  if (field === 'clean' || field === 'dirty' || field === 'noop') {
+    return field === 'clean';
+  }
+  if (field === 'seq' || field === 'deleted' || field === 'merged' || field === 'exit') {
+    return 0;
+  }
+  if (field === 'launch' || field === 'cycle') {
+    return 1;
+  }
+  if (field === 'level') {
+    return 'medium';
+  }
+  if (field === 'state') {
+    return 'open';
+  }
+  if (field === 'artifact') {
+    return 'plan';
+  }
+  if (field === 'class') {
+    return 'non-intent';
+  }
+  if (field === 'outcome') {
+    return 'no-op';
+  }
+  if (field === 'mode') {
+    return 'uncommitted';
+  }
+  if (field === 'ruling') {
+    return 'accepted';
+  }
+  if (field === 'impact') {
+    return 'degrades';
+  }
+  if (field === 'trigger') {
+    return 'realistic';
+  }
+  if (field === 'subject') {
+    return 'note:check';
+  }
+  if (field === 'report') {
+    return 'reports/verify.md';
+  }
   return `${field}-value`;
 }
 
@@ -74,9 +128,13 @@ describe('contracts and help call table', () => {
 
     for (const schema of schemas) {
       if (!schema.phased) {
-        const data: Record<string, unknown> = {};
-        for (const field of schema.required) data[field] = sampleField(schema.kind, undefined, field);
-        if (schema.kind === 'bind') data['plan'] = 'plan.md';
+        const data = Object.fromEntries<JsonValue>([]);
+        for (const field of schema.required) {
+          data[field] = sampleField(schema.kind, undefined, field);
+        }
+        if (schema.kind === 'bind') {
+          data['plan'] = 'plan.md';
+        }
         assert.doesNotThrow(
           () => validateRecord({ kind: schema.kind, by: 'user', quote: 'approved', key: `k:${schema.kind}`, data }),
           `${schema.kind} required fields pass validation`,
@@ -99,8 +157,9 @@ describe('contracts and help call table', () => {
         }
         for (const field of schema.optional) {
           const withOptional = { ...data, [field]: sampleField(schema.kind, undefined, field) };
-          if (schema.kind === 'ruling' && field === 'paths')
+          if (schema.kind === 'ruling' && field === 'paths') {
             withOptional['subject'] = 'review:code-integration:R1-F001';
+          }
           if (schema.kind === 'ruling' && (field === 'impact' || field === 'trigger')) {
             withOptional['subject'] = 'review:plan-1:R1-F001';
             withOptional['impact'] = sampleField(schema.kind, undefined, 'impact');
@@ -122,8 +181,10 @@ describe('contracts and help call table', () => {
       }
 
       for (const phaseSchema of schema.phases) {
-        const data: Record<string, unknown> = { phase: phaseSchema.phase };
-        for (const field of phaseSchema.required) data[field] = sampleField(schema.kind, phaseSchema.phase, field);
+        const data = Object.fromEntries<JsonValue>([['phase', phaseSchema.phase]]);
+        for (const field of phaseSchema.required) {
+          data[field] = sampleField(schema.kind, phaseSchema.phase, field);
+        }
         assert.doesNotThrow(
           () => validateRecord({ kind: schema.kind, by: 'tool', key: `k:${schema.kind}:${phaseSchema.phase}`, data }),
           `${schema.kind} (${phaseSchema.phase}) required fields pass validation`,
@@ -144,10 +205,10 @@ describe('contracts and help call table', () => {
           );
         }
         for (const field of phaseSchema.optional) {
-          const withOptional: Record<string, unknown> = {
-            ...data,
-            [field]: sampleField(schema.kind, phaseSchema.phase, field),
-          };
+          const withOptional = Object.fromEntries<JsonValue>([
+            ...Object.entries(data),
+            [field, sampleField(schema.kind, phaseSchema.phase, field)],
+          ]);
           if (schema.kind === 'integrate' && phaseSchema.phase === 'verification') {
             withOptional['outcome'] = 'proved';
             withOptional['report'] = 'reports/verify.md';
@@ -219,24 +280,30 @@ describe('contracts and help call table', () => {
       if (!schema.phased) {
         assert.ok(rowSet.has(`record:${schema.kind}`), `missing flat record row ${schema.kind}`);
         const row = rows.find((line) => line.startsWith(`| record | ${schema.kind} |`)) ?? '';
-        for (const field of schema.required) assert.ok(row.includes(field), `${schema.kind} row includes ${field}`);
-        for (const field of schema.optional)
+        for (const field of schema.required) {
+          assert.ok(row.includes(field), `${schema.kind} row includes ${field}`);
+        }
+        for (const field of schema.optional) {
           assert.ok(row.includes(`${field}?`), `${schema.kind} row includes ${field}?`);
+        }
       } else {
         for (const phaseSchema of schema.phases) {
           const heading = `${schema.kind} (${phaseSchema.phase})`;
           assert.ok(rowSet.has(`record:${heading}`), `missing phased row ${heading}`);
           const row = rows.find((line) => line.startsWith(`| record | ${heading} |`)) ?? '';
-          for (const field of phaseSchema.required) assert.ok(row.includes(field), `${heading} row includes ${field}`);
-          for (const field of phaseSchema.optional)
+          for (const field of phaseSchema.required) {
+            assert.ok(row.includes(field), `${heading} row includes ${field}`);
+          }
+          for (const field of phaseSchema.optional) {
             assert.ok(row.includes(`${field}?`), `${heading} row includes ${field}?`);
+          }
         }
       }
     }
 
     const f = sessionFixture();
     try {
-      const code = await entry.main(['help', 'call', 'table'], { ...f.deps, skillRoot: path.join(f.root, 'missing') });
+      const code = await main(['help', 'call', 'table'], { ...f.deps, skillRoot: path.join(f.root, 'missing') });
       assert.equal(code, 0);
       assert.equal(f.lines.length, 1);
       assert.equal(f.lines[0], rendered);

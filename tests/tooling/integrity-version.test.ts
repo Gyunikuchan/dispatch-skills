@@ -18,7 +18,7 @@ test('integrity ignores version key in skill manifest', () => {
   fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.7.1' }));
   assert.deepEqual(hashes(root), []);
-  const manifest = JSON.parse(fs.readFileSync(path.join(skill, MANIFEST_NAME), 'utf8')) as Record<string, string>;
+  const manifest: Record<string, string> = JSON.parse(fs.readFileSync(path.join(skill, MANIFEST_NAME), 'utf8'));
   assert.deepEqual(manifest, { $version: '0.7.1', ...generateSkillHashes(skill) });
   assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
   assert.equal(readVersion(skill), '0.7.1');

@@ -3,30 +3,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
 import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
-import {
-  optionalDiagnostics,
-  sessionFacts,
-  writeDiagnostics,
-} from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import {
-  heuristics,
-  normalizeUsage,
-  renderDiagnostics,
-} from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
+import { sessionFacts, writeDiagnostics } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { normalizeUsage, renderDiagnostics } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
 import { resolvePricing } from '../../../skills/dispatch/scripts/lib/pricing.ts';
-import { fanOut } from '../../../skills/dispatch/scripts/toolkit/fanout.ts';
 import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
 import type { Fold } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
-import { ToolError } from '../../../skills/dispatch/scripts/toolkit/output.ts';
 import { sessionFixture } from './helpers/session.ts';
-import { fakeGit, type FakeGitState } from './helpers/fake-git.ts';
-import { readManifest } from '../../../skills/dispatch/scripts/lib/session.ts';
-import { checks, loadPlan } from '../../../skills/dispatch/scripts/toolkit/plan-view.ts';
-import { stableValue } from '../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts';
+import { narrow, shape, text } from './helpers/json.ts';
 
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -48,7 +32,7 @@ const rosterSlot = (
 
 const finding = (
   id: string,
-  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: string[] } = {},
+  marker: { recurrence?: { of: string }; unresolved?: { of: string }; severity?: string; sources?: Array<string> } = {},
 ) => ({
   id,
   severity: marker.severity ?? 'SHOULD',
@@ -58,8 +42,8 @@ const finding = (
   requiredChange: `Resolve ${id}`,
   sources: marker.sources ?? ['claude[0]'],
   scope: 'in',
-  ...(marker.recurrence ? { recurrence: marker.recurrence } : {}),
-  ...(marker.unresolved ? { unresolved: marker.unresolved } : {}),
+  ...(marker.recurrence && { recurrence: marker.recurrence }),
+  ...(marker.unresolved && { unresolved: marker.unresolved }),
 });
 
 const slotFile = (reviewDir: string, round: number, slot: string, generation = 1) =>
@@ -72,7 +56,7 @@ const roundSubject = (session: string, review: string, round: number, generation
     .digest('hex')
     .slice(0, 16);
 
-const captureRuns = (session: string, invocations: unknown[]) =>
+const captureRuns = (session: string, invocations: Array<unknown>) =>
   writeJson(path.join(session, '.state', 'diagnostics', 'run-1.json'), {
     capture: { state: 'completed', start: 0, end: 1 },
     phases: [],
@@ -103,8 +87,8 @@ const attempt = (
   launched: input.launched ?? true,
   outcome: input.outcome ?? 'ok',
   slot: input.slot,
-  ...(input.targetSlot ? { targetSlot: input.targetSlot } : {}),
-  ...(input.tokens === undefined ? {} : { usage: { input: input.tokens, output: 0 } }),
+  ...(input.targetSlot && { targetSlot: input.targetSlot }),
+  ...(!(input.tokens === undefined) && { usage: { input: input.tokens, output: 0 } }),
 });
 
 const ruling = (seq: number, review: string, id: string, value: string) => ({
@@ -120,9 +104,9 @@ function saveRound(input: {
   session: string;
   review: string;
   round: number;
-  roster: ReturnType<typeof rosterSlot>[];
-  outcomes: unknown[];
-  findings?: unknown[];
+  roster: Array<ReturnType<typeof rosterSlot>>;
+  outcomes: Array<unknown>;
+  findings?: Array<unknown>;
   generation?: number;
 }) {
   const generation = input.generation ?? 1;
@@ -140,7 +124,7 @@ function saveRound(input: {
     target: { base: 'a'.repeat(40), head: 'b'.repeat(40) },
   });
   input.outcomes.forEach((outcome) => {
-    const slot = (outcome as { slot: string }).slot;
+    const slot = narrow(outcome, shape({ slot: text })).slot;
     writeJson(slotFile(reviewDir, input.round, slot, generation), outcome);
   });
   if (input.findings) {
@@ -151,197 +135,9 @@ function saveRound(input: {
       level: 'high',
       findings: input.findings,
       clusters: [],
-      failed: input.outcomes.filter((outcome) => (outcome as { state: string }).state === 'failed'),
+      failed: input.outcomes.filter((outcome) => narrow(outcome, shape({ state: text })).state === 'failed'),
     });
   }
-}
-
-const hostTest_HEAD = 'a'.repeat(40);
-const hostTest_TREE = 'b'.repeat(40);
-
-function hostTest_planSource(): string {
-  return [
-    '# Report fixture',
-    '',
-    '## Task Map',
-    '| ID | Title | Outcome | Prerequisites | Criteria |',
-    '| --- | --- | --- | --- | --- |',
-    '| T1 | Task 1 | Works | none | SC1 |',
-    '',
-    '## Proposed Changes',
-    '',
-    '### T1 — Task 1',
-    '#### [NEW] src/task-1.ts',
-    '- Purpose: implements the fixture behavior.',
-    '',
-    '## Success Criteria',
-    '- [SC1] Criterion works',
-    '  - Changes: src/task-1.ts',
-    '  - Check: `node verify-1.js`',
-    '  - Evidence: check',
-    '',
-    '## Verification Plan',
-    '### Automated Tests',
-    '- `node verify-1.js`',
-    '- `node contract-check.js`',
-    '',
-  ].join('\n');
-}
-
-let hostTest_eventNumber = 0;
-
-async function hostTest_fixture() {
-  const f = sessionFixture({ memory: true });
-  const skillRoot = path.join(f.root, 'isolated-skill');
-  fs.mkdirSync(skillRoot);
-  fs.writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{"diagnostics": false}\n');
-  f.deps.skillRoot = skillRoot;
-  f.artifact('brief.spec.md', '# Brief\n');
-  f.artifact('report.plan.md', hostTest_planSource());
-  await hostTest_append(f, {
-    kind: 'bind',
-    by: 'tool',
-    key: `bind:${++hostTest_eventNumber}`,
-    data: { spec: 'brief.spec.md', plan: 'report.plan.md' },
-  });
-  return { ...f, skillRoot };
-}
-
-async function hostTest_invoke(f: ReturnType<typeof sessionFixture>, tool: string, action: string, ...args: string[]) {
-  f.lines.splice(0);
-  const exit = await main([tool, action, ...args, '--session', f.session], f.deps);
-  assert.equal(f.lines.length, 1);
-  return {
-    exit,
-    output: JSON.parse(f.lines[0]!) as { ok: boolean; reason?: string; summary: string; path: string | null },
-  };
-}
-
-async function hostTest_append(f: ReturnType<typeof sessionFixture>, record: Record<string, unknown>) {
-  const file = f.artifact(`event-${++hostTest_eventNumber}.json`, JSON.stringify(record));
-  const result = await hostTest_invoke(f, 'ledger', 'append', file);
-  assert.equal(result.exit, 0, result.output.summary);
-  return result.output;
-}
-
-async function hostTest_integrate(
-  f: ReturnType<typeof sessionFixture>,
-  state: FakeGitState,
-  dest = { path: f.root, branch: 'main' },
-) {
-  const worktree = path.join(f.session, '.state', 'worktrees', 'integration');
-  fs.mkdirSync(worktree, { recursive: true });
-  state.session = f.session;
-  f.deps.run = fakeGit(state);
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:opened:${++hostTest_eventNumber}`,
-    data: {
-      phase: 'opened',
-      path: '.state/worktrees/integration',
-      branch: 'dispatch/test/integration',
-      base: 'f'.repeat(40),
-      dest,
-    },
-  });
-  return worktree;
-}
-
-async function hostTest_evidence(
-  f: ReturnType<typeof sessionFixture>,
-  criterion: string,
-  commandDigest: string,
-  tree: string,
-) {
-  const data = { criterion, commandDigest, tree, clean: true, before: tree, after: tree, exit: 0 };
-  const digest = crypto.createHash('sha256').update(stableValue(data)).digest('hex');
-  const evidencePath = `.state/evidence/${digest}.json`;
-  const evidenceFile = path.join(f.session, evidencePath);
-  fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
-  fs.writeFileSync(evidenceFile, JSON.stringify(data));
-  await hostTest_append(f, {
-    kind: 'evidence',
-    by: 'tool',
-    key: `evidence:${digest}`,
-    data: { ...data, path: evidencePath },
-  });
-  return evidencePath;
-}
-
-async function hostTest_evidenceForPlan(f: ReturnType<typeof sessionFixture>, tree: string, criteria?: string[]) {
-  const plan = loadPlan(f.session, readManifest(f.session));
-  const rows = checks(plan).filter((check) => !criteria || criteria.includes(check.criterion));
-  const paths = new Map<string, string>();
-  for (const row of rows) paths.set(row.criterion, await hostTest_evidence(f, row.criterion, row.commandDigest, tree));
-  return paths;
-}
-
-function hostTest_gitState(
-  session: string,
-  head = hostTest_HEAD,
-  tree = hostTest_TREE,
-  testedTree = tree,
-): FakeGitState {
-  return { session, head, tree, testedTree, changes: [], calls: [] };
-}
-
-async function hostTest_deliver(
-  f: ReturnType<typeof sessionFixture>,
-  head: string,
-  dest = { path: f.root, branch: 'main' },
-) {
-  await hostTest_append(f, {
-    kind: 'integrate',
-    by: 'tool',
-    key: `integrate:delivered:${++hostTest_eventNumber}`,
-    data: { phase: 'delivered', mode: 'uncommitted', dest, from: head, source: head },
-  });
-}
-
-function encodeVarint(val: number | bigint): number[] {
-  const bytes: number[] = [];
-  let n = BigInt(val);
-  while (n > 0x7fn) {
-    bytes.push(Number((n & 0x7fn) | 0x80n));
-    n >>= 7n;
-  }
-  bytes.push(Number(n & 0x7fn));
-  return bytes;
-}
-function encodeTag(fieldNum: number, wireType: number): number[] {
-  return encodeVarint((fieldNum << 3) | wireType);
-}
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | number[] | string): number[] {
-  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
-  return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
-}
-function buildGenMetadataBlob(options: {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  reasoning?: number;
-  modelSlug?: string;
-  displayName?: string;
-  lastStepIndex?: number;
-}): Uint8Array {
-  const tag1Fields: number[] = [];
-  const counters: number[] = [];
-  if (options.input !== undefined) counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
-  if (options.output !== undefined) counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
-  if (options.cacheRead !== undefined) counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
-  if (options.reasoning !== undefined) counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
-  if (counters.length > 0) tag1Fields.push(...encodeLengthDelimited(4, counters));
-  if (options.modelSlug !== undefined) tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
-  if (options.lastStepIndex !== undefined) {
-    const kv = [
-      ...encodeLengthDelimited(1, 'last_step_index'),
-      ...encodeLengthDelimited(2, String(options.lastStepIndex)),
-    ];
-    tag1Fields.push(...encodeLengthDelimited(20, kv));
-  }
-  if (options.displayName !== undefined) tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
-  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
 }
 
 test('review yield renders per slot outcomes', async () => {
@@ -674,7 +470,7 @@ test('review yield credits the last attempted responder across captures', async 
         }),
       ],
     });
-    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null } as Fold, 'complete');
+    const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.slotYield, [
       {
         kind: 'provider',
@@ -911,7 +707,24 @@ test('Claude per model reasoning survives the observer capture', async () => {
     });
     const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
     const dir = path.join(f.session, 'work');
-    await observer.deps.delegate('claude', { logPath: path.join(dir, 'logs', 'claude[0].log') } as never, 'cli');
+    await observer.deps.delegate(
+      'claude',
+      {
+        promptPath: path.join(dir, 'logs', 'claude[0].prompt.md'),
+        model: null,
+        effort: null,
+        sandbox: true,
+        schemaPath: null,
+        resume: null,
+        cwd: f.root,
+        timeoutMs: 1000,
+        outputCapBytes: 1024,
+        attachments: [],
+        logPath: path.join(dir, 'logs', 'claude[0].log'),
+        briefPath: path.join(dir, 'logs', 'claude[0].brief.md'),
+      },
+      'cli',
+    );
     const facts = sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete');
     assert.deepEqual(facts.invocations[0]?.usage?.models, {
       alpha: { input: 10, output: 2, reasoning: 3 },
