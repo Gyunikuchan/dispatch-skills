@@ -10,6 +10,14 @@ export default defineConfig({
   extends: [core, antiSlop],
   ignorePatterns: core.ignorePatterns,
   options: { typeAware: true },
+  rules: {
+    // Node 22+ native TypeScript execution requires explicit file extensions on relative imports.
+    "import/extensions": [
+      "error",
+      "always",
+      { checkTypeImports: true, ignorePackages: true },
+    ],
+  },
   overrides: [
     {
       files: ["tests/**/*.ts"],
