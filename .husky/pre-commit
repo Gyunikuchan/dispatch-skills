@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+npm run lint
+npm run format:check
+
 # Re-generate skill-hashes.json when skill files change.
 
 # Hashed skills: dispatch only — it ships the one skill-hashes.json manifest (nested

@@ -6,9 +6,21 @@ import { REPO_ROOT } from './scan.ts';
 
 // The cutover adds no dependency; native stripping defines the approved engine range.
 // Escalation approved: commitlint tooling for conventional commits.
+// Approved Oxc rollout adds formatting, type-aware linting and two shared presets.
 export const EXPECTED = {
   dependencies: [] as string[],
-  devDependencies: ['@commitlint/cli', '@commitlint/config-conventional', '@types/node', 'husky', 'typescript'],
+  devDependencies: [
+    '@cloudflare/oxlint-config',
+    '@commitlint/cli',
+    '@commitlint/config-conventional',
+    '@interfere/landmines',
+    '@types/node',
+    'husky',
+    'oxfmt',
+    'oxlint',
+    'oxlint-tsgolint',
+    'typescript',
+  ],
   engines: { node: '^22.18 || >=23.6' },
 };
 
@@ -21,7 +33,9 @@ export function checkPackage(pkg: Record<string, unknown>): string[] {
     if (extra.length) errors.push(`package rule: ${field} adds ${extra.join(', ')}; ${fix}`);
   }
   if (JSON.stringify(pkg['engines']) !== JSON.stringify(EXPECTED.engines)) {
-    errors.push(`package rule: engines is ${JSON.stringify(pkg['engines'])}, expected ${JSON.stringify(EXPECTED.engines)}; ${fix}`);
+    errors.push(
+      `package rule: engines is ${JSON.stringify(pkg['engines'])}, expected ${JSON.stringify(EXPECTED.engines)}; ${fix}`,
+    );
   }
   return errors;
 }
@@ -29,7 +43,11 @@ export function checkPackage(pkg: Record<string, unknown>): string[] {
 test('root package.json holds the approved manifest and rejects unapproved changes with the rule and the fix', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as Record<string, unknown>;
   assert.deepEqual(checkPackage(pkg), []);
-  const errors = checkPackage({ dependencies: { zod: '1' }, devDependencies: { husky: '1' }, engines: { node: '>=24' } });
+  const errors = checkPackage({
+    dependencies: { zod: '1' },
+    devDependencies: { husky: '1' },
+    engines: { node: '>=24' },
+  });
   assert.equal(errors.length, 2);
   assert.match(errors[0] ?? '', /^package rule: dependencies adds zod; remove it/);
   assert.match(errors[1] ?? '', /^package rule: engines is \{"node":">=24"\}/);
