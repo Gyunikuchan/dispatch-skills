@@ -14,9 +14,7 @@ Answer the planned-decision questions, not a general repository survey.
 
 ## Limit and nesting rules
 
-Token limit for this host: {{limit}}.
-Split threshold: {{splitAt}}.
-Launch nested explorers exactly as: {{nestedLaunch}}.
+Token limit for this host: {{limit}}. Split threshold: {{splitAt}}. Launch nested explorers exactly as: {{nestedLaunch}}.
 
 Work solo by default. Split only when expected reading exceeds the split threshold. Estimate expected reading in files and bytes using ~4 bytes per token (about 20 KB or ~5 files per ~5k tokens). The token limit is a soft budget.
 
@@ -43,6 +41,7 @@ For callers and references, use the first available tool in this order, moving o
 Mark consumers found only by text search as `(text-only)` and list unresolved dynamic dispatch under Not covered (map) or as open items (research).
 
 <!-- kind: map -->
+
 ## Coverage checklist
 
 Launch the map explorer on an agent type that can write files.
@@ -87,6 +86,7 @@ Use `<session>/<slug>.spec.context.md` for pre-spec grounding, `<session>/<slug>
 <!-- /kind: map -->
 
 <!-- kind: research -->
+
 ## Research output and budget
 
 Reply inline with a distilled answer and cited sources within {{replyLimit}} UTF-8 bytes; write no map file, use no prescribed format, and run no context-map lint. List any unread remainder as open items.

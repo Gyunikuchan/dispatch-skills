@@ -1,68 +1,92 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import { test } from "node:test";
 
-import { createDiscovery, expandCandidate } from '../../../skills/dispatch/scripts/providers/discovery.ts';
-import type { DiscoveryFs } from '../../../skills/dispatch/scripts/providers/discovery.ts';
-import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
-import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
+import {
+  createDiscovery,
+  expandCandidate,
+} from "../../../skills/dispatch/scripts/providers/discovery.ts";
+import type { DiscoveryFs } from "../../../skills/dispatch/scripts/providers/discovery.ts";
+import { SPECS } from "../../../skills/dispatch/scripts/providers/index.ts";
+import type { PlatformEnv } from "../../../skills/dispatch/scripts/providers/types.ts";
 
 const env: PlatformEnv = {
-  os: 'linux',
-  arch: 'x64',
+  os: "linux",
+  arch: "x64",
   wsl: false,
   bubblewrap: false,
   argvLimit: 100_000,
-  home: '/h',
-  path: ['/usr/bin', '/opt/bin'],
+  home: "/h",
+  path: ["/usr/bin", "/opt/bin"],
   pathExt: [],
 };
 
 /** Fake fs table: path → 'exec' | 'file'; directories derive from the paths. */
-function table(entries: Record<string, 'exec' | 'file'>): DiscoveryFs & { probes: Array<string> } {
-  const probes: Array<string> = [];
+function table(
+  entries: Record<string, "exec" | "file">
+): DiscoveryFs & { probes: string[] } {
+  const probes: string[] = [];
+
   return {
     probes,
     list: (dir) => [
       ...new Set(
         Object.keys(entries)
           .filter((p) => p.startsWith(`${dir}/`))
-          .map((p) => p.slice(dir.length + 1).split('/')[0] ?? ''),
+          .map((p) => p.slice(dir.length + 1).split("/")[0] ?? "")
       ),
     ],
     exists: (file) => {
       probes.push(file);
+
       return file in entries;
     },
-    executable: (file) => entries[file] === 'exec',
+    executable: (file) => entries[file] === "exec",
   };
 }
 
-test('discovery resolves provider × mode to path | missing | unlaunchable on a fake fs table', () => {
+test("discovery resolves provider × mode to path | missing | unlaunchable on a fake fs table", () => {
   const fs = table({
-    '/opt/bin/claude': 'exec',
-    '/h/.vscode/extensions/anthropic.claude-code-1.0.0/resources/native-binary/claude': 'file',
-    '/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude': 'exec',
-    '/usr/bin/codex': 'file',
+    "/opt/bin/claude": "exec",
+    "/h/.vscode/extensions/anthropic.claude-code-1.0.0/resources/native-binary/claude":
+      "file",
+    "/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude":
+      "exec",
+    "/usr/bin/codex": "file",
   });
+
   const discovery = createDiscovery(SPECS, env, fs);
-  assert.deepEqual(discovery.resolve('claude', 'cli'), { status: 'path', path: '/opt/bin/claude' });
-  assert.deepEqual(discovery.resolve('claude', 'vscode'), {
-    status: 'path',
-    path: '/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude',
+  assert.deepEqual(discovery.resolve("claude", "cli"), {
+    status: "path",
+    path: "/opt/bin/claude",
   });
-  assert.deepEqual(discovery.resolve('claude', 'desktop'), { status: 'missing', path: null });
-  assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'unlaunchable', path: '/usr/bin/codex' });
+  assert.deepEqual(discovery.resolve("claude", "vscode"), {
+    status: "path",
+    path: "/h/.vscode/extensions/anthropic.claude-code-2.1.0/resources/native-binary/claude",
+  });
+  assert.deepEqual(discovery.resolve("claude", "desktop"), {
+    status: "missing",
+    path: null,
+  });
+  assert.deepEqual(discovery.resolve("codex", "cli"), {
+    status: "unlaunchable",
+    path: "/usr/bin/codex",
+  });
   const rows = discovery.doctor();
   assert.equal(rows.length, 15);
-  assert.ok(rows.some((row) => row.provider === 'agy' && row.mode === 'cli' && row.status === 'missing'));
+  assert.ok(
+    rows.some(
+      (row) =>
+        row.provider === "agy" && row.mode === "cli" && row.status === "missing"
+    )
+  );
 });
 
-test('each candidate is probed once per invocation (in-memory cache)', () => {
-  const fs = table({ '/usr/bin/copilot': 'exec' });
+test("each candidate is probed once per invocation (in-memory cache)", () => {
+  const fs = table({ "/usr/bin/copilot": "exec" });
   const discovery = createDiscovery(SPECS, env, fs);
-  discovery.resolve('copilot', 'cli');
+  discovery.resolve("copilot", "cli");
   const first = fs.probes.length;
-  discovery.resolve('copilot', 'cli');
+  discovery.resolve("copilot", "cli");
   discovery.doctor();
   discovery.doctor();
   assert.equal(new Set(fs.probes).size, fs.probes.length);
@@ -70,35 +94,54 @@ test('each candidate is probed once per invocation (in-memory cache)', () => {
   assert.equal(discovery.probes, fs.probes.length);
 });
 
-test('glob candidates sort newest versions first', () => {
-  const fs = table({ '/a/v1/x': 'exec', '/a/v2/x': 'exec' });
-  assert.deepEqual(expandCandidate('/a/v*/x', fs), ['/a/v2/x', '/a/v1/x']);
-  const versions = table({ '/b/v1.9/x': 'exec', '/b/v1.10/x': 'exec' });
-  assert.deepEqual(expandCandidate('/b/v*/x', versions), ['/b/v1.10/x', '/b/v1.9/x']);
+test("glob candidates sort newest versions first", () => {
+  const fs = table({ "/a/v1/x": "exec", "/a/v2/x": "exec" });
+  assert.deepEqual(expandCandidate("/a/v*/x", fs), ["/a/v2/x", "/a/v1/x"]);
+  const versions = table({ "/b/v1.9/x": "exec", "/b/v1.10/x": "exec" });
+  assert.deepEqual(expandCandidate("/b/v*/x", versions), [
+    "/b/v1.10/x",
+    "/b/v1.9/x",
+  ]);
 });
 
-test('Windows bare binary candidates use PATHEXT', () => {
+test("Windows bare binary candidates use PATHEXT", () => {
   const win: PlatformEnv = {
     ...env,
-    os: 'win32',
+    os: "win32",
     path: [String.raw`C:\bin`],
-    pathExt: ['.exe', '.cmd'],
+    pathExt: [".exe", ".cmd"],
     home: String.raw`C:\Users\test`,
   };
-  const candidate = String.raw`C:\Users\test\AppData\Local\Programs\Codex\resources\bin\codex.exe`;
-  const probes = table({
-    'C:\\bin\\codex.cmd': 'exec',
-    [candidate]: 'exec',
-  });
-  const discovery = createDiscovery(SPECS, win, probes);
-  assert.deepEqual(discovery.resolve('codex', 'cli'), { status: 'path', path: String.raw`C:\bin\codex.cmd` });
-  assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
 
-  const upperWin: PlatformEnv = { ...env, os: 'win32', path: ['/bin'], pathExt: ['.CMD', '.EXE'] };
+  const candidate = String.raw`C:\Users\test\AppData\Local\Programs\Codex\resources\bin\codex.exe`;
+
+  const probes = table({
+    "C:\\bin\\codex.cmd": "exec",
+    [candidate]: "exec",
+  });
+
+  const discovery = createDiscovery(SPECS, win, probes);
+  assert.deepEqual(discovery.resolve("codex", "cli"), {
+    status: "path",
+    path: String.raw`C:\bin\codex.cmd`,
+  });
+  assert.deepEqual(discovery.resolve("codex", "desktop"), {
+    status: "path",
+    path: candidate,
+  });
+
+  const upperWin: PlatformEnv = {
+    ...env,
+    os: "win32",
+    path: ["/bin"],
+    pathExt: [".CMD", ".EXE"],
+  };
+
   const upperDiscovery = createDiscovery(SPECS, upperWin, {
     list: () => [],
-    exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd',
+    exists: (file) => file.replaceAll("\\", "/") === "/bin/claude.cmd",
     executable: () => true,
   });
-  assert.equal(upperDiscovery.resolve('claude', 'cli').status, 'path');
+
+  assert.equal(upperDiscovery.resolve("claude", "cli").status, "path");
 });

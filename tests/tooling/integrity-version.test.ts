@@ -1,26 +1,39 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import fs from 'node:fs';
-import path from 'node:path';
-import { hashes } from '../../scripts/generate-hashes.ts';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+
+import { hashes } from "../../scripts/generate-hashes.ts";
 import {
   checkIntegrity,
   generateSkillHashes,
   MANIFEST_NAME,
   readVersion,
-} from '../../skills/dispatch/scripts/lib/integrity.ts';
-import { tempDir } from '../helpers/fake-ports.ts';
+} from "../../skills/dispatch/scripts/lib/integrity.ts";
+import { tempDir } from "../helpers/fake-ports.ts";
 
-test('integrity ignores version key in skill manifest', () => {
-  const root = tempDir(),
-    skill = path.join(root, 'skills/dispatch');
+test("integrity ignores version key in skill manifest", () => {
+  const root = tempDir();
+  const skill = path.join(root, "skills/dispatch");
+
   fs.mkdirSync(skill, { recursive: true });
-  fs.writeFileSync(path.join(skill, 'SKILL.md'), '# skill\n');
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '0.7.1' }));
+  fs.writeFileSync(path.join(skill, "SKILL.md"), "# skill\n");
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ version: "0.7.1" })
+  );
   assert.deepEqual(hashes(root), []);
-  const manifest: Record<string, string> = JSON.parse(fs.readFileSync(path.join(skill, MANIFEST_NAME), 'utf8'));
-  assert.deepEqual(manifest, { $version: '0.7.1', ...generateSkillHashes(skill) });
-  assert.deepEqual(checkIntegrity(skill), { status: 'ok' });
-  assert.equal(readVersion(skill), '0.7.1');
+
+  // eslint-disable-next-line typescript/no-unsafe-assignment -- fixture/mock boundary: values are validated by helpers before use.
+  const manifest: Record<string, string> = JSON.parse(
+    fs.readFileSync(path.join(skill, MANIFEST_NAME), "utf-8")
+  );
+
+  assert.deepEqual(manifest, {
+    $version: "0.7.1",
+    ...generateSkillHashes(skill),
+  });
+  assert.deepEqual(checkIntegrity(skill), { status: "ok" });
+  assert.equal(readVersion(skill), "0.7.1");
   assert.deepEqual(hashes(root, true), []);
 });

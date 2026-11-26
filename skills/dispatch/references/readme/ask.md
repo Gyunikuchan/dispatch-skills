@@ -5,6 +5,7 @@ Use `ask` when you have a focused question about code, behavior, or a decision i
 `ask` is strictly user-initiated: your host agent runs it only when you request it, and uses native explorer subagents ([routing](../../SKILL.md#routing)) for its own background research.
 
 Prominent non-exhaustive use cases include:
+
 - **Cross-referencing and verification:** Verify factual claims, edge cases, and invariants across independent models against repository evidence.
 - **Differentiated opinions and suggestions:** Gather diverse architectural perspectives, design trade-offs, and alternative approaches.
 

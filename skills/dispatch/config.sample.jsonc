@@ -21,7 +21,15 @@
   "read-commands": ["codegraph explore"],
   // Optional; USD per 1M token overrides over references/pricing.json (key: model id or "provider/*").
   "pricing": {
-    "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
+    "lmstudio/*": {
+      "rates": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 0,
+      },
+    },
   },
   // Required for ask/review. Keep only providers you use; each target is one voice.
   // Hint: models with higher reasoning effort (e.g. medium+) tends to do better.
@@ -61,28 +69,53 @@
         },
         // Model arrays try each name in order if the previous one fails.
         {
-          "low": { "model": ["claude-sonnet-5-5", "bedrock.claude-sonnet-5-5"], "effort": "high" },
-          "max": { "model": ["claude-opus-5-5", "bedrock.claude-opus-5-5"], "effort": "medium" },
+          "low": {
+            "model": ["claude-sonnet-5-5", "bedrock.claude-sonnet-5-5"],
+            "effort": "high",
+          },
+          "max": {
+            "model": ["claude-opus-5-5", "bedrock.claude-opus-5-5"],
+            "effort": "medium",
+          },
         },
       ],
     },
     "opencode": {
       // OpenCode uses effort as the model variant (model#effort).
       "targets": [
-        { "low": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "xhigh" } },
         {
-          "low": { "model": "opencode-go/deepseek-v4.1-flash", "effort": "high" },
-          "high": { "model": "opencode-go/deepseek-v4.1-flash", "effort": "max" },
+          "low": {
+            "model": "opencode-go/muse-spark-1.3-contributor",
+            "effort": "xhigh",
+          },
+        },
+        {
+          "low": {
+            "model": "opencode-go/deepseek-v4.1-flash",
+            "effort": "high",
+          },
+          "high": {
+            "model": "opencode-go/deepseek-v4.1-flash",
+            "effort": "max",
+          },
         },
         {
           "low": { "model": "opencode-go/glm-5.3-flash", "effort": "high" },
           "high": { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
         },
         {
-          "low": { "model": "opencode-go/minimax-m3.1-flash", "effort": "xhigh" },
-          "high": { "model": "opencode-go/minimax-m3.1-flash", "effort": "max" },
+          "low": {
+            "model": "opencode-go/minimax-m3.1-flash",
+            "effort": "xhigh",
+          },
+          "high": {
+            "model": "opencode-go/minimax-m3.1-flash",
+            "effort": "max",
+          },
         },
-        { "low": { "model": "lmstudio/qwen3.8-27b-ridge", "effort": "medium" } },
+        {
+          "low": { "model": "lmstudio/qwen3.8-27b-ridge", "effort": "medium" },
+        },
       ],
     },
     "codex": {
@@ -112,7 +145,10 @@
       "low": { "model": ["gpt-6-luna", "bedrock.gpt-6-luna"], "effort": "max" },
     },
     "opencode": {
-      "low": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "xhigh" },
+      "low": {
+        "model": "opencode-go/muse-spark-1.3-contributor",
+        "effort": "xhigh",
+      },
       "medium": { "model": "opencode-go/deepseek-v4.1-flash", "effort": "max" },
     },
     "codex": {
@@ -126,11 +162,31 @@
   // The context-limit (in tokens) is a soft limit that encourages nested subagents for larger explorations.
   // Hint: pick a fast, cheap model with at least medium effort.
   "utility-subagents": {
-    "claude": { "model": "claude-haiku-5-5", "effort": "medium", "context-limit": 150000 },
-    "agy": { "model": "gemini-4-hydrogen", "effort": "medium", "context-limit": 300000 },
-    "copilot": { "model": "gpt-6-luna", "effort": "xhigh", "context-limit": 300000 },
-    "opencode": { "model": "opencode-go/muse-spark-1.3-contributor", "effort": "high", "context-limit": 300000 },
-    "codex": { "model": "gpt-6-luna", "effort": "xhigh", "context-limit": 300000 },
+    "claude": {
+      "model": "claude-haiku-5-5",
+      "effort": "medium",
+      "context-limit": 150000,
+    },
+    "agy": {
+      "model": "gemini-4-hydrogen",
+      "effort": "medium",
+      "context-limit": 300000,
+    },
+    "copilot": {
+      "model": "gpt-6-luna",
+      "effort": "xhigh",
+      "context-limit": 300000,
+    },
+    "opencode": {
+      "model": "opencode-go/muse-spark-1.3-contributor",
+      "effort": "high",
+      "context-limit": 300000,
+    },
+    "codex": {
+      "model": "gpt-6-luna",
+      "effort": "xhigh",
+      "context-limit": 300000,
+    },
   },
   // Optional; review breadth and round caps per level (defaults to 1 target, 1 round).
   "phases": {

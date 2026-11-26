@@ -1,15 +1,17 @@
-import { isRecord } from '../../lib/config.ts';
+import { isRecord } from "../../lib/config.ts";
 
 /** Canonical JSON value encoding makes protocol comparisons independent of object key order. */
-export function stableValue(value: unknown): string {
+export const stableValue = (value: unknown): string => {
   if (Array.isArray(value)) {
-    return `[${value.map(stableValue).join(',')}]`;
+    return `[${value.map(stableValue).join(",")}]`;
   }
+
   if (isRecord(value)) {
     return `{${Object.keys(value)
-      .sort()
+      .toSorted()
       .map((key) => `${JSON.stringify(key)}:${stableValue(value[key])}`)
-      .join(',')}}`;
+      .join(",")}}`;
   }
+
   return JSON.stringify(value) ?? String(value);
-}
+};

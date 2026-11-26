@@ -1,23 +1,33 @@
 # Quality bar
 
-`domain/prompt.ts` `qualityBar(markdown, consumer, rotation, specStageMarkdown)` selects sections for review prompts and write briefs.
-Authors read the same sections through their author frame. Keep judging criteria here.
+`domain/prompt.ts` `qualityBar(markdown, consumer, rotation, specStageMarkdown)` selects sections for review prompts and write briefs. Authors read the same sections through their author frame. Keep judging criteria here.
 
 ## shared
 
 <!-- for: all -->
+
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
+
 <!-- for: all -->
+
 - Precedence: Applicable host rule files govern first. This bar supplements host rules where they are silent and yields where they conflict. Preference applies only where both are silent. Host rules may tighten, never widen, scope, write boundaries, verification and safety.
+
 <!-- for: writer,cleanup,verifier -->
+
 - Report host-rule/brief conflicts under concerns or limits.
+
 <!-- for: code,plan,design -->
+
 - Exclude host-rule/brief conflicts from findings.
+
 <!-- for: all -->
+
 - Evidence: For external formats, state the sample inspected against the population and its uncertainty. Limit claims to the sample. For absence claims, check the search method's exclusions (ignored paths, file types, generated output, dynamic dispatch) and cite direct evidence the host supports, such as an index query, reference lookup or exhaustive listing; otherwise mark it unverified.
 - Altitude: check [document layers](../spec-stage.md#readers-and-document-layers); cite upstream IDs, not earlier layers.
 - **intent** — Trace the ask to applicable REQs and DECs, and check that each is served. Map requirements to changes and goals to requirements; state non-goals. Check the result serves the requested users. Identify a misread user ask, unmet user need, unstated assumption, flawed premise, gold-plating, XY problem, conflicting constraints, and missing prerequisites; add nothing beyond the ask. Keep the existing format of rendered output unless a recorded user decision changes it. Route a design or plan that changes intent through the user gate.
+
 <!-- for: author -->
+
 - Settled DECs, non-goals, and earlier accepted or rejected rulings follow [settled decisions](review-prompt.md#prompt-template) and [re-review closure](review-prompt.md#re-review-template).
 - **maintainability** — Delete › reuse › stdlib or platform › installed dependency › new; never add a dependency for a few lines. DRY: one source of truth; search the repository by name and behaviour for an existing equivalent before adding any exported/shared symbol, helper, module or type. Rule of three: extract on third use; duplication beats wrong abstraction. YAGNI, KISS; deep modules, low coupling, high cohesion. Remove needless branches; fix root causes. Split by responsibility, never by length; add no helper that only shortens a function. A fix or remedy is the smallest change that removes the defect: prefer deletion; add no layer, config or dependency the defect does not need. Simplicity floor: simplification never removes trust-boundary validation, data-loss guards, security or accessibility controls, or requested behaviour; moved or merged code keeps its error handling and validation. Preserve Chesterton's fence; names/docs/comments explain why and track behaviour. Flag structural coupling or cohesion defects (shotgun surgery, divergent change, leaky abstractions, or CQS violations) only when the remedy removes concrete concepts, files, or code paths; never `blocks` or `critical` alone.
 - **correctness** — State system-wide invariants that hold within and across increments, and check domain-valid formulas and algorithms, preconditions, postconditions, and invariants; type-valid but domain-invalid states; valid transitions and reachable states; off-by-one errors; units, signs, and scales; runtime behavior; and type validity.
@@ -27,7 +37,9 @@ Authors read the same sections through their author frame. Keep judging criteria
 - **compatibility** — Check breaking changes, Hyrum's law, semver, expand/contract migrations, rollback, version skew with graceful degradation, affected callers, persisted schemas and serialized formats, and portability across OS, shell, path, and encoding.
 - **operability** — Check deployment and runtime operation, observability through logs, metrics, and traces, actionable diagnostics, configuration, and a kill switch.
 - **usability** — Check WCAG accessibility, POLA (least astonishment), accessible UI, CLI/API ergonomics, and actionable errors.
+
 <!-- for: writer,cleanup -->
+
 - Run no Git write commands (add, stash, commit, checkout, reset, restore).
 
 ## spec
@@ -37,24 +49,26 @@ Authors read the same sections through their author frame. Keep judging criteria
 - Visuals, summaries, and callouts: flag a visual aid or At a Glance summary when it is stale, contradicts governed or collapsed `<details>` content, or is decorative or duplicates visible prose/tables/visuals; flag `> [!NOTE]` (for information the user must know) or `> [!IMPORTANT]` (only for a decision they must make, consistent with `Decide:`) when misused or wrapping machine fields.
 
 <!-- for: author -->
+
 - Artifact layout: Give each artifact one outcome summary: At a Glance **What** states it and **How it works** adds one method line (except walkthroughs). State each visible fact once; a summary must add a distinct view, not restate a later visible section. A visible summary may restate collapsed `<details>` detail. Keep task and increment behaviour visible before `<details>` (except walkthroughs); use the block for file changes and verbose detail. Use `> [!NOTE]` for information the user must know and `> [!IMPORTANT]` only for a decision they must make, consistent with `Decide:` when present. Keep machine fields outside callouts, prefer point form, and retain every required field. For walkthroughs, show one outcome per task instead; link plan **How it works**, visuals and behaviour.
 
 <!-- for: author -->
+
 ### Visual-aid bar
 
 A visual aid is a diagram, table, code, pseudo-code or data block. Include one when it explains content prose explains poorly, gives a skimmable map of three or more related items in long prose, or lets a reader grasp collapsed `<details>` detail, such as file changes, criteria or flow, without expanding it. Choose the smallest useful view that answers the reader’s question. Include relevant unchanged ownership, boundaries or flow; distinguish current context from proposed change with labels or diff notation, not color alone. Keep explanatory text adjacent. Match the content to its form:
 
-| Content | Form |
-| --- | --- |
-| Components and boundaries | Architecture diagram |
-| Ownership and call context | Shallow tree or call tree |
-| Runtime order | Flow or sequence diagram |
-| Lifecycle | State diagram |
-| Items with attributes | Table |
-| Interfaces and data shapes | Code or data block |
-| Algorithm | Pseudo-code |
-| Behaviour change | Before/after table or snippet |
-| Changed structure in context | Diff sketch |
+| Content                      | Form                          |
+| ---------------------------- | ----------------------------- |
+| Components and boundaries    | Architecture diagram          |
+| Ownership and call context   | Shallow tree or call tree     |
+| Runtime order                | Flow or sequence diagram      |
+| Lifecycle                    | State diagram                 |
+| Items with attributes        | Table                         |
+| Interfaces and data shapes   | Code or data block            |
+| Algorithm                    | Pseudo-code                   |
+| Behaviour change             | Before/after table or snippet |
+| Changed structure in context | Diff sketch                   |
 
 Reject decorative or stale visuals and visuals that duplicate visible prose, tables or other visuals. Restating content found only in collapsed `<details>` is not duplication, because human readers skip those blocks; a visual that disagrees with that content is stale. A repeated visual or required table needs to reveal new structure, such as parallel lanes or a critical path. Add no fixed count. Give each diagram a one-line text summary; tables and code/data blocks need none. Put orientation visuals in At a Glance and section visuals beside their prose. For worked examples, see [artifact readability](../artifact-readability.md).
 
@@ -71,9 +85,13 @@ Reject decorative or stale visuals and visuals that duplicate visible prose, tab
   3. Oracle: requirement-derived and discriminating; exact for deterministic output, else a property, invariant, relation or tolerance; fails on broken behaviour, passes behaviour-preserving refactors.
   4. Unique kill: no other retained test or configured static check catches it; static checks never prove runtime authorization or state transitions.
 - Shape: one case per equivalence class and boundary; place each distinct failure at the lowest/cheapest observing layer (unit over integration over e2e); merge only within one consumer scenario; tabulating is not merging. Prefer FIRST tests with diagnostic failures. When mocks, fixtures or infrastructure outweigh regression risk, use closest executable or review evidence and record the limit.
+
 <!-- for: writer -->
+
 - Writer focus (task writers only; ignored by reviewers and test-cleanup): author failing RED proof tests first, implement to GREEN, and take free reign to author any tests helpful for TDD, exploration, or proving behaviour, deferring pruning, merging, and tier downgrades to post-integration test cleanup.
+
 <!-- for: code,plan,design,cleanup -->
+
 - Prune: default-delete or downgrade unless a test positively passes all four gates at the cheapest layer (keep on doubt only if an undocumented external contract would lose its sole proof). Downgrade over-tiered tests in plan review, cleanup and code review. Delete or merge: **the past** (stale tests for removed/moved/superseded specs or code); **nothing** (runtime/framework/type guarantees, self-mocked/self-derived/source-restated assertions, padding, duplicates); **the implementation** (mirrored logic, private state, call order, mock counts, non-contract wording); and dedicated tests for straight-line/lightly-branching glue or wrappers lacking nested control flow, compound booleans, regexes, parsers, math/date formulas or simplicity-floor boundaries (security, auth, trust boundaries, persistence/atomicity, protocol transitions). Rewrite weak oracles (truthy, no-throw, shape-only) on retained contracts; flag uncovered contracts, failure modes and seams for coverage; flag unused test-only production helpers for removal. Code review enforces this bar and never reverses bar-compliant pruning or downgrades.
 - Naming: name tests, describe blocks, files, comments, headers and fixtures for behaviour; never cite plan artifacts (criterion, task or finding IDs, plan or session paths).
 

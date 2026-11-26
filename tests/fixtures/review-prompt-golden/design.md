@@ -1,5 +1,4 @@
-Review the technical design adversarially: challenge the requirement, its premise, and the design.
-Review the proposed architecture and its increments.
+Review the technical design adversarially: challenge the requirement, its premise, and the design. Review the proposed architecture and its increments.
 
 ### Context
 - Design: .scratch/example/example.design.md
@@ -22,9 +21,7 @@ Read the whole spec at Spec Path first.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
-For a spec finding, use § Spec: <heading>.
-Read the design and the repository contracts needed to verify claims.
-Treat increment `Grounding leads:` as advisory. Flag leads only if they conflict with a binding `REQ`, `DEC` or invariant, or are known dead ends. Leave lead investigation to increment grounding.
+For a spec finding, use § Spec: <heading>. Read the design and the repository contracts needed to verify claims. Treat increment `Grounding leads:` as advisory. Flag leads only if they conflict with a binding `REQ`, `DEC` or invariant, or are known dead ends. Leave lead investigation to increment grounding.
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under review rules.
 The governing spec's Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
@@ -61,6 +58,7 @@ CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` tim
 
 ### Severity
 Rate each finding on two dimensions; the toolkit derives severity from them. Report `impact` and `trigger`, never `severity`.
+
 - `impact`: `critical` — security breach or irreversible data loss; `blocks` — the promised outcome or a binding constraint fails; `degrades` — a real defect that lowers the outcome without blocking it; `minor` — a small defect with negligible effect or an optional improvement (always `CONSIDER`).
 - `trigger`: `realistic` — normal use or one plausible fault produces it; `contrived` — it needs several independent faults, contrived input, or no failure at all.
 
@@ -71,10 +69,8 @@ Rate each finding on two dimensions; the toolkit derives severity from them. Rep
 | `degrades` | `SHOULD` | `CONSIDER` |
 | `minor` | `CONSIDER` | `CONSIDER` |
 
-A `critical` finding's `defect` names the boundary crossed or the data lost.
-Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
-Feasibility and architectural contract defects are `blocks`.
-Plan-level mechanics safely decidable during increment planning are out of altitude.
+A `critical` finding's `defect` names the boundary crossed or the data lost. Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
+Feasibility and architectural contract defects are `blocks`. Plan-level mechanics safely decidable during increment planning are out of altitude.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
@@ -93,5 +89,4 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"§ <Design heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Cite existing code as `path/to/file:L<line>` inside `defect`.
-For an adjacent finding, use the nearest design heading as locus.
+Cite existing code as `path/to/file:L<line>` inside `defect`. For an adjacent finding, use the nearest design heading as locus.

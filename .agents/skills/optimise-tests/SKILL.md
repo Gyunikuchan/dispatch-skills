@@ -60,9 +60,9 @@ Read the result JSON at the printed `path` and inspect `ok` and `reason` first:
 
 Launch parallel read-only recon scouts using `utility[<platform>].launchAs` (or run sequentially inline only under the step-2 fallback). Give each scout a slice of `<work>/before/inventory.json` (`files` and `candidates`: `budgetOverruns`, `denseFiles`, `slowestTests`, `duplicateTitles`, `sharedImports`, `mergeClusters`) and instruct it to scan test and source files for:
 
-- **Stale tests** guarding removed, moved, or superseded specs or code (*the past*).
+- **Stale tests** guarding removed, moved, or superseded specs or code (_the past_).
 - **Over-tiered tests** observable at a cheaper layer (unit over integration over e2e).
-- **Low-signal or trivial tests** (*nothing*, *the implementation*, or straight-line/lightly-branching glue without complex logic or simplicity-floor boundaries per [testing quality bar](../../../skills/dispatch/references/templates/quality-bar.md#testing)).
+- **Low-signal or trivial tests** (_nothing_, _the implementation_, or straight-line/lightly-branching glue without complex logic or simplicity-floor boundaries per [testing quality bar](../../../skills/dispatch/references/templates/quality-bar.md#testing)).
 - **Slow or test-dense files** needing splitting, rewriting, or consolidation.
 - **Test-only production helpers** referenced only by deleted or candidate tests.
 

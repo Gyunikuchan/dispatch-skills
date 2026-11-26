@@ -23,6 +23,7 @@ Use the scope check for the next-stage recommendation. Follow [spec confirmation
 
 ```markdown
 Approve the spec?
+
 - Stated intent: <user-stated intent>
 - Assumed intent: <assumptions>
 - Core REQs: <requirements>

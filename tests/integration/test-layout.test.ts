@@ -1,33 +1,42 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { scanOverlay } from './scan.ts';
-import type { FileTable } from './scan.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { scanOverlay } from "./scan.ts";
+import type { FileTable } from "./scan.ts";
 
 export const TIERS = [
-  'tests/unit/policy/',
-  'tests/unit/providers/',
-  'tests/unit/lib/',
-  'tests/unit/toolkit/',
-  'tests/integration/',
-  'tests/tooling/',
-  'tests/e2e/',
+  "tests/unit/policy/",
+  "tests/unit/providers/",
+  "tests/unit/lib/",
+  "tests/unit/toolkit/",
+  "tests/integration/",
+  "tests/tooling/",
+  "tests/e2e/",
 ] as const;
 
-export function checkTestLayout(files: FileTable): Array<string> {
-  return files
-    .filter(({ path }) => path.endsWith('.test.ts') && !TIERS.some((tier) => path.startsWith(tier)))
-    .map(({ path }) => `test layout rule: ${path} is outside every tier; move it under one of ${TIERS.join(', ')}`);
-}
+export const checkTestLayout = (files: FileTable) =>
+  files
+    .filter(
+      ({ path }) =>
+        path.endsWith(".test.ts") &&
+        !TIERS.some((tier) => path.startsWith(tier))
+    )
+    .map(
+      ({ path }) =>
+        `test layout rule: ${path} is outside every tier; move it under one of ${TIERS.join(", ")}`
+    );
 
-test('every test file sits under a known tier and a misplaced test fails with the rule and the fix', () => {
+test("every test file sits under a known tier and a misplaced test fails with the rule and the fix", () => {
   assert.deepEqual(checkTestLayout(scanOverlay(undefined, false)), []);
+
   const errors = checkTestLayout([
-    { path: 'tests/misc/a.test.ts', text: '' },
-    { path: 'tests/unit/policy/b.test.ts', text: '' },
+    { path: "tests/misc/a.test.ts", text: "" },
+    { path: "tests/unit/policy/b.test.ts", text: "" },
   ]);
+
   assert.equal(errors.length, 1);
   assert.match(
-    errors[0] ?? '',
-    /^test layout rule: tests\/misc\/a\.test\.ts is outside every tier; move it under one of tests\/unit\/policy\//,
+    errors[0] ?? "",
+    /^test layout rule: tests\/misc\/a\.test\.ts is outside every tier; move it under one of tests\/unit\/policy\//u
   );
 });

@@ -77,14 +77,13 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 
 ### ask run
 
-Arguments: <!-- GENERATED: action:ask-run -->`ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`<!-- END GENERATED: action:ask-run -->. Use UTF-8 for files or stdin (`-`, BOM ignored). Supply one question source. Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
-Result path: answers, failed slots and native descriptors. Success also writes `answers.json`. With `cliWave: pending`, launch every native slot and retain its handle, then rerun at once for the CLI wave. Other native fields follow [review run](#review-run).
-Refusals: unreadable question, invalid level, level-unapproved, no read delegate, missing or unknown `--host`, malformed `--pins` or unknown/excluded provider (`invalid-input`), malformed `--native-failed` (`invalid-input`), `host-sandboxed` (exit 4), native-pending or ask-failed.
+Arguments: <!-- GENERATED: action:ask-run -->`ask run [<question-file|->|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]`<!-- END GENERATED: action:ask-run -->. Use UTF-8 for files or stdin (`-`, BOM ignored). Supply one question source. Always start `ask run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Result path: answers, failed slots and native descriptors. Success also writes `answers.json`. With `cliWave: pending`, launch every native slot and retain its handle, then rerun at once for the CLI wave. Other native fields follow [review run](#review-run). Refusals: unreadable question, invalid level, level-unapproved, no read delegate, missing or unknown `--host`, malformed `--pins` or unknown/excluded provider (`invalid-input`), malformed `--native-failed` (`invalid-input`), `host-sandboxed` (exit 4), native-pending or ask-failed.
 
 ### review run
 
 Arguments: <!-- GENERATED: action:review-run -->`review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]`<!-- END GENERATED: action:review-run -->. Pass `--spec` until a spec is bound. Forward any compact status `resumeRef` via `--resume-ref` for optional diagnostics. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
 Result path: `findings.json` holds the full round. Completed-round summaries name `findings.md` and `rulings.json`. The session-relative `value.findingsFile` and `value.rulingsFile` survive summary clipping. Use them to [rule the round](review-rules.md#rulings-and-fix-scope).
+
 - `findings.json` carries `units` (`{unit, findings, hot, hotStreak, bytes?, delta?, growthStreak?}`), one entry per unit with findings in the round; the summary head lists hot units after the counts as `<unit> ×<hotStreak>` plus ` ±<delta> B` when sized, within 1,024 bytes (items drop first; else `+<k> more in findings.json units`).
 - A round that ran a host-platform voice as a native subagent also reports `repositoryChanges` (`[{cwd, paths}]`) and persists it to `gen-<n>/checkout-report.json` and `findings.json`; a failed capture or compare keeps all replies and reports `repositoryCheck: {state: "unavailable", reason}` instead.
 - Code review adds advisory `warning` to the value and summary for `worktree` with a bound plan and integrated task, or `integration` missing current verification or completed test cleanup.
@@ -101,8 +100,7 @@ Result path: `findings.json` holds the full round. Completed-round summaries nam
 - `Since the previous round` keeps the inter-round diff and only lists accepted IDs and loci in the confirmation-only prompt.
 - Plan/design results include `findingsSection`: `updated`, `unchanged` or `skipped`; a skipped refresh includes `findingsSectionReason` and does not fail the review.
 - Findings carry `origin` (`original`, `fix-induced`, `unknown`); the header adds `<n> fix-induced` when nonzero.
-- Rounds after the first store `interRound` (`diff`, `accepted`) in `round.json`; plan and design rounds write `round-<n>/inter-round.diff` when the governed text differs.
-Refusals: invalid input/kind/revision, malformed `--pins` or unknown/excluded provider (`invalid-input`), unreadable or conflicting spec, lint-errors, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), `host-sandboxed` (exit 4), native-pending, target-moved, escalation-open, round-cap, review-ceiling, `coverage-decision`, `coverage-required` or missing/unknown `--host`.
+- Rounds after the first store `interRound` (`diff`, `accepted`) in `round.json`; plan and design rounds write `round-<n>/inter-round.diff` when the governed text differs. Refusals: invalid input/kind/revision, malformed `--pins` or unknown/excluded provider (`invalid-input`), unreadable or conflicting spec, lint-errors, missing-confirmation, level-unapproved, missing integration/finished launch, `nothing-to-review` (integration with no done task, or an empty captured code diff), `host-sandboxed` (exit 4), native-pending, target-moved, escalation-open, round-cap, review-ceiling, `coverage-decision`, `coverage-required` or missing/unknown `--host`.
 - Plan and design rounds also run blocking `broken-citation` validation (`lint-errors`) on new or superseded round starts (not `native-pending` resumes) for backticked repo-relative `path:line` and `path:start-end` refs in governed sections.
 - `coverage-decision` (exit 4) names the user decisions: accept reduced coverage or grant one more coverage round.
 - `coverage-required` (exit 4) means coverage state cannot be read.
@@ -120,9 +118,7 @@ Plan/design target paths select artifacts. Code targets resolve in order: integr
 
 ### report render
 
-Arguments: <!-- GENERATED: action:report-render -->`report render --session <session>`<!-- END GENERATED: action:report-render -->.
-Result path: walkthrough path, criterion statuses, Review Focus, visuals, deviations, user records, findings, rejection confirmation states, coverage state and evidence references. Review Focus combines derived departures with authored `focus` bullets. Renders a recorded replacement; otherwise links plan visuals, then parent design visuals, or shows `None.`. Renders the current snapshot without claiming completion.
-Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
+Arguments: <!-- GENERATED: action:report-render -->`report render --session <session>`<!-- END GENERATED: action:report-render -->. Result path: walkthrough path, criterion statuses, Review Focus, visuals, deviations, user records, findings, rejection confirmation states, coverage state and evidence references. Review Focus combines derived departures with authored `focus` bullets. Renders a recorded replacement; otherwise links plan visuals, then parent design visuals, or shows `None.`. Renders the current snapshot without claiming completion. Refusals: invalid arguments, unreadable bound artifacts or invalid plan.
 
 ### report complete
 
@@ -133,15 +129,11 @@ Refusals: review-confirmation-required, no-integration, criteria-unmet, focus-re
 
 ### brief render
 
-Arguments: <!-- GENERATED: action:brief-render -->`brief render <task> --session <session> --host <platform>`<!-- END GENERATED: action:brief-render -->.
-Result path: writer brief filename, task, launch, UTF-8 bytes, `launchAs` and launch `model`/`effort` values.
-Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unknown task, no-open-launch or missing/unknown `--host`. Create the task worktree before rendering.
+Arguments: <!-- GENERATED: action:brief-render -->`brief render <task> --session <session> --host <platform>`<!-- END GENERATED: action:brief-render -->. Result path: writer brief filename, task, launch, UTF-8 bytes, `launchAs` and launch `model`/`effort` values. Refusals: approval-chain, missing-confirmation or level gate, lint-errors, unknown task, no-open-launch or missing/unknown `--host`. Create the task worktree before rendering.
 
 ### brief explorer
 
-Arguments: <!-- GENERATED: action:brief-explorer -->`brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-explorer -->. Pass JSON via a file path, stdin (`-`), or `--json` (prefer `-` or a file above 4,096 bytes) holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief.
-Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values.
-Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
+Arguments: <!-- GENERATED: action:brief-explorer -->`brief explorer [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-explorer -->. Pass JSON via a file path, stdin (`-`), or `--json` (prefer `-` or a file above 4,096 bytes) holding `objective`, `questions` (a string or an array of strings), and optional `outputPath`. With `outputPath` the result is a map brief; without it, a research brief. Result path: explorer brief path, UTF-8 bytes, `kind` (`map` or `research`), `contextLimit`, `launchAs` and launch `model`/`effort` values. Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`; writes nothing.
 
 ### brief fix-review-lite
 
@@ -152,27 +144,19 @@ Refusals: code-review artifacts, no matching round or accepted finding, no chang
 
 ### brief test-cleanup
 
-Arguments: <!-- GENERATED: action:brief-test-cleanup -->`brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-test-cleanup -->. Pass JSON via file, stdin (`-`), or `--json` holding `base` and `integrationPath`, or pass both `--base` and `--integration-path` directly (combining modes or omitting one direct flag fails `invalid-input`); `planPath` derives from the bind record.
-Result path: test-cleanup brief path, UTF-8 bytes, `launchAs` and launch `model`/`effort` values.
-Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`, or no bound plan; writes nothing.
+Arguments: <!-- GENERATED: action:brief-test-cleanup -->`brief test-cleanup [<values.json|->] [--json <json>] [--base <ref> --integration-path <path>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-test-cleanup -->. Pass JSON via file, stdin (`-`), or `--json` holding `base` and `integrationPath`, or pass both `--base` and `--integration-path` directly (combining modes or omitting one direct flag fails `invalid-input`); `planPath` derives from the bind record. Result path: test-cleanup brief path, UTF-8 bytes, `launchAs` and launch `model`/`effort` values. Refusals: unreadable values, a missing or unknown value, missing/unknown `--host`, or no bound plan; writes nothing.
 
 ### worktree integrate
 
-Arguments: <!-- GENERATED: action:worktree-integrate -->`worktree integrate <task> --session <session> [--ack-stale <rationale>]`<!-- END GENERATED: action:worktree-integrate -->.
-Result path: integration commit and task, or retained conflict paths. Integration `fix` and `test-cleanup` records retain correction provenance; see [commit](#worktree-commit).
-Refusals: approval-chain or missing-confirmation gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
+Arguments: <!-- GENERATED: action:worktree-integrate -->`worktree integrate <task> --session <session> [--ack-stale <rationale>]`<!-- END GENERATED: action:worktree-integrate -->. Result path: integration commit and task, or retained conflict paths. Integration `fix` and `test-cleanup` records retain correction provenance; see [commit](#worktree-commit). Refusals: approval-chain or missing-confirmation gate, no-candidate, stale candidate, pending integration or wrong task. A non-intent plan edit after the brief, or an `edit` record affecting the task, makes the candidate stale; rerun with `--ack-stale <rationale>` to accept it. Inspect conflict state before continuing.
 
 ### worktree continue
 
-Arguments: <!-- GENERATED: action:worktree-continue -->`worktree continue <task> --session <session>`<!-- END GENERATED: action:worktree-continue -->.
-Result path: completed integration commit after a retained conflict.
-Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-integration or unresolved-conflict.
+Arguments: <!-- GENERATED: action:worktree-continue -->`worktree continue <task> --session <session>`<!-- END GENERATED: action:worktree-continue -->. Result path: completed integration commit after a retained conflict. Refusals: approval-chain or missing-confirmation gate, wrong-task, no-pending-integration or unresolved-conflict.
 
 ### worktree commit
 
-Arguments: <!-- GENERATED: action:worktree-commit -->`worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]`<!-- END GENERATED: action:worktree-commit -->. The payload options are mutually exclusive. All payload inputs accept a leading UTF-8 BOM.
-Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md).
-Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
+Arguments: <!-- GENERATED: action:worktree-commit -->`worktree commit --session <session> --reason <reason> [--review-fix <json-file|-> | --review-fix-json <json> | --test-cleanup <json-file|-> | --test-cleanup-json <json>]`<!-- END GENERATED: action:worktree-commit -->. The payload options are mutually exclusive. All payload inputs accept a leading UTF-8 BOM. Result path: integration fix commit and reason; when supplied, the tool records structurally validated review-fix metadata with the commit. Use after accepted fixes, including inspected assigned writer or utility deltas. With `--test-cleanup`, the commit is the test cleanup commit: see [test cleanup](verbs/implement.md). Refusals: blank reason, integration-pending, no-changes, invalid review-fix metadata or a test-cleanup refusal.
 
 The file holds `{"removed": ["SC<n>", ...], "deleted": <count>, "merged": <count>}`: the criterion IDs whose Check commands no longer run any test, and non-negative counts of deleted and merged tests. The `fix(dispatch): <reason>` header collapses whitespace and clips to 100 characters. Trailers are `Dispatch-Fix: <session>` and ordered `Dispatch-Test-Cleanup-Data: <base64url chunk>` lines of at most 100 characters. Recovery joins the chunks and decodes the stable JSON.
 
@@ -184,15 +168,11 @@ Refusals: test-cleanup-evidence-required (a `removed` ID is not a plan criterion
 
 ### worktree abort
 
-Arguments: <!-- GENERATED: action:worktree-abort -->`worktree abort <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abort -->.
-Result path: preserved candidate and abandoned state.
-Refusals: blank reason, wrong-task, no-candidate or already-integrated. See [user gates](decision-frame.md#user-gate-boundaries) before discarding work.
+Arguments: <!-- GENERATED: action:worktree-abort -->`worktree abort <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abort -->. Result path: preserved candidate and abandoned state. Refusals: blank reason, wrong-task, no-candidate or already-integrated. See [user gates](decision-frame.md#user-gate-boundaries) before discarding work.
 
 ### worktree deliver
 
-Arguments: <!-- GENERATED: action:worktree-deliver -->`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`<!-- END GENERATED: action:worktree-deliver -->. `--commit` and `--message` are mutually exclusive and refused on every other action.
-Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities.
-Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required, `coverage-required` or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
+Arguments: <!-- GENERATED: action:worktree-deliver -->`worktree deliver --session <session> [--commit <message-file|-> | --message <text>]`<!-- END GENERATED: action:worktree-deliver -->. `--commit` and `--message` are mutually exclusive and refused on every other action. Result path: mode (uncommitted), dest, from (original caller base), source (verified integration HEAD), ref (refs/dispatch/<safeSessionId>/delivered-source), paths (delivered paths), delivered boolean and noop when the source and base trees match. A completed retry returns delivered false and the recorded identities. Refusals: integration-pending, no-integration, caller-moved, caller-dirty, integration-dirty, unsupported-sparse, unsupported-entry, review-confirmation-required, `coverage-required` or recovery-blocked. Preserve caller changes and session evidence; inspect the result before retrying.
 
 Refuses delivery before caller writes or a delivered record when the closure query in [review rules](review-rules.md#rulings-and-fix-scope) leaves an applicable MUST rejection unconfirmed.
 
@@ -209,6 +189,7 @@ Inspect with `git diff` and `git status`; restore retained source with `git rest
 A completed same-source retry returns the recorded outcome without checking or changing later caller work; a changed source needs a new run. Conflicting ref, changed pending source or unsupported pending mode refuses recovery-blocked. Preserve refs, records and worktrees for inspection; never reset caller work.
 
 Commit phase (`--commit <message-file|->` or `--message <text>`): a second phase after delivered; the commit message requires non-blank text (BOM stripped). Under the ledger lock it takes one of two paths. Never pushes, skips hooks or rewrites the caller branch. The result value is `{commit, source, from, dest, committed, recordOnly, differing?, warning?}` and it appends `integrate` phase `committed`. `committed` is false on a retry that finds a committed record for this delivery; that retry appends nothing. `recordOnly` is true when the action made no commit.
+
 - Commit path (HEAD equals `from`): stages `source` with `git read-tree`, makes one commit with hooks, then compares `source` with the commit tree. `differing` lists every differing path plus each delivered path whose working-tree content differs after the commit. `warning` names a commit whose parent is not `from`, which only another process committing during `git commit` or its hooks causes.
 - Record-only path (HEAD descends from `from`): records the current HEAD without a commit. `differing` lists only differing paths that overlap the delivered paths.
 - Refusals (exit 4, no record): `not-delivered` (no delivered record); `caller-moved` (branch is not `dest.branch`, branch or HEAD changed at the last check, or the new commit is not an ancestor of the branch; names that commit); `staged-changes` (a staged path that is not a delivered path, a staged delivered path that differs from `source`, an index that changed at the last check, or `git write-tree` failing); `delivered-content-changed` (caller content at a delivered path differs from `source`); `commit-failed` (`git commit` failed, for example a hook; the prior index is restored); `head-not-descendant` (HEAD is not `from` and does not descend from it); `delivered-uncommitted` (record-only: a delivered path has staged, unstaged or untracked changes).
@@ -217,51 +198,36 @@ Commit phase (`--commit <message-file|->` or `--message <text>`): a second phase
 
 ### worktree close
 
-Arguments: <!-- GENERATED: action:worktree-close -->`worktree close --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-close -->.
-Result path: closed state and reason, ending an integration retained for recovery.
-Refusals: blank reason or unexpected task argument. Closing records state; it does not establish verification or satisfy the [user gate](decision-frame.md#user-gate-boundaries).
+Arguments: <!-- GENERATED: action:worktree-close -->`worktree close --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-close -->. Result path: closed state and reason, ending an integration retained for recovery. Refusals: blank reason or unexpected task argument. Closing records state; it does not establish verification or satisfy the [user gate](decision-frame.md#user-gate-boundaries).
 
 ### worktree cleanup
 
-Arguments: <!-- GENERATED: action:worktree-cleanup -->`worktree cleanup --session <session>`<!-- END GENERATED: action:worktree-cleanup -->.
-Result path: the result file contains `value.removed` paths and `value.kept` rows with `path` and `reason`. Failure rows may also include `code`, a bounded `message` and a session-relative `recoveryPath` for a stranded recovery sibling; unpreserved rows may list changed `paths`. If a per-path removal or later registration/ref operation fails, the result is `ok: false`, exit 2, reason `cleanup-incomplete`; its value retains all known progress. A path may appear in both arrays when the directory was removed but Git registration, pruning or ref release failed. Read the result file even at exit 2.
-Kept unowned, non-terminal or unpreserved paths do not always make the operation incomplete, but require inspection and a recovery or retention decision before handoff.
-Refusals: unexpected task argument, ledger lock or pre-removal Git/filesystem fault. A refusal before per-path cleanup returns its own reason and message rather than a partial cleanup value. See [cleanup](worktree-cleanup.md) for retained refs, external locks and retry limits.
+Arguments: <!-- GENERATED: action:worktree-cleanup -->`worktree cleanup --session <session>`<!-- END GENERATED: action:worktree-cleanup -->. Result path: the result file contains `value.removed` paths and `value.kept` rows with `path` and `reason`. Failure rows may also include `code`, a bounded `message` and a session-relative `recoveryPath` for a stranded recovery sibling; unpreserved rows may list changed `paths`. If a per-path removal or later registration/ref operation fails, the result is `ok: false`, exit 2, reason `cleanup-incomplete`; its value retains all known progress. A path may appear in both arrays when the directory was removed but Git registration, pruning or ref release failed. Read the result file even at exit 2. Kept unowned, non-terminal or unpreserved paths do not always make the operation incomplete, but require inspection and a recovery or retention decision before handoff. Refusals: unexpected task argument, ledger lock or pre-removal Git/filesystem fault. A refusal before per-path cleanup returns its own reason and message rather than a partial cleanup value. See [cleanup](worktree-cleanup.md) for retained refs, external locks and retry limits.
 
 ### worktree create
 
-Arguments: <!-- GENERATED: action:worktree-create -->`worktree create <task> --session <session> [--relaunch]`<!-- END GENERATED: action:worktree-create -->.
-Result path: task, launch and worktree path, plus restored/relaunch markers when applicable.
-Refusals: unknown task, `prerequisite-pending`, `stale-worktree` (an unlaunched crash worktree lacks an integrated prerequisite; the tool keeps it), writer-open, candidate-pending, no-open-launch, missing-worktree or submit-pending. `prerequisite-pending` names each prerequisite task without an `integrate` `done` record, creates no worktree and appends no record; a relaunch or restored launch skips this gate. Relaunch requires the orchestrator to establish that the old writer has stopped.
+Arguments: <!-- GENERATED: action:worktree-create -->`worktree create <task> --session <session> [--relaunch]`<!-- END GENERATED: action:worktree-create -->. Result path: task, launch and worktree path, plus restored/relaunch markers when applicable. Refusals: unknown task, `prerequisite-pending`, `stale-worktree` (an unlaunched crash worktree lacks an integrated prerequisite; the tool keeps it), writer-open, candidate-pending, no-open-launch, missing-worktree or submit-pending. `prerequisite-pending` names each prerequisite task without an `integrate` `done` record, creates no worktree and appends no record; a relaunch or restored launch skips this gate. Relaunch requires the orchestrator to establish that the old writer has stopped.
 
 ### worktree submit
 
-Arguments: <!-- GENERATED: action:worktree-submit -->`worktree submit <task> --session <session>`<!-- END GENERATED: action:worktree-submit -->.
-Result path: task, launch, candidate commit and any uncommitted paths.
-Refusals: no-open-launch, out-of-scope, submit-pending or no-changes. The orchestrator invokes this Git-writing tool after the writer stops.
+Arguments: <!-- GENERATED: action:worktree-submit -->`worktree submit <task> --session <session>`<!-- END GENERATED: action:worktree-submit -->. Result path: task, launch, candidate commit and any uncommitted paths. Refusals: no-open-launch, out-of-scope, submit-pending or no-changes. The orchestrator invokes this Git-writing tool after the writer stops.
 
 ### worktree abandon
 
-Arguments: <!-- GENERATED: action:worktree-abandon -->`worktree abandon <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abandon -->.
-Result path: preserved writer snapshot, task/launch and abandoned marker.
-Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and follow the [user gate](decision-frame.md#user-gate-boundaries) when discarding work.
+Arguments: <!-- GENERATED: action:worktree-abandon -->`worktree abandon <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abandon -->. Result path: preserved writer snapshot, task/launch and abandoned marker. Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and follow the [user gate](decision-frame.md#user-gate-boundaries) when discarding work.
 
 ### check run
 
-Arguments: <!-- GENERATED: action:check-run -->`check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]`<!-- END GENERATED: action:check-run -->. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)).
-Result path: checks with command digests, tree identity, clean/before/after state, exit, and evidence/log paths; `executed`, `reused`, `failed`, `mutated`, and `dirty` (`; reused <n>` in summary when `reused > 0`).
+Arguments: <!-- GENERATED: action:check-run -->`check run --session <session> [--criteria SC1,SC2,contract | --task T<n>] [--reuse | --fresh]`<!-- END GENERATED: action:check-run -->. `--criteria` IDs are comma-separated and trimmed. `--task` selects the criteria in that task's Task Map `Criteria` cell, applies the default filters (skip `Evidence: review` and criteria removed by test cleanup), and never selects `contract`. Without `--criteria` or `--task`, checks skip criteria marked `Evidence: review` and criteria removed by test cleanup. Explicitly naming a removed criterion refuses test-cleanup-removed; its recorded evidence-tree evidence remains eligible under [report completion](#report-complete). Always start `check run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Result path: checks with command digests, tree identity, clean/before/after state, exit, and evidence/log paths; `executed`, `reused`, `failed`, `mutated`, and `dirty` (`; reused <n>` in summary when `reused > 0`).
+
 - Within one run (unless `--fresh`), passing clean Git-non-mutating commands deduplicate per `(command, tree)` (`mode: 'dedup'`, preserving provenance without incrementing `executed` or `reused`).
 - `--reuse` (mutually exclusive with `--fresh`) reuses a prior clean passing execution in `.state/evidence/commands/index/<cacheHex>.json` (`<execId>.json`/`.log`) on the exact same clean Git tree (`testedTree === headTree === cached.tree`) after live hash and invariant validation, falling back to fresh execution on any mismatch; without `--reuse`, cross-call cache entries are never reused.
 - `--fresh` bypasses within-run per-command deduplication (use when commands share mutable gitignored or external state).
-- Each run mints a `runId` and writes immutable criterion JSON at `.state/evidence/<evidenceHex>.json` (`runId` and per-command `commands` provenance) plus combined `.log` (`value.checks[].logPath`), while appended `evidence` ledger records keep the unchanged field set.
-Refusals: unknown criterion or unknown task, which names each unknown ID and the valid IDs; `--task` with `--criteria`; `--reuse` with `--fresh`; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
-
+- Each run mints a `runId` and writes immutable criterion JSON at `.state/evidence/<evidenceHex>.json` (`runId` and per-command `commands` provenance) plus combined `.log` (`value.checks[].logPath`), while appended `evidence` ledger records keep the unchanged field set. Refusals: unknown criterion or unknown task, which names each unknown ID and the valid IDs; `--task` with `--criteria`; `--reuse` with `--fresh`; explicitly selecting a review-only criterion is rejected before integration setup or any evidence file or ledger write; test-cleanup-removed (a named criterion was removed by test cleanup); invalid arguments or unreadable bound plan. checks-failed, mutated and dirty can return exit 0 with ok false. Checks execute on the integration tree; successful evidence must match current commands and a clean unchanged tree.
 
 ### brief verifier
 
-Arguments: <!-- GENERATED: action:brief-verifier -->`brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-verifier -->; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed + reused > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required.
-Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`.
-Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
+Arguments: <!-- GENERATED: action:brief-verifier -->`brief verifier [<values.json|->] [--json <json>] --session <session> --host <platform>`<!-- END GENERATED: action:brief-verifier -->; values (from file, stdin `-`, or `--json`) are `checkoutPath`, `base`, `specPath` and `focus`. Start `focus` with `Cycle <n>` from the verification stage. Add `checks passed` only when `check run` passed on the verified tree with `executed + reused > 0`; omit it when no bound integration is targeted or no command ran, so the verifier runs and reports the repository baseline. No plan binding is required. Result path: `briefPath`, `bytes`, `evidenceDir` and utility launch values. The evidence directory is `<session>/verification/`. Refusals: missing, blank or unknown values; no brief or evidence directory is written on invalid input.
 
 ### ledger append
 
@@ -272,9 +238,7 @@ Refusals: unreadable JSON, invalid-record (including an empty array and an appro
 
 ### ledger query
 
-Arguments: <!-- GENERATED: action:ledger-query -->`ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`<!-- END GENERATED: action:ledger-query -->.
-Result path: matching full records.
-Refusals: positional arguments or invalid filters. Invalid `kind` names the allowed record kinds; invalid `since` gives the nonnegative safe-integer shape.
+Arguments: <!-- GENERATED: action:ledger-query -->`ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]`<!-- END GENERATED: action:ledger-query -->. Result path: matching full records. Refusals: positional arguments or invalid filters. Invalid `kind` names the allowed record kinds; invalid `since` gives the nonnegative safe-integer shape.
 
 ### doctor run
 
@@ -374,9 +338,7 @@ data: `bullets` is an array of 0–5 `{text, evidence}` items; each `evidence` i
 
 ### edit
 
-data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool.
-For a confirmed spec revision before initial bind, retain canonical hashes, diff reference and rationale, bind the revised spec, then append its `edit` record. Non-intent edits extend approved hashes. Other classes need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol).
-For each edited artifact per fix batch, run `lint run --edit`. Name every accepted finding the batch fixes in its rationale. For a qualifying plan/design SHOULD correction, record the baseline, correction and verification in an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
+data: artifact (spec/plan/design), `before`, `after`, `class` (non-intent/intent/dependency/discard), `affects` (task IDs), `rationale`, `diffRef`. Allowed by: user, orchestrator, tool. For a confirmed spec revision before initial bind, retain canonical hashes, diff reference and rationale, bind the revised spec, then append its `edit` record. Non-intent edits extend approved hashes. Other classes need a new approval tuple under [revision protocol](spec-stage.md#revision-protocol). For each edited artifact per fix batch, run `lint run --edit`. Name every accepted finding the batch fixes in its rationale. For a qualifying plan/design SHOULD correction, record the baseline, correction and verification in an evidence-linked `focus` bullet. Include every edit as a walkthrough deviation.
 
 ### evidence
 
@@ -389,6 +351,7 @@ data includes `phase` and `task`. launched adds path and base {commit, taskSecti
 ### integrate
 
 data includes `phase`: opened {path, branch, base, `dest` {branch,path}}; started {task,candidate}; conflict {task,paths}; done {task,commit}; abandoned {task,candidate,reason}; fix {commit,reason,reviewFix?}; deliver-started {mode:'uncommitted',dest,from,source}; delivered {mode:'uncommitted',dest,from,source,noop?}; committed {commit,source,differing?} (tool only, from `worktree deliver --commit`); closed {reason}; test-cleanup {from,fromTree,to,removed,deleted,merged,trees}; verification {cycle,outcome,head,reason,open,report?,artifacts?,dirty?}.
+
 - Verification has a positive cycle, outcome `proved`, `partial` or `no-op`, a full commit head, and open issue IDs `<cycle>:V<n>`; proved and no-op require an empty open list.
 - Proved and partial require report.
 - Report and artifacts follow the focus evidence path rule; dirty marks uncommitted changes.

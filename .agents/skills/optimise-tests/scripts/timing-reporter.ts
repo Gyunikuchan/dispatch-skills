@@ -1,10 +1,6 @@
-// `node --test` reporter for inventory.ts: writes one JSON line per test result, the coverage summary,
-// and the run summary to the path in OPTIMISE_TESTS_OUT. Yields one short status line for the console.
+import fs from "node:fs";
+import path from "node:path";
 
-import fs from 'node:fs';
-import path from 'node:path';
-
-// Every `node --test` payload field read here; each stays unvalidated until narrowed at its use.
 interface Data {
   file?: unknown;
   name?: unknown;
@@ -19,14 +15,15 @@ interface Data {
   coveredLineCount?: unknown;
   totalLineCount?: unknown;
 }
+
 export interface ReporterEvent {
   type: string;
   data?: Data;
 }
 
 export interface TestLine {
-  kind: 'test';
-  status: 'pass' | 'fail';
+  kind: "test";
+  status: "pass" | "fail";
   file: string;
   name: string;
   nesting: number;
@@ -34,87 +31,120 @@ export interface TestLine {
   durationMs: number;
   suite: boolean;
 }
+
 export interface CoverageLine {
-  kind: 'coverage';
-  files: Array<{ path: string; covered: number; total: number }>;
+  kind: "coverage";
+  files: { path: string; covered: number; total: number }[];
 }
+
 export interface SummaryLine {
-  kind: 'summary';
+  kind: "summary";
   durationMs: number;
 }
+
 export type EventLine = TestLine | CoverageLine | SummaryLine;
 
-const isData = (value: unknown): value is Data => typeof value === 'object' && value !== null;
-const record = (value: unknown): Data => (isData(value) ? value : {});
-const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
+const isData = (value: unknown): value is Data => {
+  if (value === null || value === undefined) {
+    return false;
+  }
 
-// SECTION: Event mapping
+  return Object.prototype.toString.call(value) === "[object Object]";
+};
 
-export function toLine(type: string, data: Data): EventLine | undefined {
-  if (type === 'test:pass' || type === 'test:fail') {
-    const details = record(data['details']);
-    if (typeof data['file'] !== 'string') {
-      return undefined;
+const textOf = (value: unknown): value is string =>
+  Object.prototype.toString.call(value) === "[object String]";
+
+const num = (data: Data, field: keyof Data) => {
+  const value = data[field];
+
+  return Number.isFinite(value) ? Number(value) : 0;
+};
+
+export const toLine = (type: string, data: Data) => {
+  if (type === "test:pass" || type === "test:fail") {
+    const details: Data = isData(data.details) ? data.details : {};
+
+    if (!textOf(data.file)) {
+      return null;
     }
+
     return {
-      kind: 'test',
-      status: type === 'test:pass' ? 'pass' : 'fail',
-      file: data['file'],
-      name: String(data['name'] ?? ''),
-      nesting: num(data['nesting']),
-      line: num(data['line']),
-      durationMs: num(details['duration_ms']),
-      suite: details['type'] === 'suite',
+      kind: "test",
+      status: type === "test:pass" ? "pass" : "fail",
+      file: data.file,
+      name: textOf(data.name) ? data.name : "",
+      nesting: num(data, "nesting"),
+      line: num(data, "line"),
+      durationMs: num(details, "duration_ms"),
+      suite: details.type === "suite",
     };
   }
-  if (type === 'test:coverage') {
-    const files = record(data['summary'])['files'];
+
+  if (type === "test:coverage") {
+    const summary: Data = isData(data.summary) ? data.summary : {};
+    const { files } = summary;
+
     if (!Array.isArray(files)) {
-      return undefined;
+      return null;
     }
+
     return {
-      kind: 'coverage',
-      files: files
-        .map((file) => record(file))
-        .map((file) => ({
-          path: String(file['path']),
-          covered: num(file['coveredLineCount']),
-          total: num(file['totalLineCount']),
-        })),
+      kind: "coverage",
+      files: files.map((file) => {
+        const raw: unknown = file;
+        const entry: Data = isData(raw) ? raw : {};
+
+        return {
+          path: textOf(entry.path) ? entry.path : "",
+          covered: num(entry, "coveredLineCount"),
+          total: num(entry, "totalLineCount"),
+        };
+      }),
     };
   }
-  // NOTE: only the run-level summary has no file; per-file summaries are skipped.
-  if (type === 'test:summary' && data['file'] === undefined) {
-    return { kind: 'summary', durationMs: num(data['duration_ms']) };
-  }
-  return undefined;
-}
 
-// SECTION: Reporter flow
-
-export default async function* timingReporter(source: AsyncIterable<ReporterEvent>): AsyncGenerator<string> {
-  const out = process.env['OPTIMISE_TESTS_OUT'];
-  if (!out) {
-    throw new Error('timing-reporter: set OPTIMISE_TESTS_OUT to the events output path');
+  if (type === "test:summary" && data.file === undefined) {
+    return { kind: "summary", durationMs: num(data, "duration_ms") };
   }
-  const lines: Array<string> = [];
+
+  return null;
+};
+
+export default async function* timingReporter(
+  source: AsyncIterable<ReporterEvent>
+) {
+  const out = process.env["OPTIMISE_TESTS_OUT"];
+
+  if (out === undefined || out === "") {
+    throw new Error(
+      "timing-reporter: set OPTIMISE_TESTS_OUT to the events output path"
+    );
+  }
+
+  const lines: string[] = [];
   let passed = 0;
   let failed = 0;
+
   for await (const { type, data = {} } of source) {
     const line = toLine(type, data);
-    if (!line) {
+
+    if (line === null) {
       continue;
     }
-    if (line.kind === 'test' && !line.suite) {
-      if (line.status === 'pass') {
-        passed++;
+
+    if (line.kind === "test" && line.suite === false) {
+      if (line.status === "pass") {
+        passed += 1;
       } else {
-        failed++;
+        failed += 1;
       }
     }
+
     lines.push(JSON.stringify(line));
   }
+
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, lines.length ? `${lines.join('\n')}\n` : '');
+  fs.writeFileSync(out, lines.length ? `${lines.join("\n")}\n` : "");
   yield `optimise-tests: ${passed} passed, ${failed} failed\n`;
 }

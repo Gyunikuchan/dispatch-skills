@@ -36,7 +36,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 ## Routing
 
 | Work | Route |
-|---|---|
+| --- | --- |
 | Research, log and verify triage, finding evidence, consumer and stale-reference sweeps, grounding maps, plan and design lightweight fix reviews | Explorer subagent |
 | Test cleanup, runtime verification, map corrections exceeding the context-guard threshold, implementation integration mechanical fixes that a deterministic check confirms | Utility subagent |
 | Plan tasks, remaining implementation integration fixes per [writer triggers](references/review-rules.md) | Writer at run level |
@@ -45,7 +45,7 @@ Handle `native-pending` under [native slots](references/providers.md#native-slot
 | Decisions, rulings, ledger, user gates, spec and plan authoring, submitted-change inspection, `focus` bullets, small map corrections, remaining small integration fixes and standalone review fixes | Orchestrator |
 
 | Role | Launched by | May launch | Model source | Writes | May be continued |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | Child orchestrator | Orchestrator | Writer, explorer, utility, voice | Documented inheritance | Increment session files | Increment continuation |
 | Writer | Orchestrator, child orchestrator | Explorer (research), utility subagent | Doctor writer models at run level | Assigned task paths; integration worktree for review fix | Read-only; review fix inline |
 | Explorer (outputs: map, research) | Orchestrator, child orchestrator, lead explorer, writer | Nested explorer under brief rule | Doctor [utility](references/toolkit.md#doctor-run) from the `utility-subagents` entry | Writes only an assigned map (including nested partial maps); inline reply (research) | Follow-up inline at any time |

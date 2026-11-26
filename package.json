@@ -2,39 +2,35 @@
   "name": "dispatch-skills",
   "version": "0.8.6",
   "description": "Dispatch turns the host agent into an end-to-end orchestrator across native subagents and cross-platform CLI delegates—catching flawed assumptions early and verifying delivery with minimal routine human coordination.",
+  "keywords": [
+    "agent-skills",
+    "ai",
+    "antigravity",
+    "claude-code",
+    "code-review",
+    "codex",
+    "coding-agents",
+    "delegation",
+    "git-worktree",
+    "github-copilot",
+    "multi-agent",
+    "opencode",
+    "orchestration",
+    "plan-review",
+    "subagents"
+  ],
+  "homepage": "https://github.com/Gyunikuchan/dispatch-skills#readme",
+  "bugs": {
+    "url": "https://github.com/Gyunikuchan/dispatch-skills/issues"
+  },
   "license": "MIT",
-  "type": "module",
   "author": {
     "name": "Gyunikuchan",
     "url": "https://github.com/Gyunikuchan"
   },
-  "homepage": "https://github.com/Gyunikuchan/dispatch-skills#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Gyunikuchan/dispatch-skills.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Gyunikuchan/dispatch-skills/issues"
-  },
-  "keywords": [
-    "ai",
-    "agent-skills",
-    "coding-agents",
-    "orchestration",
-    "subagents",
-    "multi-agent",
-    "delegation",
-    "claude-code",
-    "antigravity",
-    "github-copilot",
-    "opencode",
-    "codex",
-    "code-review",
-    "plan-review",
-    "git-worktree"
-  ],
-  "engines": {
-    "node": "^22.18 || >=23.6"
   },
   "files": [
     "skills",
@@ -43,6 +39,7 @@
     "LICENSE",
     "README.md"
   ],
+  "type": "module",
   "scripts": {
     "prepare": "husky",
     "hashes": "node scripts/generate-hashes.ts",
@@ -50,7 +47,7 @@
     "typecheck": "tsc -p .",
     "lint": "node scripts/lint.ts",
     "lint:all": "node scripts/lint.ts --all",
-    "format": "oxfmt oxlint.config.ts oxfmt.config.ts \"skills/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \".agents/skills/{audit-dispatch-skills,optimise-tests,link-reader}/**/*.ts\"",
+    "format": "oxfmt oxlint.config.ts oxfmt.config.ts \"skills/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\" \".agents/skills/{optimise-tests,link-reader}/**/*.ts\"",
     "format:check": "npm run format -- --check",
     "test": "npm run typecheck && node scripts/maintain.ts --check && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node scripts/path-bytes.ts && node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts --test-concurrency=8 \"tests/{unit,integration,tooling}/**/*.test.ts\"",
     "validate:configs": "node scripts/validate-configs.ts",
@@ -69,5 +66,8 @@
     "oxlint-tsgolint": "7.0.2008",
     "typescript": "^7.0.2",
     "ultracite": "^8.3.1"
+  },
+  "engines": {
+    "node": "^22.18 || >=23.6"
   }
 }

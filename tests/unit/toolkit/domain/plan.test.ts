@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { jsonValue, parseJson } from '../helpers/json.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
 
 import {
   governedPlanText,
@@ -13,7 +12,9 @@ import {
   structuralLines,
   taskExecutionSummary,
   taskMapRows,
-} from '../../../../skills/dispatch/scripts/toolkit/domain/plan.ts';
+} from "../../../../skills/dispatch/scripts/toolkit/domain/plan.ts";
+import { defined } from "../../../helpers/guards.ts";
+import { jsonValue, parseJson } from "../helpers/json.ts";
 
 const splitMessage = (action: string, text: string) =>
   `List one path per [${action}] heading; only [DELETE] may group comma-separated paths. Split "${text}".`;
@@ -74,298 +75,451 @@ const PLAN = `# Add retry budget
 
 const defects = (source: string) => {
   const result = parsePlan(source);
+
   return [
     ...(result.ok ? [] : result.defects),
     ...result.warnings.filter(
       (item) =>
-        !['missing-seams', 'criterion-red-test-path', 'undeclared-test-path', 'red-downgraded', 'overlap'].includes(
-          item.code,
-        ),
+        ![
+          "missing-seams",
+          "criterion-red-test-path",
+          "undeclared-test-path",
+          "red-downgraded",
+          "overlap",
+        ].includes(item.code)
     ),
   ].map((item) => item.code);
 };
 
-test('presentation and traceability findings are warnings while structural findings block', () => {
+test("presentation and traceability findings are warnings while structural findings block", () => {
   for (const code of [
-    'missing-summary-box',
-    'summary-label',
-    'leftover-placeholder',
-    'filler-note',
-    'section-order',
-    'missing-satisfies',
-    'missing-requirement-ref',
-    'unknown-requirement',
-    'plan-id-in-test-name',
-    'task-summary',
-    'task-overlap',
-    'automated-test-duplicates-check',
-    'criterion-critical-review',
+    "missing-summary-box",
+    "summary-label",
+    "leftover-placeholder",
+    "filler-note",
+    "section-order",
+    "missing-satisfies",
+    "missing-requirement-ref",
+    "unknown-requirement",
+    "plan-id-in-test-name",
+    "task-summary",
+    "task-overlap",
+    "automated-test-duplicates-check",
+    "criterion-critical-review",
   ] as const) {
-    assert.equal(lint(code, null, 'finding').severity, 'warning', code);
+    assert.equal(lint(code, null, "finding").severity, "warning", code);
   }
+
   const result = parsePlan(
-    PLAN.replace('> **Risk:** low — isolated helper\n', '').replaceAll('  - Satisfies: REQ-1\n', ''),
+    PLAN.replace("> **Risk:** low — isolated helper\n", "").replaceAll(
+      "  - Satisfies: REQ-1\n",
+      ""
+    )
   );
+
   assert.ok(result.ok, JSON.stringify(result));
-  assert.ok(result.warnings.some((item) => item.code === 'summary-label'));
-  assert.ok(result.warnings.some((item) => item.code === 'missing-satisfies'));
+  assert.ok(result.warnings.some((item) => item.code === "summary-label"));
+  assert.ok(result.warnings.some((item) => item.code === "missing-satisfies"));
+
   for (const [source, code] of [
-    [PLAN.replace('[SC1]', '[SC0]'), 'criterion-id'],
-    [PLAN.replace('  - Check: `node --test tests/fetch.test.ts`', '  - Check: invalid'), 'criterion-check'],
-    [PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts'), 'change-heading'],
-    [PLAN.replace('## Task Map', '## Tasks'), 'task-map'],
+    [PLAN.replace("[SC1]", "[SC0]"), "criterion-id"],
+    [
+      PLAN.replace(
+        "  - Check: `node --test tests/fetch.test.ts`",
+        "  - Check: invalid"
+      ),
+      "criterion-check",
+    ],
+    [
+      PLAN.replace(
+        "#### [MODIFY] src/fetch.ts",
+        "#### [MODIFY] src/fetch.ts, src/other.ts"
+      ),
+      "change-heading",
+    ],
+    [PLAN.replace("## Task Map", "## Tasks"), "task-map"],
   ]) {
-    const invalid = parsePlan(source!);
-    assert.ok(!invalid.ok && invalid.defects.some((item) => item.code === code), code);
+    const invalid = parsePlan(defined(source));
+    assert.ok(
+      !invalid.ok && invalid.defects.some((item) => item.code === code),
+      code
+    );
   }
 });
 
-const TESTS_LINE = '  - Tests: tests/fetch.test.ts\n';
+const TESTS_LINE = "  - Tests: tests/fetch.test.ts\n";
+
 const readable = (source = PLAN) =>
-  source.replaceAll(/^#### /gm, '- #### ').replaceAll(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
+  source
+    .replaceAll(/^#### /gmu, "- #### ")
+    .replaceAll(/^(?<g1>- (?:Changes|Purpose|Command|Inputs):.*)$/gmu, "  $1");
+
 const parsed = (source: string) => {
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
+
   return result.plan;
 };
 
-test('plan: summary box without TL;DR lints clean', () => {
-  const source = readable().replace(/^> \*\*TL;DR:\*\*.*\r?\n/m, '');
+test("plan: summary box without TL;DR lints clean", () => {
+  const source = readable().replace(/^> \*\*TL;DR:\*\*.*\r?\n/mu, "");
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
   assert.deepEqual(
-    result.warnings.filter(({ code }) => code === 'summary-label'),
-    [],
+    result.warnings.filter(({ code }) => code === "summary-label"),
+    []
   );
 });
 
-test('numeric criterion grammar stays shared across headings and task mappings', () => {
-  const numeric = PLAN.replaceAll('SC1', 'SC14').replaceAll('SC2', 'SC205');
+test("numeric criterion grammar stays shared across headings and task mappings", () => {
+  const numeric = PLAN.replaceAll("SC1", "SC14").replaceAll("SC2", "SC205");
   assert.deepEqual(
     parsed(numeric).criteria.map((row) => row.id),
-    ['SC14', 'SC205'],
+    ["SC14", "SC205"]
   );
-  for (const id of ['SC0', 'SC01', 'SC14a']) {
-    assert.ok(defects(numeric.replaceAll('SC14', id)).includes('criterion-id'));
-    assert.ok(defects(numeric.replace('SC14, SC205', `${id}, SC205`)).includes('task-criteria'));
+
+  for (const id of ["SC0", "SC01", "SC14a"]) {
+    assert.ok(defects(numeric.replaceAll("SC14", id)).includes("criterion-id"));
+    assert.ok(
+      defects(numeric.replace("SC14, SC205", `${id}, SC205`)).includes(
+        "task-criteria"
+      )
+    );
   }
 });
 
-// SECTION: Readable plan syntax
+test("readable plan syntax: nested and mixed entries preserve executable contracts and source lines", () => {
+  const plain = parsed(PLAN);
+  const nested = parsed(readable());
 
-test('readable plan syntax: nested and mixed entries preserve executable contracts and source lines', () => {
-  const plain = parsed(PLAN),
-    nested = parsed(readable());
   assert.deepEqual(nested.changes, plain.changes);
   assert.deepEqual(nested.tasks, plain.tasks);
   assert.deepEqual(nested.criteria, plain.criteria);
   assert.equal(nested.governedText, governedPlanText(readable()));
   assert.deepEqual(
-    parsed(readable().replace('- #### [NEW]', '#### [NEW]').replace('  - Purpose:', '- Purpose:')).changes,
-    plain.changes,
+    parsed(
+      readable()
+        .replace("- #### [NEW]", "#### [NEW]")
+        .replace("  - Purpose:", "- Purpose:")
+    ).changes,
+    plain.changes
   );
   assert.deepEqual(
-    parsed(readable().replace('- #### [NEW]', '- #### [DELETE]')).changes.map((c) => c.action),
-    ['MODIFY', 'DELETE', 'GENERATED'],
+    parsed(readable().replace("- #### [NEW]", "- #### [DELETE]")).changes.map(
+      (c) => c.action
+    ),
+    ["MODIFY", "DELETE", "GENERATED"]
   );
-  const consecutive = readable().replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.\n', '');
+
+  const consecutive = readable().replace(
+    "- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.\n",
+    ""
+  );
+
   const generated = parsed(
-    consecutive.replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts').replace(TESTS_LINE, ''),
+    consecutive
+      .replace("src/fetch.ts, tests/fetch.test.ts", "src/fetch.ts")
+      .replace(TESTS_LINE, "")
   );
+
   assert.equal(generated.changes[0]?.command, null);
-  assert.equal(generated.changes[0]?.note, 'add a retry counter to fetchWithRetry.');
-  assert.equal(generated.changes[1]?.command, 'npm run docs');
-  assert.deepEqual(generated.tasks[0]?.generated, [{ path: 'docs/api.md', inputs: ['src/fetch.ts'] }]);
+  assert.equal(
+    generated.changes[0]?.note,
+    "add a retry counter to fetchWithRetry."
+  );
+  assert.equal(generated.changes[1]?.command, "npm run docs");
+  assert.deepEqual(generated.tasks[0]?.generated, [
+    { path: "docs/api.md", inputs: ["src/fetch.ts"] },
+  ]);
 });
 
-test('readable plan syntax: owned briefs carry Outcome, Constraints and every labelled invariant once', () => {
+test("readable plan syntax: owned briefs carry Outcome, Constraints and every labelled invariant once", () => {
   const source = readable()
     .replace(
-      '| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |',
+      "| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |",
       [
-        '| T1 | Cap fetch retries | Fetch stops retrying. | none | SC1 |',
-        '| T2 | Check the companion | Check the companion. | T1 | SC2 |',
-      ].join('\n'),
-    )
-    .replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n- Constraints: Keep the public API.')
-    .replace(
-      '  - Changes: add a retry counter to fetchWithRetry.',
-      '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only.',
-    )
-    .replace('#### [GENERATED] docs/api.md', '#### [GENERATED] docs/api.md')
-    .replace(
-      '## Success Criteria',
-      '### T2 — Check the companion\n- Constraints: Preserve companion shape.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria',
+        "| T1 | Cap fetch retries | Fetch stops retrying. | none | SC1 |",
+        "| T2 | Check the companion | Check the companion. | T1 | SC2 |",
+      ].join("\n")
     )
     .replace(
-      '  - Changes: src/fetch.ts\n  - Check: `npm test`',
-      '  - Changes: src/companion.ts\n  - Check: `npm test`',
+      "### T1 — Cap fetch retries",
+      "### T1 — Cap fetch retries\n- Constraints: Keep the public API."
+    )
+    .replace(
+      "  - Changes: add a retry counter to fetchWithRetry.",
+      "  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only."
+    )
+    .replace("#### [GENERATED] docs/api.md", "#### [GENERATED] docs/api.md")
+    .replace(
+      "## Success Criteria",
+      "### T2 — Check the companion\n- Constraints: Preserve companion withFields.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria"
+    )
+    .replace(
+      "  - Changes: src/fetch.ts\n  - Check: `npm test`",
+      "  - Changes: src/companion.ts\n  - Check: `npm test`"
     );
+
   const plan = parsed(source);
-  const first = selectTaskBrief(plan, 'T1'),
-    second = selectTaskBrief(plan, 'T2');
+
+  const first = selectTaskBrief(plan, "T1");
+  const second = selectTaskBrief(plan, "T2");
+
   assert.ok(first);
   assert.ok(second);
-  assert.equal(first.task.summary, 'Fetch stops retrying.');
-  assert.deepEqual(first.task.constraints, ['Keep the public API.']);
-  assert.deepEqual(second.task.constraints, ['Preserve companion shape.']);
-  const note = first.changes.find((c) => c.path === 'src/fetch.ts')!.note;
+  assert.equal(first.task.summary, "Fetch stops retrying.");
+  assert.deepEqual(first.task.constraints, ["Keep the public API."]);
+  assert.deepEqual(second.task.constraints, ["Preserve companion withFields."]);
+
+  const { note } = defined(
+    first.changes.find((c) => c.path === "src/fetch.ts")
+  );
+
   for (const text of [
-    'Invariants: Preserve retry ordering.',
-    'Exception: zero retries still calls once.',
-    'Keep the callback.',
-    'Invariants: Preserve errors.',
+    "Invariants: Preserve retry ordering.",
+    "Exception: zero retries still calls once.",
+    "Keep the callback.",
+    "Invariants: Preserve errors.",
   ]) {
     assert.equal(note.split(text).length - 1, 1);
   }
-  assert.ok(!JSON.stringify(first).includes('optional context only'));
-  assert.ok(!JSON.stringify(first.dependents).includes('Preserve companion shape'));
-  assert.ok(!JSON.stringify(second).includes('Preserve retry ordering'));
-  assert.ok(plan.sharedContext.includes('| T2 | Check the companion | Check the companion. | T1 | SC2 |'));
-  assert.match(plan.governedText, /Notes: optional context only/);
+
+  assert.ok(!JSON.stringify(first).includes("optional context only"));
+  assert.ok(
+    !JSON.stringify(first.dependents).includes("Preserve companion withFields")
+  );
+  assert.ok(!JSON.stringify(second).includes("Preserve retry ordering"));
+  assert.ok(
+    plan.sharedContext.includes(
+      "| T2 | Check the companion | Check the companion. | T1 | SC2 |"
+    )
+  );
+  assert.match(plan.governedText, /Notes: optional context only/u);
 });
 
-test('readable plan syntax: unsafe paths, malformed nesting, aliases and fake authority stay rejected', () => {
+test("readable plan syntax: unsafe paths, malformed nesting, aliases and fake authority stay rejected", () => {
   for (const [source, code] of [
-    [readable().replace('src/fetch.ts\n  - Changes:', '../outside.ts\n  - Changes:'), 'invalid-change-path'],
-    [readable().replace('- #### [NEW] tests/fetch.test.ts', '- #### [NEW] SRC/fetch.ts'), 'duplicate-change-path'],
-    [readable().replace('- #### [MODIFY]', '  - #### [MODIFY]'), 'change-heading'],
-    [readable().replace('  - Inputs: src/fetch.ts', ''), 'generated-inputs'],
+    [
+      readable().replace(
+        "src/fetch.ts\n  - Changes:",
+        "../outside.ts\n  - Changes:"
+      ),
+      "invalid-change-path",
+    ],
+    [
+      readable().replace(
+        "- #### [NEW] tests/fetch.test.ts",
+        "- #### [NEW] SRC/fetch.ts"
+      ),
+      "duplicate-change-path",
+    ],
+    [
+      readable().replace("- #### [MODIFY]", "  - #### [MODIFY]"),
+      "change-heading",
+    ],
+    [readable().replace("  - Inputs: src/fetch.ts", ""), "generated-inputs"],
   ]) {
     assert.ok(
-      defects(source!).some((item) => item === code),
-      String(code),
+      defects(defined(source)).some((item) => item === code),
+      String(code)
     );
   }
+
   for (const wrap of [
     (s: string) => `> ${s}`,
     (s: string) => `<!--\n${s}\n-->`,
     (s: string) => `\`\`\`md\n${s}\n\`\`\``,
   ]) {
-    const source = readable().replace('- #### [NEW]', `${wrap('- #### [MODIFY] src/fake.ts')}\n- #### [NEW]`);
-    assert.ok(!parsed(source).changes.some((c) => c.path === 'src/fake.ts'));
+    const source = readable().replace(
+      "- #### [NEW]",
+      `${wrap("- #### [MODIFY] src/fake.ts")}\n- #### [NEW]`
+    );
+
+    assert.ok(!parsed(source).changes.some((c) => c.path === "src/fake.ts"));
   }
-  const source = readable().replace('- #### [NEW]', '    #### [MODIFY] src/fake.ts\n- #### [NEW]');
-  assert.ok(!parsed(source).changes.some((c) => c.path === 'src/fake.ts'));
+
+  const source = readable().replace(
+    "- #### [NEW]",
+    "    #### [MODIFY] src/fake.ts\n- #### [NEW]"
+  );
+
+  assert.ok(!parsed(source).changes.some((c) => c.path === "src/fake.ts"));
   assert.ok(
-    !parsed(readable().replace('- #### [NEW]', '  #### [MODIFY] src/fake.ts\n- #### [NEW]')).changes.some(
-      (c) => c.path === 'src/fake.ts',
-    ),
+    !parsed(
+      readable().replace(
+        "- #### [NEW]",
+        "  #### [MODIFY] src/fake.ts\n- #### [NEW]"
+      )
+    ).changes.some((c) => c.path === "src/fake.ts")
   );
   assert.ok(
-    defects(readable(TASKS).replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts')).includes(
-      'generated-inputs',
-    ),
+    defects(
+      readable(TASKS).replace(
+        "src/writer.ts, README.md",
+        "src/writer.ts, src/reader.ts"
+      )
+    ).includes("generated-inputs")
   );
 });
 
-test('readable plan syntax: invariant-only notes stay single and unlabeled details retain all continuations', () => {
+test("readable plan syntax: invariant-only notes stay single and unlabeled details retain all continuations", () => {
   const source = readable().replace(
-    '  - Changes: add a retry counter to fetchWithRetry.',
-    '  - Notes: Optional background.\n  - Invariants: Keep API.\n    - Exception: Keep flag.',
+    "  - Changes: add a retry counter to fetchWithRetry.",
+    "  - Notes: Optional background.\n  - Invariants: Keep API.\n    - Exception: Keep flag."
   );
-  assert.equal(parsed(source).changes[0]?.note, 'Invariants: Keep API.\n  - Exception: Keep flag.');
+
+  assert.equal(
+    parsed(source).changes[0]?.note,
+    "Invariants: Keep API.\n  - Exception: Keep flag."
+  );
+
   const continued = readable().replace(
-    '  - Changes: add a retry counter to fetchWithRetry.',
-    '  - Changes:\n    - Add the counter.\n      Preserve callback order.\n    - Bound the attempts.',
+    "  - Changes: add a retry counter to fetchWithRetry.",
+    "  - Changes:\n    - Add the counter.\n      Preserve callback order.\n    - Bound the attempts."
   );
+
   assert.equal(
     parsed(continued).changes[0]?.note,
-    '  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.',
+    "  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts."
   );
 });
 
-// SECTION: Plan parsing and validation
-
-test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, traceability', () => {
+test("implement-plan-lint: parsePlan extracts box, criteria, changes, verification, traceability", () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));
   const { plan } = result;
-  assert.equal(plan.title, 'Add retry budget');
-  assert.equal(plan.box['Parent'], '`governing.spec.md` · sha256:' + 'a'.repeat(64));
-  assert.deepEqual(plan.keyDecisions, ['Cap at three attempts (user)']);
+  assert.equal(plan.title, "Add retry budget");
+  assert.equal(
+    plan.box["Parent"],
+    `\`governing.spec.md\` · sha256:${"a".repeat(64)}`
+  );
+  assert.deepEqual(plan.keyDecisions, ["Cap at three attempts (user)"]);
   assert.deepEqual(
     plan.criteria.map((item) => [item.id, item.evidence]),
     [
-      ['SC1', 'red'],
-      ['SC2', 'check'],
-    ],
+      ["SC1", "red"],
+      ["SC2", "check"],
+    ]
   );
-  assert.deepEqual(plan.criteria[0]?.changes, ['src/fetch.ts', 'tests/fetch.test.ts']);
-  assert.deepEqual(plan.criteria[1]?.verify, [{ command: 'npm test' }]);
+  assert.deepEqual(plan.criteria[0]?.changes, [
+    "src/fetch.ts",
+    "tests/fetch.test.ts",
+  ]);
+  assert.deepEqual(plan.criteria[1]?.verify, [{ command: "npm test" }]);
   assert.deepEqual(
     plan.changes.map((item) => [item.action, item.path]),
     [
-      ['MODIFY', 'src/fetch.ts'],
-      ['NEW', 'tests/fetch.test.ts'],
-      ['GENERATED', 'docs/api.md'],
-    ],
+      ["MODIFY", "src/fetch.ts"],
+      ["NEW", "tests/fetch.test.ts"],
+      ["GENERATED", "docs/api.md"],
+    ]
   );
-  assert.equal(plan.changes[2]?.command, 'npm run docs');
-  assert.deepEqual(plan.verification.automated, ['npm run lint']);
-  assert.deepEqual(plan.traceability, { 'Approved revision': 'none' });
+  assert.equal(plan.changes[2]?.command, "npm run docs");
+  assert.deepEqual(plan.verification.automated, ["npm run lint"]);
+  assert.deepEqual(plan.traceability, { "Approved revision": "none" });
 });
 
-test('implement-plan-lint: missing criterion fields, unknown markers, and GENERATED without Command fail', () => {
-  assert.ok(defects(PLAN.replace('  - Evidence: check\n', '')).includes('criterion-evidence'));
+test("implement-plan-lint: missing criterion fields, unknown markers, and GENERATED without Command fail", () => {
   assert.ok(
-    defects(PLAN.replace('#### [NEW] tests/fetch.test.ts', '#### [ADD] tests/fetch.test.ts')).includes(
-      'unknown-change-marker',
-    ),
+    defects(PLAN.replace("  - Evidence: check\n", "")).includes(
+      "criterion-evidence"
+    )
   );
-  assert.ok(defects(PLAN.replace('- Command: `npm run docs`\n', '')).includes('generated-command'));
-  assert.ok(defects(PLAN.replace('> **Risk:** low — isolated helper\n', '')).includes('summary-label'));
+  assert.ok(
+    defects(
+      PLAN.replace(
+        "#### [NEW] tests/fetch.test.ts",
+        "#### [ADD] tests/fetch.test.ts"
+      )
+    ).includes("unknown-change-marker")
+  );
+  assert.ok(
+    defects(PLAN.replace("- Command: `npm run docs`\n", "")).includes(
+      "generated-command"
+    )
+  );
+  assert.ok(
+    defects(PLAN.replace("> **Risk:** low — isolated helper\n", "")).includes(
+      "summary-label"
+    )
+  );
 });
 
-test('implement-plan-lint: leftover template placeholders fail when a vocabulary is supplied', () => {
-  const vocabulary = placeholderVocabulary(['````markdown\n# <Goal Description>\n- Check: `<command>`\n````\n']);
-  const result = parsePlan(PLAN.replace('Observe logs.', 'Observe <Goal Description>.'), { placeholders: vocabulary });
-  assert.ok(result.ok && result.warnings.some((item) => item.code === 'leftover-placeholder'));
+test("implement-plan-lint: leftover template placeholders fail when a vocabulary is supplied", () => {
+  const vocabulary = placeholderVocabulary([
+    "````markdown\n# <Goal Description>\n- Check: `<command>`\n````\n",
+  ]);
+
+  const result = parsePlan(
+    PLAN.replace("Observe logs.", "Observe <Goal Description>."),
+    { placeholders: vocabulary }
+  );
+
+  assert.ok(
+    result.ok &&
+      result.warnings.some((item) => item.code === "leftover-placeholder")
+  );
 });
 
-test('implement-plan-lint: governed text excludes the trailing resolution section only', () => {
+test("implement-plan-lint: governed text excludes the trailing resolution section only", () => {
   const governed = governedPlanText(`${PLAN}\n## Out of Scope\n- Nothing.\n`);
-  assert.ok(!governed.includes('## Review Findings & Resolutions'));
-  assert.ok(!governed.includes('No reviews conducted yet'));
-  assert.ok(governed.includes('## Out of Scope'));
+  assert.ok(!governed.includes("## Review Findings & Resolutions"));
+  assert.ok(!governed.includes("No reviews conducted yet"));
+  assert.ok(governed.includes("## Out of Scope"));
   const result = parsePlan(PLAN);
   assert.ok(result.ok && result.plan.governedText === governedPlanText(PLAN));
 });
 
-test('implement-plan-lint: drive-qualified, home, and rooted paths are rejected as absolute', () => {
-  for (const raw of ['C:/outside/file.ts', 'c:file.ts', '/etc/passwd', '~/x.ts']) {
-    assert.equal(normalizePlanPath(raw).reason, 'absolute', raw);
+test("implement-plan-lint: drive-qualified, home, and rooted paths are rejected as absolute", () => {
+  for (const raw of [
+    "C:/outside/file.ts",
+    "c:file.ts",
+    "/etc/passwd",
+    "~/x.ts",
+  ]) {
+    assert.equal(normalizePlanPath(raw).reason, "absolute", raw);
   }
-  assert.equal(normalizePlanPath('next/a.ts').path, 'next/a.ts');
+
+  assert.equal(normalizePlanPath("next/a.ts").path, "next/a.ts");
 });
 
-test('implement-plan-lint: a fence line with an info string inside a fence keeps the block fenced', () => {
-  const lines = structuralLines(['```', '```markdown', '## Success Criteria', '```', '## Real'].join('\n'));
+test("implement-plan-lint: a fence line with an info string inside a fence keeps the block fenced", () => {
+  const lines = structuralLines(
+    ["```", "```markdown", "## Success Criteria", "```", "## Real"].join("\n")
+  );
+
   assert.deepEqual(
     lines.map((entry) => entry.fenced),
-    [true, true, true, true, false],
+    [true, true, true, true, false]
   );
-  const commentFences = structuralLines(['<!--', '```', '-->', '## Real'].join('\n'));
+
+  const commentFences = structuralLines(
+    ["<!--", "```", "-->", "## Real"].join("\n")
+  );
+
   assert.equal(commentFences[3]?.fenced, false);
-  assert.equal(commentFences[3]?.text, '## Real');
+  assert.equal(commentFences[3]?.text, "## Real");
 });
 
-test('implement-plan-lint: rejects fenced automated commands, invalid Pre-existing, and blank review fields', () => {
-  const fenced = PLAN.replace('- `npm run lint`', '```sh\nnpm run lint\n```');
-  assert.ok(defects(fenced).includes('automated-command'));
+test("implement-plan-lint: rejects fenced automated commands, invalid Pre-existing, and blank review fields", () => {
+  const fenced = PLAN.replace("- `npm run lint`", "```sh\nnpm run lint\n```");
+  assert.ok(defects(fenced).includes("automated-command"));
   assert.ok(
-    defects(PLAN.replace('  - Evidence: red\n', '  - Evidence: red\n  - Pre-existing: maybe\n')).includes(
-      'criterion-format',
-    ),
+    defects(
+      PLAN.replace(
+        "  - Evidence: red\n",
+        "  - Evidence: red\n  - Pre-existing: maybe\n"
+      )
+    ).includes("criterion-format")
   );
-  const review = PLAN.replace(
-    '  - Evidence: check\n',
-    '  - Evidence: review\n  - Review: artifact: ; scenario: ; pass:\n',
-  );
-  assert.ok(defects(review).includes('criterion-review'));
-});
 
-// SECTION: Task graph and ownership
+  const review = PLAN.replace(
+    "  - Evidence: check\n",
+    "  - Evidence: review\n  - Review: artifact: ; scenario: ; pass:\n"
+  );
+
+  assert.ok(defects(review).includes("criterion-review"));
+});
 
 const TASKS = `# Shared contract with consumers
 
@@ -379,16 +533,16 @@ const TASKS = `# Shared contract with consumers
 
 | ID | Title | Outcome | Prerequisites | Criteria |
 | --- | --- | --- | --- | --- |
-| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |
-| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |
-| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |
+| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | none | SC1 |
+| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |
+| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |
 
 ## Proposed Changes
 
 ### T1 — Define the shared contract
 
 #### [NEW] src/contract.ts
-- Purpose: exports the shared shape.
+- Purpose: exports the shared withFields.
 
 ### T2 — Read through the contract
 - Constraints: Preserve unknown fields.
@@ -405,7 +559,7 @@ const TASKS = `# Shared contract with consumers
 - Inputs: src/contract.ts, src/writer.ts, README.md
 
 ## Success Criteria
-- [SC1] Contract exports the shape
+- [SC1] Contract exports the withFields
   - Satisfies: REQ-1
   - Changes: src/contract.ts
   - Check: \`node --test tests/contract.test.ts\`
@@ -431,1224 +585,1782 @@ const TASKS = `# Shared contract with consumers
 - \`npm run lint\`
 `;
 
-test('task-plan: parses tasks with summary, prerequisites, criteria, owned paths, and generated inputs', () => {
+test("task-plan: parses tasks with summary, prerequisites, criteria, owned paths, and generated inputs", () => {
   const result = parsePlan(TASKS);
   assert.ok(result.ok, JSON.stringify(result));
   const { tasks } = result.plan;
   assert.deepEqual(
-    tasks.map((task) => [task.id, task.title, task.prerequisites, task.criteria, task.paths]),
+    tasks.map((task) => [
+      task.id,
+      task.title,
+      task.prerequisites,
+      task.criteria,
+      task.paths,
+    ]),
     [
-      ['T1', 'Define the shared contract', [], ['SC1'], ['src/contract.ts']],
-      ['T2', 'Read through the contract', ['T1'], ['SC2'], ['src/reader.ts']],
-      ['T3', 'Write through the contract', ['T1'], ['SC3'], ['src/writer.ts', 'docs/contract.md']],
-    ],
+      ["T1", "Define the shared contract", [], ["SC1"], ["src/contract.ts"]],
+      ["T2", "Read through the contract", ["T1"], ["SC2"], ["src/reader.ts"]],
+      [
+        "T3",
+        "Write through the contract",
+        ["T1"],
+        ["SC3"],
+        ["src/writer.ts", "docs/contract.md"],
+      ],
+    ]
   );
-  assert.equal(tasks[0]?.summary, 'Consumers share one exported shape so they cannot drift.');
-  assert.deepEqual(tasks[1]?.constraints, ['Preserve unknown fields.']);
+  assert.equal(
+    tasks[0]?.summary,
+    "Consumers share one exported withFields so they cannot drift."
+  );
+  assert.deepEqual(tasks[1]?.constraints, ["Preserve unknown fields."]);
   assert.deepEqual(tasks[2]?.generated, [
-    { path: 'docs/contract.md', inputs: ['src/contract.ts', 'src/writer.ts', 'README.md'] },
+    {
+      path: "docs/contract.md",
+      inputs: ["src/contract.ts", "src/writer.ts", "README.md"],
+    },
   ]);
   assert.deepEqual(
     result.plan.changes.map((change) => change.path),
-    ['src/contract.ts', 'src/reader.ts', 'src/writer.ts', 'docs/contract.md'],
+    ["src/contract.ts", "src/reader.ts", "src/writer.ts", "docs/contract.md"]
   );
 });
 
-test('task behaviour records visible bullets and excludes visuals', () => {
+test("task behaviour records visible bullets and excludes visuals", () => {
   const source = PLAN.replace(
-    '### T1 — Cap fetch retries',
+    "### T1 — Cap fetch retries",
     [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '* Callers receive the final error.',
-      '```mermaid',
-      'graph LR',
-      '  A --> B',
-      '```',
-      '<details>',
-      '<summary>Old summary ignored</summary>',
-      '',
-      '- Hidden implementation detail.',
-      '</details>',
-      '- This bullet follows details and stays hidden.',
-    ].join('\n'),
+      "### T1 — Cap fetch retries",
+      "- The retry loop stops after three attempts.",
+      "* Callers receive the final error.",
+      "```mermaid",
+      "graph LR",
+      "  A --> B",
+      "```",
+      "<details>",
+      "<summary>Old summary ignored</summary>",
+      "",
+      "- Hidden implementation detail.",
+      "</details>",
+      "- This bullet follows details and stays hidden.",
+    ].join("\n")
   );
+
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
   assert.deepEqual(result.plan.tasks[0]?.behaviour, [
-    'The retry loop stops after three attempts.',
-    'Callers receive the final error.',
+    "The retry loop stops after three attempts.",
+    "Callers receive the final error.",
   ]);
-  assert.ok(!result.warnings.some((item) => item.code === 'task-behaviour'));
+  assert.ok(!result.warnings.some((item) => item.code === "task-behaviour"));
 
   const tableTask = PLAN.replace(
-    '### T1 — Cap fetch retries',
+    "### T1 — Cap fetch retries",
     [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '| Attempt | Delay |',
-      '| --- | --- |',
-      '| 1 | 100ms |',
-    ].join('\n'),
+      "### T1 — Cap fetch retries",
+      "- The retry loop stops after three attempts.",
+      "",
+      "| Attempt | Delay |",
+      "| --- | --- |",
+      "| 1 | 100ms |",
+    ].join("\n")
   );
+
   assert.ok(parsePlan(tableTask).ok, JSON.stringify(parsePlan(tableTask)));
 
   const diagramTask = PLAN.replace(
-    '### T1 — Cap fetch retries',
+    "### T1 — Cap fetch retries",
     [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  Attempt --> Exhausted',
-      '```',
-      '',
-      'Text summary: Attempt sequence leading to exhaustion.',
-    ].join('\n'),
+      "### T1 — Cap fetch retries",
+      "- The retry loop stops after three attempts.",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  Attempt --> Exhausted",
+      "```",
+      "",
+      "Text summary: Attempt sequence leading to exhaustion.",
+    ].join("\n")
   );
+
   assert.ok(parsePlan(diagramTask).ok, JSON.stringify(parsePlan(diagramTask)));
 
   const visualSource = PLAN.replace(
-    '### T1 — Cap fetch retries',
+    "### T1 — Cap fetch retries",
     [
-      '### T1 — Cap fetch retries',
-      '- The retry loop stops after three attempts.',
-      '',
-      '| Attempt | Delay |',
-      '| --- | --- |',
-      '| 1 | 100ms |',
-      '',
-      '```mermaid',
-      'flowchart LR',
-      '  Attempt --> Exhausted',
-      '```',
-      '',
-      'Text summary: Attempt sequence leading to exhaustion.',
-    ].join('\n'),
+      "### T1 — Cap fetch retries",
+      "- The retry loop stops after three attempts.",
+      "",
+      "| Attempt | Delay |",
+      "| --- | --- |",
+      "| 1 | 100ms |",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  Attempt --> Exhausted",
+      "```",
+      "",
+      "Text summary: Attempt sequence leading to exhaustion.",
+    ].join("\n")
   );
+
   const visualResult = parsePlan(visualSource);
   assert.ok(visualResult.ok, JSON.stringify(visualResult));
-  assert.deepEqual(visualResult.plan.tasks[0]?.behaviour, ['The retry loop stops after three attempts.']);
+  assert.deepEqual(visualResult.plan.tasks[0]?.behaviour, [
+    "The retry loop stops after three attempts.",
+  ]);
 });
 
 const sourceFor = (header: string) =>
-  PLAN.replace('### T1 — Cap fetch retries', `### T1 — Cap fetch retries\n${header}`);
+  PLAN.replace(
+    "### T1 — Cap fetch retries",
+    `### T1 — Cap fetch retries\n${header}`
+  );
 
 const taskWarnings = (source: string) => {
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
-  return result.warnings.filter((item) => item.code === 'task-behaviour');
+
+  return result.warnings.filter((item) => item.code === "task-behaviour");
 };
 
-test('task behaviour: warns on hidden, missing, count-only, and placeholder bullets', () => {
-  const cases: Array<[string, string]> = [
-    ['missing', ''],
-    ['hidden only', '<details>\n<summary>Old summary ignored</summary>\n\n- Hidden implementation detail.\n</details>'],
-    ['file count', '- 3 files changed.'],
-    ['mixed file counts', '- 2 new files, 1 modified file'],
-    ['file count with a code span path', '- 3 files changed `src/fetch.ts`'],
-    ['placeholder', '- TBD'],
+test("task behaviour: warns on hidden, missing, count-only, and placeholder bullets", () => {
+  const cases: [string, string][] = [
+    ["missing", ""],
+    [
+      "hidden only",
+      "<details>\n<summary>Old summary ignored</summary>\n\n- Hidden implementation detail.\n</details>",
+    ],
+    ["file count", "- 3 files changed."],
+    ["mixed file counts", "- 2 new files, 1 modified file"],
+    ["file count with a code span path", "- 3 files changed `src/fetch.ts`"],
+    ["placeholder", "- TBD"],
   ];
+
   for (const [name, header] of cases) {
     const warnings = taskWarnings(sourceFor(header));
     assert.equal(warnings.length, 1, name);
-    assert.equal(warnings[0]?.severity, 'warning', name);
+    assert.equal(warnings[0]?.severity, "warning", name);
   }
 
-  assert.deepEqual(taskWarnings(sourceFor('- 2 files are compared by content before delivery')), []);
-  assert.deepEqual(taskWarnings(sourceFor('- 3 files changed before callers receive the terminal error')), []);
-  const rationale = parsePlan(sourceFor('- Rationale: Callers receive the terminal error after retry exhaustion.'));
+  assert.deepEqual(
+    taskWarnings(
+      sourceFor("- 2 files are compared by content before delivery")
+    ),
+    []
+  );
+  assert.deepEqual(
+    taskWarnings(
+      sourceFor("- 3 files changed before callers receive the terminal error")
+    ),
+    []
+  );
+
+  const rationale = parsePlan(
+    sourceFor(
+      "- Rationale: Callers receive the terminal error after retry exhaustion."
+    )
+  );
+
   assert.ok(rationale.ok, JSON.stringify(rationale));
   assert.deepEqual(rationale.plan.tasks[0]?.behaviour, [
-    'Rationale: Callers receive the terminal error after retry exhaustion.',
+    "Rationale: Callers receive the terminal error after retry exhaustion.",
   ]);
-  const taskField = parsePlan(sourceFor('- Outcome: This machine field belongs in the Task Map.'));
-  assert.ok(!taskField.ok && taskField.defects.some((item) => item.code === 'task-map'));
-  assert.ok(taskField.warnings.some((item) => item.code === 'task-behaviour'));
-  const prose = parsePlan(sourceFor('Visible prose remains invalid.'));
-  assert.ok(!prose.ok && prose.defects.some((item) => item.code === 'task-map'));
-  const emptySummary = parsePlan(sourceFor('Text summary:   '));
-  assert.ok(!emptySummary.ok && emptySummary.defects.some((item) => item.code === 'task-map'));
+
+  const taskField = parsePlan(
+    sourceFor("- Outcome: This machine field belongs in the Task Map.")
+  );
+
+  assert.ok(
+    !taskField.ok && taskField.defects.some((item) => item.code === "task-map")
+  );
+  assert.ok(taskField.warnings.some((item) => item.code === "task-behaviour"));
+  const prose = parsePlan(sourceFor("Visible prose remains invalid."));
+  assert.ok(
+    !prose.ok && prose.defects.some((item) => item.code === "task-map")
+  );
+  const emptySummary = parsePlan(sourceFor("Text summary:   "));
+  assert.ok(
+    !emptySummary.ok &&
+      emptySummary.defects.some((item) => item.code === "task-map")
+  );
 });
 
-test('task-plan: rejects graph and mapping defects', () => {
-  const cases: Array<[string, string, string]> = [
-    ['untasked entry', '## Proposed Changes\n\n### T1 — Define the shared contract', 'task-ownership'],
-    ['malformed heading', '### T2 — Read through the contract', 'task-heading'],
+test("task-plan: rejects graph and mapping defects", () => {
+  const cases: [string, string, string][] = [
     [
-      'empty outcome',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-      'task-summary',
+      "untasked entry",
+      "## Proposed Changes\n\n### T1 — Define the shared contract",
+      "task-ownership",
     ],
-    ['duplicate id', '### T3 — Write through the contract', 'duplicate-id'],
+    ["malformed heading", "### T2 — Read through the contract", "task-heading"],
     [
-      'unknown prerequisite',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-      'missing-prerequisite',
+      "empty outcome",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+      "task-summary",
+    ],
+    ["duplicate id", "### T3 — Write through the contract", "duplicate-id"],
+    [
+      "unknown prerequisite",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+      "missing-prerequisite",
     ],
     [
-      'missing prerequisites cell',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-      'task-map',
+      "missing prerequisites cell",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+      "task-map",
     ],
     [
-      'cycle',
-      '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |',
-      'cycle',
+      "cycle",
+      "| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | none | SC1 |",
+      "cycle",
     ],
   ];
+
   const replacements = new Map<string, string>([
-    ['untasked entry', '## Proposed Changes\n\n#### [MODIFY] src/orphan.ts\n\n### T1 — Define the shared contract'],
-    ['malformed heading', '### Reader — Read'],
-    ['empty outcome', '| T2 | Read through the contract |  | T1 | SC2 |'],
-    ['duplicate id', '### T2 — Write through the contract'],
     [
-      'unknown prerequisite',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T9 | SC2 |',
+      "untasked entry",
+      "## Proposed Changes\n\n#### [MODIFY] src/orphan.ts\n\n### T1 — Define the shared contract",
+    ],
+    ["malformed heading", "### Reader — Read"],
+    ["empty outcome", "| T2 | Read through the contract |  | T1 | SC2 |"],
+    ["duplicate id", "### T2 — Write through the contract"],
+    [
+      "unknown prerequisite",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T9 | SC2 |",
     ],
     [
-      'missing prerequisites cell',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. |  | SC2 |',
+      "missing prerequisites cell",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. |  | SC2 |",
     ],
     [
-      'cycle',
-      '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | T2 | SC1 |',
+      "cycle",
+      "| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | T2 | SC1 |",
     ],
   ]);
+
   for (const [name, from, code] of cases) {
     assert.ok(
-      defects(TASKS.replace(from, replacements.get(name) ?? '')).some((item) => item === code),
-      name,
+      defects(TASKS.replace(from, replacements.get(name) ?? "")).some(
+        (item) => item === code
+      ),
+      name
     );
   }
-  for (const summary of ['TBD', 'Same.']) {
+
+  for (const summary of ["TBD", "Same."]) {
     assert.ok(
       defects(
         TASKS.replace(
-          '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-          `| T2 | Read through the contract | ${summary} | T1 | SC2 |`,
-        ),
-      ).includes('task-summary'),
-      summary,
+          "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+          `| T2 | Read through the contract | ${summary} | T1 | SC2 |`
+        )
+      ).includes("task-summary"),
+      summary
     );
   }
 
   assert.ok(
     defects(
       TASKS.replace(
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC1 |',
-      ),
-    ).includes('task-criteria'),
-    'double-mapped',
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC1 |"
+      )
+    ).includes("task-criteria"),
+    "double-mapped"
   );
   assert.ok(
     defects(
       TASKS.replace(
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2, SC9 |',
-      ),
-    ).includes('task-criteria'),
-    'unknown criterion',
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2, SC9 |"
+      )
+    ).includes("task-criteria"),
+    "unknown criterion"
   );
   assert.ok(
-    defects(TASKS.replace('  - Integration: spans reader and writer tasks.\n', '')).includes('task-criteria'),
-    'unmapped criterion',
+    defects(
+      TASKS.replace("  - Integration: spans reader and writer tasks.\n", "")
+    ).includes("task-criteria"),
+    "unmapped criterion"
   );
   assert.ok(
     defects(
       TASKS.replace(
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-        '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | none |',
-      ),
-    ).includes('task-criteria'),
-    'task without criteria',
-  );
-  assert.ok(
-    defects(TASKS.replace('  - Changes: src/reader.ts\n', '  - Changes: src/reader.ts, src/writer.ts\n')).includes(
-      'task-criteria',
-    ),
-    'foreign path',
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+        "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | none |"
+      )
+    ).includes("task-criteria"),
+    "task without criteria"
   );
   assert.ok(
     defects(
       TASKS.replace(
-        '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
-        '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3, SC4 |',
-      ),
-    ).includes('task-criteria'),
-    'task-mapped integration criterion',
+        "  - Changes: src/reader.ts\n",
+        "  - Changes: src/reader.ts, src/writer.ts\n"
+      )
+    ).includes("task-criteria"),
+    "foreign path"
+  );
+  assert.ok(
+    defects(
+      TASKS.replace(
+        "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |",
+        "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3, SC4 |"
+      )
+    ).includes("task-criteria"),
+    "task-mapped integration criterion"
   );
 });
 
 const taskChanges = (source: string) => {
   const result = parsePlan(source);
-  return result.ok ? [] : result.defects.filter((item) => item.code === 'criterion-task-changes');
+
+  return result.ok
+    ? []
+    : result.defects.filter((item) => item.code === "criterion-task-changes");
 };
 
-test('a task-owned criterion without changes fails lint with a fix hint unless it is Integration', () => {
-  const verifyOnly = TASKS.replace('  - Changes: src/reader.ts\n', '');
+test("a task-owned criterion without changes fails lint with a fix hint unless it is Integration", () => {
+  const verifyOnly = TASKS.replace("  - Changes: src/reader.ts\n", "");
   const found = taskChanges(verifyOnly);
   assert.equal(found.length, 1);
-  assert.equal(found[0]?.severity, 'defect');
-  assert.equal(found[0]?.line, verifyOnly.split('\n').indexOf('- [SC2] Reader consumes the contract') + 1);
-  assert.match(found[0]?.message ?? '', /SC2.*Changes.*Integration/);
-  const integration = verifyOnly.replace(
-    'tests/reader.test.ts`\n  - Evidence: check\n',
-    'tests/reader.test.ts`\n  - Evidence: check\n  - Integration: spans the reader.\n',
+  assert.equal(found[0]?.severity, "defect");
+  assert.equal(
+    found[0]?.line,
+    verifyOnly.split("\n").indexOf("- [SC2] Reader consumes the contract") + 1
   );
-  assert.notDeepEqual(defects(integration), [], 'the mapped Integration variant still fails on its task mapping');
+  assert.match(found[0]?.message ?? "", /SC2.*Changes.*Integration/u);
+
+  const integration = verifyOnly.replace(
+    "tests/reader.test.ts`\n  - Evidence: check\n",
+    "tests/reader.test.ts`\n  - Evidence: check\n  - Integration: spans the reader.\n"
+  );
+
+  assert.notDeepEqual(
+    defects(integration),
+    [],
+    "the mapped Integration variant still fails on its task mapping"
+  );
   assert.deepEqual(taskChanges(integration), []);
   const clean = parsePlan(TASKS);
   assert.ok(
-    clean.ok && clean.plan.criteria.some((criterion) => criterion.id === 'SC4' && !criterion.changes.length),
-    'unmapped Integration criterion without Changes stays clean',
+    clean.ok &&
+      clean.plan.criteria.some(
+        (criterion) => criterion.id === "SC4" && !criterion.changes.length
+      ),
+    "unmapped Integration criterion without Changes stays clean"
   );
 });
 
-test('task-plan: generated inputs require Inputs and cover producers through prerequisites', () => {
+test("task-plan: generated inputs require Inputs and cover producers through prerequisites", () => {
   assert.ok(
-    defects(TASKS.replace('- Inputs: src/contract.ts, src/writer.ts, README.md\n', '')).includes('generated-inputs'),
-    'missing inputs',
+    defects(
+      TASKS.replace("- Inputs: src/contract.ts, src/writer.ts, README.md\n", "")
+    ).includes("generated-inputs"),
+    "missing inputs"
   );
   assert.ok(
-    defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, ../outside.md')).includes('generated-inputs'),
-    'invalid input',
+    defects(
+      TASKS.replace("src/writer.ts, README.md", "src/writer.ts, ../outside.md")
+    ).includes("generated-inputs"),
+    "invalid input"
   );
   assert.ok(
-    defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts')).includes('generated-inputs'),
-    'producer not a prerequisite',
+    defects(
+      TASKS.replace("src/writer.ts, README.md", "src/writer.ts, src/reader.ts")
+    ).includes("generated-inputs"),
+    "producer not a prerequisite"
   );
   assert.ok(
-    defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, src/Reader.ts')).includes('generated-inputs'),
-    'case-variant producer',
+    defects(
+      TASKS.replace("src/writer.ts, README.md", "src/writer.ts, src/Reader.ts")
+    ).includes("generated-inputs"),
+    "case-variant producer"
   );
+
   const result = parsePlan(
     TASKS.replace(
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | sc2, `SC2` |',
-    ),
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | sc2, `SC2` |"
+    )
   );
+
   assert.ok(result.ok, JSON.stringify(result));
-  assert.deepEqual(result.plan.tasks[1]?.criteria, ['SC2']);
-  for (const value of ['', ', ,']) {
+  assert.deepEqual(result.plan.tasks[1]?.criteria, ["SC2"]);
+
+  for (const value of ["", ", ,"]) {
     assert.ok(
       defects(
         TASKS.replace(
-          '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-          `| T2 | Read through the contract | The reader decodes records with the shared shape. | ${value} | SC2 |`,
-        ),
-      ).includes('task-map'),
-      JSON.stringify(value),
+          "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+          `| T2 | Read through the contract | The reader decodes records with the shared withFields. | ${value} | SC2 |`
+        )
+      ).includes("task-map"),
+      JSON.stringify(value)
     );
   }
-  const deleted = TASKS.replace('#### [MODIFY] src/reader.ts', '#### [DELETE] src/reader.ts')
-    .replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts')
+
+  const deleted = TASKS.replace(
+    "#### [MODIFY] src/reader.ts",
+    "#### [DELETE] src/reader.ts"
+  )
+    .replace("src/writer.ts, README.md", "src/writer.ts, src/reader.ts")
     .replace(
-      '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
-      '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1, T2 | SC3 |',
+      "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |",
+      "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1, T2 | SC3 |"
     );
-  assert.ok(defects(deleted).includes('generated-inputs'));
+
+  assert.ok(defects(deleted).includes("generated-inputs"));
 });
 
-test('task-plan: derives summary and brief from the graph', () => {
+test("task-plan: derives summary and brief from the graph", () => {
   const result = parsePlan(TASKS);
   assert.ok(result.ok);
   assert.deepEqual(taskExecutionSummary(result.plan.tasks), [
-    'T1 — Define the shared contract (start)',
-    'T2 — Read through the contract (after T1)',
-    'T3 — Write through the contract (after T1)',
+    "T1 — Define the shared contract (start)",
+    "T2 — Read through the contract (after T1)",
+    "T3 — Write through the contract (after T1)",
   ]);
-  const brief = selectTaskBrief(result.plan, 'T1');
+  const brief = selectTaskBrief(result.plan, "T1");
   assert.ok(brief);
   assert.deepEqual(
     brief.changes.map((change) => change.path),
-    ['src/contract.ts'],
+    ["src/contract.ts"]
   );
   assert.deepEqual(
     brief.criteria.map((criterion) => criterion.id),
-    ['SC1'],
+    ["SC1"]
   );
   assert.deepEqual(
     brief.dependents.map((task) => task.id),
-    ['T2', 'T3'],
+    ["T2", "T3"]
   );
   assert.deepEqual(
-    selectTaskBrief(result.plan, 'T3')?.prerequisites.map((task) => task.id),
-    ['T1'],
+    selectTaskBrief(result.plan, "T3")?.prerequisites.map((task) => task.id),
+    ["T1"]
   );
-  assert.equal(selectTaskBrief(result.plan, 'T9'), null);
+  assert.equal(selectTaskBrief(result.plan, "T9"), null);
 });
 
-// SECTION: Grouped DELETE headings and comma rejection
+const DELETE_NOTE = "- Changes: remove the obsolete retry shims.";
 
-const DELETE_NOTE = '- Changes: remove the obsolete retry shims.';
 const withDelete = (heading: string) =>
-  PLAN.replace('- Inputs: src/fetch.ts\n', `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`);
+  PLAN.replace(
+    "- Inputs: src/fetch.ts\n",
+    `- Inputs: src/fetch.ts\n#### [DELETE] ${heading}\n${DELETE_NOTE}\n`
+  );
+
 const defectsOf = (source: string, code: string) => {
   const result = parsePlan(source);
-  return [...(result.ok ? [] : result.defects), ...result.warnings].filter((item) => item.code === code);
+
+  return [...(result.ok ? [] : result.defects), ...result.warnings].filter(
+    (item) => item.code === code
+  );
 };
 
-test('grouped delete headings share one comma and note grammar', () => {
-  // Grouped delete registers every path and flags duplicates.
-  const source = withDelete('src/old-a.ts, src/old-b.ts');
+test("grouped delete headings share one comma and note grammar", () => {
+  const source = withDelete("src/old-a.ts, src/old-b.ts");
   const plan = parsed(source);
-  const deletes = plan.changes.filter((change) => change.action === 'DELETE');
-  const line = source.split('\n').findIndex((text) => text.startsWith('#### [DELETE]')) + 1;
+  const deletes = plan.changes.filter((change) => change.action === "DELETE");
+
+  const line =
+    source.split("\n").findIndex((text) => text.startsWith("#### [DELETE]")) +
+    1;
+
   assert.deepEqual(
     deletes.map((change) => change.path),
-    ['src/old-a.ts', 'src/old-b.ts'],
+    ["src/old-a.ts", "src/old-b.ts"]
   );
   assert.deepEqual(
     deletes.map((change) => change.note),
-    ['remove the obsolete retry shims.', 'remove the obsolete retry shims.'],
+    ["remove the obsolete retry shims.", "remove the obsolete retry shims."]
   );
   assert.deepEqual(
     deletes.map((change) => change.line),
-    [line, line],
+    [line, line]
   );
-  assert.ok(['src/old-a.ts', 'src/old-b.ts'].every((path) => plan.tasks[0]?.paths.includes(path)));
-
-  const backticked = parsed(withDelete('`src/old-a.ts`, `src/old-b.ts`'));
-  assert.deepEqual(
-    backticked.changes.filter((change) => change.action === 'DELETE').map((change) => change.path),
-    ['src/old-a.ts', 'src/old-b.ts'],
+  assert.ok(
+    ["src/old-a.ts", "src/old-b.ts"].every(
+      (path) => plan.tasks[0]?.paths.includes(path) === true
+    )
   );
 
+  const backticked = parsed(withDelete("`src/old-a.ts`, `src/old-b.ts`"));
   assert.deepEqual(
-    defectsOf(withDelete('src/old-a.ts, src/old-a.ts'), 'duplicate-change-path').map((item) => item.message),
-    ['Change path "src/old-a.ts" appears more than once.'],
-  );
-  assert.deepEqual(
-    defectsOf(withDelete('src/old-a.ts, src/fetch.ts'), 'duplicate-change-path').map((item) => item.message),
-    ['Change path "src/fetch.ts" appears more than once.'],
+    backticked.changes
+      .filter((change) => change.action === "DELETE")
+      .map((change) => change.path),
+    ["src/old-a.ts", "src/old-b.ts"]
   );
 
-  // Non-grouped headings reject comma-separated paths.
-  const modifySource = PLAN.replace('#### [MODIFY] src/fetch.ts', '#### [MODIFY] src/fetch.ts, src/other.ts');
   assert.deepEqual(
-    defectsOf(modifySource, 'change-heading').map((item) => item.message),
-    [splitMessage('MODIFY', 'src/fetch.ts, src/other.ts')],
+    defectsOf(
+      withDelete("src/old-a.ts, src/old-a.ts"),
+      "duplicate-change-path"
+    ).map((item) => item.message),
+    ['Change path "src/old-a.ts" appears more than once.']
   );
+  assert.deepEqual(
+    defectsOf(
+      withDelete("src/old-a.ts, src/fetch.ts"),
+      "duplicate-change-path"
+    ).map((item) => item.message),
+    ['Change path "src/fetch.ts" appears more than once.']
+  );
+
+  const modifySource = PLAN.replace(
+    "#### [MODIFY] src/fetch.ts",
+    "#### [MODIFY] src/fetch.ts, src/other.ts"
+  );
+
+  assert.deepEqual(
+    defectsOf(modifySource, "change-heading").map((item) => item.message),
+    [splitMessage("MODIFY", "src/fetch.ts, src/other.ts")]
+  );
+
   const backtickedNew = PLAN.replace(
-    '#### [NEW] tests/fetch.test.ts',
-    '#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`',
-  );
-  assert.deepEqual(
-    defectsOf(backtickedNew, 'change-heading').map((item) => item.message),
-    [splitMessage('NEW', '`tests/fetch.test.ts`, `tests/other.test.ts`')],
-  );
-  const noPathSource = PLAN.replace(
-    '#### [MODIFY] src/fetch.ts',
-    '#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts',
-  );
-  assert.deepEqual(defects(noPathSource), ['change-heading', 'task-behaviour', 'missing-section']);
-  const soleSource = PLAN.replace(
-    /#### \[MODIFY\][\s\S]*?- Inputs: src\/fetch\.ts\n/,
-    '#### [GENERATED] src/fetch.ts, docs/api.md\n- Command: `npm run docs`\n- Inputs: src/fetch.ts\n',
-  );
-  assert.deepEqual(
-    defectsOf(soleSource, 'change-heading').map((item) => item.message),
-    [splitMessage('GENERATED', 'src/fetch.ts, docs/api.md')],
+    "#### [NEW] tests/fetch.test.ts",
+    "#### [NEW] `tests/fetch.test.ts`, `tests/other.test.ts`"
   );
 
-  // Repeated sibling notes hint grouping for deletes and name the file otherwise.
+  assert.deepEqual(
+    defectsOf(backtickedNew, "change-heading").map((item) => item.message),
+    [splitMessage("NEW", "`tests/fetch.test.ts`, `tests/other.test.ts`")]
+  );
+
+  const noPathSource = PLAN.replace(
+    "#### [MODIFY] src/fetch.ts",
+    "#### [MODIFY] src/fetch.ts, tests/fetch.test.ts\n- Changes: bundle the cap and its test.\n#### [MODIFY] src/fetch.ts"
+  );
+
+  assert.deepEqual(defects(noPathSource), [
+    "change-heading",
+    "task-behaviour",
+    "missing-section",
+  ]);
+
+  const soleSource = PLAN.replace(
+    /#### \[MODIFY\][\s\S]*?- Inputs: src\/fetch\.ts\n/u,
+    "#### [GENERATED] src/fetch.ts, docs/api.md\n- Command: `npm run docs`\n- Inputs: src/fetch.ts\n"
+  );
+
+  assert.deepEqual(
+    defectsOf(soleSource, "change-heading").map((item) => item.message),
+    [splitMessage("GENERATED", "src/fetch.ts, docs/api.md")]
+  );
+
   const dupDelete = PLAN.replace(
-    '- Inputs: src/fetch.ts\n',
-    `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`,
+    "- Inputs: src/fetch.ts\n",
+    `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`
   );
+
   assert.deepEqual(
-    defectsOf(dupDelete, 'filler-note').map((item) => item.message),
-    Array(2).fill(
-      'Change note "remove the obsolete retry shims." repeats a sibling note; say what changes in this file; group these [DELETE] paths under one heading.',
-    ),
+    defectsOf(dupDelete, "filler-note").map((item) => item.message),
+    new Array(2).fill(
+      'Change note "remove the obsolete retry shims." repeats a sibling note; say what changes in this file; group these [DELETE] paths under one heading.'
+    )
   );
+
   const sibling = PLAN.replace(
-    '- Inputs: src/fetch.ts\n',
-    '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n',
+    "- Inputs: src/fetch.ts\n",
+    "- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: add a retry counter to fetchWithRetry.\n"
   );
+
   assert.deepEqual(
-    defectsOf(sibling, 'filler-note').map((item) => item.message),
-    Array(2).fill(
-      'Change note "add a retry counter to fetchWithRetry." repeats a sibling note; say what changes in this file.',
-    ),
+    defectsOf(sibling, "filler-note").map((item) => item.message),
+    new Array(2).fill(
+      'Change note "add a retry counter to fetchWithRetry." repeats a sibling note; say what changes in this file.'
+    )
   );
+
   const filler = PLAN.replace(
-    '- Inputs: src/fetch.ts\n',
-    '- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: same\n',
+    "- Inputs: src/fetch.ts\n",
+    "- Inputs: src/fetch.ts\n#### [MODIFY] src/other.ts\n- Changes: same\n"
   );
+
   assert.deepEqual(
-    defectsOf(filler, 'filler-note').map((item) => item.message),
-    ['Change note "same" is filler; say what changes in this file.'],
+    defectsOf(filler, "filler-note").map((item) => item.message),
+    ['Change note "same" is filler; say what changes in this file.']
   );
 });
 
-// SECTION: Cross-task overlap
+const READER_ENTRY =
+  "#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n";
 
-const READER_ENTRY = '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n';
-const WRITER_ENTRY = '#### [MODIFY] src/writer.ts\n- Changes: encode with the contract.\n';
-/** T2 and T3 both require only T1, so a path they share has no Requires path between them. */
-const overlapPlan = (writerPath = 'src/shared.ts', writerHeader = '') =>
-  TASKS.replace(READER_ENTRY, `${READER_ENTRY}#### [MODIFY] src/shared.ts\n- Changes: add the reader lookup table.\n`)
-    .replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] ${writerPath}\n- Changes: add the writer lookup table.\n`)
-    .replace('### T3 — Write through the contract', `### T3 — Write through the contract${writerHeader}`);
+const WRITER_ENTRY =
+  "#### [MODIFY] src/writer.ts\n- Changes: encode with the contract.\n";
+
+const overlapPlan = (writerPath = "src/shared.ts", writerHeader = "") =>
+  TASKS.replace(
+    READER_ENTRY,
+    `${READER_ENTRY}#### [MODIFY] src/shared.ts\n- Changes: add the reader lookup table.\n`
+  )
+    .replace(
+      WRITER_ENTRY,
+      `${WRITER_ENTRY}#### [MODIFY] ${writerPath}\n- Changes: add the writer lookup table.\n`
+    )
+    .replace(
+      "### T3 — Write through the contract",
+      `### T3 — Write through the contract${writerHeader}`
+    );
+
 const okPlan = (source: string) => {
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
+
   return result;
 };
-const overlapCodes = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'overlap');
 
-test('cross-task overlap warns only for unjustified shared writes', () => {
-  // Unjustified overlap warns once and keeps both notes.
+const overlapCodes = (source: string) =>
+  okPlan(source).warnings.filter((item) => item.code === "overlap");
+
+test("cross-task overlap warns only for unjustified shared writes", () => {
   const result = okPlan(overlapPlan());
-  assert.deepEqual(result.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
+  assert.deepEqual(result.plan.warnings, [
+    { kind: "overlap", tasks: ["T2", "T3"], path: "src/shared.ts" },
+  ]);
   assert.equal(overlapCodes(overlapPlan()).length, 1);
   assert.deepEqual(
-    result.plan.changes.filter((change) => change.path === 'src/shared.ts').map((change) => change.note),
-    ['add the reader lookup table.', 'add the writer lookup table.'],
+    result.plan.changes
+      .filter((change) => change.path === "src/shared.ts")
+      .map((change) => change.note),
+    ["add the reader lookup table.", "add the writer lookup table."]
   );
   assert.deepEqual(
-    selectTaskBrief(result.plan, 'T2')?.changes.map((change) => change.note),
-    ['decode with the contract.', 'add the reader lookup table.'],
+    selectTaskBrief(result.plan, "T2")?.changes.map((change) => change.note),
+    ["decode with the contract.", "add the reader lookup table."]
   );
   assert.deepEqual(
-    selectTaskBrief(result.plan, 'T3')?.changes.map((change) => change.note),
-    ['encode with the contract.', 'add the writer lookup table.', ''],
+    selectTaskBrief(result.plan, "T3")?.changes.map((change) => change.note),
+    ["encode with the contract.", "add the writer lookup table.", ""]
   );
-  const alias = okPlan(overlapPlan('src/Shared.ts'));
-  assert.deepEqual(alias.plan.warnings, [{ kind: 'overlap', tasks: ['T2', 'T3'], path: 'src/shared.ts' }]);
-  assert.match(alias.warnings.find((item) => item.code === 'overlap')?.message ?? '', /\(as "src\/Shared\.ts" in T3\)/);
+  const alias = okPlan(overlapPlan("src/Shared.ts"));
+  assert.deepEqual(alias.plan.warnings, [
+    { kind: "overlap", tasks: ["T2", "T3"], path: "src/shared.ts" },
+  ]);
+  assert.match(
+    alias.warnings.find((item) => item.code === "overlap")?.message ?? "",
+    /\(as "src\/Shared\.ts" in T3\)/u
+  );
 
-  // A declared Overlap line justifies the shared path; missing reasons and unowned paths fail.
   const justified = okPlan(
-    overlapPlan('src/shared.ts', '\n- Overlap: `src/shared.ts` — both lookup tables live in one module.'),
+    overlapPlan(
+      "src/shared.ts",
+      "\n- Overlap: `src/shared.ts` — both lookup tables live in one module."
+    )
   );
+
   assert.deepEqual(justified.plan.warnings, []);
   assert.deepEqual(
-    overlapCodes(overlapPlan('src/shared.ts', '\n- Overlap: src/Shared.ts — case variants name one file.')),
-    [],
+    overlapCodes(
+      overlapPlan(
+        "src/shared.ts",
+        "\n- Overlap: src/Shared.ts — case variants name one file."
+      )
+    ),
+    []
   );
   assert.deepEqual(justified.plan.tasks[2]?.overlaps, [
-    { path: 'src/shared.ts', reason: 'both lookup tables live in one module.' },
+    { path: "src/shared.ts", reason: "both lookup tables live in one module." },
   ]);
   assert.equal(
     justified.plan.tasks[2]?.summary,
-    'The writer encodes records with the shared shape and regenerates the docs.',
+    "The writer encodes records with the shared withFields and regenerates the docs."
   );
   assert.ok(
-    defects(overlapPlan('src/shared.ts', '\n- Overlap: src/shared.ts')).includes('task-overlap'),
-    'missing reason',
+    defects(
+      overlapPlan("src/shared.ts", "\n- Overlap: src/shared.ts")
+    ).includes("task-overlap"),
+    "missing reason"
   );
   assert.ok(
-    defects(overlapPlan('src/shared.ts', '\n- Overlap: src/reader.ts — not written here.')).includes('task-overlap'),
-    'unowned path',
+    defects(
+      overlapPlan(
+        "src/shared.ts",
+        "\n- Overlap: src/reader.ts — not written here."
+      )
+    ).includes("task-overlap"),
+    "unowned path"
   );
 
-  // The duplicate-path defect stays within one task and Overlap never excuses a same-task repeat.
   const repeated = TASKS.replace(
     WRITER_ENTRY,
-    `${WRITER_ENTRY}#### [MODIFY] src/writer.ts\n- Changes: also log each encode.\n`,
+    `${WRITER_ENTRY}#### [MODIFY] src/writer.ts\n- Changes: also log each encode.\n`
   );
+
   assert.deepEqual(
-    defectsOf(repeated, 'duplicate-change-path').map((item) => item.message),
-    ['Change path "src/writer.ts" appears more than once.'],
+    defectsOf(repeated, "duplicate-change-path").map((item) => item.message),
+    ['Change path "src/writer.ts" appears more than once.']
   );
+
   const aliased = TASKS.replace(
     WRITER_ENTRY,
-    `${WRITER_ENTRY}#### [MODIFY] src/Writer.ts\n- Changes: also log each encode.\n`,
+    `${WRITER_ENTRY}#### [MODIFY] src/Writer.ts\n- Changes: also log each encode.\n`
   );
-  assert.deepEqual(
-    defectsOf(aliased, 'duplicate-change-path').map((item) => item.message),
-    ['Change path "src/Writer.ts" aliases "src/writer.ts" on case-insensitive filesystems.'],
-  );
-  const excused = repeated.replace(
-    '### T3 — Write through the contract',
-    '### T3 — Write through the contract\n- Overlap: src/writer.ts — same task.',
-  );
-  assert.ok(defects(excused).includes('duplicate-change-path'), 'Overlap does not excuse a same-task repeat');
 
-  // Reference-only paths (prose, comments, criteria lists) never count for overlap.
+  assert.deepEqual(
+    defectsOf(aliased, "duplicate-change-path").map((item) => item.message),
+    [
+      'Change path "src/Writer.ts" aliases "src/writer.ts" on case-insensitive filesystems.',
+    ]
+  );
+
+  const excused = repeated.replace(
+    "### T3 — Write through the contract",
+    "### T3 — Write through the contract\n- Overlap: src/writer.ts — same task."
+  );
+
+  assert.ok(
+    defects(excused).includes("duplicate-change-path"),
+    "Overlap does not excuse a same-task repeat"
+  );
+
   const source = TASKS.replace(
-    '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-    '| T2 | Read through the contract | The reader decodes records that `src/writer.ts` encodes. | T1 | SC2 |',
+    "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+    "| T2 | Read through the contract | The reader decodes records that `src/writer.ts` encodes. | T1 | SC2 |"
   )
     .replace(
       READER_ENTRY,
-      '#### [MODIFY] src/reader.ts\n- Changes: decode with the contract; mirror `src/writer.ts`.\n<!-- #### [MODIFY] src/writer.ts -->\n',
+      "#### [MODIFY] src/reader.ts\n- Changes: decode with the contract; mirror `src/writer.ts`.\n<!-- #### [MODIFY] src/writer.ts -->\n"
     )
     .replace(
-      '  - Integration: spans reader and writer tasks.',
-      '  - Changes: src/reader.ts, src/writer.ts\n  - Integration: spans reader and writer tasks.',
+      "  - Integration: spans reader and writer tasks.",
+      "  - Changes: src/reader.ts, src/writer.ts\n  - Integration: spans reader and writer tasks."
     );
+
   const refResult = okPlan(source);
   assert.deepEqual(refResult.plan.warnings, []);
   assert.deepEqual(
-    refResult.warnings.filter((item) => item.code === 'overlap'),
-    [],
+    refResult.warnings.filter((item) => item.code === "overlap"),
+    []
   );
+
   const directSource = TASKS.replace(
     READER_ENTRY,
-    `${READER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the reader decode hook.\n`,
+    `${READER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the reader decode hook.\n`
   );
+
   assert.deepEqual(okPlan(directSource).plan.warnings, []);
   assert.deepEqual(overlapCodes(directSource), []);
+
   const transitiveSource = TASKS.replace(
-    '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
-    '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T2 | SC3 |',
-  ).replace(WRITER_ENTRY, `${WRITER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the writer encode hook.\n`);
+    "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |",
+    "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T2 | SC3 |"
+  ).replace(
+    WRITER_ENTRY,
+    `${WRITER_ENTRY}#### [MODIFY] src/contract.ts\n- Changes: add the writer encode hook.\n`
+  );
+
   assert.deepEqual(okPlan(transitiveSource).plan.warnings, []);
   assert.deepEqual(overlapCodes(transitiveSource), []);
 });
 
-// SECTION: Seams
+const seamWarnings = (source: string) =>
+  okPlan(source).warnings.filter((item) => item.code === "missing-seams");
 
-const seamWarnings = (source: string) => okPlan(source).warnings.filter((item) => item.code === 'missing-seams');
 const withSeams = (declaration: string) =>
-  PLAN.replace('## Verification Plan\n', `## Verification Plan\n${declaration}`);
-
-test('seam advisory parses declarations, rejecting decoys and empty declarations while permitting explicit none', () => {
-  assert.deepEqual(parsed(PLAN).seams, []);
-  const declared = PLAN.replace(
-    '## Verification Plan\n',
-    '## Verification Plan\n- Seams: `tests/fetch.test.ts`, `node --test --test-name-pattern="a,b" tests/e2e.test.ts`\n',
+  PLAN.replace(
+    "## Verification Plan\n",
+    `## Verification Plan\n${declaration}`
   );
+
+test("seam advisory parses declarations, rejecting decoys and empty declarations while permitting explicit none", () => {
+  assert.deepEqual(parsed(PLAN).seams, []);
+
+  const declared = PLAN.replace(
+    "## Verification Plan\n",
+    '## Verification Plan\n- Seams: `tests/fetch.test.ts`, `node --test --test-name-pattern="a,b" tests/e2e.test.ts`\n'
+  );
+
   assert.deepEqual(parsed(declared).seams, [
-    'tests/fetch.test.ts',
+    "tests/fetch.test.ts",
     'node --test --test-name-pattern="a,b" tests/e2e.test.ts',
   ]);
-  assert.deepEqual(parsed(PLAN.replace('## Verification Plan\n', '## Verification Plan\n- Seams: none\n')).seams, []);
-  for (const source of [PLAN, withSeams('- Seams:\n'), withSeams('- Seams: ``, ,\n')]) {
+  assert.deepEqual(
+    parsed(
+      PLAN.replace(
+        "## Verification Plan\n",
+        "## Verification Plan\n- Seams: none\n"
+      )
+    ).seams,
+    []
+  );
+
+  for (const source of [
+    PLAN,
+    withSeams("- Seams:\n"),
+    withSeams("- Seams: ``, ,\n"),
+  ]) {
     const warnings = seamWarnings(source);
     assert.equal(warnings.length, 1);
-    assert.equal(warnings[0]?.severity, 'warning');
-    assert.equal(warnings[0]?.line, source.split('\n').indexOf('## Verification Plan') + 1);
-    assert.match(warnings[0]?.message ?? '', /Seams:.*none/);
+    assert.equal(warnings[0]?.severity, "warning");
+    assert.equal(
+      warnings[0]?.line,
+      source.split("\n").indexOf("## Verification Plan") + 1
+    );
+    assert.match(warnings[0]?.message ?? "", /Seams:.*none/u);
     assert.deepEqual(parsed(source).seams, []);
   }
-  for (const declaration of ['```text\n- Seams: none\n```\n', '<!--\n- Seams: none\n-->\n', '> - Seams: none\n']) {
+
+  for (const declaration of [
+    "```text\n- Seams: none\n```\n",
+    "<!--\n- Seams: none\n-->\n",
+    "> - Seams: none\n",
+  ]) {
     assert.equal(seamWarnings(withSeams(declaration)).length, 1);
   }
-  assert.equal(seamWarnings(PLAN.replace('### Automated Tests\n', '### Automated Tests\n- Seams: none\n')).length, 1);
+
   assert.equal(
-    seamWarnings(PLAN.replace('## Key Decisions & Context\n', '## Key Decisions & Context\n- Seams: none\n')).length,
-    1,
+    seamWarnings(
+      PLAN.replace(
+        "### Automated Tests\n",
+        "### Automated Tests\n- Seams: none\n"
+      )
+    ).length,
+    1
+  );
+  assert.equal(
+    seamWarnings(
+      PLAN.replace(
+        "## Key Decisions & Context\n",
+        "## Key Decisions & Context\n- Seams: none\n"
+      )
+    ).length,
+    1
   );
 
-  for (const declaration of ['- Seams: none\n', '* seams: NoNe\n', '- Seams: `tests/fetch.test.ts`\n']) {
+  for (const declaration of [
+    "- Seams: none\n",
+    "* seams: NoNe\n",
+    "- Seams: `tests/fetch.test.ts`\n",
+  ]) {
     assert.deepEqual(seamWarnings(withSeams(declaration)), []);
   }
-  assert.deepEqual(parsed(withSeams('- Seams: `tests/fetch.test.ts`\n')).seams, ['tests/fetch.test.ts']);
+
+  assert.deepEqual(
+    parsed(withSeams("- Seams: `tests/fetch.test.ts`\n")).seams,
+    ["tests/fetch.test.ts"]
+  );
 });
 
-test('seam advisory accounts for review-only and verify-backed criteria', () => {
-  const reviewOnly = PLAN.replaceAll(/ {2}- Check:.*\n/g, '').replaceAll(
-    / {2}- Evidence: (red|verify)/g,
-    '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit',
+test("seam advisory accounts for review-only and verify-backed criteria", () => {
+  const reviewOnly = PLAN.replaceAll(/ {2}- Check:.*\n/gu, "").replaceAll(
+    / {2}- Evidence: (?<g2>red|verify)/gu,
+    "  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit"
   );
+
   assert.deepEqual(seamWarnings(reviewOnly), []);
 
-  const laterVerify = PLAN.replace('  - Check: `node --test tests/fetch.test.ts`\n', '').replace(
-    '  - Evidence: red',
-    '  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit',
+  const laterVerify = PLAN.replace(
+    "  - Check: `node --test tests/fetch.test.ts`\n",
+    ""
+  ).replace(
+    "  - Evidence: red",
+    "  - Evidence: review\n  - Review: artifact: src/fetch.ts; scenario: bounded inspection; pass: retry cap is explicit"
   );
+
   assert.equal(seamWarnings(laterVerify).length, 1);
 });
 
-// SECTION: Declared tests and RED command
+const RED_LINE = "  - RED: `node --test {files}`\n";
 
-const RED_LINE = '  - RED: `node --test {files}`\n';
-const NEW_FETCH_TEST = '#### [NEW] tests/fetch.test.ts\n- Purpose: pins the retry cap.';
-const warningsOf = (source: string, code: string) => okPlan(source).warnings.filter((item) => item.code === code);
-const criterionLine = (source: string, heading: string) => source.split('\n').indexOf(heading) + 1;
-const CHECK_LINE = '  - Check: `node --test tests/fetch.test.ts`\n';
-const checkTestsWarnings = (source: string) => warningsOf(source, 'criterion-check-tests');
-const namedDefects = (source: string) => defectsOf(source, 'plan-id-in-test-name');
+const NEW_FETCH_TEST =
+  "#### [NEW] tests/fetch.test.ts\n- Purpose: pins the retry cap.";
+
+const warningsOf = (source: string, code: string) =>
+  okPlan(source).warnings.filter((item) => item.code === code);
+
+const criterionLine = (source: string, heading: string) =>
+  source.split("\n").indexOf(heading) + 1;
+
+const CHECK_LINE = "  - Check: `node --test tests/fetch.test.ts`\n";
+
+const checkTestsWarnings = (source: string) =>
+  warningsOf(source, "criterion-check-tests");
+
+const namedDefects = (source: string) =>
+  defectsOf(source, "plan-id-in-test-name");
+
 const withPattern = (pattern: string) =>
   PLAN.replace(
-    '`node --test tests/fetch.test.ts`',
-    `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``,
+    "`node --test tests/fetch.test.ts`",
+    `\`node --test --test-name-pattern="${pattern}" tests/fetch.test.ts\``
   );
-const withFinding = (id: string) =>
-  PLAN.replace('*No reviews conducted yet.*', `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`);
 
-test('declared test paths, RED commands and check cross-references share one grammar', () => {
-  for (const path of ['test_x.py', 'pkg/x_unit_test.go', 'tests/x.rs', 'tests/test_x_unit.py', 'src/x.unit.test.ts']) {
+const withFinding = (id: string) =>
+  PLAN.replace(
+    "*No reviews conducted yet.*",
+    `### Review r\n#### Round 1 — full\n##### ${id}\n- Resolved.`
+  );
+
+// oxlint-disable-next-line eslint/complexity -- grammar matrix covers paths, commands and cross-references; splitting would scatter the assertions
+test("declared test paths, RED commands and check cross-references share one grammar", () => {
+  for (const path of [
+    "test_x.py",
+    "pkg/x_unit_test.go",
+    "tests/x.rs",
+    "tests/test_x_unit.py",
+    "src/x.unit.test.ts",
+  ]) {
     assert.ok(isTestPath(path), path);
   }
-  for (const path of ['src/testing.ts', 'src/contest.ts']) {
+
+  for (const path of ["src/testing.ts", "src/contest.ts"]) {
     assert.ok(!isTestPath(path), path);
   }
 
-  // Tests parses normalized paths into the criterion and rejects unowned entries.
   assert.deepEqual(
     parsed(PLAN).criteria.map((criterion) => criterion.tests),
-    [['tests/fetch.test.ts'], []],
+    [["tests/fetch.test.ts"], []]
   );
-  const backticked = PLAN.replace(TESTS_LINE, '  - Tests: `./tests/fetch.test.ts`\n');
-  assert.deepEqual(parsed(backticked).criteria[0]?.tests, ['tests/fetch.test.ts']);
-  const outsideSource = PLAN.replace(TESTS_LINE, '  - Tests: tests/fetch.test.ts, tests/other.test.ts\n');
-  const found = defectsOf(outsideSource, 'criterion-tests-path');
+
+  const backticked = PLAN.replace(
+    TESTS_LINE,
+    "  - Tests: `./tests/fetch.test.ts`\n"
+  );
+
+  assert.deepEqual(parsed(backticked).criteria[0]?.tests, [
+    "tests/fetch.test.ts",
+  ]);
+
+  const outsideSource = PLAN.replace(
+    TESTS_LINE,
+    "  - Tests: tests/fetch.test.ts, tests/other.test.ts\n"
+  );
+
+  const found = defectsOf(outsideSource, "criterion-tests-path");
   assert.equal(found.length, 1);
   assert.equal(
     found[0]?.line,
-    outsideSource.split('\n').indexOf('  - Tests: tests/fetch.test.ts, tests/other.test.ts') + 1,
+    outsideSource
+      .split("\n")
+      .indexOf("  - Tests: tests/fetch.test.ts, tests/other.test.ts") + 1
   );
-  assert.match(found[0]?.message ?? '', /tests\/other\.test\.ts/);
-  assert.equal(defectsOf(PLAN.replace(TESTS_LINE, '  - Tests:\n'), 'criterion-tests-path').length, 1, 'empty Tests');
+  assert.match(found[0]?.message ?? "", /tests\/other\.test\.ts/u);
   assert.equal(
-    defectsOf(PLAN.replace(TESTS_LINE, '  - Tests: ../tests/fetch.test.ts\n'), 'criterion-tests-path').length,
+    defectsOf(PLAN.replace(TESTS_LINE, "  - Tests:\n"), "criterion-tests-path")
+      .length,
     1,
-    'unsafe path',
+    "empty Tests"
   );
-  assert.deepEqual(warningsOf(PLAN, 'criterion-red-test-path'), []);
-  const downgradeFound = warningsOf(PLAN.replace(TESTS_LINE, ''), 'criterion-red-test-path');
-  assert.equal(downgradeFound.length, 1);
-  assert.equal(downgradeFound[0]?.severity, 'warning');
-  assert.match(JSON.stringify(downgradeFound[0]), /red evidence downgrades to check/);
-  const named = PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts');
-  const heading = criterionLine(named, '#### [NEW] tests/sc1.test.ts');
-  assert.ok(namedDefects(named).some((item) => item.line === heading));
-  assert.ok(!namedDefects(named.replace('  - Tests: tests/sc1.test.ts\n', '')).some((item) => item.line === heading));
+  assert.equal(
+    defectsOf(
+      PLAN.replace(TESTS_LINE, "  - Tests: ../tests/fetch.test.ts\n"),
+      "criterion-tests-path"
+    ).length,
+    1,
+    "unsafe path"
+  );
+  assert.deepEqual(warningsOf(PLAN, "criterion-red-test-path"), []);
 
-  // RED parses one inline-code command per criterion; a missing RED downgrades.
+  const downgradeFound = warningsOf(
+    PLAN.replace(TESTS_LINE, ""),
+    "criterion-red-test-path"
+  );
+
+  assert.equal(downgradeFound.length, 1);
+  assert.equal(downgradeFound[0]?.severity, "warning");
+  assert.match(
+    JSON.stringify(downgradeFound[0]),
+    /red evidence downgrades to check/u
+  );
+  const named = PLAN.replaceAll("tests/fetch.test.ts", "tests/sc1.test.ts");
+  const heading = criterionLine(named, "#### [NEW] tests/sc1.test.ts");
+  assert.ok(namedDefects(named).some((item) => item.line === heading));
+  assert.ok(
+    !namedDefects(named.replace("  - Tests: tests/sc1.test.ts\n", "")).some(
+      (item) => item.line === heading
+    )
+  );
+
   assert.deepEqual(
     parsed(PLAN).criteria.map((criterion) => criterion.red),
-    ['node --test {files}', null],
+    ["node --test {files}", null]
   );
-  const exception = parsed(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n')).criteria[0];
+
+  const [exception] = parsed(
+    PLAN.replace(RED_LINE, "  - RED exception: behavior-preserving\n")
+  ).criteria;
+
   assert.equal(exception?.red, null);
-  assert.equal(exception?.redException, 'behavior-preserving');
-  const both = parsed(PLAN.replace(RED_LINE, `${RED_LINE}  - RED exception: already-satisfied\n`)).criteria[0];
-  assert.equal(both?.red, 'node --test {files}');
-  assert.equal(both?.redException, 'already-satisfied');
+  assert.equal(exception?.redException, "behavior-preserving");
+
+  const [both] = parsed(
+    PLAN.replace(RED_LINE, `${RED_LINE}  - RED exception: already-satisfied\n`)
+  ).criteria;
+
+  assert.equal(both?.red, "node --test {files}");
+  assert.equal(both?.redException, "already-satisfied");
+
   for (const line of [
-    '  - RED: node --test {files}\n',
-    '  - RED: `node --test` `{files}`\n',
-    '  - RED:\n',
+    "  - RED: node --test {files}\n",
+    "  - RED: `node --test` `{files}`\n",
+    "  - RED:\n",
     `${RED_LINE}${RED_LINE}`,
   ]) {
     const redSource = PLAN.replace(RED_LINE, line);
-    assert.equal(defectsOf(redSource, 'criterion-red-command').length, 1, line);
+    assert.equal(defectsOf(redSource, "criterion-red-command").length, 1, line);
   }
+
   assert.equal(
-    namedDefects(PLAN.replace(RED_LINE, '  - RED: `node --test --test-name-pattern="sc1" {files}`\n')).length,
-    1,
+    namedDefects(
+      PLAN.replace(
+        RED_LINE,
+        '  - RED: `node --test --test-name-pattern="sc1" {files}`\n'
+      )
+    ).length,
+    1
   );
-  const downgradeSource = PLAN.replace(RED_LINE, '');
-  const redFound = warningsOf(downgradeSource, 'red-downgraded');
+  const downgradeSource = PLAN.replace(RED_LINE, "");
+  const redFound = warningsOf(downgradeSource, "red-downgraded");
   assert.equal(redFound.length, 1);
-  assert.equal(redFound[0]?.severity, 'warning');
-  assert.equal(redFound[0]?.line, criterionLine(downgradeSource, '- [SC1] Fetch stops after three attempts'));
-  assert.match(redFound[0]?.message ?? '', /SC1/);
-  assert.deepEqual(warningsOf(PLAN, 'red-downgraded'), []);
+  assert.equal(redFound[0]?.severity, "warning");
+  assert.equal(
+    redFound[0]?.line,
+    criterionLine(downgradeSource, "- [SC1] Fetch stops after three attempts")
+  );
+  assert.match(redFound[0]?.message ?? "", /SC1/u);
+  assert.deepEqual(warningsOf(PLAN, "red-downgraded"), []);
   assert.deepEqual(
-    warningsOf(PLAN.replace(RED_LINE, '  - RED exception: behavior-preserving\n'), 'red-downgraded'),
-    [],
+    warningsOf(
+      PLAN.replace(RED_LINE, "  - RED exception: behavior-preserving\n"),
+      "red-downgraded"
+    ),
+    []
   );
 
-  // A test-like Changes path outside every Tests warns; support files stay exempt.
-  assert.deepEqual(warningsOf(PLAN, 'undeclared-test-path'), []);
-  const undeclaredSource = PLAN.replace(TESTS_LINE, '');
-  const undeclared = warningsOf(undeclaredSource, 'undeclared-test-path');
+  assert.deepEqual(warningsOf(PLAN, "undeclared-test-path"), []);
+  const undeclaredSource = PLAN.replace(TESTS_LINE, "");
+  const undeclared = warningsOf(undeclaredSource, "undeclared-test-path");
   assert.equal(undeclared.length, 1);
-  assert.equal(undeclared[0]?.severity, 'warning');
-  assert.match(undeclared[0]?.message ?? '', /tests\/fetch\.test\.ts/);
-  const support = ['tests/fixtures/fetch.ts', 'tests/helpers/fetch.ts', 'tests/mocks/fetch.ts'];
+  assert.equal(undeclared[0]?.severity, "warning");
+  assert.match(undeclared[0]?.message ?? "", /tests\/fetch\.test\.ts/u);
+
+  const support = [
+    "tests/fixtures/fetch.ts",
+    "tests/helpers/fetch.ts",
+    "tests/mocks/fetch.ts",
+  ];
+
   const exemptSource = PLAN.replace(
     NEW_FETCH_TEST,
-    `${NEW_FETCH_TEST}\n${support.map((path) => `#### [NEW] ${path}\n- Purpose: adds the shared retry ${path.split('/')[1]} module.`).join('\n')}`,
+    `${NEW_FETCH_TEST}\n${support.map((path) => `#### [NEW] ${path}\n- Purpose: adds the shared retry ${path.split("/")[1]} module.`).join("\n")}`
   ).replace(
-    '  - Changes: src/fetch.ts, tests/fetch.test.ts\n',
-    `  - Changes: src/fetch.ts, tests/fetch.test.ts, ${support.join(', ')}\n`,
+    "  - Changes: src/fetch.ts, tests/fetch.test.ts\n",
+    `  - Changes: src/fetch.ts, tests/fetch.test.ts, ${support.join(", ")}\n`
   );
-  assert.deepEqual(warningsOf(exemptSource, 'undeclared-test-path'), []);
 
-  // Check warns only when it names a test file that no Tests path lists.
-  const checkSource = PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/other.test.ts`\n');
+  assert.deepEqual(warningsOf(exemptSource, "undeclared-test-path"), []);
+
+  const checkSource = PLAN.replace(
+    CHECK_LINE,
+    "  - Check: `node --test tests/other.test.ts`\n"
+  );
+
   const checkFound = checkTestsWarnings(checkSource);
   assert.equal(checkFound.length, 1);
-  assert.equal(checkFound[0]?.severity, 'warning');
-  assert.equal(checkFound[0]?.line, criterionLine(checkSource, '  - Check: `node --test tests/other.test.ts`'));
-  assert.match(checkFound[0]?.message ?? '', /tests\/fetch\.test\.ts/);
-  assert.deepEqual(
-    checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `npm test`\n')),
-    [],
-    'aggregate Check without test paths',
+  assert.equal(checkFound[0]?.severity, "warning");
+  assert.equal(
+    checkFound[0]?.line,
+    criterionLine(checkSource, "  - Check: `node --test tests/other.test.ts`")
   );
-  const supportOnly = PLAN.replace(TESTS_LINE, '  - Tests: tests/helpers/fetch.ts\n')
+  assert.match(checkFound[0]?.message ?? "", /tests\/fetch\.test\.ts/u);
+  assert.deepEqual(
+    checkTestsWarnings(PLAN.replace(CHECK_LINE, "  - Check: `npm test`\n")),
+    [],
+    "aggregate Check without test paths"
+  );
+
+  const supportOnly = PLAN.replace(
+    TESTS_LINE,
+    "  - Tests: tests/helpers/fetch.ts\n"
+  )
     .replace(
-      '  - Changes: src/fetch.ts, tests/fetch.test.ts\n',
-      '  - Changes: src/fetch.ts, tests/fetch.test.ts, tests/helpers/fetch.ts\n',
+      "  - Changes: src/fetch.ts, tests/fetch.test.ts\n",
+      "  - Changes: src/fetch.ts, tests/fetch.test.ts, tests/helpers/fetch.ts\n"
     )
     .replace(
       NEW_FETCH_TEST,
-      `${NEW_FETCH_TEST}\n#### [NEW] tests/helpers/fetch.ts\n- Purpose: shares the retry fixture.`,
+      `${NEW_FETCH_TEST}\n#### [NEW] tests/helpers/fetch.ts\n- Purpose: shares the retry fixture.`
     );
-  assert.deepEqual(checkTestsWarnings(supportOnly), [], 'support-only Tests');
+
+  assert.deepEqual(checkTestsWarnings(supportOnly), [], "support-only Tests");
   assert.deepEqual(
-    checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test "./tests/fetch.test.ts"`\n')),
+    checkTestsWarnings(
+      PLAN.replace(
+        CHECK_LINE,
+        '  - Check: `node --test "./tests/fetch.test.ts"`\n'
+      )
+    ),
     [],
-    './-prefixed Check path',
+    "./-prefixed Check path"
   );
-  const spaced = 'tests/fetch case.test.ts';
-  const spacedSource = PLAN.replace('#### [NEW] tests/fetch.test.ts', `#### [NEW] \`${spaced}\``)
-    .replace('  - Changes: src/fetch.ts, tests/fetch.test.ts', `  - Changes: src/fetch.ts, \`${spaced}\``)
+  const spaced = "tests/fetch case.test.ts";
+
+  const spacedSource = PLAN.replace(
+    "#### [NEW] tests/fetch.test.ts",
+    `#### [NEW] \`${spaced}\``
+  )
+    .replace(
+      "  - Changes: src/fetch.ts, tests/fetch.test.ts",
+      `  - Changes: src/fetch.ts, \`${spaced}\``
+    )
     .replace(TESTS_LINE, `  - Tests: \`${spaced}\`\n`)
     .replace(CHECK_LINE, `  - Check: \`node --test "${spaced}"\`\n`);
-  assert.deepEqual(checkTestsWarnings(spacedSource), [], 'quoted Tests path with a space');
+
   assert.deepEqual(
-    checkTestsWarnings(PLAN.replace(CHECK_LINE, `  - Check: \`node --test tests/other.test.ts\`\n${CHECK_LINE}`)),
+    checkTestsWarnings(spacedSource),
     [],
-    'Tests file named in a second Check',
+    "quoted Tests path with a space"
   );
   assert.deepEqual(
-    checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests/`\n')),
+    checkTestsWarnings(
+      PLAN.replace(
+        CHECK_LINE,
+        `  - Check: \`node --test tests/other.test.ts\`\n${CHECK_LINE}`
+      )
+    ),
     [],
-    'Check directory with trailing slash',
+    "Tests file named in a second Check"
   );
   assert.deepEqual(
-    checkTestsWarnings(PLAN.replace(CHECK_LINE, '  - Check: `node --test tests`\n')),
+    checkTestsWarnings(
+      PLAN.replace(CHECK_LINE, "  - Check: `node --test tests/`\n")
+    ),
     [],
-    'Check directory without trailing slash',
+    "Check directory with trailing slash"
+  );
+  assert.deepEqual(
+    checkTestsWarnings(
+      PLAN.replace(CHECK_LINE, "  - Check: `node --test tests`\n")
+    ),
+    [],
+    "Check directory without trailing slash"
   );
 });
 
-test('plan IDs stay out of test selectors and files while criteria and findings register', () => {
-  const verifyFound = namedDefects(withPattern('sc1 caps'));
+test("plan IDs stay out of test selectors and files while criteria and findings register", () => {
+  const verifyFound = namedDefects(withPattern("sc1 caps"));
   assert.equal(verifyFound.length, 1);
-  assert.match(verifyFound[0]?.message ?? '', /names plan ID SC1; name the behavior instead\.$/);
+  assert.match(
+    verifyFound[0]?.message ?? "",
+    /names plan ID SC1; name the behavior instead\.$/u
+  );
 
-  const fileFound = namedDefects(PLAN.replaceAll('tests/fetch.test.ts', 'tests/sc1.test.ts'));
+  const fileFound = namedDefects(
+    PLAN.replaceAll("tests/fetch.test.ts", "tests/sc1.test.ts")
+  );
+
   assert.ok(
-    fileFound.some((item) => item.line === PLAN.split('\n').indexOf('#### [NEW] tests/fetch.test.ts') + 1),
-    JSON.stringify(fileFound),
+    fileFound.some(
+      (item) =>
+        item.line ===
+        PLAN.split("\n").indexOf("#### [NEW] tests/fetch.test.ts") + 1
+    ),
+    JSON.stringify(fileFound)
   );
 
   assert.equal(
     namedDefects(
-      withFinding('R1-F001').replace(
-        '`node --test tests/fetch.test.ts`',
-        '`node --test --test-name-pattern="R1-F001" tests/fetch.test.ts`',
-      ),
+      withFinding("R1-F001").replace(
+        "`node --test tests/fetch.test.ts`",
+        '`node --test --test-name-pattern="R1-F001" tests/fetch.test.ts`'
+      )
     ).length,
-    1,
+    1
   );
 
-  for (const name of ['SC10', 'ESC1', 'R1-F001']) {
+  for (const name of ["SC10", "ESC1", "R1-F001"]) {
     assert.deepEqual(namedDefects(withPattern(name)), [], name);
   }
 
-  assert.deepEqual(parsed(withFinding('R2-F003')).planIds, ['R2-F003', 'SC1', 'SC2']);
+  assert.deepEqual(parsed(withFinding("R2-F003")).planIds, [
+    "R2-F003",
+    "SC1",
+    "SC2",
+  ]);
 });
 
-const orderDefects = (source: string) => parsePlan(source).warnings.filter((item) => item.code === 'section-order');
+const orderDefects = (source: string) =>
+  parsePlan(source).warnings.filter((item) => item.code === "section-order");
 
-// SECTION: Section order and Task Map
+test("plan-section-order: old order fails and new order with absent optional sections passes", () => {
+  const criteria = PLAN.slice(
+    PLAN.indexOf("## Success Criteria"),
+    PLAN.indexOf("## Verification Plan")
+  );
 
-test('plan-section-order: old order fails and new order with absent optional sections passes', () => {
-  const criteria = PLAN.slice(PLAN.indexOf('## Success Criteria'), PLAN.indexOf('## Verification Plan'));
-  const criteriaFirst = PLAN.replace(criteria, '').replace('## Proposed Changes', `${criteria}## Proposed Changes`);
+  const criteriaFirst = PLAN.replace(criteria, "").replace(
+    "## Proposed Changes",
+    `${criteria}## Proposed Changes`
+  );
+
   const oldOrder = PLAN.replace(
-    '## Key Decisions & Context\n',
-    '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n',
+    "## Key Decisions & Context\n",
+    "## Background\n- Retries loop today.\n\n## Key Decisions & Context\n"
   )
     .replace(
-      '## Technical-Design Traceability\n',
-      '## Background\n- Current behavior.\n\n## Technical-Design Traceability\n',
+      "## Technical-Design Traceability\n",
+      "## Background\n- Current behavior.\n\n## Technical-Design Traceability\n"
     )
-    .replace('## Review Findings', '## Out of Scope\n- Backoff.\n\n## Review Findings');
+    .replace(
+      "## Review Findings",
+      "## Out of Scope\n- Backoff.\n\n## Review Findings"
+    );
 
   assert.deepEqual(
     orderDefects(criteriaFirst).map((item) => item.line),
-    [criteriaFirst.split('\n').indexOf('## Proposed Changes') + 1],
+    [criteriaFirst.split("\n").indexOf("## Proposed Changes") + 1]
   );
   assert.deepEqual(
     orderDefects(oldOrder).map((item) => item.line),
-    ['## Background', '## Out of Scope'].map((heading) => oldOrder.split('\n').lastIndexOf(heading) + 1),
+    ["## Background", "## Out of Scope"].map(
+      (heading) => oldOrder.split("\n").lastIndexOf(heading) + 1
+    )
   );
-  assert.match(orderDefects(oldOrder)[0]!.message, /Move "## Background" before "## Task Map"/);
+  assert.match(
+    defined(orderDefects(oldOrder)[0]).message,
+    /Move "## Background" before "## Task Map"/u
+  );
+
   const full = PLAN.replace(
-    '## Key Decisions & Context\n',
-    '## Background\n- Retries loop today.\n\n## Key Decisions & Context\n',
+    "## Key Decisions & Context\n",
+    "## Background\n- Retries loop today.\n\n## Key Decisions & Context\n"
   )
     .replace(
-      '## Task Map\n',
-      '## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Task Map\n',
+      "## Task Map\n",
+      "## Open Questions & Assumptions\n- None.\n\n## Out of Scope\n- Backoff.\n\n## Task Map\n"
     )
-    .replace('## Review Findings', '## Rollback & Blast Radius\n- Revert the helper.\n\n## Review Findings');
+    .replace(
+      "## Review Findings",
+      "## Rollback & Blast Radius\n- Revert the helper.\n\n## Review Findings"
+    );
+
   parsed(full);
   parsed(PLAN);
 });
 
-test('authored Task Map owns task metadata, hash input, and shared writer context', () => {
+test("authored Task Map owns task metadata, hash input, and shared writer context", () => {
   const source = PLAN.replace(
-    '| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |',
-    '| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |',
+    "| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |",
+    "| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |"
   )
-    .replace('### T1 — Cap fetch retries', '### T1 — Cap | fetch retries')
-    .replace('### T1 — Cap | fetch retries', '### T1 — Cap | fetch retries\n- Constraints: Keep the public API.');
+    .replace("### T1 — Cap fetch retries", "### T1 — Cap | fetch retries")
+    .replace(
+      "### T1 — Cap | fetch retries",
+      "### T1 — Cap | fetch retries\n- Constraints: Keep the public API."
+    );
+
   const result = parsePlan(source);
   assert.ok(result.ok, JSON.stringify(result));
-  const task = result.plan.tasks[0]!;
-  assert.equal(task.title, 'Cap | fetch retries');
-  assert.equal(task.summary, 'Stop `fetch|retry` after three attempts');
-  assert.deepEqual(task.constraints, ['Keep the public API.']);
+  const task = defined(result.plan.tasks[0]);
+  assert.equal(task.title, "Cap | fetch retries");
+  assert.equal(task.summary, "Stop `fetch|retry` after three attempts");
+  assert.deepEqual(task.constraints, ["Keep the public API."]);
   assert.deepEqual(task.prerequisites, []);
-  assert.deepEqual(task.criteria, ['SC1', 'SC2']);
+  assert.deepEqual(task.criteria, ["SC1", "SC2"]);
   assert.ok(
     result.plan.sharedContext.includes(
-      '| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |',
-    ),
+      "| T1 | Cap \\| fetch retries | Stop `fetch\\|retry` after three attempts | none | SC1, SC2 |"
+    )
   );
-  assert.ok(result.plan.governedText.includes('## Task Map'));
-  assert.notEqual(governedPlanText(source), governedPlanText(source.replace('SC1, SC2', 'SC2, SC1')));
+  assert.ok(result.plan.governedText.includes("## Task Map"));
+  assert.notEqual(
+    governedPlanText(source),
+    governedPlanText(source.replace("SC1, SC2", "SC2, SC1"))
+  );
   assert.equal(
     governedPlanText(source),
-    governedPlanText(source.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')),
+    governedPlanText(
+      source.replace("*No reviews conducted yet.*", "### Review r\n- Resolved.")
+    )
   );
   const overlapPlanSource = overlapPlan();
   const overlapPlanObj = parsed(overlapPlanSource);
-  assert.ok(overlapPlanObj.sharedContext.includes('| ID | Title | Outcome | Prerequisites | Criteria |'));
   assert.ok(
     overlapPlanObj.sharedContext.includes(
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-    ),
+      "| ID | Title | Outcome | Prerequisites | Criteria |"
+    )
   );
-  assert.ok(!overlapPlanObj.sharedContext.includes('## Proposed Changes'));
   assert.ok(
-    !overlapPlanObj.sharedContext.includes('Preserve unknown fields.'),
-    'task constraints stay outside the shared map',
+    overlapPlanObj.sharedContext.includes(
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |"
+    )
   );
+  assert.ok(!overlapPlanObj.sharedContext.includes("## Proposed Changes"));
+  assert.ok(
+    !overlapPlanObj.sharedContext.includes("Preserve unknown fields."),
+    "task constraints stay outside the shared map"
+  );
+
   const edited = overlapPlanSource.replace(
-    '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |',
-    '| T1 | Define the shared contract | Consumers share one exported shape without drift. | none | SC1 |',
+    "| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | none | SC1 |",
+    "| T1 | Define the shared contract | Consumers share one exported withFields without drift. | none | SC1 |"
   );
-  assert.notEqual(governedPlanText(edited), governedPlanText(overlapPlanSource));
+
+  assert.notEqual(
+    governedPlanText(edited),
+    governedPlanText(overlapPlanSource)
+  );
   assert.notEqual(parsed(edited).sharedContext, overlapPlanObj.sharedContext);
   assert.equal(
     governedPlanText(overlapPlanSource),
-    governedPlanText(overlapPlanSource.replace('*No reviews conducted yet.*', '### Review r\n- Resolved.')),
+    governedPlanText(
+      overlapPlanSource.replace(
+        "*No reviews conducted yet.*",
+        "### Review r\n- Resolved."
+      )
+    )
   );
 });
 
-test('Task Map pipes inside inline code follow GFM escaping', () => {
+test("Task Map pipes inside inline code follow GFM escaping", () => {
   const escaped = TASKS.replace(
-    'The reader decodes records with the shared shape.',
-    'The reader decodes `records\\|shape` with the shared shape.',
+    "The reader decodes records with the shared withFields.",
+    "The reader decodes `records\\|withFields` with the shared withFields."
   );
+
   const result = parsePlan(escaped);
   assert.ok(result.ok, JSON.stringify(result));
   assert.equal(
-    result.plan.tasks.find(({ id }) => id === 'T2')?.summary,
-    'The reader decodes `records|shape` with the shared shape.',
+    result.plan.tasks.find(({ id }) => id === "T2")?.summary,
+    "The reader decodes `records|withFields` with the shared withFields."
   );
 
   const unescaped = TASKS.replace(
-    'The reader decodes records with the shared shape.',
-    'The reader decodes `records|shape` with the shared shape.',
+    "The reader decodes records with the shared withFields.",
+    "The reader decodes `records|withFields` with the shared withFields."
   );
+
   const malformed = parsePlan(unescaped);
   assert.ok(
     !malformed.ok &&
-      malformed.defects.some((item) => item.code === 'task-map' && item.message.includes('exactly five cells')),
-    JSON.stringify(malformed),
+      malformed.defects.some(
+        (item) =>
+          item.code === "task-map" &&
+          item.message.includes("exactly five cells")
+      ),
+    JSON.stringify(malformed)
   );
 });
 
-test('Task Map rows join by ID and keep file selection tied to H3 source lines', () => {
+test("Task Map rows join by ID and keep file selection tied to H3 source lines", () => {
   const source = TASKS.replace(
-    '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |\n| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |\n| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
+    "| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | none | SC1 |\n| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |\n| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |",
     [
-      '| T3 | Write through the contract | The writer encodes records with the shared shape and regenerates the docs. | T1 | SC3 |',
-      '| T1 | Define the shared contract | Consumers share one exported shape so they cannot drift. | none | SC1 |',
-      '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |',
-    ].join('\n'),
+      "| T3 | Write through the contract | The writer encodes records with the shared withFields and regenerates the docs. | T1 | SC3 |",
+      "| T1 | Define the shared contract | Consumers share one exported withFields so they cannot drift. | none | SC1 |",
+      "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
+    ].join("\n")
   ).replace(
-    '### T1 — Define the shared contract',
-    '### T1 — Define the shared contract\n- Constraints: Keep the exported name stable.',
+    "### T1 — Define the shared contract",
+    "### T1 — Define the shared contract\n- Constraints: Keep the exported name stable."
   );
+
   const plan = parsed(source);
   assert.deepEqual(
     plan.tasks.map(({ id }) => id),
-    ['T3', 'T1', 'T2'],
+    ["T3", "T1", "T2"]
   );
   assert.equal(
-    plan.tasks.find(({ id }) => id === 'T2')?.line,
-    source.split('\n').indexOf('### T2 — Read through the contract') + 1,
+    plan.tasks.find(({ id }) => id === "T2")?.line,
+    source.split("\n").indexOf("### T2 — Read through the contract") + 1
   );
   assert.deepEqual(
-    selectTaskBrief(plan, 'T2')?.changes.map(({ path }) => path),
-    ['src/reader.ts'],
+    selectTaskBrief(plan, "T2")?.changes.map(({ path }) => path),
+    ["src/reader.ts"]
   );
   assert.equal(
-    taskMapRows(plan).find(({ id }) => id === 'T2')?.outcome,
-    'Read through the contract — The reader decodes records with the shared shape.',
+    taskMapRows(plan).find(({ id }) => id === "T2")?.outcome,
+    "Read through the contract — The reader decodes records with the shared withFields."
   );
-  assert.deepEqual(plan.tasks.find(({ id }) => id === 'T2')?.constraints, ['Preserve unknown fields.']);
+  assert.deepEqual(plan.tasks.find(({ id }) => id === "T2")?.constraints, [
+    "Preserve unknown fields.",
+  ]);
   const overlapPlanObj = parsed(overlapPlan());
   assert.deepEqual(
-    taskMapRows(overlapPlanObj).map(({ id, prerequisites, criteria, paths }) => ({
+    taskMapRows(overlapPlanObj).map(
+      ({ id, prerequisites, criteria, paths }) => ({
+        id,
+        prerequisites,
+        criteria,
+        paths,
+      })
+    ),
+    overlapPlanObj.tasks.map(({ id, prerequisites, criteria, paths }) => ({
       id,
       prerequisites,
       criteria,
       paths,
-    })),
-    overlapPlanObj.tasks.map(({ id, prerequisites, criteria, paths }) => ({ id, prerequisites, criteria, paths })),
+    }))
   );
   assert.deepEqual(
     taskMapRows(overlapPlanObj).map((row) => row.overlap),
-    [[], [{ path: 'src/shared.ts', tasks: ['T3'] }], [{ path: 'src/shared.ts', tasks: ['T2'] }]],
+    [
+      [],
+      [{ path: "src/shared.ts", tasks: ["T3"] }],
+      [{ path: "src/shared.ts", tasks: ["T2"] }],
+    ]
   );
   assert.equal(
     taskMapRows(overlapPlanObj)[1]?.outcome,
-    'Read through the contract — The reader decodes records with the shared shape.',
+    "Read through the contract — The reader decodes records with the shared withFields."
   );
   assert.equal(
     taskMapRows(overlapPlanObj)[0]?.outcome,
-    'Define the shared contract — Consumers share one exported shape so they cannot drift.',
+    "Define the shared contract — Consumers share one exported withFields so they cannot drift."
   );
 });
 
-test('task-map rejects missing, duplicate, orphan, mismatched, and repeated metadata', () => {
+test("task-map rejects missing, duplicate, orphan, mismatched, and repeated metadata", () => {
   const row =
-    '| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |';
-  const missing = PLAN.replace(`${row}\n`, '');
-  assert.ok(defects(missing).includes('task-map'), 'missing task row');
+    "| T1 | Cap fetch retries | Fetch stops retrying after three attempts so callers fail fast. | none | SC1, SC2 |";
+
+  const missing = PLAN.replace(`${row}\n`, "");
+  assert.ok(defects(missing).includes("task-map"), "missing task row");
   assert.ok(
-    defects(PLAN.replace('## Task Map\n', '## Task Map\n\n## Task Map\n')).includes('task-map'),
-    'duplicate Task Map section',
+    defects(
+      PLAN.replace("## Task Map\n", "## Task Map\n\n## Task Map\n")
+    ).includes("task-map"),
+    "duplicate Task Map section"
   );
   assert.ok(
-    defects(PLAN.replace(row, `${row}\n| T9 | Extra | Extra work. | none | SC1 |`)).includes('task-map'),
-    'orphan row',
+    defects(
+      PLAN.replace(row, `${row}\n| T9 | Extra | Extra work. | none | SC1 |`)
+    ).includes("task-map"),
+    "orphan row"
   );
-  const mismatch = PLAN.replace(row, row.replace('Cap fetch retries', 'Other title'));
-  assert.ok(defects(mismatch).includes('task-map'), 'title mismatch');
-  const wrongWidth = PLAN.replace(row, '| T1 | Cap fetch retries | outcome | none |');
+
+  const mismatch = PLAN.replace(
+    row,
+    row.replace("Cap fetch retries", "Other title")
+  );
+
+  assert.ok(defects(mismatch).includes("task-map"), "title mismatch");
+
+  const wrongWidth = PLAN.replace(
+    row,
+    "| T1 | Cap fetch retries | outcome | none |"
+  );
+
   const wrongWidthResult = parsePlan(wrongWidth);
   assert.ok(
     !wrongWidthResult.ok &&
       wrongWidthResult.defects.some(
         (item) =>
-          item.code === 'task-map' &&
-          item.line === wrongWidth.split('\n').indexOf('| T1 | Cap fetch retries | outcome | none |') + 1,
+          item.code === "task-map" &&
+          item.line ===
+            wrongWidth
+              .split("\n")
+              .indexOf("| T1 | Cap fetch retries | outcome | none |") +
+              1
       ),
-    'malformed row has source line',
+    "malformed row has source line"
   );
   assert.ok(
-    defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n- Criteria: SC1')).includes(
-      'task-map',
-    ),
-    'task metadata stays in the map',
+    defects(
+      PLAN.replace(
+        "### T1 — Cap fetch retries",
+        "### T1 — Cap fetch retries\n- Criteria: SC1"
+      )
+    ).includes("task-map"),
+    "task metadata stays in the map"
   );
   assert.ok(
-    defects(PLAN.replace(row, `${row}\n| T1 | Duplicate | Duplicate row. | none | SC1 |`)).includes('duplicate-id'),
-    'duplicate map ID',
+    defects(
+      PLAN.replace(
+        row,
+        `${row}\n| T1 | Duplicate | Duplicate row. | none | SC1 |`
+      )
+    ).includes("duplicate-id"),
+    "duplicate map ID"
   );
 });
 
-test('unmapped task sections keep graph diagnostics on the Task Map', () => {
-  const row = '| T2 | Read through the contract | The reader decodes records with the shared shape. | T1 | SC2 |';
-  const source = TASKS.replace(row + '\n', '');
+test("unmapped task sections keep graph diagnostics on the Task Map", () => {
+  const row =
+    "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |";
+
+  const source = TASKS.replace(`${row}\n`, "");
   const result = parsePlan(source);
   assert.ok(!result.ok, JSON.stringify(result));
   assert.deepEqual(
-    result.defects.filter(({ message }) => message.startsWith('Task T2')).map(({ code }) => code),
-    ['task-map'],
+    result.defects
+      .filter(({ message }) => message.startsWith("Task T2"))
+      .map(({ code }) => code),
+    ["task-map"]
   );
   assert.ok(
     result.defects.some(
-      ({ code, message }) => code === 'task-criteria' && message.includes('SC2') && message.includes('Task Map row'),
-    ),
+      ({ code, message }) =>
+        code === "task-criteria" &&
+        message.includes("SC2") &&
+        message.includes("Task Map row")
+    )
   );
 
   const withoutChanges = parsePlan(
-    source.replace('#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n', ''),
+    source.replace(
+      "#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n",
+      ""
+    )
   );
+
   assert.ok(
     !withoutChanges.ok &&
       withoutChanges.defects.some(
-        ({ code, message }) => code === 'task-ownership' && message === 'Task T2 owns no file change.',
-      ),
+        ({ code, message }) =>
+          code === "task-ownership" &&
+          message === "Task T2 owns no file change."
+      )
   );
+
   const duplicateSection = parsePlan(
-    TASKS.replace('### T3 — Write through the contract', '### T2 — Write through the contract'),
+    TASKS.replace(
+      "### T3 — Write through the contract",
+      "### T2 — Write through the contract"
+    )
   );
-  assert.ok(!duplicateSection.ok && duplicateSection.defects.some(({ code }) => code === 'duplicate-id'));
+
+  assert.ok(
+    !duplicateSection.ok &&
+      duplicateSection.defects.some(({ code }) => code === "duplicate-id")
+  );
 });
 
-test('plan summary: Parent rejects invalid pins (user request, unsuffixed)', () => {
+test("plan summary: Parent rejects invalid pins (user request, unsuffixed)", () => {
   assert.ok(parsePlan(PLAN).ok);
-  assert.ok(parsePlan(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, '`governing.design.md` · I01')).ok);
+  assert.ok(
+    parsePlan(
+      PLAN.replace(
+        /`governing.spec.md` · sha256:a{64}/u,
+        "`governing.design.md` · I01"
+      )
+    ).ok
+  );
+
   for (const parent of [
-    'user request',
-    '`notes.txt` · sha256:' + 'a'.repeat(64),
-    'governing.spec.md · sha256:' + 'a'.repeat(64),
+    "user request",
+    `\`notes.txt\` · sha256:${"a".repeat(64)}`,
+    `governing.spec.md · sha256:${"a".repeat(64)}`,
   ]) {
-    assert.ok(defects(PLAN.replace(/`governing.spec.md` · sha256:a{64}/, parent)).includes('summary-label'), parent);
+    assert.ok(
+      defects(
+        PLAN.replace(/`governing.spec.md` · sha256:a{64}/u, parent)
+      ).includes("summary-label"),
+      parent
+    );
   }
 });
 
-test('plan criterion satisfies ids parse with one diagnostic per missing criterion', () => {
-  const plan = parsed(PLAN.replace('Satisfies: REQ-1', 'Satisfies: REQ-1, REQ-2'));
-  assert.deepEqual(plan.criteria[0]?.satisfies, ['REQ-1', 'REQ-2']);
+test("plan criterion satisfies ids parse with one diagnostic per missing criterion", () => {
+  const plan = parsed(
+    PLAN.replace("Satisfies: REQ-1", "Satisfies: REQ-1, REQ-2")
+  );
+
+  assert.deepEqual(plan.criteria[0]?.satisfies, ["REQ-1", "REQ-2"]);
+
   for (const value of [
-    '',
-    '  - Satisfies: \n',
-    '  - Satisfies: REQ-1, DEC-1\n',
-    '  - Satisfies:\n',
-    '  - Satisfies: REQ-x\n',
-    '  - Satisfies: REQ-x\n  - Satisfies: wrong\n',
+    "",
+    "  - Satisfies: \n",
+    "  - Satisfies: REQ-1, DEC-1\n",
+    "  - Satisfies:\n",
+    "  - Satisfies: REQ-x\n",
+    "  - Satisfies: REQ-x\n  - Satisfies: wrong\n",
   ]) {
-    const source = PLAN.replace('  - Satisfies: REQ-1\n', value);
-    assert.equal(defectsOf(source, 'missing-satisfies').length, 1, value);
-    assert.ok(defects(source).includes('missing-satisfies'), value);
+    const source = PLAN.replace("  - Satisfies: REQ-1\n", value);
+    assert.equal(defectsOf(source, "missing-satisfies").length, 1, value);
+    assert.ok(defects(source).includes("missing-satisfies"), value);
   }
 });
 
 const collapsed = (source: string) =>
   source
     .replace(
-      '### T1 — Cap fetch retries',
-      '### T1 — Cap fetch retries\n<details>\n<summary>Retry implementation</summary>\n',
+      "### T1 — Cap fetch retries",
+      "### T1 — Cap fetch retries\n<details>\n<summary>Retry implementation</summary>\n"
     )
-    .replace('## Success Criteria', '</details>\n\n## Success Criteria')
-    .replaceAll(/(- \[SC\d+\][^\n]*\n)/g, '$1  <details>\n  <summary>Checks</summary>\n\n')
-    .replace('- [SC2]', '  </details>\n\n- [SC2]')
-    .replace('## Verification Plan', '  </details>\n\n## Verification Plan');
+    .replace("## Success Criteria", "</details>\n\n## Success Criteria")
+    .replaceAll(
+      /(?<g3>- \[SC\d+\][^\n]*\n)/gu,
+      "$1  <details>\n  <summary>Checks</summary>\n\n"
+    )
+    .replace("- [SC2]", "  </details>\n\n- [SC2]")
+    .replace("## Verification Plan", "  </details>\n\n## Verification Plan");
 
 const stripLines = (value: unknown) =>
   parseJson(
-    JSON.stringify(value, (key, item: unknown) => (key === 'line' ? undefined : item)),
-    jsonValue,
+    JSON.stringify(value, (key, item: unknown) =>
+      key === "line" ? undefined : item
+    ),
+    jsonValue
   );
 
-test('plan human layout keeps At a Glance, glance fields and wrappers parse-stable', () => {
-  // At a Glance is required and shared sections precede the Task Map.
-  assert.ok(parsePlan(PLAN).warnings.some((row) => row.code === 'missing-section'));
+test("plan human layout keeps At a Glance, glance fields and wrappers parse-stable", () => {
+  assert.ok(
+    parsePlan(PLAN).warnings.some((row) => row.code === "missing-section")
+  );
+
   const source = PLAN.replace(
-    '## Key Decisions & Context',
-    '## At a Glance\n- Retry cap.\n\n## Background\n- Context.\n\n## Key Interfaces & Data\n- Contract.\n\n## Key Decisions & Context',
-  ).replace('## Task Map', '## Constraints\n- Keep API.\n\n## Task Map');
+    "## Key Decisions & Context",
+    "## At a Glance\n- Retry cap.\n\n## Background\n- Context.\n\n## Key Interfaces & Data\n- Contract.\n\n## Key Decisions & Context"
+  ).replace("## Task Map", "## Constraints\n- Keep API.\n\n## Task Map");
+
   const result = parsePlan(source);
   assert.ok(result.ok);
-  assert.ok(!result.warnings.some((row) => ['missing-section', 'section-order'].includes(row.code)));
-  for (const heading of ['At a Glance', 'Key Interfaces & Data', 'Constraints']) {
+  assert.ok(
+    !result.warnings.some((row) =>
+      ["missing-section", "section-order"].includes(row.code)
+    )
+  );
+
+  for (const heading of [
+    "At a Glance",
+    "Key Interfaces & Data",
+    "Constraints",
+  ]) {
     assert.ok(result.plan.sharedContext.includes(`## ${heading}`));
   }
-  assert.ok(!result.plan.sharedContext.includes('#### [MODIFY]'));
+
+  assert.ok(!result.plan.sharedContext.includes("#### [MODIFY]"));
   assert.ok(
     parsePlan(
       source
-        .replace('## At a Glance', '## Constraints')
-        .replace('## Constraints\n- Keep API.', '## At a Glance\n- Keep API.'),
-    ).warnings.some((row) => row.code === 'section-order'),
+        .replace("## At a Glance", "## Constraints")
+        .replace("## Constraints\n- Keep API.", "## At a Glance\n- Keep API.")
+    ).warnings.some((row) => row.code === "section-order")
   );
 
-  // Glance parses What and How it works with indented continuation lines.
   const glanceSource = PLAN.replace(
-    '## Key Decisions & Context',
+    "## Key Decisions & Context",
     [
-      '## At a Glance',
-      '- **What:** Fetch stops after three attempts.',
-      '  Callers receive the final error.',
-      '- **How it works:** Count attempts before sending.',
-      '  Stop after the final retry.',
-      '',
-      '## Key Decisions & Context',
-    ].join('\n'),
+      "## At a Glance",
+      "- **What:** Fetch stops after three attempts.",
+      "  Callers receive the final error.",
+      "- **How it works:** Count attempts before sending.",
+      "  Stop after the final retry.",
+      "",
+      "## Key Decisions & Context",
+    ].join("\n")
   );
+
   const glance = parsePlan(glanceSource);
   assert.ok(glance.ok, JSON.stringify(glance));
   assert.deepEqual(glance.plan.glance, {
-    what: 'Fetch stops after three attempts.\nCallers receive the final error.',
-    how: 'Count attempts before sending.\nStop after the final retry.',
-    visuals: '',
+    what: "Fetch stops after three attempts.\nCallers receive the final error.",
+    how: "Count attempts before sending.\nStop after the final retry.",
+    visuals: "",
   });
 
   const visuals = [
-    '- Text summary: The map shows the request boundary.',
-    '',
-    '| Component | Role |',
-    '| --- | --- |',
-    '| Gateway | Accepts requests |',
-    '',
-    '```mermaid',
-    'flowchart LR',
-    '  Gateway --> Store',
-    '```',
-    '',
-    '<details>',
-    '<summary>Diagram notes</summary>',
-    '',
-    'The note stays with the visual.',
-    '</details>',
-  ].join('\n');
+    "- Text summary: The map shows the request boundary.",
+    "",
+    "| Component | Role |",
+    "| --- | --- |",
+    "| Gateway | Accepts requests |",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    "  Gateway --> Store",
+    "```",
+    "",
+    "<details>",
+    "<summary>Diagram notes</summary>",
+    "",
+    "The note stays with the visual.",
+    "</details>",
+  ].join("\n");
+
   const visualResult = parsePlan(
-    glanceSource.replace('\n\n## Key Decisions & Context', `\n${visuals}\n\n## Key Decisions & Context`),
+    glanceSource.replace(
+      "\n\n## Key Decisions & Context",
+      `\n${visuals}\n\n## Key Decisions & Context`
+    )
   );
+
   assert.ok(visualResult.ok, JSON.stringify(visualResult));
   assert.equal(visualResult.plan.glance?.visuals, visuals);
 
   const empty = parsePlan(
     PLAN.replace(
-      '## Key Decisions & Context',
-      '## At a Glance\n- **Audience:** maintainers.\n\n## Key Decisions & Context',
-    ),
+      "## Key Decisions & Context",
+      "## At a Glance\n- **Audience:** maintainers.\n\n## Key Decisions & Context"
+    )
   );
+
   assert.ok(empty.ok, JSON.stringify(empty));
-  assert.deepEqual(empty.plan.glance, { what: '', how: '', visuals: '' });
+  assert.deepEqual(empty.plan.glance, { what: "", how: "", visuals: "" });
   assert.equal(parsed(PLAN).glance, null);
 
-  // Details wrappers and callouts leave parse results unchanged.
-  const wrappedSource = collapsed(readable()).replace('## Task Map', '> [!NOTE]\n> User context.\n\n## Task Map');
+  const wrappedSource = collapsed(readable()).replace(
+    "## Task Map",
+    "> [!NOTE]\n> User context.\n\n## Task Map"
+  );
 
-  const plain = parsed(readable()),
-    wrapped = parsed(wrappedSource);
-  for (const key of ['tasks', 'changes', 'criteria', 'verification'] as const) {
+  const plain = parsed(readable());
+  const wrapped = parsed(wrappedSource);
+
+  for (const key of ["tasks", "changes", "criteria", "verification"] as const) {
     assert.deepEqual(stripLines(wrapped[key]), stripLines(plain[key]));
   }
+
   const vocabulary = placeholderVocabulary([
-    '````markdown\n<details>\n<summary>Checks</summary>\n<unfilled>\n</details>\n````',
+    "````markdown\n<details>\n<summary>Checks</summary>\n<unfilled>\n</details>\n````",
   ]);
+
   assert.deepEqual(
     parsePlan(wrappedSource, { placeholders: vocabulary }).warnings.filter(
-      (row) => row.code === 'leftover-placeholder',
+      (row) => row.code === "leftover-placeholder"
     ),
-    [],
+    []
   );
   assert.ok(
-    parsePlan(wrappedSource + '\n<unfilled>', { placeholders: vocabulary }).warnings.some(
-      (row) => row.code === 'leftover-placeholder',
-    ),
+    parsePlan(`${wrappedSource}\n<unfilled>`, {
+      placeholders: vocabulary,
+    }).warnings.some((row) => row.code === "leftover-placeholder")
   );
   assert.ok(
-    defects(PLAN.replace('### T1 — Cap fetch retries', '### T1 — Cap fetch retries\n<div>Other HTML</div>')).includes(
-      'task-map',
-    ),
+    defects(
+      PLAN.replace(
+        "### T1 — Cap fetch retries",
+        "### T1 — Cap fetch retries\n<div>Other HTML</div>"
+      )
+    ).includes("task-map")
   );
 });
 
-test('plan parser rejects retired Verify: and Evidence: verify with Check: and check hints', () => {
+test("plan parser rejects retired Verify: and Evidence: verify with Check: and check hints", () => {
   const legacyVerify = parsePlan(
-    PLAN.replace('  - Check: `node --test tests/fetch.test.ts`', '  - Verify: `node --test tests/fetch.test.ts`'),
+    PLAN.replace(
+      "  - Check: `node --test tests/fetch.test.ts`",
+      "  - Verify: `node --test tests/fetch.test.ts`"
+    )
   );
+
   assert.equal(legacyVerify.ok, false);
+
   if (!legacyVerify.ok) {
-    const defect = legacyVerify.defects.find((d) => d.code === 'criterion-check');
+    const defect = legacyVerify.defects.find(
+      (d) => d.code === "criterion-check"
+    );
+
     assert.ok(defect, JSON.stringify(legacyVerify.defects));
-    assert.match(defect.message, /Check:/);
+    assert.match(defect.message, /Check:/u);
   }
 
-  const legacyEvidence = parsePlan(PLAN.replace('  - Evidence: check', '  - Evidence: verify'));
+  const legacyEvidence = parsePlan(
+    PLAN.replace("  - Evidence: check", "  - Evidence: verify")
+  );
+
   assert.equal(legacyEvidence.ok, false);
+
   if (!legacyEvidence.ok) {
-    const defect = legacyEvidence.defects.find((d) => d.code === 'criterion-evidence');
+    const defect = legacyEvidence.defects.find(
+      (d) => d.code === "criterion-evidence"
+    );
+
     assert.ok(defect, JSON.stringify(legacyEvidence.defects));
-    assert.match(defect.message, /check/);
+    assert.match(defect.message, /check/u);
   }
 });

@@ -31,7 +31,7 @@ For backward-incompatible changes, adopt the simpler current behavior and drop l
 ## Product Architecture and Key Areas
 
 - **Shipped skills (`skills/`):** `dispatch` owns all shipped runners, drivers, templates, schemas, configs, and operational references. `dispatch-plan`, `dispatch-implement`, `dispatch-code-review`, and `dispatch-verify` are thin compatibility aliases (`dispatch` never references them). Reference skills by name or sibling-relative `<skills-dir>` paths, never host-specific paths; aliases require sibling `dispatch`, map arguments to one verb, and report a missing-dependency diagnostic if absent. When changing `dispatch` in this checkout, follow [fixed-controller self-build](skills/dispatch/references/self-build.md).
-- **Maintainer and vendored skills (`.agents/skills/`):** Entries tracked in `skills-lock.json` (`grilling`, `retro`, `writing-for-agents`) are external and read-only; adapt their behavior through maintainer-owned files (`AGENTS.md`, root skills, or scripts). Internal maintainer skills (`audit-dispatch-skills`, `audit-dispatch-skills-fix`, `optimise-tests`, `publish-git`) are repository-owned and not shipped in the npm package.
+- **Maintainer and vendored skills (`.agents/skills/`):** Entries tracked in `skills-lock.json` (`grilling`, `retro`, `writing-for-agents`) are external and read-only; adapt their behavior through maintainer-owned files (`AGENTS.md`, root skills, or scripts). Internal maintainer skills (`optimise-tests`, `publish-git`) are repository-owned and not shipped in the npm package.
 - **Review and canonical documents:** Shared review rules live in [review-rules.md](skills/dispatch/references/review-rules.md). Canonical document roles and layer boundaries (Spec, Design, Plan, Walkthrough) live in [spec-stage.md](skills/dispatch/references/spec-stage.md#readers-and-document-layers). These artifacts serve a **dual audience (humans and agents)**: keep outcome summaries, observable behavior, and visual aids visible for human review, and collapse machine fields, per-file breakdowns, and granular execution detail inside `<details>` blocks per [quality-bar.md § spec](skills/dispatch/references/templates/quality-bar.md#spec).
 
 ## Documentation Standards
@@ -84,4 +84,3 @@ For completed repository edit tasks, report:
 3. **Remaining concerns and artifacts** — unresolved decisions, proposed ADR updates, blockers, and artifact links.
 
 For read-only tasks, report findings and evidence without edit-specific fields.
-

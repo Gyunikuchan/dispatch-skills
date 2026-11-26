@@ -1,106 +1,171 @@
-// The single delegate-report parse path for every source (spec §6.5 step 5).
-// Parse failures are named so the wave can fall back; findings dedup with `dupOf`.
+import { isRecord } from "../../lib/config.ts";
+import type { JsonObject, JsonValue } from "../../lib/integrity.ts";
+import type { SlotId } from "../types.ts";
+import { sanitizeText } from "./sanitize.ts";
+import { IMPACTS, TRIGGERS, severityOf } from "./severity.ts";
+import type {
+  DraftFinding,
+  Finding,
+  FindingOrigin,
+  ReviewKind,
+} from "./types.ts";
 
-import type { FindingId, SlotId } from '../types.ts';
-import { isRecord } from '../../lib/config.ts';
-import { sanitizeText } from './sanitize.ts';
-import { IMPACTS, TRIGGERS, severityOf } from './severity.ts';
-import type { DraftFinding, Finding, FindingOrigin, ReviewKind } from './types.ts';
+const SECTION_LOCUS = /^§\s+\S.*$/u;
 
-// SECTION: Kind contracts
-
-const SECTION_LOCUS = /^§\s+\S.*$/;
-const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[1-9]\d*$/;
+const CODE_LOCUS =
+  /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[1-9]\d*$/u;
 
 const BASE_REVIEW_TAGS = [
-  'intent',
-  'spec',
-  'correctness',
-  'reliability',
-  'security',
-  'performance',
-  'compatibility',
-  'maintainability',
-  'operability',
-  'testing',
-  'usability',
-  'standards',
-  'adjacent',
+  "intent",
+  "spec",
+  "correctness",
+  "reliability",
+  "security",
+  "performance",
+  "compatibility",
+  "maintainability",
+  "operability",
+  "testing",
+  "usability",
+  "standards",
+  "adjacent",
 ] as const;
-const PLAN_DESIGN_TAGS: ReadonlySet<string> = new Set([...BASE_REVIEW_TAGS, 'architecture', 'decomposition']);
-export const REVIEW_TAGS_BY_KIND: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
+
+const PLAN_DESIGN_TAGS: ReadonlySet<string> = new Set([
+  ...BASE_REVIEW_TAGS,
+  "architecture",
+  "decomposition",
+]);
+
+export const REVIEW_TAGS_BY_KIND: Readonly<
+  Record<ReviewKind, ReadonlySet<string>>
+> = {
   code: new Set(BASE_REVIEW_TAGS),
   plan: PLAN_DESIGN_TAGS,
   design: PLAN_DESIGN_TAGS,
 };
 
-const LOCUS: Readonly<Record<ReviewKind, RegExp>> = { code: CODE_LOCUS, plan: SECTION_LOCUS, design: SECTION_LOCUS };
+const LOCUS: Readonly<Record<ReviewKind, RegExp>> = {
+  code: CODE_LOCUS,
+  plan: SECTION_LOCUS,
+  design: SECTION_LOCUS,
+};
 
-const FINDING_FIELDS = ['defect', 'impact', 'locus', 'requiredChange', 'tag', 'trigger'];
-const OPTIONAL_FIELDS = new Set(['origin']);
-const ORIGINS: ReadonlyArray<FindingOrigin> = ['original', 'fix-induced', 'unknown'];
-const originRank = (origin: FindingOrigin | undefined): number =>
-  origin === 'fix-induced' ? 2 : origin === 'original' ? 1 : 0;
-/** `fix-induced` wins and a known value replaces `unknown`. */
-const mergeOrigin = (a: FindingOrigin | undefined, b: FindingOrigin | undefined): FindingOrigin | undefined =>
-  originRank(b) > originRank(a) ? b : a;
+const FINDING_FIELDS = [
+  "defect",
+  "impact",
+  "locus",
+  "requiredChange",
+  "tag",
+  "trigger",
+];
+
+const OPTIONAL_FIELDS = new Set(["origin"]);
+
+const ORIGINS: readonly FindingOrigin[] = [
+  "original",
+  "fix-induced",
+  "unknown",
+];
+
+const originRank = (origin: FindingOrigin | undefined) => {
+  if (origin === "fix-induced") {
+    return 2;
+  }
+
+  if (origin === "original") {
+    return 1;
+  }
+
+  return 0;
+};
+
+const mergeOrigin = (
+  a: FindingOrigin | undefined,
+  b: FindingOrigin | undefined
+) => (originRank(b) > originRank(a) ? b : a);
+
+const categoryOf = (tag: string, known: boolean) => {
+  if (!known) {
+    return "uncategorized";
+  }
+
+  return tag === "spec" ? "intent" : tag;
+};
+
+const originOf = (round: number, candidate: FindingOrigin | undefined) => {
+  if (round === 1) {
+    return "original";
+  }
+
+  if (candidate === "original" || candidate === "fix-induced") {
+    return candidate;
+  }
+
+  return "unknown";
+};
+
 const REFUSAL =
-  /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/i;
+  /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/iu;
 
-/** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
-function normalizeLocus(kind: ReviewKind, locus: string): string {
+const normalizeLocus = (kind: ReviewKind, locus: string) => {
   const trimmed = locus.trim();
-  if (kind === 'code') {
-    return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]+):([1-9]\d*)$/, '$1:L$2');
-  }
-  return trimmed.replace(/^§(?=\S)/, '§ ');
-}
 
-const UNRESOLVED_LOCUS = 'unresolved-locus: ';
+  if (kind === "code") {
+    return trimmed
+      .replace(/^(?<cap1>[^:#]+)#L(?<cap2>[1-9]\d*)$/u, "$1:L$2")
+      .replace(/^(?<cap1>[^:#]+):(?<cap2>[1-9]\d*)$/u, "$1:L$2");
+  }
+
+  return trimmed.replace(/^§(?=\S)/u, "§ ");
+};
+
+const UNRESOLVED_LOCUS = "unresolved-locus: ";
 const UNRESOLVED_LOCUS_BYTES = 120;
-export const isUnresolvedLocus = (locus: string): boolean => locus.startsWith(UNRESOLVED_LOCUS);
 
-/** Its 120-byte bound keeps the marked text visible inside a 200-byte summary item. */
-function unresolvedLocus(reported: unknown): string {
-  const text = (typeof reported === 'string' && sanitizeText(reported)) || '(none)';
-  if (Buffer.byteLength(text, 'utf8') <= UNRESOLVED_LOCUS_BYTES) {
-    return UNRESOLVED_LOCUS + text;
+export const isUnresolvedLocus = (locus: string) =>
+  locus.startsWith(UNRESOLVED_LOCUS);
+
+const unresolvedLocus = (reported: unknown) => {
+  const text =
+    (typeof reported === "string" && sanitizeText(reported)) || "(none)";
+
+  if (Buffer.byteLength(text, "utf-8") <= UNRESOLVED_LOCUS_BYTES) {
+    return `${UNRESOLVED_LOCUS}${text}`;
   }
-  // NOTE: a byte cut can end inside a character, which decodes to one trailing U+FFFD.
-  return (
-    UNRESOLVED_LOCUS +
-    Buffer.from(text, 'utf8')
-      .subarray(0, UNRESOLVED_LOCUS_BYTES - 3)
-      .toString('utf8')
-      .replace(/\uFFFD$/, '') +
-    '…'
-  );
-}
 
-// SECTION: JSON extraction
+  return `${UNRESOLVED_LOCUS}${Buffer.from(text, "utf-8")
+    .subarray(0, UNRESOLVED_LOCUS_BYTES - 3)
+    .toString("utf-8")
+    .replace(/\uFFFD$/u, "")}…`;
+};
 
-const parses = (text: string): boolean => {
+const parses = (text: string) => {
   try {
     JSON.parse(text);
+
     return true;
   } catch {
     return false;
   }
 };
+
 const MAX_CANDIDATES = 1024;
-const FENCE = '```';
+const FENCE = "```";
 
-/** Index just past the last character before i that is not whitespace. */
-function endOfPrior(text: string, i: number): number {
-  while (i > 0 && /\s/.test(text.charAt(i - 1))) {
-    i--;
+const endOfPrior = (text: string, i: number) => {
+  let index = i;
+
+  while (index > 0 && /\s/u.test(text.charAt(index - 1))) {
+    index -= 1;
   }
-  return i;
-}
 
-/** A line-start or json-tagged opener; a raw newline cannot occur in a JSON string, so embedded fences never qualify. */
-function fencedBody(text: string): string | null {
+  return index;
+};
+
+const fencedBody = (text: string) => {
   const close = text.length - FENCE.length;
+
   for (
     let open = text.lastIndexOf(FENCE, close - 1);
     open >= 0;
@@ -108,98 +173,436 @@ function fencedBody(text: string): string | null {
   ) {
     const body = text.slice(open + FENCE.length, close);
     let lineStart = open;
-    while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) {
-      lineStart--;
+
+    while (
+      lineStart > 0 &&
+      (text[lineStart - 1] === " " || text[lineStart - 1] === "\t")
+    ) {
+      lineStart -= 1;
     }
-    const tagged = /^json[ \t]*\r?\n/i.test(body);
-    if (tagged || lineStart === 0 || text[lineStart - 1] === '\n') {
+
+    const tagged = /^json[ \t]*\r?\n/iu.test(body);
+
+    if (tagged || lineStart === 0 || text[lineStart - 1] === "\n") {
       return (tagged ? body.slice(4) : body).trim();
     }
   }
-  return null;
-}
 
-/** A prior line that opens an object key, is a bare key with a JSON value, is a value and comma, or is only container punctuation means this object is nested in a cut-off report. */
-function continuesContainer(text: string, lineStart: number): boolean {
+  return null;
+};
+
+const continuesContainer = (text: string, lineStart: number) => {
   const end = endOfPrior(text, lineStart);
-  const line = text.slice(text.lastIndexOf('\n', end - 1) + 1, end).trim();
+  const line = text.slice(text.lastIndexOf("\n", end - 1) + 1, end).trim();
+
   if (parses(line)) {
     return false;
   }
-  if (line.endsWith(',') && parses(line.slice(0, -1))) {
+
+  if (line.endsWith(",") && parses(line.slice(0, -1))) {
     return true;
   }
-  return (
-    /^[{[,][{[,\s]*"[^"]*"\s*:/.test(line) ||
-    /^"[^"]*"\s*:\s*(?:$|[{["]|(?:-?\d[\d.eE+-]*|true|false|null)\s*,?$)/.test(line) ||
-    /^(?:[{[]|[}\]]\s*,)$/.test(line)
-  );
-}
 
-/**
- * The report must end the reply: the whole text, a closing fenced block, or a line-start object running to the end.
- * Position decides, not content, so quoted examples and earlier JSON never compete; anything else fails closed.
- */
-function extractJsonText(raw: string): string {
+  return (
+    /^[{[,][{[,\s]*"[^"]*"\s*:/u.test(line) ||
+    /^"[^"]*"\s*:\s*(?:$|[{["]|(?:-?\d[\d.eE+-]*|true|false|null)\s*,?$)/u.test(
+      line
+    ) ||
+    /^(?:[{[]|[}\]]\s*,)$/u.test(line)
+  );
+};
+
+const extractJsonText = (raw: string) => {
   const text = raw.trim();
+
   if (parses(text)) {
     return text;
   }
+
   if (text.endsWith(FENCE)) {
     return fencedBody(text) ?? text;
   }
-  if (!text.endsWith('}')) {
+
+  if (!text.endsWith("}")) {
     return text;
   }
+
   let tried = 0;
+
   for (
-    let brace = text.lastIndexOf('{');
+    let brace = text.lastIndexOf("{");
     brace >= 0 && tried < MAX_CANDIDATES;
-    brace = brace === 0 ? -1 : text.lastIndexOf('{', brace - 1)
+    brace = brace === 0 ? -1 : text.lastIndexOf("{", brace - 1)
   ) {
     let lineStart = brace;
-    while (lineStart > 0 && (text[lineStart - 1] === ' ' || text[lineStart - 1] === '\t')) {
-      lineStart--;
+
+    while (
+      lineStart > 0 &&
+      (text[lineStart - 1] === " " || text[lineStart - 1] === "\t")
+    ) {
+      lineStart -= 1;
     }
-    if (lineStart > 0 && text[lineStart - 1] !== '\n') {
+
+    if (lineStart > 0 && text[lineStart - 1] !== "\n") {
       continue;
     }
+
     if (continuesContainer(text, lineStart)) {
       continue;
     }
-    tried++;
+
+    tried += 1;
     const candidate = text.slice(brace);
+
     if (parses(candidate)) {
       return candidate;
     }
   }
+
   return text;
+};
+
+type ReportFailureKind =
+  | "empty-output"
+  | "refusal"
+  | "blocked"
+  | "truncated"
+  | "uncovered-scope";
+
+interface ReportFailure {
+  kind: ReportFailureKind;
+  detail: string;
 }
 
-// SECTION: Parse
+type ReportResult =
+  | {
+      ok: true;
+      status: "CLEAN" | "FINDINGS";
+      findings: DraftFinding[];
+      confirmations?: Confirmation[];
+    }
+  | { ok: false; failure: ReportFailure };
 
-type ReportFailureKind = 'empty-output' | 'refusal' | 'blocked' | 'truncated' | 'uncovered-scope';
-type ReportFailure = { kind: ReportFailureKind; detail: string };
-type Confirmation = { requestId: string; decision: 'agree' | 'disagree'; rationale: string };
-type ReportInput = {
+interface Confirmation {
+  requestId: string;
+  decision: "agree" | "disagree";
+  rationale: string;
+}
+
+interface ReportInput {
   kind: ReviewKind;
   source: SlotId;
   text: string;
   truncated?: boolean;
-  expectedRequestIds?: ReadonlyArray<string>;
-};
-type ReportResult =
-  | { ok: true; status: 'CLEAN' | 'FINDINGS'; findings: Array<DraftFinding>; confirmations?: Array<Confirmation> }
-  | { ok: false; failure: ReportFailure };
-const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
-const fail = (kind: ReportFailureKind, detail: string): ReportResult => ({ ok: false, failure: { kind, detail } });
-function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  expectedRequestIds?: readonly string[];
+}
+
+const nonEmpty = (value: JsonValue | undefined): value is string =>
+  typeof value === "string" && value.trim().length > 0;
+
+const fail = (kind: ReportFailureKind, detail: string): ReportResult => ({
+  ok: false,
+  failure: { kind, detail },
+});
+
+const parseJson = (
+  text: string
+): { ok: true; value: unknown } | { ok: false } => {
   try {
+    // SAFETY: JSON.parse returns any; narrowing to unknown forces downstream validation via isRecord.
     return { ok: true, value: JSON.parse(extractJsonText(text)) as unknown };
   } catch {
     return { ok: false };
   }
+};
+
+type ParseResult<T> = { ok: true; value: T } | { ok: false; detail: string };
+
+const CONFIRMATION_FAILURE =
+  "confirmation needs a unique requestId, explicit decision and rationale";
+
+const parseConfirmations = (
+  raw: JsonValue | undefined,
+  expectedIds: readonly string[] | undefined
+): ParseResult<Confirmation[]> => {
+  if (raw === undefined) {
+    if (expectedIds !== undefined && expectedIds.length !== 0) {
+      return {
+        ok: false,
+        detail:
+          "each assigned confirmation request requires exactly one explicit reply",
+      };
+    }
+
+    return { ok: true, value: [] };
+  }
+
+  if (!Array.isArray(raw)) {
+    return { ok: false, detail: "confirmations must be an array" };
+  }
+
+  const confirmations: Confirmation[] = [];
+
+  for (const item of raw) {
+    if (
+      item === null ||
+      typeof item !== "object" ||
+      Array.isArray(item) ||
+      Object.keys(item).toSorted().join("\0") !==
+        "decision\0rationale\0requestId"
+    ) {
+      return {
+        ok: false,
+        detail:
+          "confirmation fields must be exactly requestId, decision, rationale",
+      };
+    }
+
+    const { requestId, decision, rationale } = item;
+
+    if (
+      !nonEmpty(requestId) ||
+      (decision !== "agree" && decision !== "disagree") ||
+      !nonEmpty(rationale)
+    ) {
+      return { ok: false, detail: CONFIRMATION_FAILURE };
+    }
+
+    const safe = sanitizeText(rationale);
+
+    if (!safe || confirmations.some((reply) => reply.requestId === requestId)) {
+      return { ok: false, detail: CONFIRMATION_FAILURE };
+    }
+
+    confirmations.push({ requestId, decision, rationale: safe });
+  }
+
+  if (
+    expectedIds !== undefined &&
+    (confirmations.length !== expectedIds.length ||
+      confirmations.some((reply) => !expectedIds.includes(reply.requestId)))
+  ) {
+    return {
+      ok: false,
+      detail:
+        "each assigned confirmation request requires exactly one explicit reply",
+    };
+  }
+
+  return { ok: true, value: confirmations };
+};
+
+const findingFieldsFailure = (item: JsonObject, index: number) => {
+  const missing = FINDING_FIELDS.filter((field) => !Object.hasOwn(item, field));
+
+  const unexpected = Object.keys(item).filter(
+    (field) => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.has(field)
+  );
+
+  const others = unexpected.filter((field) => field !== "severity").length;
+
+  const unsupported = [
+    ...(unexpected.includes("severity") ? ["severity"] : []),
+    ...(others ? [`${others} other field(s)`] : []),
+  ];
+
+  if (!missing.length && !unsupported.length) {
+    return null;
+  }
+
+  return `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? `; missing: ${missing.join(", ")}` : ""}${unsupported.length ? `; unsupported: ${unsupported.join(", ")}` : ""}`;
+};
+
+const sanitizedTexts = (
+  defect: JsonValue | undefined,
+  requiredChange: JsonValue | undefined
+): ParseResult<{ defect: string; requiredChange: string }> => {
+  if (!nonEmpty(defect) || !nonEmpty(requiredChange)) {
+    return {
+      ok: false,
+      detail: "needs a defect and a requiredChange",
+    };
+  }
+
+  const safeDefect = sanitizeText(defect);
+  const safeChange = sanitizeText(requiredChange);
+
+  if (!safeDefect || !safeChange) {
+    return {
+      ok: false,
+      detail: "needs a defect and a requiredChange after sanitization",
+    };
+  }
+
+  return {
+    ok: true,
+    value: { defect: safeDefect, requiredChange: safeChange },
+  };
+};
+
+interface ParsedFinding {
+  draft: DraftFinding;
+  dedupKey: string;
 }
+
+const parseFinding = (
+  item: JsonValue | undefined,
+  index: number,
+  kind: ReviewKind,
+  source: SlotId,
+  pattern: RegExp
+): ParseResult<ParsedFinding> => {
+  if (!isRecord(item)) {
+    return {
+      ok: false,
+      detail: `finding ${index} must be a JSON object`,
+    };
+  }
+
+  const fieldsFailure = findingFieldsFailure(item, index);
+
+  if (fieldsFailure !== null) {
+    return { ok: false, detail: fieldsFailure };
+  }
+
+  const impact = IMPACTS.find((candidate) => candidate === item["impact"]);
+
+  if (impact === undefined) {
+    return {
+      ok: false,
+      detail: `finding ${index} impact must be one of ${IMPACTS.join(", ")}`,
+    };
+  }
+
+  const trigger = TRIGGERS.find((candidate) => candidate === item["trigger"]);
+
+  if (trigger === undefined) {
+    return {
+      ok: false,
+      detail: `finding ${index} trigger must be one of ${TRIGGERS.join(", ")}`,
+    };
+  }
+
+  const { locus, tag, defect, requiredChange } = item;
+
+  if (!nonEmpty(tag)) {
+    return { ok: false, detail: `finding ${index} needs a nonempty tag` };
+  }
+
+  const normalizedTag = tag.trim();
+  const known = REVIEW_TAGS_BY_KIND[kind].has(normalizedTag);
+
+  const texts = sanitizedTexts(defect, requiredChange);
+
+  if (!texts.ok) {
+    return { ok: false, detail: `finding ${index} ${texts.detail}` };
+  }
+
+  const { defect: safeDefect, requiredChange: safeChange } = texts.value;
+
+  const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : "";
+  const resolved = pattern.test(normalizedLocus);
+
+  const category = categoryOf(normalizedTag, known);
+
+  const originalTag = known
+    ? undefined
+    : normalizedTag.replaceAll(/[^A-Za-z0-9_.-]/gu, "_").slice(0, 80);
+
+  const origin = ORIGINS.find((candidate) => candidate === item["origin"]);
+
+  const draft: DraftFinding = {
+    impact,
+    trigger,
+    severity: severityOf(impact, trigger),
+    category,
+    locus: resolved ? normalizedLocus : unresolvedLocus(locus),
+    defect: safeDefect,
+    requiredChange: safeChange,
+    sources: [source],
+    scope: category === "adjacent" ? "adjacent" : "in",
+    ...(!(originalTag === undefined) && { originalTag }),
+    ...(origin !== undefined && { origin }),
+  };
+
+  const dedupKey = JSON.stringify([
+    draft.severity,
+    resolved ? normalizedLocus : locus,
+    draft.category,
+    draft.defect,
+    draft.requiredChange,
+    known ? null : normalizedTag,
+  ]);
+
+  return { ok: true, value: { draft, dedupKey } };
+};
+
+const unparsedFailure = (
+  text: string,
+  truncated: boolean | undefined
+): ReportResult => {
+  if (truncated === true) {
+    return fail("truncated", "output was cut off before a complete report");
+  }
+
+  if (REFUSAL.test(text)) {
+    return fail("refusal", sanitizeText(text).slice(0, 200));
+  }
+
+  return fail("uncovered-scope", "no JSON report object found");
+};
+
+const blockedDetail = (value: JsonObject) => {
+  if (value["status"] !== "BLOCKED") {
+    return null;
+  }
+
+  const { reason } = value;
+
+  return typeof reason === "string" && reason.trim().length > 0
+    ? reason.trim()
+    : null;
+};
+
+const reportFieldsFailure = (value: JsonObject) => {
+  const fields = Object.keys(value).toSorted().join("\0");
+
+  return fields !== "findings\0status" &&
+    fields !== "confirmations\0findings\0status"
+    ? "report fields must be status, findings and optional confirmations"
+    : null;
+};
+
+const isReportStatus = (
+  value: JsonValue | undefined
+): value is "CLEAN" | "FINDINGS" => value === "CLEAN" || value === "FINDINGS";
+
+const statusAndItems = (value: JsonObject) => {
+  const { status } = value;
+  const items = value["findings"];
+
+  if (!isReportStatus(status) || !Array.isArray(items)) {
+    return null;
+  }
+
+  return { status, items };
+};
+
+const consistencyFailure = (
+  status: "CLEAN" | "FINDINGS",
+  findings: readonly unknown[]
+) => {
+  if (status === "CLEAN" && findings.length > 0) {
+    return "CLEAN requires an empty findings array";
+  }
+
+  if (status === "FINDINGS" && findings.length === 0) {
+    return "FINDINGS requires at least one finding";
+  }
+
+  return null;
+};
+
 /**
  * Parses one delegate report. Failures: empty output; truncation (runner-reported and unparseable); refusal;
  * blocked (a `BLOCKED` report with a reason); uncovered scope (no structured `{status, findings}` review of the
@@ -207,326 +610,283 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
  * tag outside the shared vocabulary is recovered, not a failure: the finding becomes `uncategorized` with a
  * sanitized `originalTag`. A locus outside the kind's grammar is also recovered: the finding keeps it marked with `UNRESOLVED_LOCUS`.
  */
-export function parseReport(input: ReportInput): ReportResult {
+
+export const parseReport = (input: ReportInput): ReportResult => {
   const { kind, source } = input;
   const text = input.text.trim();
+
   if (!text) {
-    return fail('empty-output', 'the delegate returned no text');
+    return fail("empty-output", "the delegate returned no text");
   }
+
   const parsed = parseJson(text);
+
   if (!parsed.ok) {
-    if (input.truncated) {
-      return fail('truncated', 'output was cut off before a complete report');
-    }
-    if (REFUSAL.test(text)) {
-      return fail('refusal', sanitizeText(text).slice(0, 200));
-    }
-    return fail('uncovered-scope', 'no JSON report object found');
+    return unparsedFailure(text, input.truncated);
   }
-  const value = parsed.value;
+
+  const { value } = parsed;
+
   if (!isRecord(value)) {
-    return fail('uncovered-scope', 'report must be a JSON object');
+    return fail("uncovered-scope", "report must be a JSON object");
   }
-  const status = value['status'];
-  const items = value['findings'];
-  // A capability blocker is a report, not a malformed review: keep the reviewer's own reason.
-  if (status === 'BLOCKED') {
-    const reason = value['reason'];
-    if (nonEmpty(reason)) {
-      return fail('blocked', reason.trim());
-    }
+
+  const blocked = blockedDetail(value);
+
+  if (blocked !== null) {
+    return fail("blocked", blocked);
   }
-  const fields = Object.keys(value).sort().join('\0');
-  if (fields !== 'findings\0status' && fields !== 'confirmations\0findings\0status') {
-    return fail('uncovered-scope', 'report fields must be status, findings and optional confirmations');
+
+  const fieldsFailure = reportFieldsFailure(value);
+
+  if (fieldsFailure !== null) {
+    return fail("uncovered-scope", fieldsFailure);
   }
-  const confirmations: Array<Confirmation> = [];
-  if (Object.hasOwn(value, 'confirmations')) {
-    if (!Array.isArray(value['confirmations'])) {
-      return fail('uncovered-scope', 'confirmations must be an array');
-    }
-    for (const item of value['confirmations']) {
-      if (
-        !item ||
-        typeof item !== 'object' ||
-        Array.isArray(item) ||
-        Object.keys(item).sort().join('\0') !== 'decision\0rationale\0requestId'
-      ) {
-        return fail('uncovered-scope', 'confirmation fields must be exactly requestId, decision, rationale');
-      }
-      const { requestId, decision, rationale } = item;
-      if (
-        !nonEmpty(requestId) ||
-        (decision !== 'agree' && decision !== 'disagree') ||
-        !nonEmpty(rationale) ||
-        !sanitizeText(rationale) ||
-        confirmations.some((reply) => reply.requestId === requestId)
-      ) {
-        return fail('uncovered-scope', 'confirmation needs a unique requestId, explicit decision and rationale');
-      }
-      confirmations.push({ requestId, decision, rationale: sanitizeText(rationale) });
-    }
+
+  const parsedConfirmations = parseConfirmations(
+    Object.hasOwn(value, "confirmations") ? value["confirmations"] : undefined,
+    input.expectedRequestIds
+  );
+
+  if (!parsedConfirmations.ok) {
+    return fail("uncovered-scope", parsedConfirmations.detail);
   }
-  const expectedIds = input.expectedRequestIds;
-  if (
-    expectedIds &&
-    (confirmations.length !== expectedIds.length ||
-      confirmations.some((reply) => !expectedIds.includes(reply.requestId)))
-  ) {
-    return fail('uncovered-scope', 'each assigned confirmation request requires exactly one explicit reply');
+
+  const confirmations = parsedConfirmations.value;
+
+  const shape = statusAndItems(value);
+
+  if (shape === null) {
+    return fail(
+      "uncovered-scope",
+      "report must carry status CLEAN|FINDINGS and a findings array"
+    );
   }
-  if ((status !== 'CLEAN' && status !== 'FINDINGS') || !Array.isArray(items)) {
-    return fail('uncovered-scope', 'report must carry status CLEAN|FINDINGS and a findings array');
-  }
-  const findings: Array<DraftFinding> = [];
+
+  const { status, items } = shape;
+  const findings: DraftFinding[] = [];
   const seen = new Map<string, DraftFinding>();
   const pattern = LOCUS[kind];
+
   for (const [index, item] of items.entries()) {
-    if (!isRecord(item)) {
-      return fail('uncovered-scope', `finding ${index} must be a JSON object`);
+    const parsedFinding = parseFinding(item, index, kind, source, pattern);
+
+    if (!parsedFinding.ok) {
+      return fail("uncovered-scope", parsedFinding.detail);
     }
-    const missing = FINDING_FIELDS.filter((field) => !Object.hasOwn(item, field)),
-      unexpected = Object.keys(item).filter((field) => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.has(field));
-    // NOTE: key names are delegate text, so only the retired field is named and other keys are counted.
-    const others = unexpected.filter((field) => field !== 'severity').length;
-    const unsupported = [
-      ...(unexpected.includes('severity') ? ['severity'] : []),
-      ...(others ? [others + ' other field(s)'] : []),
-    ];
-    if (missing.length || unsupported.length) {
-      return fail(
-        'uncovered-scope',
-        `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? '; missing: ' + missing.join(', ') : ''}${unsupported.length ? '; unsupported: ' + unsupported.join(', ') : ''}`,
-      );
-    }
-    const { locus, tag, defect, requiredChange } = item;
-    const impact = IMPACTS.find((candidate) => candidate === item['impact']);
-    if (impact === undefined) {
-      return fail('uncovered-scope', `finding ${index} impact must be one of ${IMPACTS.join(', ')}`);
-    }
-    const trigger = TRIGGERS.find((candidate) => candidate === item['trigger']);
-    if (trigger === undefined) {
-      return fail('uncovered-scope', `finding ${index} trigger must be one of ${TRIGGERS.join(', ')}`);
-    }
-    if (!nonEmpty(tag)) {
-      return fail('uncovered-scope', `finding ${index} needs a nonempty tag`);
-    }
-    const normalizedTag = tag.trim();
-    const known = REVIEW_TAGS_BY_KIND[kind].has(normalizedTag);
-    // `spec` shares the intent gate.
-    const category = known ? (normalizedTag === 'spec' ? 'intent' : normalizedTag) : 'uncategorized';
-    // Markup-inert by construction; the raw spelling stays only in the provider log.
-    const originalTag = known ? undefined : normalizedTag.replaceAll(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80);
-    if (!nonEmpty(defect) || !nonEmpty(requiredChange)) {
-      return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);
-    }
-    const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : '';
-    const resolved = pattern.test(normalizedLocus);
-    // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
-    if (!sanitizeText(defect) || !sanitizeText(requiredChange)) {
-      return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange after sanitization`);
-    }
-    const origin = ORIGINS.find((candidate) => candidate === item['origin']);
-    const draft: DraftFinding = {
-      impact,
-      trigger,
-      severity: severityOf(impact, trigger),
-      category,
-      locus: resolved ? normalizedLocus : unresolvedLocus(locus),
-      defect: sanitizeText(defect),
-      requiredChange: sanitizeText(requiredChange),
-      sources: [source],
-      scope: category === 'adjacent' ? 'adjacent' : 'in',
-      ...(!(originalTag === undefined) && { originalTag }),
-      ...(origin !== undefined && { origin }),
-    };
-    // Raw tag and unresolved locus, not their lossy sanitized forms, so distinct values never collide.
-    const key = JSON.stringify([
-      draft.severity,
-      resolved ? normalizedLocus : locus,
-      draft.category,
-      draft.defect,
-      draft.requiredChange,
-      known ? null : normalizedTag,
-    ]);
-    const kept = seen.get(key);
+
+    const { draft, dedupKey } = parsedFinding.value;
+    const kept = seen.get(dedupKey);
+
     if (kept) {
       const merged = mergeOrigin(kept.origin, draft.origin);
+
       if (merged) {
         kept.origin = merged;
       }
+
       continue;
     }
-    seen.set(key, draft);
+
+    seen.set(dedupKey, draft);
     findings.push(draft);
   }
-  if (status === 'CLEAN' && findings.length) {
-    return fail('uncovered-scope', 'CLEAN requires an empty findings array');
-  }
-  if (status === 'FINDINGS' && !findings.length) {
-    return fail('uncovered-scope', 'FINDINGS requires at least one finding');
-  }
-  return { ok: true, status, findings, ...(Object.hasOwn(value, 'confirmations') && { confirmations }) };
-}
 
-// SECTION: Matching
+  const inconsistent = consistencyFailure(status, findings);
+
+  if (inconsistent !== null) {
+    return fail("uncovered-scope", inconsistent);
+  }
+
+  return {
+    ok: true,
+    status,
+    findings,
+    ...(Object.hasOwn(value, "confirmations") && { confirmations }),
+  };
+};
 
 const MATCH_LINE_WINDOW = 5;
 const MATCH_JACCARD = 0.3;
+
 const STOPWORDS: ReadonlySet<string> = new Set([
-  'the',
-  'and',
-  'for',
-  'are',
-  'but',
-  'not',
-  'you',
-  'all',
-  'any',
-  'can',
-  'has',
-  'had',
-  'its',
-  'was',
-  'were',
-  'will',
-  'with',
-  'this',
-  'that',
-  'from',
-  'into',
-  'when',
-  'then',
-  'than',
-  'them',
-  'they',
-  'which',
-  'while',
-  'where',
-  'there',
-  'their',
-  'these',
-  'those',
-  'should',
-  'would',
-  'could',
-  'must',
-  'does',
-  'did',
-  'have',
-  'been',
-  'being',
-  'also',
-  'only',
-  'each',
-  'other',
-  'such',
-  'what',
-  'who',
-  'how',
-  'why',
-  'our',
-  'out',
-  'use',
-  'uses',
-  'used',
+  "the",
+  "and",
+  "for",
+  "are",
+  "but",
+  "not",
+  "you",
+  "all",
+  "any",
+  "can",
+  "has",
+  "had",
+  "its",
+  "was",
+  "were",
+  "will",
+  "with",
+  "this",
+  "that",
+  "from",
+  "into",
+  "when",
+  "then",
+  "than",
+  "them",
+  "they",
+  "which",
+  "while",
+  "where",
+  "there",
+  "their",
+  "these",
+  "those",
+  "should",
+  "would",
+  "could",
+  "must",
+  "does",
+  "did",
+  "have",
+  "been",
+  "being",
+  "also",
+  "only",
+  "each",
+  "other",
+  "such",
+  "what",
+  "who",
+  "how",
+  "why",
+  "our",
+  "out",
+  "use",
+  "uses",
+  "used",
 ]);
 
 const tokens = (text: string) =>
   new Set(
     text
       .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((token) => token.length >= 3 && !STOPWORDS.has(token)),
+      .split(/[^a-z0-9]+/u)
+      .filter((token) => token.length >= 3 && !STOPWORDS.has(token))
   );
-/** Token Jaccard; two empty sets score 0 so location and category alone never match. */
-function similarity(a: string, b: string): number {
+
+const similarity = (a: string, b: string) => {
   const left = tokens(a);
   const right = tokens(b);
+
   if (!left.size || !right.size) {
     return 0;
   }
+
   let shared = 0;
+
   for (const token of left) {
     if (right.has(token)) {
       shared += 1;
     }
   }
+
   return shared / (left.size + right.size - shared);
+};
+
+interface MatchKey {
+  locus: string;
+  category: string;
+  text: string;
 }
 
-type MatchKey = { locus: string; category: string; text: string };
+const codeLocation = (locus: string) =>
+  /^(?<cap1>.+?):L(?<cap2>\d+)/u.exec(locus.trim());
 
-const codeLocation = (locus: string) => /^(.+?):L(\d+)/.exec(locus.trim());
-
-/** Code loci: same path (case-folded when `caseInsensitive`) within ±MATCH_LINE_WINDOW lines; section loci: same heading; unresolved loci: never. */
-function sameLocation(a: string, b: string, caseInsensitive: boolean): boolean {
+const sameLocation = (a: string, b: string, caseInsensitive: boolean) => {
   if (isUnresolvedLocus(a) || isUnresolvedLocus(b)) {
     return false;
   }
+
   const left = codeLocation(a);
   const right = codeLocation(b);
+
   if (left && right) {
     const fold = (file: string) =>
-      caseInsensitive ? file.replaceAll('\\', '/').toLowerCase() : file.replaceAll('\\', '/');
+      caseInsensitive
+        ? file.replaceAll("\\", "/").toLowerCase()
+        : file.replaceAll("\\", "/");
+
     return (
-      fold(left[1] ?? '') === fold(right[1] ?? '') && Math.abs(Number(left[2]) - Number(right[2])) <= MATCH_LINE_WINDOW
+      fold(left[1] ?? "") === fold(right[1] ?? "") &&
+      Math.abs(Number(left[2]) - Number(right[2])) <= MATCH_LINE_WINDOW
     );
   }
+
   if (left || right) {
     return false;
   }
+
   return a.trim().toLowerCase() === b.trim().toLowerCase();
-}
+};
 
 /** Location + category with loose text similarity (spec §7.5). */
-export function matchFinding(a: MatchKey, b: MatchKey, caseInsensitive = false): boolean {
-  return (
-    a.category === b.category &&
-    sameLocation(a.locus, b.locus, caseInsensitive) &&
-    similarity(a.text, b.text) >= MATCH_JACCARD
-  );
-}
+export const matchFinding = (
+  a: MatchKey,
+  b: MatchKey,
+  caseInsensitive = false
+) =>
+  a.category === b.category &&
+  sameLocation(a.locus, b.locus, caseInsensitive) &&
+  similarity(a.text, b.text) >= MATCH_JACCARD;
 
-// SECTION: Collect and dedup
-
-const findingId = (round: number, ordinal: number): FindingId => `R${round}-F${String(ordinal).padStart(3, '0')}`;
+const findingId = (round: number, ordinal: number) =>
+  `R${round}-F${String(ordinal).padStart(3, "0")}`;
 
 /**
  * Assigns round ids in report order and dedups across sources: a duplicate keeps its own id with `dupOf`
  * naming the first, and the first cites every source that reported it.
  */
-export function collectFindings(round: number, drafts: ReadonlyArray<DraftFinding>, firstOrdinal = 1): Array<Finding> {
-  const out: Array<Finding> = [];
-  drafts.forEach((draft, index) => {
+export const collectFindings = (
+  round: number,
+  drafts: readonly DraftFinding[],
+  firstOrdinal = 1
+) => {
+  const out: Finding[] = [];
+
+  for (const [index, draft] of drafts.entries()) {
     const id = findingId(round, firstOrdinal + index);
+
     const key: MatchKey = {
       locus: draft.locus,
       category: draft.category,
       text: `${draft.defect} ${draft.requiredChange}`,
     };
-    // Round 1 has no earlier fix; later rounds keep a reviewer's known value and mark every other reply `unknown`.
-    const origin: FindingOrigin =
-      round === 1
-        ? 'original'
-        : draft.origin === 'original' || draft.origin === 'fix-induced'
-          ? draft.origin
-          : 'unknown';
+
+    const origin: FindingOrigin = originOf(round, draft.origin);
+
     const first = out.find(
       (prior) =>
         prior.dupOf === undefined &&
         matchFinding(
-          { locus: prior.locus, category: prior.category, text: `${prior.defect} ${prior.requiredChange}` },
-          key,
-        ),
+          {
+            locus: prior.locus,
+            category: prior.category,
+            text: `${prior.defect} ${prior.requiredChange}`,
+          },
+          key
+        )
     );
+
     if (first) {
       first.sources = [...new Set([...first.sources, ...draft.sources])];
-      first.origin = mergeOrigin(first.origin, origin) ?? 'unknown';
+      first.origin = mergeOrigin(first.origin, origin) ?? "unknown";
       out.push({ ...draft, id, origin, dupOf: first.id });
     } else {
       out.push({ ...draft, id, origin });
     }
-  });
+  }
+
   return out;
-}
+};

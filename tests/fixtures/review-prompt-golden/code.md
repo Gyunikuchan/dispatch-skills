@@ -11,20 +11,13 @@ The Spec Hash is the canonical identity reported by lint; it is not a hash of th
 - Advisory Tool Turn Target: 10
 
 ### Review against
-- The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`:
-  assess each applicable criterion from the selected diff and tests. A goal missed or met only
-  on paper, such as a test passing without exercising it, is `intent`.
+- The governing spec's REQs and DECs and, when supplied, the plan's `## Success Criteria`: assess each applicable criterion from the selected diff and tests. A goal missed or met only on paper, such as a test passing without exercising it, is `intent`.
 - Behaviour the diff adds that no REQ asks for at a consumer boundary (public API or CLI surface, outputs, persisted data, side effects, dependencies) is an `intent` finding; internal helpers and refactors are not.
-- Code review does not establish that verification commands ran or final gates passed.
-  Execution evidence and final verification remain separate workflow gates.
-- With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not
-  propose an alternative to a settled decision as a fix; report a contradiction with one only as
-  `intent`, and cite the decision in `defect`.
+- Code review does not establish that verification commands ran or final gates passed. Execution evidence and final verification remain separate workflow gates.
+- With a plan, its `## Key Decisions & Context` entries are settled, like the spec's DECs. Do not propose an alternative to a settled decision as a fix; report a contradiction with one only as `intent`, and cite the decision in `defect`.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
-Judge quality using the quality criteria below.
-Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`. Reuse searches do not count toward the target.
-Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`.
+Judge quality using the quality criteria below. Anchor reuse findings on the new symbol and cite the existing equivalent as `path:L<line>` in `defect`. Reuse searches do not count toward the target. Anchor a code `spec` finding on the changed code line and cite `§ Spec: <heading>` in `defect`.
 
 ### Inspection
 Inspect by reading and searching files, running read-only commands in the foreground. A reviewer may run a host read tool that creates or updates only its own cache or index, unless a stricter host rule forbids it.
@@ -34,14 +27,7 @@ Read the whole spec at Spec Path first.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
-Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
-source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
-empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
-Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
-On a `Full review`, when the diff changes a shared invariant, contract, or signature, list every
-caller of it and inspect each one in this round, so later rounds do not find them one at a time.
-Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise
-search the repository.
+Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`. Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim. On a `Full review`, when the diff changes a shared invariant, contract, or signature, list every caller of it and inspect each one in this round, so later rounds do not find them one at a time. Use the repository's code-graph index (for example CodeGraph callers) when one exists; otherwise search the repository.
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under review rules.
 The governing spec's Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
@@ -81,6 +67,7 @@ CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` tim
 
 ### Severity
 Rate each finding on two dimensions; the toolkit derives severity from them. Report `impact` and `trigger`, never `severity`.
+
 - `impact`: `critical` — security breach or irreversible data loss; `blocks` — the promised outcome or a binding constraint fails; `degrades` — a real defect that lowers the outcome without blocking it; `minor` — a small defect with negligible effect or an optional improvement (always `CONSIDER`).
 - `trigger`: `realistic` — normal use or one plausible fault produces it; `contrived` — it needs several independent faults, contrived input, or no failure at all.
 
@@ -91,8 +78,7 @@ Rate each finding on two dimensions; the toolkit derives severity from them. Rep
 | `degrades` | `SHOULD` | `CONSIDER` |
 | `minor` | `CONSIDER` | `CONSIDER` |
 
-A `critical` finding's `defect` names the boundary crossed or the data lost.
-Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
+A `critical` finding's `defect` names the boundary crossed or the data lost. Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
@@ -111,6 +97,4 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<relative-file>:L<line>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
-is `adjacent`.
-For an `adjacent` finding, cite code at its real `path:L<line>` locus.
+Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else is `adjacent`. For an `adjacent` finding, cite code at its real `path:L<line>` locus.

@@ -1,513 +1,802 @@
-import assert from 'node:assert/strict';
-import path from 'node:path';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import path from "node:path";
+import { test } from "node:test";
 
-import { resolveEffectiveOpencodeLaunch } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
-import { opencode, prepareOpencode, PROXY_TRAP } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import { runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import type { RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import type { JsonObject } from "../../../skills/dispatch/scripts/lib/config.ts";
 import type {
   OpencodeMessage,
   OpencodeRead,
   OpencodeReadOptions,
-} from '../../../skills/dispatch/scripts/lib/opencode-db.ts';
-import { parseReport } from '../../../skills/dispatch/scripts/toolkit/domain/report.ts';
+} from "../../../skills/dispatch/scripts/lib/opencode-db.ts";
+import { resolveEffectiveOpencodeLaunch } from "../../../skills/dispatch/scripts/providers/opencode-runtime.ts";
+import {
+  opencode,
+  prepareOpencode,
+  PROXY_TRAP,
+} from "../../../skills/dispatch/scripts/providers/opencode.ts";
+import { runDelegate } from "../../../skills/dispatch/scripts/providers/runner.ts";
+import type { RunnerPorts } from "../../../skills/dispatch/scripts/providers/runner.ts";
 import type {
   DelegateRequest,
   LaunchRequest,
   Launch,
   ProcessResult,
-} from '../../../skills/dispatch/scripts/providers/types.ts';
-import type { JsonObject } from '../../../skills/dispatch/scripts/lib/config.ts';
+} from "../../../skills/dispatch/scripts/providers/types.ts";
+import { parseReport } from "../../../skills/dispatch/scripts/toolkit/domain/report.ts";
+// eslint-disable-next-line typescript/newline-after-import -- intentional test pattern.
+import { defined } from "../../helpers/guards.ts";
+
+const EMPTY_TOKENS: JsonObject = {
+  input: 0,
+  output: 0,
+  reasoning: 0,
+  cache: { read: 0, write: 0 },
+};
 
 const platform = {
-  os: 'darwin',
-  arch: 'arm64',
+  os: "darwin",
+  arch: "arm64",
   wsl: false,
   bubblewrap: false,
   argvLimit: 100_000,
-  home: '/h',
+  home: "/h",
   path: [],
   pathExt: [],
 } as const;
+
 const base: DelegateRequest = {
-  promptPath: '/p.md',
-  model: 'lmstudio/qwen',
-  effort: 'high',
+  promptPath: "/p.md",
+  model: "lmstudio/qwen",
+  effort: "high",
   sandbox: false,
   schemaPath: null,
   resume: null,
-  cwd: '/repo',
+  cwd: "/repo",
   timeoutMs: 1000,
-  agent: 'explore',
+  agent: "explore",
   readOnlyVerified: true,
   outputCapBytes: 1000,
   attachments: [],
-  logPath: '/log',
-  briefPath: '/brief',
+  logPath: "/log",
+  briefPath: "/brief",
 };
-const launchReq = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({
+
+const launchReq = (over: Partial<LaunchRequest> = {}) => ({
   ...base,
-  binary: 'opencode',
-  prompt: 'P',
+  binary: "opencode",
+  prompt: "P",
   briefFile: null,
   schemaText: null,
   platform,
   ...over,
 });
 
-test('opencode argv is v2-only: run --auto --format json, -m model#effort, -- prompt; never --pure or --variant', () => {
-  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
-    const argv = opencode.argv(launchReq({ agent: 'plan' }), mode).argv;
+test("opencode argv is v2-only: run --auto --format json, -m model#effort, -- prompt; never --pure or --variant", () => {
+  for (const mode of ["cli", "desktop", "vscode"] as const) {
+    const { argv } = opencode.argv(launchReq({ agent: "plan" }), mode);
     assert.deepEqual(
       argv,
       [
-        'opencode',
-        '--standalone',
-        'run',
-        '--auto',
-        '--format',
-        'json',
-        '--agent',
-        'plan',
-        '-m',
-        'lmstudio/qwen#high',
-        '--',
-        'P',
+        "opencode",
+        "--standalone",
+        "run",
+        "--auto",
+        "--format",
+        "json",
+        "--agent",
+        "plan",
+        "-m",
+        "lmstudio/qwen#high",
+        "--",
+        "P",
       ],
-      mode,
+      mode
     );
-    assert.ok(!argv.includes('--pure') && !argv.includes('--variant'), mode);
+    assert.ok(!argv.includes("--pure") && !argv.includes("--variant"), mode);
   }
-  assert.deepEqual(opencode.argv(launchReq({ effort: null }), 'cli').argv.slice(-3), ['lmstudio/qwen', '--', 'P']);
+
+  assert.deepEqual(
+    opencode.argv(launchReq({ effort: null }), "cli").argv.slice(-3),
+    ["lmstudio/qwen", "--", "P"]
+  );
   assert.equal(opencode.outputCapBytes, 64 * 1024 * 1024);
 });
 
-test('OpenCode bubblewrapped launch keeps private server invocation', async () => {
+test("OpenCode bubblewrapped launch keeps private server invocation", async () => {
+  await Promise.resolve();
+
   const bubblewrapped = opencode.argv(
     launchReq({
       sandbox: true,
-      platform: { ...platform, os: 'linux', bubblewrap: true },
+      platform: { ...platform, os: "linux", bubblewrap: true },
     }),
-    'cli',
+    "cli"
   ).argv;
-  const binaryIndex = bubblewrapped.indexOf('opencode');
-  assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), ['opencode', '--standalone', 'run']);
+
+  const binaryIndex = bubblewrapped.indexOf("opencode");
+  assert.deepEqual(bubblewrapped.slice(binaryIndex, binaryIndex + 3), [
+    "opencode",
+    "--standalone",
+    "run",
+  ]);
 });
 
-function ports(
-  results: Array<ProcessResult>,
-  prepare?: RunnerPorts['prepare'],
-): RunnerPorts & { launches: Array<Launch> } {
-  const launches: Array<Launch> = [];
-  const p: RunnerPorts & { launches: Array<Launch> } = {
+const ports = (results: ProcessResult[], prepare?: RunnerPorts["prepare"]) => {
+  const launches: Launch[] = [];
+
+  const p: RunnerPorts & { launches: Launch[] } = {
     launches,
     process: {
       start: (launch) => {
         launches.push(launch);
-        return { pid: 1, done: Promise.resolve(results.shift() ?? results[0]!) };
+
+        return {
+          pid: 1,
+          done: Promise.resolve(results.shift() ?? defined(results[0])),
+        };
       },
       signal: () => {},
     },
     clock: { now: () => 0, every: () => () => {} },
     fs: {
-      readText: () => 'body',
+      readText: () => "body",
       writeText: () => {},
       realpath: (f) => f,
       readdir: () => [],
       size: () => null,
-      readPrefix: () => '',
+      readPrefix: () => "",
     },
-    env: { HTTP_PROXY: 'http://corp:8080', OPENAI_API_KEY: 'sk-x' },
+    env: { HTTP_PROXY: "http://corp:8080", OPENAI_API_KEY: "sk-x" },
     platform,
-    binary: 'opencode',
-    nonce: () => 'n',
+    binary: "opencode",
+    nonce: () => "n",
   };
+
   if (prepare) {
     p.prepare = prepare;
   }
+
   return p;
-}
-const result = (stdout: string, exit = 0, stderrTail = ''): ProcessResult => ({
+};
+
+const result = (stdout: string, exit = 0, stderrTail = "") => ({
   exit,
   signal: null,
   stdout,
-  stdoutPath: '/log',
+  stdoutPath: "/log",
   stderrTail,
   durationMs: 1,
   timedOut: false,
   truncated: false,
 });
-const event = (type: string, part: JsonObject) => JSON.stringify({ type, timestamp: 0, sessionID: 'ses', part });
-const jsonText = (text: string, id = 'text-0') =>
-  event('text', { id, sessionID: 'ses', messageID: 'msg', type: 'text', text });
-const jsonStep = (tokens: JsonObject = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }) =>
-  event('step_finish', {
-    id: 'step-finish-0',
-    sessionID: 'ses',
-    messageID: 'msg',
-    type: 'step-finish',
-    reason: 'stop',
+
+const event = (type: string, part: JsonObject) =>
+  JSON.stringify({ type, timestamp: 0, sessionID: "ses", part });
+
+const jsonText = (text: string, id = "text-0") =>
+  event("text", { id, sessionID: "ses", messageID: "msg", type: "text", text });
+
+const jsonStep = (tokens: JsonObject = EMPTY_TOKENS) =>
+  event("step_finish", {
+    id: "step-finish-0",
+    sessionID: "ses",
+    messageID: "msg",
+    type: "step-finish",
+    reason: "stop",
     cost: 0,
     tokens,
   });
+
 const jsonError = (message: string) =>
-  JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error: { name: 'ProviderError', message } });
+  JSON.stringify({
+    type: "error",
+    timestamp: 0,
+    sessionID: "ses",
+    error: { name: "ProviderError", message },
+  });
 
-test('`Variant unavailable` retries once without effort', async () => {
-  const outcome = opencode.parse(result('', 1, 'Error: Variant unavailable for model'), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'config');
-  assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
+test("`Variant unavailable` retries once without effort", async () => {
+  const outcome = opencode.parse(
+    result("", 1, "Error: Variant unavailable for model"),
+    launchReq()
+  );
 
-  const p = ports([result('', 1, 'Error: Variant unavailable for model'), result(jsonText('R'))]);
-  const run = await runDelegate(opencode, base, 'cli', p);
-  assert.equal(run.outcome.status, 'ok');
+  assert.equal(outcome.status === "fail" && outcome.cls, "config");
+  assert.match(
+    outcome.status === "fail" ? outcome.detail : "",
+    /effort variant "high" unavailable/u
+  );
+
+  const p = ports([
+    result("", 1, "Error: Variant unavailable for model"),
+    result(jsonText("R")),
+  ]);
+
+  const run = await runDelegate(opencode, base, "cli", p);
+  assert.equal(run.outcome.status, "ok");
   assert.equal(run.attempts, 2);
-  assert.ok(p.launches[0]?.argv.includes('lmstudio/qwen#high'));
-  assert.ok(p.launches[1]?.argv.includes('lmstudio/qwen'));
+  // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+  assert.ok(p.launches[0]?.argv.includes("lmstudio/qwen#high"));
+  // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+  assert.ok(p.launches[1]?.argv.includes("lmstudio/qwen"));
+
   const twice = await runDelegate(
     opencode,
     base,
-    'cli',
-    ports([result('', 1, 'Variant unavailable'), result('', 1, 'Variant unavailable')]),
+    "cli",
+    ports([
+      result("", 1, "Variant unavailable"),
+      result("", 1, "Variant unavailable"),
+    ])
   );
+
   assert.equal(twice.attempts, 2);
-  assert.equal(twice.outcome.status, 'fail');
+  assert.equal(twice.outcome.status, "fail");
 });
 
-test('a missing subscription classifies as auth, not empty-output', () => {
+test("a missing subscription classifies as auth, not empty-output", () => {
   for (const stderr of [
-    'Error: No active subscription for this model',
-    'HTTP 402 Payment Required: insufficient credit balance; no active subscription',
+    "Error: No active subscription for this model",
+    "HTTP 402 Payment Required: insufficient credit balance; no active subscription",
   ]) {
-    const outcome = opencode.parse(result('', 1, stderr), launchReq());
-    assert.equal(outcome.status, 'fail');
-    assert.equal(outcome.status === 'fail' && outcome.cls, 'auth');
+    const outcome = opencode.parse(result("", 1, stderr), launchReq());
+    assert.equal(outcome.status, "fail");
+    assert.equal(outcome.status === "fail" && outcome.cls, "auth");
   }
 });
 
-test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt', async () => {
-  const events: Array<string> = [];
+test("local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt", async () => {
+  const events: string[] = [];
+
   const prepare = {
     fetchModels: async (endpoint: string) => {
+      await Promise.resolve();
       events.push(`models ${endpoint}`);
-      return ['qwen'];
+
+      return ["qwen"];
     },
     acquireGpuLock: async () => {
-      events.push('lock');
+      await Promise.resolve();
+      events.push("lock");
+
       return () => {
-        events.push('release');
+        events.push("release");
       };
     },
   };
-  const p = ports([result(jsonText('R'))], prepare);
-  const run = await runDelegate(opencode, { ...base, endpoint: 'http://127.0.0.1:1234/v1' }, 'cli', p);
-  assert.equal(run.outcome.status, 'ok');
-  assert.deepEqual(events, ['models http://127.0.0.1:1234/v1', 'lock', 'release']);
+
+  const p = ports([result(jsonText("R"))], prepare);
+
+  const run = await runDelegate(
+    opencode,
+    { ...base, endpoint: "http://127.0.0.1:1234/v1" },
+    "cli",
+    p
+  );
+
+  assert.equal(run.outcome.status, "ok");
+  assert.deepEqual(events, [
+    "models http://127.0.0.1:1234/v1",
+    "lock",
+    "release",
+  ]);
   const env = p.launches[0]?.env ?? {};
-  assert.equal(env['HTTPS_PROXY'], PROXY_TRAP);
-  assert.equal(env['HTTP_PROXY'], PROXY_TRAP);
-  assert.match(env['NO_PROXY'] ?? '', /127\.0\.0\.1/);
-  assert.equal(env['OPENAI_API_KEY'], undefined);
+  assert.equal(env["HTTPS_PROXY"], PROXY_TRAP);
+  assert.equal(env["HTTP_PROXY"], PROXY_TRAP);
+  assert.match(env["NO_PROXY"] ?? "", /127\.0\.0\.1/u);
+  assert.equal(env["OPENAI_API_KEY"], undefined);
 });
 
-test('an offline local server fails as model-not-loaded', async () => {
-  const offline = await prepareOpencode(launchReq({ endpoint: 'http://localhost:1234/v1' }), {
-    fetchModels: async () => null,
-    acquireGpuLock: async () => () => {},
-  });
-  assert.equal(offline.kind === 'fail' && offline.outcome.cls, 'model-not-loaded');
+test("an offline local server fails as model-not-loaded", async () => {
+  const offline = await prepareOpencode(
+    launchReq({ endpoint: "http://localhost:1234/v1" }),
+    {
+      fetchModels: async () => {
+        await Promise.resolve();
+
+        return null;
+      },
+      acquireGpuLock: async () => {
+        await Promise.resolve();
+
+        return () => {};
+      },
+    }
+  );
+
+  assert.equal(
+    offline.kind === "fail" && offline.outcome.cls,
+    "model-not-loaded"
+  );
 });
 
-test('a remote endpoint skips model preflight, GPU locking, and the proxy trap', async () => {
+test("a remote endpoint skips model preflight, GPU locking, and the proxy trap", async () => {
   let touched = false;
-  const remote = await prepareOpencode(launchReq({ endpoint: 'https://api.example.com/v1' }), {
-    fetchModels: async () => {
-      touched = true;
-      return [];
-    },
-    acquireGpuLock: async () => {
-      touched = true;
-      return () => {};
-    },
-  });
+
+  const remote = await prepareOpencode(
+    launchReq({ endpoint: "https://api.example.com/v1" }),
+    {
+      fetchModels: async () => {
+        await Promise.resolve();
+        touched = true;
+
+        return [];
+      },
+      acquireGpuLock: async () => {
+        await Promise.resolve();
+        touched = true;
+
+        return () => {};
+      },
+    }
+  );
+
   assert.equal(touched, false);
-  assert.deepEqual(remote.kind === 'launch' ? remote.env : null, {});
+  assert.deepEqual(remote.kind === "launch" ? remote.env : null, {});
 });
 
-const inspectEndpoints = async (command: 'config' | 'agents') =>
-  command === 'config'
+const inspectEndpoints = async (command: "config" | "agents") =>
+  // eslint-disable-next-line typescript/await-thenable -- mock value is wrapped by async on return.
+  (await command) === "config"
     ? [
         {
-          type: 'document',
+          type: "document",
           info: {
-            model: 'remote/model',
-            providers: { local: { settings: { baseURL: 'http://localhost:1234/v1' } } },
+            model: "remote/model",
+            providers: {
+              local: { settings: { baseURL: "http://localhost:1234/v1" } },
+            },
           },
         },
-        { type: 'document', info: { providers: { local: { settings: { baseURL: 'http://127.0.0.1:1234/v1' } } } } },
+        {
+          type: "document",
+          info: {
+            providers: {
+              local: { settings: { baseURL: "http://127.0.0.1:1234/v1" } },
+            },
+          },
+        },
       ]
     : [
         {
-          id: 'plan',
+          id: "plan",
           permissions: [
-            { action: '*', resource: '*', effect: 'allow' },
-            { action: 'edit', resource: '*', effect: 'ask' },
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "ask" },
           ],
         },
         {
-          id: 'explore',
+          id: "explore",
           permissions: [
-            { action: '*', resource: '*', effect: 'deny' },
-            { action: 'read', resource: '*', effect: 'allow' },
+            { action: "*", resource: "*", effect: "deny" },
+            { action: "read", resource: "*", effect: "allow" },
           ],
         },
       ];
 
-test('effective config merges selected model endpoint and verifies agent denial', async () => {
+test("effective config merges selected model endpoint and verifies agent denial", async () => {
   const resolved = await resolveEffectiveOpencodeLaunch(
-    { ...base, agent: null, model: 'local/qwen' },
-    inspectEndpoints,
+    { ...base, agent: null, model: "local/qwen" },
+    inspectEndpoints
   );
-  assert.equal(resolved.endpoint, 'http://127.0.0.1:1234/v1');
-  assert.equal(resolved.agent, 'explore');
+
+  assert.equal(resolved.endpoint, "http://127.0.0.1:1234/v1");
+  assert.equal(resolved.agent, "explore");
   assert.equal(resolved.readOnlyVerified, true);
   await assert.rejects(
     resolveEffectiveOpencodeLaunch(base, async (command) =>
-      command === 'config' ? [] : [{ id: 'plan', permissions: [{ action: '*', resource: '*', effect: 'allow' }] }],
+      // eslint-disable-next-line typescript/await-thenable -- mock value is wrapped by async on return.
+      (await command) === "config"
+        ? []
+        : [
+            {
+              id: "plan",
+              permissions: [{ action: "*", resource: "*", effect: "allow" }],
+            },
+          ]
     ),
-    /read-only-agent-unavailable/,
+    /read-only-agent-unavailable/u
   );
+
   const denied = await prepareOpencode(launchReq({ agent: null }), {
-    fetchModels: async () => [],
-    acquireGpuLock: async () => () => {},
+    fetchModels: async () => {
+      await Promise.resolve();
+
+      return [];
+    },
+    acquireGpuLock: async () => {
+      await Promise.resolve();
+
+      return () => {};
+    },
   });
-  assert.equal(denied.kind, 'fail');
+
+  assert.equal(denied.kind, "fail");
 });
 
-test('opencode accepts an unverified built-in explore agent as best-effort read-only, never another agent', async () => {
+test("opencode accepts an unverified built-in explore agent as best-effort read-only, never another agent", async () => {
   const agents = [
     {
-      id: 'explore',
+      id: "explore",
       permissions: [
-        { action: '*', resource: '*', effect: 'deny' },
-        { action: 'shell', resource: '*', effect: 'allow' },
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "shell", resource: "*", effect: "allow" },
       ],
     },
-    { id: 'build', permissions: [{ action: '*', resource: '*', effect: 'allow' }] },
+    {
+      id: "build",
+      permissions: [{ action: "*", resource: "*", effect: "allow" }],
+    },
   ];
-  const inspect = async (command: 'config' | 'agents') => (command === 'config' ? [] : agents);
-  const resolved = await resolveEffectiveOpencodeLaunch({ ...base, agent: null }, inspect);
-  assert.equal(resolved.agent, 'explore');
+
+  const inspect = async (command: "config" | "agents") => {
+    await Promise.resolve();
+
+    return command === "config" ? [] : agents;
+  };
+
+  const resolved = await resolveEffectiveOpencodeLaunch(
+    { ...base, agent: null },
+    inspect
+  );
+
+  assert.equal(resolved.agent, "explore");
   assert.equal(resolved.readOnlyVerified, false);
   assert.equal(resolved.readOnlyBestEffort, true);
   assert.equal(
+    // eslint-disable-next-line eslint/no-await-expression-member -- direct await member access is intentional in this assertion.
     (
-      await prepareOpencode(launchReq({ readOnlyVerified: false, readOnlyBestEffort: true }), {
-        fetchModels: async () => [],
-        acquireGpuLock: async () => () => {},
-      })
+      await prepareOpencode(
+        launchReq({ readOnlyVerified: false, readOnlyBestEffort: true }),
+        {
+          fetchModels: async () => {
+            await Promise.resolve();
+
+            return [];
+          },
+          acquireGpuLock: async () => {
+            await Promise.resolve();
+
+            return () => {};
+          },
+        }
+      )
     ).kind,
-    'launch',
+    "launch"
   );
   await assert.rejects(
-    resolveEffectiveOpencodeLaunch({ ...base, agent: 'build' }, inspect),
-    /read-only-agent-unavailable/,
+    resolveEffectiveOpencodeLaunch({ ...base, agent: "build" }, inspect),
+    /read-only-agent-unavailable/u
   );
 });
 
-test('unsupported standalone parser variants fail config without effort retry or shared fallback', async () => {
+test("unsupported standalone parser variants fail config without effort retry or shared fallback", async () => {
   // Installed v2.2.5 reports "Unrecognized flag: --dispatch-unsupported-inspection-probe in command opencode debug config".
   // Substitution of --standalone is an inference; option/argument forms are synthetic compatibility cases.
   for (const diagnostic of [
     "error: unrecognized option '--standalone'",
-    'Unrecognized flag: --standalone in command opencode debug config',
+    "Unrecognized flag: --standalone in command opencode debug config",
     "error: unknown option '--standalone'",
-    'Unknown argument: standalone',
-    'Unknown arguments: standalone',
+    "Unknown argument: standalone",
+    "Unknown arguments: standalone",
   ]) {
-    const parsed = opencode.parse(result('', 2, diagnostic), launchReq());
-    assert.equal(parsed.status === 'fail' && parsed.cls, 'config', diagnostic);
-    assert.equal(parsed.status === 'fail' && parsed.retryWithoutEffort, undefined);
-    const p = ports([result('', 2, diagnostic)]);
-    const run = await runDelegate(opencode, base, 'cli', p);
-    assert.equal(run.outcome.status === 'fail' && run.outcome.cls, 'config');
+    const parsed = opencode.parse(result("", 2, diagnostic), launchReq());
+    assert.equal(parsed.status === "fail" && parsed.cls, "config", diagnostic);
+    assert.equal(
+      parsed.status === "fail" && parsed.retryWithoutEffort,
+      undefined
+    );
+    const p = ports([result("", 2, diagnostic)]);
+    // eslint-disable-next-line no-await-in-loop
+    const run = await runDelegate(opencode, base, "cli", p);
+    assert.equal(run.outcome.status === "fail" && run.outcome.cls, "config");
     assert.equal(p.launches.length, 1);
-    assert.ok(p.launches.every((launch) => launch.argv.includes('--standalone')));
+    assert.ok(
+      p.launches.every((launch) => launch.argv.includes("--standalone"))
+    );
   }
 });
 
-test('resume argv: opencode inserts --session before --', () => {
-  const fresh = opencode.argv(launchReq(), 'cli').argv;
-  assert.ok(!fresh.includes('--session'));
-  for (const mode of ['cli', 'desktop', 'vscode'] as const) {
-    const argv = opencode.argv(launchReq({ resume: 'ses_abc123' }), mode).argv;
-    const session = argv.indexOf('--session');
-    const dash = argv.indexOf('--');
-    assert.ok(session > 0 && argv[session + 1] === 'ses_abc123' && session < dash, mode);
+test("resume argv: opencode inserts --session before --", () => {
+  const fresh = opencode.argv(launchReq(), "cli").argv;
+  assert.ok(!fresh.includes("--session"));
+
+  for (const mode of ["cli", "desktop", "vscode"] as const) {
+    const { argv } = opencode.argv(launchReq({ resume: "ses_abc123" }), mode);
+    const session = argv.indexOf("--session");
+    const dash = argv.indexOf("--");
+    assert.ok(
+      session > 0 && argv[session + 1] === "ses_abc123" && session < dash,
+      mode
+    );
   }
 });
 
-test('opencode json text extraction', () => {
+test("opencode json text extraction", () => {
   const stream = [
-    jsonText('Hello '),
-    jsonText('world'),
-    jsonStep({ input: 12, output: 3, reasoning: 1, cache: { read: 4, write: 0 } }),
-  ].join('\n');
+    jsonText("Hello "),
+    jsonText("world"),
+    jsonStep({
+      input: 12,
+      output: 3,
+      reasoning: 1,
+      cache: { read: 4, write: 0 },
+    }),
+  ].join("\n");
+
   assert.deepEqual(opencode.parse(result(stream), launchReq()), {
-    status: 'ok',
-    text: 'Hello world',
-    sessionId: 'ses',
-    resume: 'opencode:lmstudio/qwen',
+    status: "ok",
+    text: "Hello world",
+    sessionId: "ses",
+    resume: "opencode:lmstudio/qwen",
   });
 });
 
-const errorEvent = (error: JsonObject): string =>
-  JSON.stringify({ type: 'error', timestamp: 0, sessionID: 'ses', error });
+const errorEvent = (error: JsonObject) =>
+  JSON.stringify({ type: "error", timestamp: 0, sessionID: "ses", error });
 
-const parseError = (error: JsonObject) => opencode.parse(result(errorEvent(error)), launchReq());
+const parseError = (error: JsonObject) =>
+  opencode.parse(result(errorEvent(error)), launchReq());
 
-test('opencode rate-limit event becomes capacity with its retry delay; quota wording stays quota', () => {
-  const cases: Array<[JsonObject, number | undefined]> = [
+test("opencode rate-limit event becomes capacity with its retry delay; quota wording stays quota", () => {
+  const cases: [JsonObject, number | undefined][] = [
     [
       {
-        type: 'provider.rate-limit',
-        message: 'the cell is at capacity; retry shortly (after 30 s)',
+        type: "provider.rate-limit",
+        message: "the cell is at capacity; retry shortly (after 30 s)",
         status: 429,
         retryAfterMs: 30_000,
       },
       30_000,
     ],
-    [{ type: 'provider.rate-limit', message: 'the cell is at capacity; retry shortly (after 30 s)' }, undefined],
-    [{ message: 'the cell is at capacity; retry shortly (after 30 s)', status: 429 }, undefined],
-    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: 0 }, undefined],
-    [{ type: 'provider.rate-limit', message: 'the cell is at capacity', retryAfterMs: '30000' }, undefined],
+    [
+      {
+        type: "provider.rate-limit",
+        message: "the cell is at capacity; retry shortly (after 30 s)",
+      },
+      undefined,
+    ],
+    [
+      {
+        message: "the cell is at capacity; retry shortly (after 30 s)",
+        status: 429,
+      },
+      undefined,
+    ],
+    [
+      {
+        type: "provider.rate-limit",
+        message: "the cell is at capacity",
+        retryAfterMs: 0,
+      },
+      undefined,
+    ],
+    [
+      {
+        type: "provider.rate-limit",
+        message: "the cell is at capacity",
+        retryAfterMs: "30000",
+      },
+      undefined,
+    ],
   ];
+
   for (const [error, retryAfterMs] of cases) {
     const outcome = parseError(error);
-    assert.equal(outcome.status, 'fail', JSON.stringify(error));
-    assert.equal(outcome.status === 'fail' && outcome.cls, 'capacity', JSON.stringify(error));
-    assert.equal(outcome.status === 'fail' ? outcome.retryAfterMs : undefined, retryAfterMs, JSON.stringify(error));
+    assert.equal(outcome.status, "fail", JSON.stringify(error));
+    assert.equal(
+      outcome.status === "fail" && outcome.cls,
+      "capacity",
+      JSON.stringify(error)
+    );
+    assert.equal(
+      outcome.status === "fail" ? outcome.retryAfterMs : undefined,
+      retryAfterMs,
+      JSON.stringify(error)
+    );
   }
+
   const quota = parseError({
-    type: 'provider.rate-limit',
-    message: 'rate limit exceeded: usage limit reached',
+    type: "provider.rate-limit",
+    message: "rate limit exceeded: usage limit reached",
     status: 429,
     retryAfterMs: 30_000,
   });
-  assert.equal(quota.status === 'fail' && quota.cls, 'quota');
-  assert.equal(quota.status === 'fail' ? quota.retryAfterMs : undefined, undefined);
+
+  assert.equal(quota.status === "fail" && quota.cls, "quota");
+  assert.equal(
+    quota.status === "fail" ? quota.retryAfterMs : undefined,
+    undefined
+  );
 });
 
-test('opencode narration parses when the report starts its own line', () => {
-  const stream = [jsonText("I'll read the plan.\n"), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
+test("opencode narration parses when the report starts its own line", () => {
+  const stream = [
+    jsonText("I'll read the plan.\n"),
+    jsonText('{"status":"CLEAN","findings":[]}'),
+  ].join("\n");
+
   const outcome = opencode.parse(result(stream), launchReq());
-  assert.equal(outcome.status, 'ok');
+  assert.equal(outcome.status, "ok");
   assert.equal(
-    parseReport({ kind: 'plan', source: 'claude[0]', text: outcome.status === 'ok' ? outcome.text : '' }).ok,
-    true,
+    parseReport({
+      kind: "plan",
+      source: "claude[0]",
+      text: outcome.status === "ok" ? outcome.text : "",
+    }).ok,
+    true
   );
 
-  const gluedStream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}')].join('\n');
+  const gluedStream = [
+    jsonText("I'll read the plan."),
+    jsonText('{"status":"CLEAN","findings":[]}'),
+  ].join("\n");
+
   const gluedOutcome = opencode.parse(result(gluedStream), launchReq());
-  assert.equal(gluedOutcome.status, 'ok');
+  assert.equal(gluedOutcome.status, "ok");
   assert.equal(
-    parseReport({ kind: 'plan', source: 'claude[0]', text: gluedOutcome.status === 'ok' ? gluedOutcome.text : '' }).ok,
-    false,
+    parseReport({
+      kind: "plan",
+      source: "claude[0]",
+      text: gluedOutcome.status === "ok" ? gluedOutcome.text : "",
+    }).ok,
+    false
   );
 
-  const splitStream = [jsonText('{"status":"CLE'), jsonText('AN","findings":[]}')].join('\n');
+  const splitStream = [
+    jsonText('{"status":"CLE'),
+    jsonText('AN","findings":[]}'),
+  ].join("\n");
+
   const splitOutcome = opencode.parse(result(splitStream), launchReq());
-  assert.equal(splitOutcome.status, 'ok');
+  assert.equal(splitOutcome.status, "ok");
+
   const splitParsed = parseReport({
-    kind: 'plan',
-    source: 'claude[0]',
-    text: splitOutcome.status === 'ok' ? splitOutcome.text : '',
+    kind: "plan",
+    source: "claude[0]",
+    text: splitOutcome.status === "ok" ? splitOutcome.text : "",
   });
+
   assert.equal(splitParsed.ok, true);
-  assert.equal(splitParsed.ok && splitParsed.status, 'CLEAN');
+  assert.equal(splitParsed.ok && splitParsed.status, "CLEAN");
 });
 
-test('opencode distinct text parts start new lines', () => {
-  const stream = [jsonText("I'll read the plan."), jsonText('{"status":"CLEAN","findings":[]}', 'text-1')].join('\n');
+test("opencode distinct text parts start new lines", () => {
+  const stream = [
+    jsonText("I'll read the plan."),
+    jsonText('{"status":"CLEAN","findings":[]}', "text-1"),
+  ].join("\n");
+
   const outcome = opencode.parse(result(stream), launchReq());
-  assert.equal(outcome.status, 'ok');
-  const parsed = parseReport({ kind: 'plan', source: 'opencode[0]', text: outcome.text });
-  assert.deepEqual(parsed, { ok: true, status: 'CLEAN', findings: [] });
+  assert.equal(outcome.status, "ok");
+
+  const parsed = parseReport({
+    kind: "plan",
+    source: "opencode[0]",
+    text: outcome.text,
+  });
+
+  assert.deepEqual(parsed, { ok: true, status: "CLEAN", findings: [] });
 });
 
-test('opencode nonzero exit keeps stderr class', () => {
-  const outcome = opencode.parse(result(jsonText('partial answer'), 1, 'rate limit exceeded'), launchReq());
-  assert.equal(outcome.status === 'fail' && outcome.cls, 'quota');
+test("opencode nonzero exit keeps stderr class", () => {
+  const outcome = opencode.parse(
+    result(jsonText("partial answer"), 1, "rate limit exceeded"),
+    launchReq()
+  );
+
+  assert.equal(outcome.status === "fail" && outcome.cls, "quota");
 
   const errorEventOutcome = opencode.parse(
-    result(jsonError('rate limit exceeded: usage limit reached'), 0),
-    launchReq(),
+    result(jsonError("rate limit exceeded: usage limit reached"), 0),
+    launchReq()
   );
-  assert.equal(errorEventOutcome.status === 'fail' && errorEventOutcome.cls, 'quota');
-  assert.match(errorEventOutcome.status === 'fail' ? errorEventOutcome.detail : '', /usage limit reached/);
 
-  const tool = event('tool_use', {
-    id: 'tool-0',
-    sessionID: 'ses',
-    messageID: 'msg',
-    type: 'tool',
+  assert.equal(
+    errorEventOutcome.status === "fail" && errorEventOutcome.cls,
+    "quota"
+  );
+  assert.match(
+    errorEventOutcome.status === "fail" ? errorEventOutcome.detail : "",
+    /usage limit reached/u
+  );
+
+  const tool = event("tool_use", {
+    id: "tool-0",
+    sessionID: "ses",
+    messageID: "msg",
+    type: "tool",
     state: {
-      status: 'error',
+      status: "error",
       input: {},
-      error: 'rate limit exceeded',
+      error: "rate limit exceeded",
       metadata: {},
-      content: [{ type: 'text', text: 'rate limit exceeded' }],
+      content: [{ type: "text", text: "rate limit exceeded" }],
     },
   });
+
   const toolOutcome = opencode.parse(result(tool, 2), launchReq());
-  assert.equal(toolOutcome.status === 'fail' && toolOutcome.cls, 'empty-output');
-});
-
-test('opencode error after text fails', () => {
-  const outcome = opencode.parse(
-    result([jsonText('answer'), jsonError('provider response ended unexpectedly')].join('\n')),
-    launchReq(),
+  assert.equal(
+    toolOutcome.status === "fail" && toolOutcome.cls,
+    "empty-output"
   );
-  assert.equal(outcome.status, 'fail');
-  assert.match(outcome.status === 'fail' ? outcome.detail : '', /provider response ended unexpectedly/);
 });
 
-test('opencode large tool events keep usage', () => {
-  const tool = event('tool_use', {
-    id: 'tool-0',
-    sessionID: 'ses',
-    messageID: 'msg',
-    type: 'tool',
-    tool: 'read',
-    state: { status: 'completed', input: { path: 'big.txt' }, output: 'x'.repeat(400_000), metadata: {}, content: [] },
+test("opencode error after text fails", () => {
+  const outcome = opencode.parse(
+    result(
+      [
+        jsonText("answer"),
+        jsonError("provider response ended unexpectedly"),
+      ].join("\n")
+    ),
+    launchReq()
+  );
+
+  assert.equal(outcome.status, "fail");
+  assert.match(
+    outcome.status === "fail" ? outcome.detail : "",
+    /provider response ended unexpectedly/u
+  );
+});
+
+test("opencode large tool events keep usage", () => {
+  const tool = event("tool_use", {
+    id: "tool-0",
+    sessionID: "ses",
+    messageID: "msg",
+    type: "tool",
+    tool: "read",
+    state: {
+      status: "completed",
+      input: { path: "big.txt" },
+      output: "x".repeat(400_000),
+      metadata: {},
+      content: [],
+    },
   });
+
   const stream = [
     tool,
-    jsonText('done'),
-    jsonStep({ input: 10, output: 2, reasoning: 0, cache: { read: 5, write: 1 } }),
-  ].join('\n');
-  assert.equal(opencode.parse(result(stream), launchReq()).status, 'ok');
+    jsonText("done"),
+    jsonStep({
+      input: 10,
+      output: 2,
+      reasoning: 0,
+      cache: { read: 5, write: 1 },
+    }),
+  ].join("\n");
+
+  assert.equal(opencode.parse(result(stream), launchReq()).status, "ok");
   assert.deepEqual(opencode.usage?.(stream), {
     input: 10,
     output: 2,
     reasoning: 0,
     cacheRead: 5,
     cacheWrite: 1,
-    scope: 'invocation',
-    provenance: 'opencode.step.finish',
-    inputSemantics: 'uncached',
+    scope: "invocation",
+    provenance: "opencode.step.finish",
+    inputSemantics: "uncached",
   });
 });
 
-type UsageReader = (dbPath: string, sessionId: string, options: OpencodeReadOptions) => OpencodeRead;
-const readResult = (messages: Array<OpencodeMessage>, truncated: OpencodeRead['truncated'] = null): OpencodeRead => ({
+type UsageReader = (
+  dbPath: string,
+  sessionId: string,
+  options: OpencodeReadOptions
+) => OpencodeRead;
+
+const readResult = (
+  messages: OpencodeMessage[],
+  truncated: OpencodeRead["truncated"] = null
+) => ({
   messages,
   skipped: 0,
   truncated,
 });
+
 const sessionContext = (read: UsageReader) => ({
-  mode: 'cli' as const,
+  mode: "cli" as const,
   platform,
   env: {},
   launchStartMs: 100,
@@ -515,143 +804,243 @@ const sessionContext = (read: UsageReader) => ({
   resumed: true,
   readOpencodeMessages: read,
   transcripts: {
-    fs: { list: () => [], stat: () => null, read: () => Buffer.alloc(0), decompress: null },
+    fs: {
+      list: () => [],
+      stat: () => null,
+      read: () => Buffer.alloc(0),
+      decompress: null,
+    },
     budget: { remaining: 1024 * 1024 },
   },
 });
 
-test('opencode sessionUsage sums DB rows for the session and descendants with per-model effort keys', () => {
-  const calls: Array<{ dbPath: string; sessionId: string; options: OpencodeReadOptions }> = [];
+test("opencode sessionUsage sums DB rows for the session and descendants with per-model effort keys", () => {
+  const calls: {
+    dbPath: string;
+    sessionId: string;
+    options: OpencodeReadOptions;
+  }[] = [];
+
   const read: UsageReader = (dbPath, sessionId, options) => {
     calls.push({ dbPath, sessionId, options });
+
     return readResult([
       {
         depth: 0,
         createdMs: 150,
-        model: 'opencode-go/deepseek-v4.1-flash',
-        effort: 'high',
+        model: "opencode-go/deepseek-v4.1-flash",
+        effort: "high",
         input: 10,
         output: 2,
         reasoning: 1,
         cacheRead: 3,
         cacheWrite: 0,
       },
-      { depth: 1, createdMs: 160, model: 'opencode-go/deepseek-v4.1-flash', effort: 'high', input: 5, output: 1 },
-      { depth: 2, createdMs: 170, model: 'lmstudio/qwen3.8-27b', effort: 'low', input: 7, output: 3, reasoning: 2 },
+      {
+        depth: 1,
+        createdMs: 160,
+        model: "opencode-go/deepseek-v4.1-flash",
+        effort: "high",
+        input: 5,
+        output: 1,
+      },
+      {
+        depth: 2,
+        createdMs: 170,
+        model: "lmstudio/qwen3.8-27b",
+        effort: "low",
+        input: 7,
+        output: 3,
+        reasoning: 2,
+      },
     ]);
   };
+
   const session = opencode.sessionUsage?.(jsonStep({ input: 1, output: 1 }), {
     ...sessionContext(read),
-    env: { XDG_DATA_HOME: '/data' },
+    env: { XDG_DATA_HOME: "/data" },
   });
+
   assert.deepEqual(calls, [
-    { dbPath: path.join('/data', 'opencode', 'opencode.db'), sessionId: 'ses', options: { fromMs: 100, toMs: 200 } },
+    {
+      dbPath: path.join("/data", "opencode", "opencode.db"),
+      sessionId: "ses",
+      options: { fromMs: 100, toMs: 200 },
+    },
   ]);
   assert.equal(session?.complete, true);
   const usage = session?.usage;
-  assert.equal(usage?.provenance, 'session');
+  assert.equal(usage?.provenance, "session");
   assert.deepEqual(
-    [usage?.input, usage?.output, usage?.cacheRead, usage?.cacheWrite, usage?.reasoning],
-    [22, 6, 3, 0, 3],
+    [
+      usage?.input,
+      usage?.output,
+      usage?.cacheRead,
+      usage?.cacheWrite,
+      usage?.reasoning,
+    ],
+    [22, 6, 3, 0, 3]
   );
-  assert.deepEqual(usage?.actualModels, ['opencode-go/deepseek-v4.1-flash', 'lmstudio/qwen3.8-27b']);
+  assert.deepEqual(usage?.actualModels, [
+    "opencode-go/deepseek-v4.1-flash",
+    "lmstudio/qwen3.8-27b",
+  ]);
   assert.equal(usage?.actualEffort, null);
   assert.deepEqual(
     { ...usage?.models },
     {
-      'opencode-go/deepseek-v4.1-flash#high': {
+      "opencode-go/deepseek-v4.1-flash#high": {
         input: 15,
         output: 3,
         cacheRead: 3,
         cacheWrite: 0,
         reasoning: 1,
         turns: 1,
-        bands: { le100k: { input: 15, output: 3, cacheRead: 3, cacheWrite: 0, reasoning: 1 } },
+        bands: {
+          le100k: {
+            input: 15,
+            output: 3,
+            cacheRead: 3,
+            cacheWrite: 0,
+            reasoning: 1,
+          },
+        },
       },
-      'lmstudio/qwen3.8-27b#low': {
+      "lmstudio/qwen3.8-27b#low": {
         input: 7,
         output: 3,
         reasoning: 2,
         turns: 0,
         bands: { le100k: { input: 7, output: 3, reasoning: 2 } },
       },
-    },
+    }
   );
 });
 
-test('opencode sessionUsage bounds a resumed session read to the launch window', () => {
+test("opencode sessionUsage bounds a resumed session read to the launch window", () => {
   for (const createdMs of [1500, 2500]) {
     let seen: OpencodeReadOptions | undefined;
+
     const read: UsageReader = (_dbPath, _sessionId, options) => {
       seen = options;
-      return readResult([{ depth: 0, createdMs, model: 'p/m', effort: 'max', input: 8, output: 2 }]);
+
+      return readResult([
+        {
+          depth: 0,
+          createdMs,
+          model: "p/m",
+          effort: "max",
+          input: 8,
+          output: 2,
+        },
+      ]);
     };
+
     const session = opencode.sessionUsage?.(jsonStep(), {
       ...sessionContext(read),
       launchStartMs: 1500,
       launchEndMs: 2500,
       resumed: true,
     });
-    assert.deepEqual(seen, { fromMs: 1500, toMs: 2500 }, `createdMs ${createdMs}`);
+
+    assert.deepEqual(
+      seen,
+      { fromMs: 1500, toMs: 2500 },
+      `createdMs ${createdMs}`
+    );
     assert.equal(session?.complete, true, `createdMs ${createdMs}`);
     assert.equal(session?.usage?.input, 8, `createdMs ${createdMs}`);
-    assert.equal(session?.usage?.actualEffort, 'max', `createdMs ${createdMs}`);
+    assert.equal(session?.usage?.actualEffort, "max", `createdMs ${createdMs}`);
   }
 });
 
-test('opencode sessionUsage reports incomplete when DB attribution is unavailable and usage stays stdout-only', () => {
-  const stdout = jsonStep({ input: 4, output: 2, reasoning: 0, cache: { read: 1, write: 0 } });
+test("opencode sessionUsage reports incomplete when DB attribution is unavailable and usage stays stdout-only", () => {
+  const stdout = jsonStep({
+    input: 4,
+    output: 2,
+    reasoning: 0,
+    cache: { read: 1, write: 0 },
+  });
+
   const stdoutUsage = {
     input: 4,
     output: 2,
     reasoning: 0,
     cacheRead: 1,
     cacheWrite: 0,
-    scope: 'invocation' as const,
-    provenance: 'opencode.step.finish',
-    inputSemantics: 'uncached' as const,
+    scope: "invocation" as const,
+    provenance: "opencode.step.finish",
+    inputSemantics: "uncached" as const,
   };
-  const partial: Array<OpencodeMessage> = [
-    { depth: 0, createdMs: 150, model: 'p/m', effort: 'max', input: 99, output: 99 },
+
+  const partial: OpencodeMessage[] = [
+    {
+      depth: 0,
+      createdMs: 150,
+      model: "p/m",
+      effort: "max",
+      input: 99,
+      output: 99,
+    },
   ];
-  const cases: Array<[string, UsageReader]> = [
+
+  const cases: [string, UsageReader][] = [
     [
-      'read error',
+      "read error",
       () => {
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
       },
     ],
-    ['no rows', () => readResult([])],
-    ['truncated sessions', () => readResult(partial, 'sessions')],
-    ['truncated rows', () => readResult(partial, 'rows')],
+    ["no rows", () => readResult([])],
+    ["truncated sessions", () => readResult(partial, "sessions")],
+    ["truncated rows", () => readResult(partial, "rows")],
   ];
+
   for (const [label, read] of cases) {
-    assert.equal(opencode.sessionUsage?.(stdout, sessionContext(read))?.complete, false, label);
-    assert.deepEqual(opencode.usage?.(stdout, sessionContext(read)), stdoutUsage, label);
+    assert.equal(
+      opencode.sessionUsage?.(stdout, sessionContext(read))?.complete,
+      false,
+      label
+    );
+    assert.deepEqual(
+      opencode.usage?.(stdout, sessionContext(read)),
+      stdoutUsage,
+      label
+    );
   }
 
   let calls = 0;
+
   const noSession = JSON.stringify({
-    type: 'step_finish',
-    part: { tokens: { input: 4, output: 2, reasoning: 0, cache: { read: 1, write: 0 } } },
+    type: "step_finish",
+    part: {
+      tokens: {
+        input: 4,
+        output: 2,
+        reasoning: 0,
+        cache: { read: 1, write: 0 },
+      },
+    },
   });
+
   assert.equal(
     opencode.sessionUsage?.(
       noSession,
       sessionContext(() => {
-        calls++;
+        calls += 1;
+
         return readResult(partial);
-      }),
+      })
     )?.complete,
-    false,
+    false
   );
   assert.equal(calls, 0);
   assert.deepEqual(opencode.usage?.(stdout), stdoutUsage);
 });
 
-test('step event classification recognizes only top-level step events', () => {
-  assert.equal(opencode.stepEvent?.('{"type":"step_start"}'), 'step-start');
-  assert.equal(opencode.stepEvent?.('{"type":"step_finish"}'), 'step-end');
+test("step event classification recognizes only top-level step events", () => {
+  assert.equal(opencode.stepEvent?.('{"type":"step_start"}'), "step-start");
+  assert.equal(opencode.stepEvent?.('{"type":"step_finish"}'), "step-end");
   assert.equal(opencode.stepEvent?.('{"type":"text"}'), null);
-  assert.equal(opencode.stepEvent?.('invalid'), null);
+  assert.equal(opencode.stepEvent?.("invalid"), null);
 });

@@ -1,99 +1,143 @@
-// Delegate failure cascade (spec §6.4, ADR 0001): model array inside one voice, provider-declared mode cascade,
-// sandbox-unsupported skip, reserves once per fan-out directory.
+import type { FailureClass, SlotId } from "../toolkit/types.ts";
 
-import type { FailureClass, SlotId } from '../toolkit/types.ts';
-
-export type Voice = {
+export interface Voice {
   slot: SlotId;
   platform: string;
-  models: ReadonlyArray<string | null>;
-  modes: ReadonlyArray<string>;
+  models: readonly (string | null)[];
+  modes: readonly string[];
   /** Classes the provider declares mode-cascadable (agy: quota/context-overflow/…; copilot: quota). */
-  modeCascadeOn: ReadonlyArray<FailureClass>;
-};
-type Position = { model: number; mode: number };
-type WaveContext = { reserveAvailable: boolean };
+  modeCascadeOn: readonly FailureClass[];
+}
+
+interface Position {
+  model: number;
+  mode: number;
+}
+
+interface WaveContext {
+  reserveAvailable: boolean;
+}
 
 type CascadeDecision =
-  | { kind: 'next-model'; position: Position }
-  | { kind: 'next-mode'; position: Position }
-  | { kind: 'reserve' }
-  | { kind: 'terminal'; scope: 'slot' | 'run'; reason: string };
+  | { kind: "next-model"; position: Position }
+  | { kind: "next-mode"; position: Position }
+  | { kind: "reserve" }
+  | { kind: "terminal"; scope: "slot" | "run"; reason: string };
 
-const unreachable = (value: never): never => {
+const unreachable = (value: never) => {
   throw new Error(`unhandled failure class: ${String(value)}`);
 };
 
 /** How a class moves inside the voice before exhaustion. */
-export function failureDisposition(cls: FailureClass): 'cascade' | 'skip-voice' | 'terminal-run' {
+export const failureDisposition = (cls: FailureClass) => {
   switch (cls) {
-    case 'quota':
-    case 'context-overflow':
-    case 'auth':
-    case 'model-not-found':
-    case 'cli-outdated':
-    case 'model-not-loaded':
-    case 'not-found':
-    case 'timeout':
-    case 'buffer':
-    case 'empty-output':
-    case 'capacity':
-    case 'refusal':
-    case 'no-report':
-    case 'blocked':
-    case 'truncated':
-      return 'cascade';
-    case 'sandbox-unsupported':
-      return 'skip-voice';
-    case 'integrity':
-    case 'config':
-      return 'terminal-run';
-    default:
+    case "quota":
+    case "context-overflow":
+    case "auth":
+    case "model-not-found":
+    case "cli-outdated":
+    case "model-not-loaded":
+    case "not-found":
+    case "timeout":
+    case "buffer":
+    case "empty-output":
+    case "capacity":
+    case "refusal":
+    case "no-report":
+    case "blocked":
+    case "truncated": {
+      return "cascade";
+    }
+
+    case "sandbox-unsupported": {
+      return "skip-voice";
+    }
+
+    case "integrity":
+    case "config": {
+      return "terminal-run";
+    }
+
+    default: {
       return unreachable(cls);
+    }
   }
-}
+};
 
 /** The next step after `cls` failed at `position`. */
-export function next(
+export const next: (
   cls: FailureClass,
   position: Position,
   voice: Voice,
-  wave: WaveContext = { reserveAvailable: false },
-): CascadeDecision {
+  wave?: WaveContext
+) => CascadeDecision = (cls, position, voice, wave) => {
   const disposition = failureDisposition(cls);
-  if (disposition === 'terminal-run') {
-    return { kind: 'terminal', scope: 'run', reason: `${cls} is terminal for the run` };
+
+  if (disposition === "terminal-run") {
+    return {
+      kind: "terminal",
+      scope: "run",
+      reason: `${cls} is terminal for the run`,
+    };
   }
-  if (disposition === 'cascade') {
-    // Every failure, auth and quota included, tries the next alias of the voice (ADR 0001): models maintain independent quotas.
+
+  if (disposition === "cascade") {
     if (position.model + 1 < voice.models.length) {
-      return { kind: 'next-model', position: { model: position.model + 1, mode: position.mode } };
+      return {
+        kind: "next-model",
+        position: { model: position.model + 1, mode: position.mode },
+      };
     }
-    if (voice.modeCascadeOn.includes(cls) && position.mode + 1 < voice.modes.length) {
-      return { kind: 'next-mode', position: { model: 0, mode: position.mode + 1 } };
+
+    if (
+      voice.modeCascadeOn.includes(cls) &&
+      position.mode + 1 < voice.modes.length
+    ) {
+      return {
+        kind: "next-mode",
+        position: { model: 0, mode: position.mode + 1 },
+      };
     }
   }
-  // The voice is exhausted, or the sandbox gap makes its other models and modes pointless (D28).
-  if (wave.reserveAvailable) {
-    return { kind: 'reserve' };
+
+  if (wave?.reserveAvailable === true) {
+    return { kind: "reserve" };
   }
-  return { kind: 'terminal', scope: 'slot', reason: `${voice.slot} failed: ${cls}` };
+
+  return {
+    kind: "terminal",
+    scope: "slot",
+    reason: `${voice.slot} failed: ${cls}`,
+  };
+};
+
+interface ReservePool {
+  order: readonly SlotId[];
+  used: readonly SlotId[];
+  records: readonly string[];
 }
 
-// SECTION: Reserves
+export const reservePool = (order: readonly SlotId[]) => ({
+  order,
+  used: [],
+  records: [],
+});
 
-type ReservePool = { order: ReadonlyArray<SlotId>; used: ReadonlyArray<SlotId>; records: ReadonlyArray<string> };
-type ReserveTake = { pool: ReservePool; reserve: SlotId | null };
-
-export const reservePool = (order: ReadonlyArray<SlotId>): ReservePool => ({ order, used: [], records: [] });
-export const hasReserve = (pool: ReservePool): boolean => pool.order.some((slot) => !pool.used.includes(slot));
+export const hasReserve = (pool: ReservePool) =>
+  pool.order.some((slot) => !pool.used.includes(slot));
 
 /** Consumes the next unused ordered reserve (each at most once per fan-out directory) and records `<failed> → <reserve>: <reason>`. */
-export function takeReserve(pool: ReservePool, failed: SlotId, reason: string): ReserveTake {
+export const takeReserve = (
+  pool: ReservePool,
+  failed: SlotId,
+  reason: string
+) => {
   const reserve = pool.order.find((slot) => !pool.used.includes(slot));
+
   if (reserve === undefined) {
     return { pool, reserve: null };
   }
+
   return {
     reserve,
     pool: {
@@ -102,4 +146,4 @@ export function takeReserve(pool: ReservePool, failed: SlotId, reason: string): 
       records: [...pool.records, `${failed} → ${reserve}: ${reason}`],
     },
   };
-}
+};

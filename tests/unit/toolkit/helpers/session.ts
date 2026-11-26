@@ -1,84 +1,126 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import { randomUUID } from 'node:crypto';
-import { mock } from 'node:test';
-import { memoryNodeFs } from '../../../helpers/memory-node-fs.ts';
-import path from 'node:path';
-import type { CliDeps } from '../../../../skills/dispatch/scripts/toolkit/cli.ts';
-import type { ToolResult } from '../../../../skills/dispatch/scripts/toolkit/output.ts';
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { mock } from "node:test";
+
+import { isRecord } from "../../../../skills/dispatch/scripts/lib/config.ts";
+import { nodeLinkFs } from "../../../../skills/dispatch/scripts/lib/node-fs-ext.ts";
+import { canonicalRepositoryRoot } from "../../../../skills/dispatch/scripts/lib/session.ts";
 import type {
   DelegateRequest,
   ModeId,
   ProviderId,
   RunOutcome,
-} from '../../../../skills/dispatch/scripts/providers/types.ts';
-import { canonicalRepositoryRoot } from '../../../../skills/dispatch/scripts/lib/session.ts';
-import { nodeLinkFs } from '../../../../skills/dispatch/scripts/lib/node-fs-ext.ts';
-import { isRecord } from '../../../../skills/dispatch/scripts/lib/config.ts';
+} from "../../../../skills/dispatch/scripts/providers/types.ts";
+import type { CliDeps } from "../../../../skills/dispatch/scripts/toolkit/cli.ts";
+import { memoryNodeFs } from "../../../helpers/memory-node-fs.ts";
 
-export function useMemoryAtomicWrite(): () => void {
-  // Route artifact updates through the active in-memory filesystem.
-  const write = mock.method(nodeLinkFs, 'writeAtomic', (file: string, text: string) => fs.writeFileSync(file, text));
-  return () => write.mock.restore();
-}
+export const useMemoryAtomicWrite = () => {
+  const write = mock.method(
+    nodeLinkFs,
+    "writeAtomic",
+    (file: string, text: string) => {
+      fs.writeFileSync(file, text);
+    }
+  );
 
-export function sessionFixture(options: { memory?: boolean } = {}) {
-  const root = options.memory
-    ? path.join(os.tmpdir(), 'toolkit-' + randomUUID())
-    : fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-'));
-  const restore = options.memory ? memoryNodeFs(root) : null;
-  const session = path.join(root, '.scratch', 'dispatch-skills', '20261023T0000Z-test');
+  return () => {
+    write.mock.restore();
+  };
+};
+
+export const sessionFixture = (options: { memory?: boolean } = {}) => {
+  const root =
+    options.memory === true
+      ? path.join(os.tmpdir(), `toolkit-${randomUUID()}`)
+      : fs.mkdtempSync(path.join(os.tmpdir(), "toolkit-"));
+
+  const restore = options.memory === true ? memoryNodeFs(root) : null;
+
+  const session = path.join(
+    root,
+    ".scratch",
+    "dispatch-skills",
+    "20261023T0000Z-test"
+  );
+
   fs.mkdirSync(session, { recursive: true });
   fs.writeFileSync(
-    path.join(session, 'manifest.json'),
+    path.join(session, "manifest.json"),
     JSON.stringify({
       schemaVersion: 1,
       folderName: path.basename(session),
-      sessionId: 'test',
-      safeSessionId: 'test',
+      sessionId: "test",
+      safeSessionId: "test",
       repositoryRoot: canonicalRepositoryRoot(root),
-    }),
+    })
   );
-  const lines: Array<string> = [];
-  const sleeps: Array<number> = [];
+  const lines: string[] = [];
+  const sleeps: number[] = [];
   const replies = new Map<string, RunOutcome>();
-  const launches: Array<{ provider: ProviderId; request: DelegateRequest; mode: ModeId }> = [];
+
+  const launches: {
+    provider: ProviderId;
+    request: DelegateRequest;
+    mode: ModeId;
+  }[] = [];
+
   const deps: CliDeps = {
     run: async () => {
-      throw new Error('Unit tests must not spawn processes');
+      await Promise.resolve();
+      throw new Error("Unit tests must not spawn processes");
     },
     delegate: async (provider, request, mode) => {
+      await Promise.resolve();
       launches.push({ provider, request, mode });
-      const outcome = replies.get(provider + ':' + request.model);
+      const outcome = replies.get(`${provider}:${request.model}`);
+
       if (!outcome) {
-        throw new Error('Unscripted delegate ' + provider + ':' + request.model);
+        throw new Error(`Unscripted delegate ${provider}:${request.model}`);
       }
+
       return { outcome, invocations: [] };
     },
-    modes: () => ['cli'],
+    modes: () => ["cli"],
     orchestrator: null,
-    liveness: { claude: true, agy: true, codex: true, copilot: true, opencode: true },
-    stdout: (line) => lines.push(line),
+    liveness: {
+      claude: true,
+      agy: true,
+      codex: true,
+      copilot: true,
+      opencode: true,
+    },
+    stdout: (line) => {
+      lines.push(line);
+    },
     env: {},
     clock: () => 0,
     sleep: async (ms) => {
+      await Promise.resolve();
       sleeps.push(ms);
     },
     pid: 42,
-    host: 'test-host',
+    host: "test-host",
     isAlive: () => false,
-    skillRoot: path.resolve('skills/dispatch'),
+    skillRoot: path.resolve("skills/dispatch"),
   };
+
   const artifact = (name: string, source: string) => {
     const file = path.join(root, name);
     fs.writeFileSync(file, source);
+
     return file;
   };
+
   const script = (provider: string, model: string, text: string | RunOutcome) =>
     replies.set(
-      provider + ':' + model,
-      typeof text === 'string' ? { status: 'ok', text, resume: null, sessionId: null } : text,
+      `${provider}:${model}`,
+      typeof text === "string"
+        ? { status: "ok", text, resume: null, sessionId: null }
+        : text
     );
+
   return {
     root,
     session,
@@ -88,25 +130,32 @@ export function sessionFixture(options: { memory?: boolean } = {}) {
     artifact,
     script,
     launches,
-    output: (): Omit<ToolResult, 'exit'> => {
+    output: () => {
       const [line] = lines;
+
       if (lines.length !== 1 || line === undefined) {
-        throw new Error('Expected one output line');
+        throw new Error("Expected one output line");
       }
+
       const output: unknown = JSON.parse(line);
+
       if (!isRecord(output)) {
-        throw new Error('Expected a toolkit response');
+        throw new Error("Expected a toolkit response");
       }
+
+      // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
       const { ok, summary, path, reason, hint } = output;
+
       if (
-        typeof ok !== 'boolean' ||
-        typeof summary !== 'string' ||
-        (path !== null && typeof path !== 'string') ||
-        (reason !== undefined && typeof reason !== 'string') ||
-        (hint !== undefined && typeof hint !== 'string')
+        typeof ok !== "boolean" ||
+        typeof summary !== "string" ||
+        (path !== null && typeof path !== "string") ||
+        (reason !== undefined && typeof reason !== "string") ||
+        (hint !== undefined && typeof hint !== "string")
       ) {
-        throw new Error('Invalid toolkit response');
+        throw new Error("Invalid toolkit response");
       }
+
       return {
         ...output,
         ok,
@@ -124,4 +173,4 @@ export function sessionFixture(options: { memory?: boolean } = {}) {
       }
     },
   };
-}
+};

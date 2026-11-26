@@ -1,281 +1,425 @@
-import assert from 'node:assert/strict';
-import path from 'node:path';
-import { describe, test } from 'node:test';
-import { LanguageVariant, SyntaxKind } from 'typescript/unstable/ast';
-import { createScanner } from 'typescript/unstable/ast/scanner';
-import { extractImports, OVERLAY_ROOT, resolveRelative, scanOverlay } from './scan.ts';
-import type { FileTable } from './scan.ts';
+import assert from "node:assert/strict";
+import path from "node:path";
+import { describe, test } from "node:test";
 
-const SCRIPTS = 'skills/dispatch/scripts/';
-type Layer = 'dispatch' | 'policy' | 'providers' | 'lib' | 'toolkit';
+import { LanguageVariant, SyntaxKind } from "typescript/unstable/ast";
+import { createScanner } from "typescript/unstable/ast/scanner";
+
+import { defined } from "../helpers/guards.ts";
+import {
+  extractImports,
+  OVERLAY_ROOT,
+  resolveRelative,
+  scanOverlay,
+} from "./scan.ts";
+import type { FileTable } from "./scan.ts";
+
+const SCRIPTS = "skills/dispatch/scripts/";
+
+type Layer = "dispatch" | "policy" | "providers" | "lib" | "toolkit";
 
 // Design § Layers: anything not listed is forbidden (which also rules out cycles).
-type LayerRules = { readonly [K in Layer]: ReadonlyArray<Layer> };
+type LayerRules = { readonly [K in Layer]: readonly Layer[] };
+
 export const ALLOWED: LayerRules = {
-  dispatch: ['lib', 'providers', 'policy', 'toolkit'],
+  dispatch: ["lib", "providers", "policy", "toolkit"],
   policy: [],
-  providers: ['lib'],
+  providers: ["lib"],
   lib: [],
-  toolkit: ['toolkit', 'providers', 'lib', 'policy'],
+  toolkit: ["toolkit", "providers", "lib", "policy"],
 };
 
-const PURE = new Set<Layer>(['policy']);
-const IMPURE_MODULES = ['fs', 'child_process', 'os'];
-const IMPURE_TOKENS: ReadonlyArray<[RegExp, string]> = [
-  [/\bDate\b/, 'Date'],
-  [/\bMath\.random\b/, 'Math.random'],
-  [/\bprocess\.env\b/, 'process.env'],
-  [/\bperformance\b/, 'performance'],
+const PURE = new Set<Layer>(["policy"]);
+const IMPURE_MODULES = ["fs", "child_process", "os"];
+
+const IMPURE_TOKENS: readonly [RegExp, string][] = [
+  [/\bDate\b/u, "Date"],
+  [/\bMath\.random\b/u, "Math.random"],
+  [/\bprocess\.env\b/u, "process.env"],
+  [/\bperformance\b/u, "performance"],
 ];
+
 const REGEX_PREFIXES = new Set([
-  '(',
-  '[',
-  '{',
-  ',',
-  ';',
-  ':',
-  '?',
-  '=',
-  '!',
-  '~',
-  '+',
-  '-',
-  '*',
-  '%',
-  '&',
-  '|',
-  '^',
-  '&&',
-  '||',
-  '??',
-  '=>',
-  'return',
-  'throw',
-  'case',
-  'delete',
-  'void',
-  'typeof',
-  'new',
-  'yield',
-  'await',
-  'else',
-  'do',
-  'instanceof',
-  'in',
-  'of',
+  "(",
+  "[",
+  "{",
+  ",",
+  ";",
+  ":",
+  "?",
+  "=",
+  "!",
+  "~",
+  "+",
+  "-",
+  "*",
+  "%",
+  "&",
+  "|",
+  "^",
+  "&&",
+  "||",
+  "??",
+  "=>",
+  "return",
+  "throw",
+  "case",
+  "delete",
+  "void",
+  "typeof",
+  "new",
+  "yield",
+  "await",
+  "else",
+  "do",
+  "instanceof",
+  "in",
+  "of",
 ]);
 
-function hasIdentifier(text: string, name: string): boolean {
+const hasIdentifier = (text: string, name: string) => {
   const scanner = createScanner(true, LanguageVariant.Standard, text);
-  let previous = '';
-  for (let token = scanner.scan(); token !== SyntaxKind.EndOfFile; token = scanner.scan()) {
+  let previous = "";
+
+  for (
+    let token = scanner.scan();
+    token !== SyntaxKind.EndOfFile;
+    token = scanner.scan()
+  ) {
     if (token === SyntaxKind.SlashToken && REGEX_PREFIXES.has(previous)) {
       token = scanner.reScanSlashToken();
     }
+
     if (token === SyntaxKind.Identifier && scanner.getTokenText() === name) {
       return true;
     }
+
     previous = scanner.getTokenText();
   }
+
   return false;
-}
+};
 
 const isLayer = (name: string): name is Layer => Object.hasOwn(ALLOWED, name);
 
-function layerOf(file: string): Layer | null {
+const layerOf = (file: string) => {
   if (!file.startsWith(SCRIPTS)) {
     return null;
   }
-  const rest = file.slice(SCRIPTS.length);
-  if (rest === 'dispatch.ts') {
-    return 'dispatch';
-  }
-  const head = rest.split('/')[0] ?? '';
-  return isLayer(head) && rest.includes('/') ? head : null;
-}
 
-export function checkDependencies(files: FileTable): Array<string> {
-  const errors: Array<string> = [];
+  const rest = file.slice(SCRIPTS.length);
+
+  if (rest === "dispatch.ts") {
+    return "dispatch";
+  }
+
+  const head = rest.split("/")[0] ?? "";
+
+  return isLayer(head) && rest.includes("/") ? head : null;
+};
+
+// eslint-disable-next-line eslint/complexity -- scenario matrix test keeps all cases in one place.
+export const checkDependencies = (files: FileTable) => {
+  const errors: string[] = [];
+
   for (const { path: file, text } of files) {
     const layer = layerOf(file);
-    if (!file.endsWith('.ts') || !file.startsWith(SCRIPTS)) {
+
+    if (!file.endsWith(".ts") || !file.startsWith(SCRIPTS)) {
       continue;
     }
+
     if (!layer) {
       errors.push(
-        `dependency rule: ${file} is outside the shipped layers; move it to toolkit/, providers/, lib/ or policy/`,
+        `dependency rule: ${file} is outside the shipped layers; move it to toolkit/, providers/, lib/ or policy/`
       );
       continue;
     }
+
     for (const { specifier, typeOnly } of extractImports(text)) {
-      if (PURE.has(layer) && IMPURE_MODULES.some((name) => specifier === name || specifier === `node:${name}`)) {
+      if (
+        PURE.has(layer) &&
+        IMPURE_MODULES.some(
+          (name) => specifier === name || specifier === `node:${name}`
+        )
+      ) {
         errors.push(
-          `purity rule: ${file} (${layer}) imports ${specifier}; pure layers do no I/O, so move it to toolkit/ or lib/`,
+          `purity rule: ${file} (${layer}) imports ${specifier}; pure layers do no I/O, so move it to toolkit/ or lib/`
         );
       }
+
       const target = resolveRelative(file, specifier);
-      const targetLayer = target ? layerOf(target) : null;
-      if (target && !targetLayer) {
-        errors.push(`dependency rule: ${file} imports ${specifier} outside the shipped layers; use a surviving owner`);
+
+      const hasTarget =
+        target !== undefined && target !== null && target !== "";
+
+      const targetLayer = hasTarget ? layerOf(target) : null;
+
+      if (hasTarget && !targetLayer) {
+        errors.push(
+          `dependency rule: ${file} imports ${specifier} outside the shipped layers; use a surviving owner`
+        );
         continue;
       }
-      if (targetLayer === 'toolkit' && layer !== 'toolkit' && layer !== 'dispatch') {
-        if (typeOnly && [SCRIPTS + 'toolkit/types.ts', SCRIPTS + 'toolkit/domain/types.ts'].includes(target!)) {
+
+      if (
+        targetLayer === "toolkit" &&
+        layer !== "toolkit" &&
+        layer !== "dispatch"
+      ) {
+        if (
+          typeOnly &&
+          [
+            `${SCRIPTS}toolkit/types.ts`,
+            `${SCRIPTS}toolkit/domain/types.ts`,
+          ].includes(defined(target))
+        ) {
           continue;
         }
+
         errors.push(
-          `dependency rule: ${file} imports ${specifier}; shared layers may only type-import toolkit/types.ts or toolkit/domain/types.ts`,
+          `dependency rule: ${file} imports ${specifier}; shared layers may only type-import toolkit/types.ts or toolkit/domain/types.ts`
         );
         continue;
       }
+
       if (!targetLayer || targetLayer === layer) {
         continue;
       }
+
       if (!ALLOWED[layer].includes(targetLayer)) {
         errors.push(
-          `dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(', ') || 'nothing'}, so invert the dependency or move the code`,
+          `dependency rule: ${file} (${layer}) imports ${specifier} (${targetLayer}); ${layer} may import only ${ALLOWED[layer].join(", ") || "nothing"}, so invert the dependency or move the code`
         );
       }
     }
+
     if (PURE.has(layer)) {
       for (const [pattern, token] of IMPURE_TOKENS) {
-        if (pattern.test(text) && (token !== 'performance' || hasIdentifier(text, token))) {
+        if (
+          pattern.test(text) &&
+          (token !== "performance" || hasIdentifier(text, token))
+        ) {
           errors.push(
-            `purity rule: ${file} (${layer}) uses ${token}; pure layers read time and randomness only from events, so pass it in`,
+            `purity rule: ${file} (${layer}) uses ${token}; pure layers read time and randomness only from events, so pass it in`
           );
         }
       }
     }
   }
-  return errors;
-}
 
-test('the overlay obeys the dependency matrix and purity rules', () => {
-  const scriptsRoot = path.join(OVERLAY_ROOT, 'skills/dispatch/scripts');
-  const files = scanOverlay(scriptsRoot).map((entry) => ({ ...entry, path: `${SCRIPTS}${entry.path}` }));
+  return errors;
+};
+
+test("the overlay obeys the dependency matrix and purity rules", () => {
+  const scriptsRoot = path.join(OVERLAY_ROOT, "skills/dispatch/scripts");
+
+  const files = scanOverlay(scriptsRoot).map((entry) => ({
+    ...entry,
+    path: `${SCRIPTS}${entry.path}`,
+  }));
+
   assert.deepEqual(checkDependencies(files), []);
 });
 
-const IMPORT = 'imp' + 'ort';
-const file = (path: string, ...lines: Array<string>) => ({ path, text: lines.join('\n') });
+// eslint-disable-next-line no-useless-concat
+const IMPORT = "imp" + "ort";
 
-test('dispatch entry imports only portable services and toolkit', () => {
-  for (const layer of ['lib', 'providers', 'policy', 'toolkit']) {
+// eslint-disable-next-line eslint/no-shadow -- fixture-local name intentionally mirrors the outer contract.
+const file = (path: string, ...lines: string[]) => ({
+  path,
+  text: lines.join("\n"),
+});
+
+test("dispatch entry imports only portable services and toolkit", () => {
+  for (const layer of ["lib", "providers", "policy", "toolkit"]) {
     assert.deepEqual(
-      checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]),
-      [],
+      checkDependencies([
+        file(
+          `${SCRIPTS}dispatch.ts`,
+          `${IMPORT} { X } from "./${layer}/example.ts";`
+        ),
+      ]),
+      []
     );
   }
-  for (const layer of ['invalid', 'forbidden', 'other', 'unknown']) {
+
+  for (const layer of ["invalid", "forbidden", "other", "unknown"]) {
     assert.equal(
-      checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' { X } from "./' + layer + '/example.ts";')]).length,
-      1,
+      checkDependencies([
+        file(
+          `${SCRIPTS}dispatch.ts`,
+          `${IMPORT} { X } from "./${layer}/example.ts";`
+        ),
+      ]).length,
+      1
     );
     assert.equal(
-      checkDependencies([file(SCRIPTS + 'dispatch.ts', IMPORT + ' type { X } from "./' + layer + '/types.ts";')])
-        .length,
-      1,
+      checkDependencies([
+        file(
+          `${SCRIPTS}dispatch.ts`,
+          `${IMPORT} type { X } from "./${layer}/types.ts";`
+        ),
+      ]).length,
+      1
     );
   }
 });
 
-describe('toolkit import boundary', () => {
-  test('shipped layers refuse relative imports outside the scripts tree', () => {
-    for (const layer of ['toolkit', 'lib']) {
-      for (const type of ['', 'type ']) {
+describe("toolkit import boundary", () => {
+  test("shipped layers refuse relative imports outside the scripts tree", () => {
+    for (const layer of ["toolkit", "lib"]) {
+      for (const type of ["", "type "]) {
         const errors = checkDependencies([
-          file(SCRIPTS + layer + '/example.ts', IMPORT + ' ' + type + '{ X } from "../../../../tests/example.ts";'),
+          file(
+            `${SCRIPTS + layer}/example.ts`,
+            `${IMPORT} ${type}{ X } from "../../../../tests/example.ts";`
+          ),
         ]);
-        assert.equal(errors.length, 1, `${layer}: ${type || 'value'}`);
-        assert.match(errors[0]!, /outside the shipped layers; use a surviving owner/);
+
+        assert.equal(errors.length, 1, `${layer}: ${type || "value"}`);
+        assert.match(
+          defined(errors[0]),
+          /outside the shipped layers; use a surviving owner/u
+        );
       }
-      for (const specifier of ['node:fs', 'typescript/unstable/ast']) {
+
+      for (const specifier of ["node:fs", "typescript/unstable/ast"]) {
         assert.deepEqual(
           checkDependencies([
-            file(SCRIPTS + layer + '/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';'),
+            file(
+              `${SCRIPTS + layer}/example.ts`,
+              `${IMPORT} { X } from ${JSON.stringify(specifier)};`
+            ),
           ]),
-          [],
+          []
         );
       }
     }
+
     for (const [specifier, type] of [
-      ['../invalid/types.ts', 'type '],
-      ['../forbidden/interpreter.ts', ''],
+      ["../invalid/types.ts", "type "],
+      ["../forbidden/interpreter.ts", ""],
     ]) {
       const errors = checkDependencies([
-        file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' ' + type + '{ X } from ' + JSON.stringify(specifier) + ';'),
+        file(
+          `${SCRIPTS}toolkit/example.ts`,
+          `${IMPORT} ${type}{ X } from ${JSON.stringify(specifier)};`
+        ),
       ]);
+
       assert.equal(errors.length, 1, specifier);
-      assert.match(errors[0]!, /toolkit/);
+      assert.match(defined(errors[0]), /toolkit/u);
     }
-    for (const specifier of ['./domain/plan.ts', '../providers/types.ts', '../lib/session.ts', '../policy/roster.ts']) {
+
+    for (const specifier of [
+      "./domain/plan.ts",
+      "../providers/types.ts",
+      "../lib/session.ts",
+      "../policy/roster.ts",
+    ]) {
       assert.deepEqual(
         checkDependencies([
-          file(SCRIPTS + 'toolkit/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';'),
+          file(
+            `${SCRIPTS}toolkit/example.ts`,
+            `${IMPORT} { X } from ${JSON.stringify(specifier)};`
+          ),
         ]),
-        [],
+        []
       );
     }
-    for (const layer of ['policy', 'providers', 'lib']) {
-      for (const specifier of ['../toolkit/types.ts', '../toolkit/domain/types.ts']) {
+
+    for (const layer of ["policy", "providers", "lib"]) {
+      for (const specifier of [
+        "../toolkit/types.ts",
+        "../toolkit/domain/types.ts",
+      ]) {
         assert.deepEqual(
           checkDependencies([
-            file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from ' + JSON.stringify(specifier) + ';'),
+            file(
+              `${SCRIPTS + layer}/example.ts`,
+              `${IMPORT} type { X } from ${JSON.stringify(specifier)};`
+            ),
           ]),
-          [],
+          []
         );
         assert.equal(
           checkDependencies([
-            file(SCRIPTS + layer + '/example.ts', IMPORT + ' { X } from ' + JSON.stringify(specifier) + ';'),
+            file(
+              `${SCRIPTS + layer}/example.ts`,
+              `${IMPORT} { X } from ${JSON.stringify(specifier)};`
+            ),
           ]).length,
-          1,
+          1
         );
       }
+
       assert.equal(
-        checkDependencies([file(SCRIPTS + layer + '/example.ts', IMPORT + ' type { X } from "../toolkit/cli.ts";')])
-          .length,
-        1,
+        checkDependencies([
+          file(
+            `${SCRIPTS + layer}/example.ts`,
+            `${IMPORT} type { X } from "../toolkit/cli.ts";`
+          ),
+        ]).length,
+        1
       );
     }
   });
 });
 
-test('purity checks reject direct, computed, and captured performance identifiers', () => {
+test("purity checks reject direct, computed, and captured performance identifiers", () => {
   assert.deepEqual(
     checkDependencies([
       file(
         `${SCRIPTS}policy/example.ts`,
         `const family = 'performance';`,
-        '// ' + 'performance' + '.now() is an example only',
-        `/* performance['now']() is example text */`,
+        // eslint-disable-next-line no-useless-concat
+        "// " + "performance" + ".now() is an example only",
+        `/* performance['now']() is example text */`
       ),
     ]),
-    [],
+    []
   );
+
   const errors = checkDependencies([
-    file(`${SCRIPTS}policy/direct.ts`, 'performance' + '.now();'),
+    // eslint-disable-next-line no-useless-concat
+    file(`${SCRIPTS}policy/direct.ts`, "performance" + ".now();"),
     file(`${SCRIPTS}policy/computed.ts`, "performance['now']();"),
-    file(`${SCRIPTS}policy/captured.ts`, 'const clock = performance;'),
+    file(`${SCRIPTS}policy/captured.ts`, "const clock = performance;"),
   ]);
+
   assert.equal(errors.length, 3);
-  assert.ok(errors.every((error) => error.includes('uses performance')));
+  assert.ok(errors.every((error) => error.includes("uses performance")));
 });
 
-test('dependency and purity violations identify the broken layer rule and corrective action', () => {
+test("dependency and purity violations identify the broken layer rule and corrective action", () => {
   const errors = checkDependencies([
     file(
       `${SCRIPTS}policy/example.ts`,
       `${IMPORT} fs from 'node:fs';`,
       `${IMPORT} { run } from '../providers/runner.ts';`,
-      'const t = new Date();',
+      "const t = new Date();"
     ),
-    file(`${SCRIPTS}unknown/example.ts`, ''),
-    file(`${SCRIPTS}lib/config.ts`, `${IMPORT} type { X } from '../invalid/types.ts';`),
+    file(`${SCRIPTS}unknown/example.ts`, ""),
+    file(
+      `${SCRIPTS}lib/config.ts`,
+      `${IMPORT} type { X } from '../invalid/types.ts';`
+    ),
   ]);
+
   assert.equal(errors.length, 5);
-  assert.match(errors[0] ?? '', /^purity rule: .*policy\/example\.ts .*node:fs.*move it to toolkit\/ or lib\//);
-  assert.match(errors[1] ?? '', /^dependency rule: .*\(policy\) imports .*providers.*may import only nothing/);
-  assert.match(errors[2] ?? '', /^purity rule: .*uses Date/);
-  assert.match(errors[3] ?? '', /outside the shipped layers; move it/);
-  assert.match(errors[4] ?? '', /outside the shipped layers; use a surviving owner/);
+  assert.match(
+    errors[0] ?? "",
+    /^purity rule: .*policy\/example\.ts .*node:fs.*move it to toolkit\/ or lib\//u
+  );
+  assert.match(
+    errors[1] ?? "",
+    /^dependency rule: .*\(policy\) imports .*providers.*may import only nothing/u
+  );
+  assert.match(errors[2] ?? "", /^purity rule: .*uses Date/u);
+  assert.match(errors[3] ?? "", /outside the shipped layers; move it/u);
+  assert.match(
+    errors[4] ?? "",
+    /outside the shipped layers; use a surviving owner/u
+  );
 });

@@ -2,34 +2,44 @@
 
 The spec is the governing requirements and intent document. Put selected architecture in the design and execution detail in the plan, as described in [document layers](../spec-stage.md#readers-and-document-layers).
 
-````markdown
+```markdown
 # <Spec title>
 
 > **Status:** <draft | approved by user — "<quote>" (<date>)>
 
 ## At a Glance
+
 - **What:** <plain-language change and why it matters>
 - **How it works:** <one-line explanation>
 
 ## Intent & Problem
-*The problem, who has it, and the intended outcome.*
+
+_The problem, who has it, and the intended outcome._
 
 ## Background
-*Current state and the facts that constrain the solution.*
+
+_Current state and the facts that constrain the solution._
 
 ## Requirements
+
 ### REQ-<n> — <title>
-*What must be true.*
+
+_What must be true._
+
 - Acceptance: <observable check>
 
 ## Non-goals
+
 - <excluded outcome>
 
 ## Constraints
+
 - <limit the solution must respect>
 
 ## Decisions
+
 ### DEC-<n> — <title>
+
 - Context: <why a choice was needed>
 - Options:
   - <option: trade-off, limitation, risk>
@@ -40,11 +50,13 @@ The spec is the governing requirements and intent document. Put selected archite
 - Rejected: <rejected options and why>
 
 ## Discussion Record
+
 - <dated exchange that settled intent without a DEC, or None.>
 
 ## Open Questions
+
 - <question, or none>
-````
+```
 
 ## Field notes
 

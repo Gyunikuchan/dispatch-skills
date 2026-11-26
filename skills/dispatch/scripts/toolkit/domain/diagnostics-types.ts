@@ -1,3 +1,4 @@
+import type { JsonObject } from "../../lib/integrity.ts";
 import type {
   CopilotActor,
   CopilotEvidence,
@@ -7,46 +8,49 @@ import type {
   HostUsageFacts,
   ResponseStage,
   UsageSource,
-} from '../../lib/usage/rows.ts';
-import type { LifecycleStep } from '../../providers/types.ts';
-import type { FailureClass } from '../types.ts';
-import type { RecoverySelection } from '../review-state.ts';
-import type { JsonObject } from '../../lib/integrity.ts';
-import type { ReviewKind } from './types.ts';
+} from "../../lib/usage/rows.ts";
+import type { LifecycleStep } from "../../providers/types.ts";
+import type { RecoverySelection } from "../review-state.ts";
+import type { FailureClass } from "../types.ts";
+import type { ReviewKind } from "./types.ts";
 
 export const PHASE_NAMES = [
-  'plan',
-  'plan review',
-  'implementation',
-  'code review',
-  'design',
-  'design review',
-  'integration review',
-  'ask',
+  "plan",
+  "plan review",
+  "implementation",
+  "code review",
+  "design",
+  "design review",
+  "integration review",
+  "ask",
 ] as const;
 
 /** The review machine's halt on a re-raised fix (regression) or a pending rejection re-raised twice (deadlock). */
-type Escalation = { kind: 'regression' | 'deadlock'; ids: ReadonlyArray<string> };
+interface Escalation {
+  kind: "regression" | "deadlock";
+  ids: readonly string[];
+}
 
 /** Review phases carry the review machine's convergence result (findings re-raised across rounds, any escalation) and the resolved round `cap`. */
-export type Phase = {
+export interface Phase {
   key: string;
   name: (typeof PHASE_NAMES)[number];
   outcome?: string;
-  reraised?: ReadonlyArray<string>;
+  reraised?: readonly string[];
   escalation?: Escalation;
   cap?: number;
-};
+}
 
 /** Key order is severity order. Hosts send the keys; the report renders the labels. */
 export const CATEGORIES = {
-  correctness: 'Correctness / protocol',
-  'token-economy': 'Token economy',
-  speed: 'Speed',
-  'review-convergence': 'Review convergence',
-  'instruction-clarity': 'Instruction clarity',
-  'information-access': 'Information access',
+  correctness: "Correctness / protocol",
+  "token-economy": "Token economy",
+  speed: "Speed",
+  "review-convergence": "Review convergence",
+  "instruction-clarity": "Instruction clarity",
+  "information-access": "Information access",
 } as const;
+
 export type Category = keyof typeof CATEGORIES;
 
 export type ModelUsage = DiagnosticModelUsage;
@@ -54,13 +58,13 @@ export type ModelUsage = DiagnosticModelUsage;
 /** `input` is canonical uncached input; `models` holds per-model counters, with `<model>#<effort>` keys when effort varies. */
 export type Usage = ModelUsage & {
   copilot?: CopilotEvidence;
-  actors?: Array<CopilotActor>;
+  actors?: CopilotActor[];
   models?: Record<string, ModelUsage>;
   reasoningInOutput?: boolean;
 };
 
 /** Tool-call durations can overlap; they do not measure session elapsed time. */
-export type PhaseFacts = {
+export interface PhaseFacts {
   key: string;
   name: string;
   outcome?: string;
@@ -68,7 +72,7 @@ export type PhaseFacts = {
   driverMs?: number;
   hostMs?: number;
   userMs?: number;
-};
+}
 
 /** One launch attempt (`phase` is a phase key; `outcome` is `ok` or a failure class). */
 export type DiagnosticEvent = {
@@ -80,43 +84,65 @@ export type DiagnosticEvent = {
   attempt: number;
   targetSlot?: string;
 } & (
-  | { kind: 'validation'; outcome: string; surface: 'cli' | 'native' }
-  | { kind: 'routing'; cls?: FailureClass; state: 'next-model' | 'next-mode' | 'reserve' | 'stop' }
-  | { kind: 'native'; state: 'pending' | 'completed' | 'invalid' | 'failed'; replay?: boolean }
-  | { kind: 'slot'; cls?: FailureClass; state: 'done' | 'native' | 'failed'; replay?: boolean }
+  | { kind: "validation"; outcome: string; surface: "cli" | "native" }
+  | {
+      kind: "routing";
+      cls?: FailureClass;
+      state: "next-model" | "next-mode" | "reserve" | "stop";
+    }
+  | {
+      kind: "native";
+      state: "pending" | "completed" | "invalid" | "failed";
+      replay?: boolean;
+    }
+  | {
+      kind: "slot";
+      cls?: FailureClass;
+      state: "done" | "native" | "failed";
+      replay?: boolean;
+    }
 );
-export type DelegateResponseFacts = DelegateResponse & { stage: ResponseStage; agent?: string };
 
-type InvocationResponses = {
-  usageSource?: UsageSource | undefined;
-  coverage?: ReadonlyArray<CoverageReason> | undefined;
-  responses?: ReadonlyArray<DelegateResponseFacts> | undefined;
+export type DelegateResponseFacts = DelegateResponse & {
+  stage: ResponseStage;
+  agent?: string;
 };
 
-export const isSessionDelegate = (invocation: InvocationResponses): boolean =>
-  invocation.usageSource !== 'stdout' && !invocation.coverage?.includes('transcript unavailable');
-
-const isObservedResponse = (
-  response: DelegateResponseFacts,
-): response is DelegateResponseFacts & { observed: number } =>
-  response.coverage === 'complete' && response.observed !== undefined;
-
-export function completeDelegateResponses(invocation: InvocationResponses) {
-  if (!isSessionDelegate(invocation)) {
-    return undefined;
-  }
-  const delegates = invocation.responses?.filter((response) => response.role === 'delegate');
-  return delegates?.length && delegates.every(isObservedResponse) ? delegates : undefined;
+interface InvocationResponses {
+  usageSource?: UsageSource | undefined;
+  coverage?: readonly CoverageReason[] | undefined;
+  responses?: readonly DelegateResponseFacts[] | undefined;
 }
 
-export type InvocationFacts = {
+export const isSessionDelegate = (invocation: InvocationResponses) =>
+  invocation.usageSource !== "stdout" &&
+  invocation.coverage?.includes("transcript unavailable") !== true;
+
+const isObservedResponse = (
+  response: DelegateResponseFacts
+): response is DelegateResponseFacts & { observed: number } =>
+  response.coverage === "complete" && response.observed !== undefined;
+
+export const completeDelegateResponses = (invocation: InvocationResponses) => {
+  const delegates = isSessionDelegate(invocation)
+    ? invocation.responses?.filter((response) => response.role === "delegate")
+    : undefined;
+
+  return delegates !== undefined &&
+    delegates.length > 0 &&
+    delegates.every(isObservedResponse)
+    ? delegates
+    : undefined;
+};
+
+export interface InvocationFacts {
   phase: string;
   provider: string;
   model: string;
   effort?: string;
   configuredEffort?: string;
   mode?: string;
-  surface: 'cli' | 'native';
+  surface: "cli" | "native";
   launched: boolean;
   durationMs?: number;
   startMs?: number;
@@ -124,59 +150,65 @@ export type InvocationFacts = {
   outcome: string;
   usage?: Usage;
   usageSource?: UsageSource;
-  reportedModels?: Array<string>;
+  reportedModels?: string[];
   reportedModelAmbiguous?: true;
-  coverage?: Array<CoverageReason>;
-  responses?: Array<DelegateResponseFacts>;
+  coverage?: CoverageReason[];
+  responses?: DelegateResponseFacts[];
   superseded?: true;
   slot?: string;
-  lifecycleSteps?: Array<LifecycleStep>;
+  lifecycleSteps?: LifecycleStep[];
   nudge?: true;
   wrapUp?: true;
   routingOutcome?: string;
-  slotState?: 'done' | 'native' | 'failed';
+  slotState?: "done" | "native" | "failed";
   validationOutcome?: string;
-  nativeState?: 'pending' | 'completed' | 'invalid' | 'failed';
+  nativeState?: "pending" | "completed" | "invalid" | "failed";
   subject?: string;
   attempt?: number;
   targetSlot?: string;
-};
+}
 
 /**
  * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
  * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
  */
-export type ReviewFacts = {
+export interface ReviewFacts {
   phase?: string;
   round: number;
   accepted: number;
   rejected: number;
   recurring?: number;
-  reraised?: ReadonlyArray<string>;
+  reraised?: readonly string[];
   escalation?: Escalation;
   cap?: number;
-};
+}
 
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
-export type RoundWorkload = {
+export interface RoundWorkload {
   review: string;
   round: number;
-  calls?: { total: number; phases: Array<{ key: string; count: number }> };
+  calls?: { total: number; phases: { key: string; count: number }[] };
   hostTokens?: number;
   hostTurns?: number;
   reviewerTurns?: number;
   reviewerTurnsPartial?: true;
   kind?: ReviewKind;
-};
+}
 
 export type SlotYieldAttempt = Pick<
   InvocationFacts,
-  'provider' | 'model' | 'usage' | 'usageSource' | 'reportedModels' | 'reportedModelAmbiguous' | 'coverage'
+  | "provider"
+  | "model"
+  | "usage"
+  | "usageSource"
+  | "reportedModels"
+  | "reportedModelAmbiguous"
+  | "coverage"
 > & { effort: string | null };
 
 /** Per-responder review yield: findings raised and ruled, plus the slot's measured token cost. */
-export type SlotYieldFacts = {
-  kind: 'provider' | 'native' | 'tool';
+export interface SlotYieldFacts {
+  kind: "provider" | "native" | "tool";
   provider: string;
   model: string | null;
   raised: { MUST: number; SHOULD: number; CONSIDER: number };
@@ -188,45 +220,76 @@ export type SlotYieldFacts = {
   tokens?: number;
   measured: number;
   launched: number;
-  attempts?: Array<SlotYieldAttempt>;
+  attempts?: SlotYieldAttempt[];
   priorLaunches?: number;
   /** Findings whose origin is `fix-induced`; present only when nonzero. */
   fixInduced?: number;
-};
+}
 /** Adds one responder's yield to another's; absent tokens stay absent. */
-export function addYield(current: SlotYieldFacts, row: SlotYieldFacts): void {
-  for (const severity of ['MUST', 'SHOULD', 'CONSIDER'] as const) {
+
+export const addYield = (current: SlotYieldFacts, row: SlotYieldFacts) => {
+  for (const severity of ["MUST", "SHOULD", "CONSIDER"] as const) {
     current.raised[severity] += row.raised[severity];
   }
-  for (const key of ['accepted', 'rejected', 'deferred', 'duplicate', 'unruled', 'measured', 'launched'] as const) {
+
+  for (const key of [
+    "accepted",
+    "rejected",
+    "deferred",
+    "duplicate",
+    "unruled",
+    "measured",
+    "launched",
+  ] as const) {
     current[key] += row[key];
   }
+
   if (row.tokens !== undefined) {
     current.tokens = (current.tokens ?? 0) + row.tokens;
   }
-  if (row.attempts?.length) {
+
+  if (row.attempts !== undefined && row.attempts.length > 0) {
     current.attempts = [...(current.attempts ?? []), ...row.attempts];
   }
-  if (row.priorLaunches) {
+
+  if (row.priorLaunches !== undefined && row.priorLaunches > 0) {
     current.priorLaunches = (current.priorLaunches ?? 0) + row.priorLaunches;
   }
-  if (row.fixInduced) {
+
+  if (row.fixInduced !== undefined && row.fixInduced > 0) {
     current.fixInduced = (current.fixInduced ?? 0) + row.fixInduced;
   }
-}
-export type RecoveryExecution = { ref: string; reused?: number; launched?: number; unresolved?: number };
+};
 
-export type RunFacts = {
+export interface RecoveryExecution {
+  ref: string;
+  reused?: number;
+  launched?: number;
+  unresolved?: number;
+}
+
+export interface RunFacts {
   recoverySelection?: RecoverySelection;
   recoveryExecution?: RecoveryExecution;
-  recoverySelections?: Array<RecoverySelection & { ref: string }>;
-  recoveryExecutions?: Array<RecoveryExecution>;
+  recoverySelections?: (RecoverySelection & { ref: string })[];
+  recoveryExecutions?: RecoveryExecution[];
   hostUsage?: HostUsageFacts;
   startedAt?: string;
-  hosts?: Array<string>;
-  timingScope?: 'tool-calls';
-  capture?: { state: 'opened' | 'completed'; start: number; end?: number; storageFailed?: number };
-  retroState?: 'missing' | 'unreadable' | 'malformed' | 'invalid' | 'empty' | 'collected';
+  hosts?: string[];
+  timingScope?: "tool-calls";
+  capture?: {
+    state: "opened" | "completed";
+    start: number;
+    end?: number;
+    storageFailed?: number;
+  };
+  retroState?:
+    | "missing"
+    | "unreadable"
+    | "malformed"
+    | "invalid"
+    | "empty"
+    | "collected";
   collection?: {
     completed?: number;
     partial?: number;
@@ -235,8 +298,8 @@ export type RunFacts = {
     incomplete?: number;
     storageFailed?: number;
   };
-  provenance?: Array<{ version?: string; build?: string; config?: JsonObject }>;
-  rejectedTools?: Array<{ tool: string; action: string; cls: string }>;
+  provenance?: { version?: string; build?: string; config?: JsonObject }[];
+  rejectedTools?: { tool: string; action: string; cls: string }[];
   relaunches?: number;
   version?: string;
   build?: string;
@@ -249,32 +312,45 @@ export type RunFacts = {
   config?: JsonObject;
   outcome?: string;
   /** `hostWaitMs` is the wait before the failed send; `waitBy` says whether a person or the host held it. */
-  fault?: { effectId?: string; cls: string; hostWaitMs?: number; waitBy?: 'user' | 'host'; driverMs?: number };
-  phases: Array<PhaseFacts>;
-  invocations: Array<InvocationFacts>;
-  reviews: Array<ReviewFacts>;
-  slotYield?: Array<SlotYieldFacts>;
-  roundTiming?: Array<{
+  fault?: {
+    effectId?: string;
+    cls: string;
+    hostWaitMs?: number;
+    waitBy?: "user" | "host";
+    driverMs?: number;
+  };
+  phases: PhaseFacts[];
+  invocations: InvocationFacts[];
+  reviews: ReviewFacts[];
+  slotYield?: SlotYieldFacts[];
+  roundTiming?: {
     review: string;
     round: number;
-    slots: Array<{ slot: string; attempts: Array<{ startMs?: number; endMs?: number; surface?: 'cli' | 'native' }> }>;
-  }>;
-  roundWorkload?: Array<RoundWorkload>;
+    slots: {
+      slot: string;
+      attempts: {
+        startMs?: number;
+        endMs?: number;
+        surface?: "cli" | "native";
+      }[];
+    }[];
+  }[];
+  roundWorkload?: RoundWorkload[];
   /** Raw `RETRO` items; gated by `retroObservations` at render time. */
   observations?: unknown;
-};
+}
 
-export type RetroObservation = {
+export interface RetroObservation {
   id: string;
   component: string;
   category: Category;
   evidence: string;
   impact: string;
   proposedFix: string;
-};
+}
 
 /** `source` is a heuristic id (`H1`…) or `retro`. */
-export type Finding = {
+export interface Finding {
   source: string;
   run?: number;
   id?: string;
@@ -283,9 +359,8 @@ export type Finding = {
   evidence: string;
   impact: string;
   proposedFix: string;
-};
+}
 
-// NOTE: 1640 leaves room for the grounding token-source rule in references/diagnostics.md.
 export const DIAGNOSTIC_LIMITS = {
   observations: 20,
   fieldBytes: 512,
@@ -293,7 +368,8 @@ export const DIAGNOSTIC_LIMITS = {
   instructionBytes: 1640,
 } as const;
 
-const files = (dir: string, names: ReadonlyArray<string>, ext: string) => names.map((name) => `${dir}/${name}${ext}`);
+const files = (dir: string, names: readonly string[], ext: string) =>
+  names.map((name) => `${dir}/${name}${ext}`);
 
 /** Dispatch-owned files a finding may name, relative to the skill root; mirrors the shipped tree. */
 // oxfmt-ignore
@@ -311,10 +387,10 @@ export const COMPONENTS: ReadonlySet<string> = new Set([
   "scripts/package.json",
   ...files("scripts/policy", ["cascade","quota","roster"], ".ts"),
   ...files("scripts/providers", ["agy","claude","codex","copilot","discovery","index","node-process","opencode-runtime","opencode","probe","process-policy","response","runner","session-usage","types"], ".ts"),
-  ...files("scripts/toolkit", ["artifacts","ask","brief","check","cli","confirmations","contracts","coverage","deliver","diagnostics-capture","diagnostics","doctor","evidence","fanout","findings","fix-review-lite","git","hints","input","integrate","integration-state","integration","ledger","lint","lock","narrow","output","plan-view","prompts","records","red","report","review-capture","review-checkout","review-findings","review-fix","review-identity","review-notices","review-state","review-storage","review","status","types","walkthrough","writers"], ".ts"),
+  ...files("scripts/toolkit", ["artifacts","ask","brief","check","cli","confirmations","contracts","coverage","deliver","diagnostics-capture","diagnostics","doctor","evidence","fanout","findings","fix-review-lite","git","hints","input","integrate","integration-state","integration","ledger","lint","lock","narrow","output","plan-view","prompts","records","red","report","review-capture","review-checkout","review-findings","review-fix","review-identity","review-notices","review-round","review-state","review-storage","review","status","types","walkthrough","writers"], ".ts"),
   ...files("scripts/toolkit/domain", ["blocker","citations","context","criterion-id","defined","design","diagnostics-gates","diagnostics-heuristics","diagnostics-render","diagnostics-types","diagnostics","document-lint","fix-review-lite","markdown-structure","plan-graph","plan-lint","plan-parse","plan","prompt","report","sanitize","severity","spec","stable-value","types"], ".ts"),
   ...files("scripts/toolkit/fanout", ["native","state","voice","wave"], ".ts"),
   // END GENERATED: diagnostic components
 ]);
 
-export const DASH = '—';
+export const DASH = "—";

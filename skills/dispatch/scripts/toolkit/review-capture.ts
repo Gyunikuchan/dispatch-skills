@@ -1,121 +1,150 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { renameRetrying } from '../lib/node-fs-ext.ts';
-import { artifactHash } from './artifacts.ts';
-import { taskMarkdown } from './brief.ts';
-import type { HandlerContext } from './cli.ts';
-import { governedDesignText } from './domain/design.ts';
-import { governedPlanText, parsePlan, selectTaskBrief } from './domain/plan.ts';
-import type { ReviewKind } from './domain/types.ts';
-import type { ReviewSnapshot } from './review-state.ts';
-import { git, gitOk, gitPaths } from './git.ts';
-import { integrationRecord } from './integration-state.ts';
-import { currentHashes, foldLedger, latest } from './ledger.ts';
-import { ToolError } from './output.ts';
-import { textValue } from './narrow.ts';
-import { artifactSections } from './prompts.ts';
-import { launchBase, launches } from './writers.ts';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
-// NOTE: shared by every target rejection so the host can correct its target in one turn.
-export const CODE_TARGETS = 'code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>';
+import { renameRetrying } from "../lib/node-fs-ext.ts";
+import { artifactHash } from "./artifacts.ts";
+import { taskMarkdown } from "./brief.ts";
+import type { HandlerContext } from "./cli.ts";
+import { governedDesignText } from "./domain/design.ts";
+import { governedPlanText, parsePlan, selectTaskBrief } from "./domain/plan.ts";
+import type { ReviewKind } from "./domain/types.ts";
+import { git, gitOk, gitPaths } from "./git.ts";
+import { integrationRecord } from "./integration-state.ts";
+import { currentHashes, foldLedger, latest } from "./ledger.ts";
+import { textValue } from "./narrow.ts";
+import { ToolError } from "./output.ts";
+import { artifactSections } from "./prompts.ts";
+import type { ReviewSnapshot } from "./review-state.ts";
+import { launchBase, launches } from "./writers.ts";
+
+export const CODE_TARGETS =
+  "code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>";
 
 export type Capture = ReviewSnapshot & {
   specSource?: string;
   source?: string;
   taskSummary: string;
   cwd: string;
-  changed: Array<string>;
+  changed: string[];
 };
 
-// NOTE: fix-review-lite reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
-function writeSpecSnapshot(file: string, text: string): void {
-  const temp = file + '.' + crypto.randomUUID() + '.tmp';
+const writeSpecSnapshot = (file: string, text: string) => {
+  const temp = `${file}.${crypto.randomUUID()}.tmp`;
+
   try {
     fs.writeFileSync(temp, text);
     renameRetrying(temp, file);
   } catch {
-    /* advisory evidence only */
+    void 0;
   } finally {
     try {
       fs.rmSync(temp, { force: true });
     } catch {
-      /* advisory evidence only */
+      void 0;
     }
   }
-}
+};
 
-// Reviewer input holds governed plan/design text; code reviews read the working tree directly.
-export const reviewerInputPath = (reviewDir: string, roundNumber: number): string =>
-  path.join(reviewDir, 'round-' + roundNumber + '.input.md');
-const governedInputFor = (reviewKind: ReviewKind, source: string): string =>
-  reviewKind === 'plan' ? governedPlanText(source) : governedDesignText(source);
-export function writeReviewerInput(
+export const reviewerInputPath = (reviewDir: string, roundNumber: number) =>
+  path.join(reviewDir, `round-${roundNumber}.input.md`);
+
+const governedInputFor = (reviewKind: ReviewKind, source: string) =>
+  reviewKind === "plan" ? governedPlanText(source) : governedDesignText(source);
+
+export const writeReviewerInput = (
   reviewDir: string,
   roundNumber: number,
   reviewKind: ReviewKind,
-  source: string,
-): void {
-  // A write failure refuses the round before any launch.
+  source: string
+) => {
   const file = reviewerInputPath(reviewDir, roundNumber);
+
   try {
     fs.writeFileSync(file, governedInputFor(reviewKind, source));
   } catch (error) {
     throw new ToolError(
       2,
-      'review-failed',
-      'Cannot write reviewer input ' + file + ': ' + (error instanceof Error ? error.message : String(error)),
+      "review-failed",
+      `Cannot write reviewer input ${file}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
     );
   }
-}
+};
 
-export function writeRoundSnapshots(dir: string, kind: ReviewKind, captured: Capture): void {
+export const writeRoundSnapshots = (
+  dir: string,
+  kind: ReviewKind,
+  captured: Capture
+) => {
   if (captured.source !== undefined) {
-    fs.writeFileSync(path.join(dir, 'target.snapshot.md'), captured.source);
+    fs.writeFileSync(path.join(dir, "target.snapshot.md"), captured.source);
   }
-  if ((kind === 'plan' || kind === 'design') && captured.specSource !== undefined) {
-    writeSpecSnapshot(path.join(dir, 'spec.snapshot.md'), captured.specSource);
-  }
-}
 
-// NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
-export function specHashFor(root: string, input: string): string {
+  if (
+    (kind === "plan" || kind === "design") &&
+    captured.specSource !== undefined
+  ) {
+    writeSpecSnapshot(path.join(dir, "spec.snapshot.md"), captured.specSource);
+  }
+};
+
+export const specHashFor = (root: string, input: string) => {
   const specPath = path.resolve(root, input);
   let text: string;
-  try {
-    text = fs.readFileSync(fs.realpathSync.native(specPath), 'utf8');
-  } catch {
-    throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);
-  }
-  return artifactHash('spec', text);
-}
 
-export async function captureReviewTarget(
+  try {
+    text = fs.readFileSync(fs.realpathSync.native(specPath), "utf-8");
+  } catch {
+    throw new ToolError(1, "invalid-input", `Cannot read spec ${specPath}`);
+  }
+
+  return artifactHash("spec", text);
+};
+
+// oxlint-disable-next-line eslint/complexity -- capture branches per spec-input shape, review kind, and revision state.
+export const captureReviewTarget = async (
   { session, manifest, deps, values }: HandlerContext,
   kind: ReviewKind,
   artifact: string,
   requested: string,
   taskTarget: boolean,
-  gitTarget: boolean,
-): Promise<Capture> {
-  const current = foldLedger(session),
-    bind = latest(current, 'bind');
-  const specInput: unknown = values['spec'] ?? bind?.data['spec'];
-  if (typeof specInput !== 'string') {
-    throw new ToolError(4, 'lint-errors', 'Review needs --spec or a bound spec');
+  gitTarget: boolean
+) => {
+  const current = foldLedger(session);
+  const bind = latest(current, "bind");
+
+  const specInput: unknown = values["spec"] ?? bind?.data["spec"];
+
+  if (typeof specInput !== "string") {
+    throw new ToolError(
+      4,
+      "lint-errors",
+      "Review needs --spec or a bound spec"
+    );
   }
+
   let specPath = path.resolve(manifest.repositoryRoot, specInput);
   let specText: string;
+
   try {
     specPath = fs.realpathSync.native(specPath);
-    specText = fs.readFileSync(specPath, 'utf8');
+    specText = fs.readFileSync(specPath, "utf-8");
   } catch {
-    throw new ToolError(1, 'invalid-input', 'Cannot read spec ' + specPath);
+    throw new ToolError(1, "invalid-input", `Cannot read spec ${specPath}`);
   }
-  const spec = { path: specPath, hash: artifactHash('spec', specText) };
-  const intent = artifactSections(specText).get('Intent & Problem') || 'Review the selected changes.';
-  if (kind !== 'code') {
-    const source = fs.readFileSync(artifact, 'utf8');
+
+  const spec = { path: specPath, hash: artifactHash("spec", specText) };
+
+  const intent =
+    // oxlint-disable-next-line typescript/prefer-nullish-coalescing, typescript/strict-boolean-expressions -- an empty Intent section falls back to the default review text.
+    artifactSections(specText).get("Intent & Problem") ||
+    "Review the selected changes.";
+
+  if (kind !== "code") {
+    const source = fs.readFileSync(artifact, "utf-8");
+
     return {
       artifactPath: fs.realpathSync.native(artifact),
       spec,
@@ -127,119 +156,236 @@ export async function captureReviewTarget(
       changed: [],
     };
   }
-  let base: string,
-    head: string,
-    cwd = manifest.repositoryRoot,
-    summary: string;
+
+  let base: string;
+  let head: string;
+  let cwd = manifest.repositoryRoot;
+  let summary: string;
+
   const revision = async (ref: string) => {
-    const result = await git(deps, cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
+    const result = await git(deps, cwd, [
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${ref}^{commit}`,
+    ]);
+
     if (result.exit) {
-      throw new ToolError(1, 'invalid-input', 'Cannot resolve revision ' + ref + '; ' + CODE_TARGETS);
+      throw new ToolError(
+        1,
+        "invalid-input",
+        `Cannot resolve revision ${ref}; ${CODE_TARGETS}`
+      );
     }
+
     return result.stdout.trim();
   };
-  if (requested === 'integration') {
-    if (!bind?.data['plan']) {
-      throw new ToolError(4, 'lint-errors', 'Review of integration needs a bound plan');
+
+  if (requested === "integration") {
+    if (typeof bind?.data["plan"] !== "string" || bind.data["plan"] === "") {
+      throw new ToolError(
+        4,
+        "lint-errors",
+        "Review of integration needs a bound plan"
+      );
     }
+
     const integration = integrationRecord(current);
-    if (!integration || !current.records.some((row) => row.kind === 'integrate' && row.data['phase'] === 'done')) {
-      throw new ToolError(4, 'nothing-to-review', 'No task has been integrated');
+
+    if (
+      !integration ||
+      !current.records.some(
+        (row) => row.kind === "integrate" && row.data["phase"] === "done"
+      )
+    ) {
+      throw new ToolError(
+        4,
+        "nothing-to-review",
+        "No task has been integrated"
+      );
     }
-    cwd = path.resolve(session, textValue(integration.data['path']));
-    base = textValue(integration.data['base']);
-    head = await gitOk(deps, cwd, ['rev-parse', 'HEAD']);
+
+    cwd = path.resolve(session, textValue(integration.data["path"]));
+    base = textValue(integration.data["base"]);
+    head = await gitOk(deps, cwd, ["rev-parse", "HEAD"]);
+
     const tasks = [
       ...new Set(
         current.records
-          .filter((row) => row.kind === 'integrate' && row.data['phase'] === 'done')
-          .map((row) => textValue(row.data['task'])),
+          .filter(
+            (row) => row.kind === "integrate" && row.data["phase"] === "done"
+          )
+          .map((row) => textValue(row.data["task"]))
       ),
     ];
-    summary = 'Integrated tasks: ' + tasks.join(', ');
+
+    summary = `Integrated tasks: ${tasks.join(", ")}`;
   } else if (taskTarget) {
-    if (!bind?.data['plan']) {
-      throw new ToolError(4, 'lint-errors', 'Review of a task needs a bound plan');
+    if (typeof bind?.data["plan"] !== "string" || bind.data["plan"] === "") {
+      throw new ToolError(
+        4,
+        "lint-errors",
+        "Review of a task needs a bound plan"
+      );
     }
-    const launch = launches(current, requested).findLast((launch) => launch.finished);
+
+    const launch = launches(current, requested).findLast(
+      (entry) => entry.finished
+    );
+
     if (!launch?.finished) {
-      throw new ToolError(1, 'invalid-input', 'No finished launch for ' + requested);
+      throw new ToolError(
+        1,
+        "invalid-input",
+        `No finished launch for ${requested}`
+      );
     }
-    base = textValue(launchBase(launch.record)['commit']);
-    head = textValue(launch.finished.data['candidate']);
-    const planPath = path.resolve(manifest.repositoryRoot, textValue(bind.data['plan']));
-    const planText = fs.readFileSync(planPath, 'utf8');
+
+    base = textValue(launchBase(launch.record)["commit"]);
+    head = textValue(launch.finished.data["candidate"]);
+
+    const planPath = path.resolve(
+      manifest.repositoryRoot,
+      textValue(bind.data["plan"])
+    );
+
+    const planText = fs.readFileSync(planPath, "utf-8");
     const plan = parsePlan(planText);
+
     if (!plan.ok) {
-      throw new ToolError(4, 'lint-errors', JSON.stringify(plan.defects));
+      throw new ToolError(4, "lint-errors", JSON.stringify(plan.defects));
     }
+
     const brief = selectTaskBrief(plan.plan, requested);
+
     if (!brief) {
-      throw new ToolError(1, 'invalid-input', 'Unknown task ' + requested);
+      throw new ToolError(1, "invalid-input", `Unknown task ${requested}`);
     }
+
     summary = taskMarkdown(planText, brief);
   } else {
-    if (requested === 'worktree') {
-      base = await revision('HEAD');
-      const relative = path.relative(fs.realpathSync(cwd), fs.realpathSync(session)).split(path.sep).join('/');
-      const inside = relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative);
-      const directory = path.join(session, '.state/tmp');
+    if (requested === "worktree") {
+      base = await revision("HEAD");
+
+      const relative = path
+        .relative(fs.realpathSync(cwd), fs.realpathSync(session))
+        .split(path.sep)
+        .join("/");
+
+      const inside =
+        relative !== ".." &&
+        !relative.startsWith("../") &&
+        !path.isAbsolute(relative);
+
+      const directory = path.join(session, ".state/tmp");
       fs.mkdirSync(directory, { recursive: true });
-      const index = path.join(directory, crypto.randomUUID() + '.index');
+      const index = path.join(directory, `${crypto.randomUUID()}.index`);
       const env = { GIT_INDEX_FILE: index };
+
       try {
-        await gitOk(deps, cwd, ['read-tree', base], env);
+        await gitOk(deps, cwd, ["read-tree", base], env);
+
         if (!inside || relative) {
-          await gitOk(deps, cwd, ['add', '-A', '--', '.'], env);
+          await gitOk(deps, cwd, ["add", "-A", "--", "."], env);
         }
-        // NOTE: an exclude pathspec makes git add exit 1 when it names an ignored path, so reset the session to HEAD after add.
+
         if (inside && relative) {
-          await gitOk(deps, cwd, ['reset', '-q', base, '--', ':(top,literal)' + relative], env);
+          await gitOk(
+            deps,
+            cwd,
+            ["reset", "-q", base, "--", `:(top,literal)${relative}`],
+            env
+          );
         }
-        const tree = await gitOk(deps, cwd, ['write-tree'], env);
-        head = await gitOk(deps, cwd, ['commit-tree', tree, '-p', base, '-m', 'dispatch review snapshot'], {
-          GIT_AUTHOR_NAME: 'Dispatch Review',
-          GIT_COMMITTER_NAME: 'Dispatch Review',
-          GIT_AUTHOR_EMAIL: 'dispatch-review@localhost',
-          GIT_COMMITTER_EMAIL: 'dispatch-review@localhost',
-          GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
-          GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z',
-        });
+
+        const tree = await gitOk(deps, cwd, ["write-tree"], env);
+        head = await gitOk(
+          deps,
+          cwd,
+          ["commit-tree", tree, "-p", base, "-m", "dispatch review snapshot"],
+          {
+            GIT_AUTHOR_NAME: "Dispatch Review",
+            GIT_COMMITTER_NAME: "Dispatch Review",
+            GIT_AUTHOR_EMAIL: "dispatch-review@localhost",
+            GIT_COMMITTER_EMAIL: "dispatch-review@localhost",
+            GIT_AUTHOR_DATE: "1970-01-01T00:00:00Z",
+            GIT_COMMITTER_DATE: "1970-01-01T00:00:00Z",
+          }
+        );
       } finally {
         fs.rmSync(index, { force: true });
-        fs.rmSync(index + '.lock', { force: true });
+        fs.rmSync(`${index}.lock`, { force: true });
       }
-    } else if (requested.includes('..')) {
-      if (requested.includes('...')) {
-        throw new ToolError(1, 'invalid-input', 'Three-dot revision ranges are not supported; use a..b');
+    } else if (requested.includes("..")) {
+      if (requested.includes("...")) {
+        throw new ToolError(
+          1,
+          "invalid-input",
+          "Three-dot revision ranges are not supported; use a..b"
+        );
       }
-      const parts = requested.split('..');
-      if (parts.length !== 2 || !parts[0] || !parts[1]) {
-        throw new ToolError(1, 'invalid-input', 'Expected a..b revision range');
+
+      const parts = requested.split("..");
+
+      if (
+        parts.length !== 2 ||
+        parts[0] === undefined ||
+        parts[0] === "" ||
+        parts[1] === undefined ||
+        parts[1] === ""
+      ) {
+        throw new ToolError(1, "invalid-input", "Expected a..b revision range");
       }
+
       base = await revision(parts[0]);
       head = await revision(parts[1]);
     } else {
       const ref = await revision(requested);
-      head = await revision('HEAD');
-      const result = await git(deps, cwd, ['merge-base', ref, head]);
+      head = await revision("HEAD");
+      const result = await git(deps, cwd, ["merge-base", ref, head]);
+
       if (result.exit) {
-        throw new ToolError(1, 'invalid-input', 'Revision ' + requested + ' has no common ancestor with HEAD');
+        throw new ToolError(
+          1,
+          "invalid-input",
+          `Revision ${requested} has no common ancestor with HEAD`
+        );
       }
+
       base = result.stdout.trim();
     }
-    summary = 'Changes ' + base.slice(0, 12) + '..' + head.slice(0, 12);
+
+    summary = `Changes ${base.slice(0, 12)}..${head.slice(0, 12)}`;
   }
-  const changed = await gitPaths(deps, manifest.repositoryRoot, ['diff', '--name-only', '-z', base, head]);
+
+  const changed = await gitPaths(deps, manifest.repositoryRoot, [
+    "diff",
+    "--name-only",
+    "-z",
+    base,
+    head,
+  ]);
+
   if (!changed.length) {
-    throw new ToolError(4, 'nothing-to-review', `No changes between ${base.slice(0, 12)}..${head.slice(0, 12)}`);
+    throw new ToolError(
+      4,
+      "nothing-to-review",
+      `No changes between ${base.slice(0, 12)}..${head.slice(0, 12)}`
+    );
   }
+
   return {
-    ...(!gitTarget && bind && { artifacts: { ...currentHashes(manifest.repositoryRoot, bind), spec: spec.hash } }),
+    ...(!gitTarget &&
+      bind && {
+        artifacts: {
+          ...currentHashes(manifest.repositoryRoot, bind),
+          spec: spec.hash,
+        },
+      }),
     spec,
     target: { base, head },
-    taskSummary: intent + '\n\n' + summary,
+    taskSummary: `${intent}\n\n${summary}`,
     cwd,
     changed,
   };
-}
+};

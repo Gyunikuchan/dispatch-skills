@@ -1,367 +1,632 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import { test } from "node:test";
 
-import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
-import { runDelegate } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import type { RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
+import { SPECS } from "../../../skills/dispatch/scripts/providers/index.ts";
+import { runDelegate } from "../../../skills/dispatch/scripts/providers/runner.ts";
+import type { RunnerPorts } from "../../../skills/dispatch/scripts/providers/runner.ts";
 import type {
   Launch,
   LaunchRequest,
   ProcessResult,
   ProviderId,
   RunOutcome,
-} from '../../../skills/dispatch/scripts/providers/types.ts';
+} from "../../../skills/dispatch/scripts/providers/types.ts";
+import { defined } from "../../helpers/guards.ts";
 
 const req: LaunchRequest = {
-  promptPath: '/p',
-  model: 'openai/gpt-5',
+  promptPath: "/p",
+  model: "openai/gpt-5",
   effort: null,
   sandbox: false,
   schemaPath: null,
   resume: null,
-  cwd: '/repo',
+  cwd: "/repo",
   timeoutMs: 1000,
   outputCapBytes: 1000,
   attachments: [],
-  logPath: '/log',
-  briefPath: '/brief',
-  binary: 'bin',
-  prompt: 'P',
+  logPath: "/log",
+  briefPath: "/brief",
+  binary: "bin",
+  prompt: "P",
   briefFile: null,
   schemaText: null,
   platform: {
-    os: 'linux',
-    arch: 'x64',
+    os: "linux",
+    arch: "x64",
     wsl: false,
     bubblewrap: false,
     argvLimit: 100_000,
-    home: '/h',
+    home: "/h",
     path: [],
     pathExt: [],
   },
 };
 
-const out = (stdout: string, exit: number | null = 0, stderrTail = ''): ProcessResult => ({
+const out = (stdout: string, exit: number | null = 0, stderrTail = "") => ({
   exit,
   signal: null,
   stdout,
-  stdoutPath: '/log',
+  stdoutPath: "/log",
   stderrTail,
   durationMs: 1,
   timedOut: false,
   truncated: false,
 });
 
-const opencodeText = (text: string): string =>
+const opencodeText = (text: string) =>
   JSON.stringify({
-    type: 'text',
+    type: "text",
     timestamp: 0,
-    sessionID: 'ses',
-    part: { id: 'text-0', sessionID: 'ses', messageID: 'msg', type: 'text', text },
+    sessionID: "ses",
+    part: {
+      id: "text-0",
+      sessionID: "ses",
+      messageID: "msg",
+      type: "text",
+      text,
+    },
   });
 
-const parse = (id: ProviderId, result: ProcessResult, over: Partial<LaunchRequest> = {}): RunOutcome =>
-  SPECS[id].parse(result, { ...req, ...over });
-const cls = (outcome: RunOutcome): string => (outcome.status === 'fail' ? outcome.cls : 'ok');
+const parse = (
+  id: ProviderId,
+  result: ProcessResult,
+  over: Partial<LaunchRequest> = {}
+) => SPECS[id].parse(result, { ...req, ...over });
+
+const cls = (outcome: RunOutcome) =>
+  outcome.status === "fail" ? outcome.cls : "ok";
 
 const COPILOT_UNSUPPORTED_HOST_WARNING =
-  'Sandboxing is enabled but is not supported on this host, so shell commands and sandboxed services will fail. Update Windows — supported versions at https://aka.ms/ghcp-sandbox-os-support — or turn sandboxing off with /sandbox disable, or set sandbox.enabled to false in settings.json. See https://docs.github.com/en/copilot/concepts/about-cloud-and-local-sandboxes ';
+  "Sandboxing is enabled but is not supported on this host, so shell commands and sandboxed services will fail. Update Windows — supported versions at https://aka.ms/ghcp-sandbox-os-support — or turn sandboxing off with /sandbox disable, or set sandbox.enabled to false in settings.json. See https://docs.github.com/en/copilot/concepts/about-cloud-and-local-sandboxes ";
+
 // GitHub/Copilot CLI issue #4652 reports this v1.0.81 warning; both streams are covered because its stream is unspecified.
 const COPILOT_INVALID_EFFORT =
   "error: invalid value 'invalid' for '--reasoning-effort <level>'\n  [possible values: none, minimal, low, medium, high, xhigh, max]\n\n  tip: a similar value exists: 'minimal'\n\nFor more information, try '--help'.\n";
 
-function runnerPorts(...results: Array<ProcessResult>): RunnerPorts & { launches: Array<Launch> } {
-  const launches: Array<Launch> = [];
+function runnerPorts(
+  ...results: ProcessResult[]
+): RunnerPorts & { launches: Launch[] } {
+  const launches: Launch[] = [];
   const pending = [...results];
+
   const ports: RunnerPorts = {
     process: {
       start(launch) {
         launches.push(launch);
-        return { pid: 7, done: Promise.resolve(pending.shift() ?? out('', 1)) };
+
+        return { pid: 7, done: Promise.resolve(pending.shift() ?? out("", 1)) };
       },
       signal: () => {},
     },
     clock: { now: () => 0, every: () => () => {} },
     fs: {
-      readText: () => 'P',
+      readText: () => "P",
       writeText: () => {},
       realpath: () => null,
       readdir: () => [],
       size: () => null,
-      readPrefix: () => '',
+      readPrefix: () => "",
     },
     env: {},
     platform: req.platform,
-    binary: 'copilot',
-    nonce: () => 'n',
+    binary: "copilot",
+    nonce: () => "n",
   };
+
   return Object.assign(ports, { launches });
 }
 
-test('delegates-resume-handles: recorded successes yield text, session id, and each provider’s resume handle', () => {
-  assert.deepEqual(parse('claude', out('{"type":"result","result":"R","session_id":"abc123"}')), {
-    status: 'ok',
-    text: 'R',
-    sessionId: 'abc123',
-    resume: 'claude --resume abc123',
-  });
-  assert.deepEqual(parse('agy', out('{"conversationId":"c-1","response":"R"}')), {
-    status: 'ok',
-    text: 'R',
-    sessionId: 'c-1',
-    resume: 'conversation://c-1',
-  });
-  assert.deepEqual(parse('copilot', out('R\n\nTo resume: copilot --resume 0123456789abcdef')), {
-    status: 'ok',
-    text: 'R\n\nTo resume: copilot --resume 0123456789abcdef',
-    sessionId: '0123456789abcdef',
-    resume: 'copilot --resume 0123456789abcdef',
-  });
+test("delegates-resume-handles: recorded successes yield text, session id, and each provider’s resume handle", () => {
+  assert.deepEqual(
+    parse(
+      "claude",
+      out('{"type":"result","result":"R","session_id":"abc123"}')
+    ),
+    {
+      status: "ok",
+      text: "R",
+      sessionId: "abc123",
+      resume: "claude --resume abc123",
+    }
+  );
+  assert.deepEqual(
+    parse("agy", out('{"conversationId":"c-1","response":"R"}')),
+    {
+      status: "ok",
+      text: "R",
+      sessionId: "c-1",
+      resume: "conversation://c-1",
+    }
+  );
+  assert.deepEqual(
+    parse("copilot", out("R\n\nTo resume: copilot --resume 0123456789abcdef")),
+    {
+      status: "ok",
+      text: "R\n\nTo resume: copilot --resume 0123456789abcdef",
+      sessionId: "0123456789abcdef",
+      resume: "copilot --resume 0123456789abcdef",
+    }
+  );
+
   const codexStream = [
     '{"type":"thread.started","thread_id":"t-9"}',
     '{"type":"item.completed","item":{"type":"reasoning","text":"x"}}',
     '{"type":"item.completed","item":{"type":"agent_message","text":"R"}}',
-  ].join('\n');
-  assert.deepEqual(parse('codex', out(codexStream)), {
-    status: 'ok',
-    text: 'R',
-    sessionId: 't-9',
-    resume: 'codex exec resume t-9',
+  ].join("\n");
+
+  assert.deepEqual(parse("codex", out(codexStream)), {
+    status: "ok",
+    text: "R",
+    sessionId: "t-9",
+    resume: "codex exec resume t-9",
   });
-  assert.deepEqual(parse('opencode', out(opencodeText('R'))), {
-    status: 'ok',
-    text: 'R',
-    sessionId: 'ses',
-    resume: 'opencode:openai/gpt-5',
+  assert.deepEqual(parse("opencode", out(opencodeText("R"))), {
+    status: "ok",
+    text: "R",
+    sessionId: "ses",
+    resume: "opencode:openai/gpt-5",
   });
-  const local = parse('opencode', out(opencodeText('R')), { endpoint: 'http://127.0.0.1:1234/v1' });
-  assert.equal(local.status === 'ok' ? local.resume : null, 'http://127.0.0.1:1234/v1');
+
+  const local = parse("opencode", out(opencodeText("R")), {
+    endpoint: "http://127.0.0.1:1234/v1",
+  });
+
+  assert.equal(
+    local.status === "ok" ? local.resume : null,
+    "http://127.0.0.1:1234/v1"
+  );
 });
 
-test('recorded failures map to the ported failure classes', () => {
+test("recorded failures map to the ported failure classes", () => {
   assert.equal(
-    cls(parse('claude', out('{"is_error":true,"result":"x","api_error_status":404}', 1))),
-    'model-not-found',
+    cls(
+      parse(
+        "claude",
+        out('{"is_error":true,"result":"x","api_error_status":404}', 1)
+      )
+    ),
+    "model-not-found"
   );
-  assert.equal(cls(parse('claude', out('', 1, 'claude_code_version_too_old'))), 'cli-outdated');
-  assert.equal(cls(parse('claude', out('', 0))), 'empty-output');
-  assert.equal(cls(parse('agy', out('', 1, 'Error: not signed in'))), 'auth');
-  assert.equal(cls(parse('agy', out('', 1, 'rate limit exceeded'))), 'quota');
-  assert.equal(cls(parse('agy', out('', 1, 'segfault'))), 'not-found');
-  assert.equal(cls(parse('copilot', out('', 1, 'Error: no authentication information found'))), 'auth');
-  assert.equal(cls(parse('copilot', out('', 1, '429 Too Many Requests'))), 'quota');
+  assert.equal(
+    cls(parse("claude", out("", 1, "claude_code_version_too_old"))),
+    "cli-outdated"
+  );
+  assert.equal(cls(parse("claude", out("", 0))), "empty-output");
+  assert.equal(cls(parse("agy", out("", 1, "Error: not signed in"))), "auth");
+  assert.equal(cls(parse("agy", out("", 1, "rate limit exceeded"))), "quota");
+  assert.equal(cls(parse("agy", out("", 1, "segfault"))), "not-found");
+  assert.equal(
+    cls(
+      parse("copilot", out("", 1, "Error: no authentication information found"))
+    ),
+    "auth"
+  );
+  assert.equal(
+    cls(parse("copilot", out("", 1, "429 Too Many Requests"))),
+    "quota"
+  );
   // A review quoting auth words on success is not a failure.
-  assert.equal(cls(parse('copilot', out('Consider rotating the OAuth token'))), 'ok');
   assert.equal(
-    cls(parse('codex', out('{"type":"turn.failed","error":{"message":"context_length_exceeded"}}', 1))),
-    'context-overflow',
+    cls(parse("copilot", out("Consider rotating the OAuth token"))),
+    "ok"
   );
-  assert.equal(cls(parse('codex', out('', 1, 'sandbox initialization failed'))), 'sandbox-unsupported');
-  assert.equal(cls(parse('opencode', out('', 1, 'SERVER_OFFLINE'))), 'model-not-loaded');
+  assert.equal(
+    cls(
+      parse(
+        "codex",
+        out(
+          '{"type":"turn.failed","error":{"message":"context_length_exceeded"}}',
+          1
+        )
+      )
+    ),
+    "context-overflow"
+  );
+  assert.equal(
+    cls(parse("codex", out("", 1, "sandbox initialization failed"))),
+    "sandbox-unsupported"
+  );
+  assert.equal(
+    cls(parse("opencode", out("", 1, "SERVER_OFFLINE"))),
+    "model-not-loaded"
+  );
 });
 
-test('mode-cascade classes are declared per provider: agy token/subscription/execution, copilot quota not auth', () => {
-  assert.deepEqual([...SPECS.agy.modeCascadeOn].sort(), ['auth', 'not-found', 'quota']);
-  assert.deepEqual(SPECS.copilot.modeCascadeOn, ['quota']);
-  assert.ok(!SPECS.copilot.modeCascadeOn.includes('auth'));
-  assert.deepEqual([SPECS.claude.modeCascadeOn, SPECS.codex.modeCascadeOn, SPECS.opencode.modeCascadeOn], [[], [], []]);
+test("mode-cascade classes are declared per provider: agy token/subscription/execution, copilot quota not auth", () => {
+  assert.deepEqual([...SPECS.agy.modeCascadeOn].toSorted(), [
+    "auth",
+    "not-found",
+    "quota",
+  ]);
+  assert.deepEqual(SPECS.copilot.modeCascadeOn, ["quota"]);
+  assert.ok(!SPECS.copilot.modeCascadeOn.includes("auth"));
+  assert.deepEqual(
+    [
+      SPECS.claude.modeCascadeOn,
+      SPECS.codex.modeCascadeOn,
+      SPECS.opencode.modeCascadeOn,
+    ],
+    [[], [], []]
+  );
 });
 
-test('coverage list: copilot usage unavailable coverage', async () => {
-  const run = await runDelegate(SPECS.copilot, { ...req, collectUsage: true }, 'cli', runnerPorts(out('A response')));
-  assert.equal(run.outcome.status, 'ok');
+test("coverage list: copilot usage unavailable coverage", async () => {
+  const run = await runDelegate(
+    SPECS.copilot,
+    { ...req, collectUsage: true },
+    "cli",
+    runnerPorts(out("A response"))
+  );
+
+  assert.equal(run.outcome.status, "ok");
   assert.equal(run.invocations.length, 1);
   assert.equal(run.invocations[0]?.usage, undefined);
-  assert.deepEqual(run.invocations[0]?.coverage, ['no usage']);
+  // HEAD contract: session-usage.ts returns { complete: false } for a null
+  // session id, so runner.ts pushes "transcript unavailable" alongside "no usage".
+  assert.deepEqual(run.invocations[0]?.coverage, [
+    "transcript unavailable",
+    "no usage",
+  ]);
 });
 
-test('copilot unsupported sandbox host startup warning fails closed in the runner', async () => {
+test("copilot unsupported sandbox host startup warning fails closed in the runner", async () => {
   for (const result of [
-    out('A response', 0, COPILOT_UNSUPPORTED_HOST_WARNING),
-    out(COPILOT_UNSUPPORTED_HOST_WARNING + '\r\nA response'),
+    out("A response", 0, COPILOT_UNSUPPORTED_HOST_WARNING),
+    out(`${COPILOT_UNSUPPORTED_HOST_WARNING}\r\nA response`),
   ]) {
-    const run = await runDelegate(SPECS.copilot, { ...req, sandbox: true, effort: null }, 'cli', runnerPorts(result));
-    assert.equal(cls(run.outcome), 'sandbox-unsupported');
+    // eslint-disable-next-line no-await-in-loop
+    const run = await runDelegate(
+      SPECS.copilot,
+      { ...req, sandbox: true, effort: null },
+      "cli",
+      runnerPorts(result)
+    );
+
+    assert.equal(cls(run.outcome), "sandbox-unsupported");
   }
 });
 
-test('copilot successful response may discuss an unavailable sandbox', () => {
-  const prose = 'The sandbox is unavailable for this host, so I will describe the safe next step.';
+test("copilot successful response may discuss an unavailable sandbox", () => {
+  const prose =
+    "The sandbox is unavailable for this host, so I will describe the safe next step.";
+
   for (const response of [
     prose,
-    'The CLI reports this warning:\n' + COPILOT_UNSUPPORTED_HOST_WARNING + '\nThis is quoted diagnostic evidence.',
+    `The CLI reports this warning:\n${COPILOT_UNSUPPORTED_HOST_WARNING}\nThis is quoted diagnostic evidence.`,
   ]) {
-    const result = parse('copilot', out(response));
-    assert.equal(cls(result), 'ok');
-    assert.equal(result.status === 'ok' ? result.text : '', response);
+    const result = parse("copilot", out(response));
+    assert.equal(cls(result), "ok");
+    assert.equal(result.status === "ok" ? result.text : "", response);
   }
 });
 
-test('copilot policy notice in stderr with exit 0 and valid response parses as ok', () => {
+test("copilot policy notice in stderr with exit 0 and valid response parses as ok", () => {
   const notice =
     "Sandboxing is enabled and your organization's managed policy requires it, so it can't be turned off here.";
-  const result = parse('copilot', out('R', 0, notice), { sandbox: true });
-  assert.equal(cls(result), 'ok');
-  assert.equal(result.status === 'ok' ? result.text : '', 'R');
+
+  const result = parse("copilot", out("R", 0, notice), { sandbox: true });
+  assert.equal(cls(result), "ok");
+  assert.equal(result.status === "ok" ? result.text : "", "R");
 });
 
-test('copilot unsupported sandbox warning on non-leading stderr line with exit 0 fails closed', () => {
+test("copilot unsupported sandbox warning on non-leading stderr line with exit 0 fails closed", () => {
   for (const stderr of [
-    'Startup notice\n' + COPILOT_UNSUPPORTED_HOST_WARNING,
-    '  ' + COPILOT_UNSUPPORTED_HOST_WARNING,
+    `Startup notice\n${COPILOT_UNSUPPORTED_HOST_WARNING}`,
+    `  ${COPILOT_UNSUPPORTED_HOST_WARNING}`,
   ]) {
-    const result = parse('copilot', out('R', 0, stderr), { sandbox: true });
-    assert.equal(cls(result), 'sandbox-unsupported');
+    const result = parse("copilot", out("R", 0, stderr), { sandbox: true });
+    assert.equal(cls(result), "sandbox-unsupported");
   }
 });
 
-test('copilot retries an effort rejection once without the effort flag', async () => {
+test("copilot retries an effort rejection once without the effort flag", async () => {
   for (const diagnostic of [
     COPILOT_INVALID_EFFORT,
-    COPILOT_INVALID_EFFORT.replaceAll('\n', '\r\n'),
+    COPILOT_INVALID_EFFORT.replaceAll("\n", "\r\n"),
     'Error: Model "auto" does not support reasoning effort configuration (requested: "low").\r\n',
   ]) {
-    const ports = runnerPorts(out('', 1, diagnostic), out('ok'));
-    const run = await runDelegate(SPECS.copilot, { ...req, effort: 'high' }, 'cli', ports);
-    assert.equal(cls(run.outcome), 'ok');
+    const ports = runnerPorts(out("", 1, diagnostic), out("ok"));
+
+    // eslint-disable-next-line no-await-in-loop
+    const run = await runDelegate(
+      SPECS.copilot,
+      { ...req, effort: "high" },
+      "cli",
+      ports
+    );
+
+    assert.equal(cls(run.outcome), "ok");
     assert.equal(run.attempts, 2);
     assert.equal(ports.launches.length, 2);
-    assert.ok(ports.launches[0]?.argv.includes('--reasoning-effort'));
-    assert.ok(ports.launches[0]?.argv.includes('high'));
-    assert.ok(!ports.launches[1]?.argv.includes('--reasoning-effort'));
+    // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+    assert.ok(ports.launches[0]?.argv.includes("--reasoning-effort"));
+    // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+    assert.ok(ports.launches[0]?.argv.includes("high"));
+    // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+    assert.ok(!ports.launches[1]?.argv.includes("--reasoning-effort"));
   }
 });
 
-test('copilot effort rejection yields to sandbox and auth errors', () => {
-  const sandbox = parse('copilot', out('', 1, COPILOT_UNSUPPORTED_HOST_WARNING + '\n' + COPILOT_INVALID_EFFORT), {
-    sandbox: true,
-    effort: 'high',
-  });
-  assert.equal(cls(sandbox), 'sandbox-unsupported');
-  assert.equal(sandbox.status === 'fail' ? sandbox.retryWithoutEffort : undefined, undefined);
-  const auth = parse('copilot', out('', 1, 'not authenticated\n' + COPILOT_INVALID_EFFORT), { effort: 'high' });
-  assert.equal(cls(auth), 'auth');
-  assert.equal(auth.status === 'fail' ? auth.retryWithoutEffort : undefined, undefined);
+test("copilot effort rejection yields to sandbox and auth errors", () => {
+  const sandbox = parse(
+    "copilot",
+    out(
+      "",
+      1,
+      `${COPILOT_UNSUPPORTED_HOST_WARNING}\n${COPILOT_INVALID_EFFORT}`
+    ),
+    {
+      sandbox: true,
+      effort: "high",
+    }
+  );
+
+  assert.equal(cls(sandbox), "sandbox-unsupported");
+  assert.equal(
+    sandbox.status === "fail" ? sandbox.retryWithoutEffort : undefined,
+    undefined
+  );
+
+  const auth = parse(
+    "copilot",
+    out("", 1, `not authenticated\n${COPILOT_INVALID_EFFORT}`),
+    { effort: "high" }
+  );
+
+  assert.equal(cls(auth), "auth");
+  assert.equal(
+    auth.status === "fail" ? auth.retryWithoutEffort : undefined,
+    undefined
+  );
 });
 
-const attempt = (id: ProviderId, result: ProcessResult, over: Partial<LaunchRequest> = {}): string | null =>
-  SPECS[id].attemptSession!(result, { ...req, ...over });
+const attempt = (
+  id: ProviderId,
+  result: ProcessResult,
+  over: Partial<LaunchRequest> = {}
+): string | null =>
+  defined(SPECS[id].attemptSession)(result, { ...req, ...over });
 
 const codexStream = (threadId: string | null): string =>
   [
-    `{"type":"thread.started"${threadId === null ? '' : `,"thread_id":"${threadId}"`}}`,
+    `{"type":"thread.started"${threadId === null ? "" : `,"thread_id":"${threadId}"`}}`,
     '{"type":"item.completed","item":{"type":"agent_message","text":"R"}}',
-  ].join('\n');
+  ].join("\n");
 
 const opencodeEvent = (sessionID: string, text: string): string =>
   JSON.stringify({
-    type: 'text',
+    type: "text",
     timestamp: 0,
     sessionID,
-    part: { id: 'text-0', sessionID, messageID: 'msg', type: 'text', text },
+    part: { id: "text-0", sessionID, messageID: "msg", type: "text", text },
   });
 
-test('attempt session: codex returns thread id and builds resume argv', () => {
-  assert.equal(attempt('codex', out(codexStream('t-9'))), 't-9');
-  assert.equal(attempt('codex', out('')), null);
-  assert.equal(attempt('codex', out(codexStream('../evil'))), null);
-  const argv = SPECS.codex.argv({ ...req, sandbox: true, resume: 't-9', prompt: 'C' }, 'cli').argv;
-  assert.ok(argv.includes('resume') && argv.includes('t-9'));
-  assert.ok(argv.includes('--json') && argv.includes('--skip-git-repo-check'));
-});
+test("attempt session: codex returns thread id and builds resume argv", () => {
+  assert.equal(attempt("codex", out(codexStream("t-9"))), "t-9");
+  assert.equal(attempt("codex", out("")), null);
+  assert.equal(attempt("codex", out(codexStream("../evil"))), null);
 
-test('attempt session: opencode returns last sessionID', () => {
-  assert.equal(
-    attempt('opencode', out([opencodeEvent('ses_first', 'a'), opencodeEvent('ses_last', 'b')].join('\n'))),
-    'ses_last',
+  const { argv } = SPECS.codex.argv(
+    { ...req, sandbox: true, resume: "t-9", prompt: "C" },
+    "cli"
   );
-  assert.equal(attempt('opencode', out('')), null);
-  assert.equal(attempt('opencode', out([opencodeEvent('../evil', 'x')].join('\n'))), null);
+
+  assert.ok(argv.includes("resume") && argv.includes("t-9"));
+  assert.ok(argv.includes("--json") && argv.includes("--skip-git-repo-check"));
 });
 
-test('attempt session: copilot prefers resume, extracts id, presets only after idle output', () => {
-  assert.equal(attempt('copilot', out(''), { resume: 'preset-id-1' }), 'preset-id-1');
-  assert.equal(attempt('copilot', out('R\n\nTo resume: copilot --resume 0123456789abcdef')), '0123456789abcdef');
+test("attempt session: opencode returns last sessionID", () => {
   assert.equal(
-    attempt('copilot', { ...out('partial'), idleMs: 120_000 }, { sessionPreset: 'preset-id-2' }),
-    'preset-id-2',
+    attempt(
+      "opencode",
+      out(
+        [opencodeEvent("ses_first", "a"), opencodeEvent("ses_last", "b")].join(
+          "\n"
+        )
+      )
+    ),
+    "ses_last"
   );
-  assert.equal(attempt('copilot', out('', 1)), null);
-  assert.equal(attempt('copilot', out('some unclassified stdout', 1, 'boom')), null);
-  assert.equal(attempt('copilot', out('', 1), { sessionPreset: 'preset-id-3' }), null);
-  assert.equal(attempt('copilot', out('R', 1), { resume: '../evil' }), null);
-  const fresh = SPECS.copilot.argv(req, 'cli').argv;
-  assert.ok(!fresh.includes('--session-id'));
-  const preset = SPECS.copilot.argv({ ...req, sessionPreset: 'preset-id-4' }, 'cli').argv;
-  assert.ok(preset.includes('--session-id') && preset.includes('preset-id-4'));
+  assert.equal(attempt("opencode", out("")), null);
+  assert.equal(
+    attempt("opencode", out([opencodeEvent("../evil", "x")].join("\n"))),
+    null
+  );
 });
 
-test('session preset: claude argv presets its session on a fresh launch only', () => {
-  assert.equal(SPECS.claude.presetsSession, true);
-  const fresh = SPECS.claude.argv({ ...req, sessionPreset: 'preset-id-4' }, 'cli').argv;
-  assert.ok(fresh.includes('--session-id') && fresh.includes('preset-id-4'));
-  const freshNone = SPECS.claude.argv(req, 'cli').argv;
-  assert.ok(!freshNone.includes('--session-id'));
-  const resumed = SPECS.claude.argv(
-    { ...req, resume: 'abc123', sessionPreset: 'preset-id-4', prompt: 'C' },
-    'cli',
+test("attempt session: copilot prefers resume, extracts id, presets only after idle output", () => {
+  assert.equal(
+    attempt("copilot", out(""), { resume: "preset-id-1" }),
+    "preset-id-1"
+  );
+  assert.equal(
+    attempt(
+      "copilot",
+      out("R\n\nTo resume: copilot --resume 0123456789abcdef")
+    ),
+    "0123456789abcdef"
+  );
+  assert.equal(
+    attempt(
+      "copilot",
+      { ...out("partial"), idleMs: 120_000 },
+      { sessionPreset: "preset-id-2" }
+    ),
+    "preset-id-2"
+  );
+  assert.equal(attempt("copilot", out("", 1)), null);
+  assert.equal(
+    attempt("copilot", out("some unclassified stdout", 1, "boom")),
+    null
+  );
+  assert.equal(
+    attempt("copilot", out("", 1), { sessionPreset: "preset-id-3" }),
+    null
+  );
+  assert.equal(attempt("copilot", out("R", 1), { resume: "../evil" }), null);
+  const fresh = SPECS.copilot.argv(req, "cli").argv;
+  assert.ok(!fresh.includes("--session-id"));
+
+  const preset = SPECS.copilot.argv(
+    { ...req, sessionPreset: "preset-id-4" },
+    "cli"
   ).argv;
-  assert.ok(resumed.includes('--resume') && resumed.includes('abc123'));
-  assert.ok(!resumed.includes('--session-id'));
+
+  assert.ok(preset.includes("--session-id") && preset.includes("preset-id-4"));
 });
 
-test('wrap-up: claude names the preset on a wrap-up stop', () => {
+test("session preset: claude argv presets its session on a fresh launch only", () => {
+  assert.equal(SPECS.claude.presetsSession, true);
+
+  const fresh = SPECS.claude.argv(
+    { ...req, sessionPreset: "preset-id-4" },
+    "cli"
+  ).argv;
+
+  assert.ok(fresh.includes("--session-id") && fresh.includes("preset-id-4"));
+  const freshNone = SPECS.claude.argv(req, "cli").argv;
+  assert.ok(!freshNone.includes("--session-id"));
+
+  const resumed = SPECS.claude.argv(
+    { ...req, resume: "abc123", sessionPreset: "preset-id-4", prompt: "C" },
+    "cli"
+  ).argv;
+
+  assert.ok(resumed.includes("--resume") && resumed.includes("abc123"));
+  assert.ok(!resumed.includes("--session-id"));
+});
+
+test("wrap-up: claude names the preset on a wrap-up stop", () => {
   assert.equal(
     attempt(
-      'claude',
-      { ...out('{"type":"result","result":"R","session_id":"abc123"}'), wrapUpStop: true as const },
-      { sessionPreset: 'preset-id-9' },
+      "claude",
+      {
+        ...out('{"type":"result","result":"R","session_id":"abc123"}'),
+        wrapUpStop: true as const,
+      },
+      { sessionPreset: "preset-id-9" }
     ),
-    'abc123',
+    "abc123"
   );
-  assert.equal(
-    attempt('claude', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-9' }),
-    'preset-id-9',
-  );
-  assert.equal(attempt('claude', { ...out('partial'), wrapUpStop: true as const }), null);
-  assert.equal(attempt('claude', out('partial'), { sessionPreset: 'preset-id-9' }), null);
-  assert.equal(attempt('claude', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: '../evil' }), null);
-});
-
-test('wrap-up: copilot names the preset on a wrap-up stop after streamed output', () => {
-  assert.equal(
-    attempt('copilot', { ...out('partial'), wrapUpStop: true as const }, { sessionPreset: 'preset-id-2' }),
-    'preset-id-2',
-  );
-  assert.equal(attempt('copilot', { ...out(''), wrapUpStop: true as const }, { sessionPreset: 'preset-id-2' }), null);
-  assert.equal(attempt('copilot', { ...out('partial'), wrapUpStop: true as const }), null);
-  assert.equal(attempt('copilot', out('partial'), { sessionPreset: 'preset-id-2' }), null);
   assert.equal(
     attempt(
-      'copilot',
-      { ...out('R\n\nTo resume: copilot --resume 0123456789abcdef'), wrapUpStop: true as const },
-      { sessionPreset: 'preset-id-2' },
+      "claude",
+      { ...out("partial"), wrapUpStop: true as const },
+      { sessionPreset: "preset-id-9" }
     ),
-    '0123456789abcdef',
+    "preset-id-9"
+  );
+  assert.equal(
+    attempt("claude", { ...out("partial"), wrapUpStop: true as const }),
+    null
+  );
+  assert.equal(
+    attempt("claude", out("partial"), { sessionPreset: "preset-id-9" }),
+    null
+  );
+  assert.equal(
+    attempt(
+      "claude",
+      { ...out("partial"), wrapUpStop: true as const },
+      { sessionPreset: "../evil" }
+    ),
+    null
   );
 });
 
-test('attempt session: claude returns envelope session id', () => {
-  assert.equal(attempt('claude', out('{"type":"result","result":"R","session_id":"abc123"}')), 'abc123');
-  assert.equal(attempt('claude', out('')), null);
-  assert.equal(attempt('claude', out('', 1)), null);
-  assert.equal(attempt('claude', out('{"type":"result","result":"R","session_id":"../evil"}')), null);
-  const argv = SPECS.claude.argv({ ...req, resume: 'abc123', prompt: 'C' }, 'cli').argv;
-  assert.ok(argv.includes('--resume') && argv.includes('abc123'));
+test("wrap-up: copilot names the preset on a wrap-up stop after streamed output", () => {
+  assert.equal(
+    attempt(
+      "copilot",
+      { ...out("partial"), wrapUpStop: true as const },
+      { sessionPreset: "preset-id-2" }
+    ),
+    "preset-id-2"
+  );
+  assert.equal(
+    attempt(
+      "copilot",
+      { ...out(""), wrapUpStop: true as const },
+      { sessionPreset: "preset-id-2" }
+    ),
+    null
+  );
+  assert.equal(
+    attempt("copilot", { ...out("partial"), wrapUpStop: true as const }),
+    null
+  );
+  assert.equal(
+    attempt("copilot", out("partial"), { sessionPreset: "preset-id-2" }),
+    null
+  );
+  assert.equal(
+    attempt(
+      "copilot",
+      {
+        ...out("R\n\nTo resume: copilot --resume 0123456789abcdef"),
+        wrapUpStop: true as const,
+      },
+      { sessionPreset: "preset-id-2" }
+    ),
+    "0123456789abcdef"
+  );
 });
 
-test('attempt session: agy returns conversation id and classes empty envelope', () => {
-  assert.equal(attempt('agy', out('{"conversationId":"c-1","response":"R"}')), 'c-1');
-  assert.equal(attempt('agy', out('')), null);
-  assert.equal(attempt('agy', out('{"conversationId":"../evil","response":"R"}')), null);
-  assert.equal(cls(parse('agy', out('{"conversationId":"c-1","response":""}'))), 'empty-output');
-  assert.equal(parse('agy', out('hello')).status, 'ok');
-  assert.equal(cls(parse('agy', out('{"conversationId":"c-1","response":""}', 1, 'rate limit exceeded'))), 'quota');
-  const argv = SPECS.agy.argv({ ...req, resume: 'c-1', prompt: 'C' }, 'cli').argv;
-  assert.ok(argv.includes('--conversation') && argv.includes('c-1'));
+test("attempt session: claude returns envelope session id", () => {
+  assert.equal(
+    attempt(
+      "claude",
+      out('{"type":"result","result":"R","session_id":"abc123"}')
+    ),
+    "abc123"
+  );
+  assert.equal(attempt("claude", out("")), null);
+  assert.equal(attempt("claude", out("", 1)), null);
+  assert.equal(
+    attempt(
+      "claude",
+      out('{"type":"result","result":"R","session_id":"../evil"}')
+    ),
+    null
+  );
+
+  const { argv } = SPECS.claude.argv(
+    { ...req, resume: "abc123", prompt: "C" },
+    "cli"
+  );
+
+  assert.ok(argv.includes("--resume") && argv.includes("abc123"));
+});
+
+test("attempt session: agy returns conversation id and classes empty envelope", () => {
+  assert.equal(
+    attempt("agy", out('{"conversationId":"c-1","response":"R"}')),
+    "c-1"
+  );
+  assert.equal(attempt("agy", out("")), null);
+  assert.equal(
+    attempt("agy", out('{"conversationId":"../evil","response":"R"}')),
+    null
+  );
+  assert.equal(
+    cls(parse("agy", out('{"conversationId":"c-1","response":""}'))),
+    "empty-output"
+  );
+  assert.equal(parse("agy", out("hello")).status, "ok");
+  assert.equal(
+    cls(
+      parse(
+        "agy",
+        out('{"conversationId":"c-1","response":""}', 1, "rate limit exceeded")
+      )
+    ),
+    "quota"
+  );
+
+  const { argv } = SPECS.agy.argv(
+    { ...req, resume: "c-1", prompt: "C" },
+    "cli"
+  );
+
+  assert.ok(argv.includes("--conversation") && argv.includes("c-1"));
 });

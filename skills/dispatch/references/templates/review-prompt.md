@@ -1,12 +1,11 @@
 # Review delegate prompt (shared frame)
 
-Shared by every review kind; `domain/prompt.ts` `assembleTemplate` fills each `<<slot:NAME>>`
-from its kind block. `qualityBar(markdown, consumer, rotation, specStageMarkdown)` fills the quality slot for code, plan and design
-reviews; variables are all inputs' declarations.
+Shared by every review kind; `domain/prompt.ts` `assembleTemplate` fills each `<<slot:NAME>>` from its kind block. `qualityBar(markdown, consumer, rotation, specStageMarkdown)` fills the quality slot for code, plan and design reviews; variables are all inputs' declarations.
 
 ## Prompt template
 
 Populate the template variables (kind blocks declare the rest):
+
 - `<User Focus Areas>` — structural `governing.finalFocusPaths`, or `General review` when absent or empty.
 - `<Tool Turn Budget>` — toolkit-computed advisory turn target.
 
@@ -73,12 +72,12 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 
 ## Re-review template
 
-````markdown
+```markdown
 On re-review, treat any earlier accepted or rejected rulings in `### Settled in earlier rounds` as closed unless you cite new code or requirement evidence that the ruling missed; an accepted `MUST` is never closed by that rule—re-verify its fix on the current target and re-raise the finding as unresolved when the defect is still present. Listed user decisions are closed; re-raise one only with evidence that was not available when the user decided. Rows marked `(new)` were accepted since the previous round; inspect their loci and interactions first. When Scope names changed sections or paths, raise new in-scope findings only there; `adjacent` findings may cite any locus. Stop at that blast radius. For each new finding, add `origin`: `fix-induced` when an earlier fix caused the defect, `original` when the defect predates those fixes, `unknown` when you cannot tell.
-````
+```
 
 ## Pre-registration template
 
-````markdown
+```markdown
 Before you open the artifact under review or the context map, read the code that the spec's REQs touch. Then write 3-5 plain-text lines that list the changes and risks you expect; this list is not part of the JSON reply. Then read the artifact and judge it against the spec and your list: an expected change that the artifact omits, or a change that you did not expect, is a candidate finding to verify at source.
-````
+```

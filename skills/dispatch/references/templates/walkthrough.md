@@ -2,7 +2,7 @@
 
 Toolkit report tools render this reviewer-first debrief. See [review rules](../review-rules.md) for findings and resolution records.
 
-````markdown
+```markdown
 # <task title>
 
 ## At a Glance
@@ -112,8 +112,8 @@ Not recorded.
 
 ### Verified Evidence
 
-| SC | Evidence |
-| --- | --- |
+| SC    | Evidence                     |
+| ----- | ---------------------------- |
 | SC<n> | <eligible recorded evidence> |
 
 ### User-Attributed Records
@@ -121,7 +121,7 @@ Not recorded.
 - <record with verbatim quote, or None.>
 
 </details>
-````
+```
 
 ## Field notes
 

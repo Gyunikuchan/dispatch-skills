@@ -10,8 +10,7 @@ Kind block for `review-prompt.md`.
 
 ## opener
 
-Review the implementation plan adversarially: challenge the requirement, its premise, and the plan.
-Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius. Inspect critically.
+Review the implementation plan adversarially: challenge the requirement, its premise, and the plan. Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius. Inspect critically.
 
 ## context
 
@@ -28,16 +27,11 @@ Judge whether this unimplemented plan delivers the requested features or technic
 
 ## inspection
 
-For a spec finding, use § Spec: <heading>.
-Use the authoritative plan. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
-Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
-Judge the plan against its Plan standard. Report a missing decision that prevents safe implementation; report a routine writer choice only with a concrete consequence, such as a failed criterion, broken invariant or ownership conflict.
+For a spec finding, use § Spec: <heading>. Use the authoritative plan. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim. Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks. Judge the plan against its Plan standard. Report a missing decision that prevents safe implementation; report a routine writer choice only with a concrete consequence, such as a failed criterion, broken invariant or ownership conflict.
 
 ## severity
 
-In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
-constraint. A gap that the plan's own Check gates would surface deterministically during
-implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
+In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Check gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 
 ## budget
 
@@ -47,5 +41,4 @@ implementation, such as a fixture update or a test assertion, is `degrades`, not
 
 ## closing
 
-Cite existing code as `path/to/file:L<line>` inside `defect`.
-For an adjacent finding, use the nearest plan heading as locus.
+Cite existing code as `path/to/file:L<line>` inside `defect`. For an adjacent finding, use the nearest plan heading as locus.

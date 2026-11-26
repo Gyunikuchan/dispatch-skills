@@ -37,13 +37,13 @@ See [Configure Dispatch](references/readme/configuration.md) for levels, pins, a
 ```
 
 | Part | Options | Notes |
-|---|---|---|
+| --- | --- | --- |
 | **Level** | `low`, `medium`, `high`, `xhigh`, `max` | Sets model tier and review depth. If omitted, Dispatch proposes `low`–`high` (`xhigh`/`max` are opt-in). |
 | **Pins** | `(claude,agy)`, `(3)`, `(all)` | Optional per-run filter for providers or target count. |
 | **Verb** | `ask` (default), `design`, `plan`, `implement`, `verify`, `review` | Start at any stage—for example, `implement` an existing plan. |
 
 | Verb | When to use it | Output |
-|---|---|---|
+| --- | --- | --- |
 | [`ask`](references/readme/ask.md) | Focused codebase question | Independent analysis verified by your host agent |
 | [`design`](references/readme/design.md) | Multi-increment or cross-boundary work | Spec + reviewed strategy & ordered increments |
 | [`plan`](references/readme/plan.md) | One coherent unit of change | Spec + reviewed tactical plan with task criteria |
@@ -108,7 +108,7 @@ flowchart TD
 ### Canonical documents
 
 | Document | Role |
-|---|---|
+| --- | --- |
 | **Spec** | Mission brief: intent, constraints, decisions, and acceptance conditions |
 | **Design** | Strategy: architecture, boundaries, risks, and ordered increments |
 | **Plan** | Tactics: tasks, file ownership, prerequisites, `[SC<n>]` criteria, `Check:` commands |
@@ -119,7 +119,7 @@ flowchart TD
 ## Configure routing
 
 | Setting | Controls |
-|---|---|
+| --- | --- |
 | `read-delegates` | Provider targets and models for `ask` and reviews |
 | `write-subagents` | Native writer models per platform (required for your host) |
 | `utility-subagents` | Native explorer and utility models per platform (`context-limit` required) |
@@ -141,7 +141,7 @@ See [Configure Dispatch](references/readme/configuration.md) for full details an
 ## Troubleshooting
 
 | Problem | What to check |
-|---|---|
+| --- | --- |
 | No delegates available | Run `doctor`; check `read-delegates`, provider CLI auth, and level |
 | Unexpected model or review breadth | Check active config (`config.local.jsonc` vs `config.jsonc`), level, and pins |
 | Doctor blocks or implementation cannot start | Add `write-subagents` and `utility-subagents` for your host platform; complete plan prerequisites |

@@ -1,449 +1,673 @@
-// Matched measurement: reads finished session folders and host transcripts, then writes a per-pair comparison.
-// Reads only; the sole writes are comparison.json and comparison.md in --out.
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { parseArgs } from 'node:util';
-import type { CliDeps } from '../skills/dispatch/scripts/toolkit/cli.ts';
-import { sessionFacts } from '../skills/dispatch/scripts/toolkit/diagnostics.ts';
+import { isRecord } from "../skills/dispatch/scripts/lib/config.ts";
+import {
+  nodeErrorCode,
+  stripBom,
+} from "../skills/dispatch/scripts/lib/fs-ext.ts";
+import { orchestratorFor } from "../skills/dispatch/scripts/lib/platform.ts";
+import {
+  formatCost,
+  resolvePricing,
+} from "../skills/dispatch/scripts/lib/pricing.ts";
+import type {
+  CostReason,
+  Pricer,
+} from "../skills/dispatch/scripts/lib/pricing.ts";
+import {
+  readManifest,
+  validSessionId,
+} from "../skills/dispatch/scripts/lib/session.ts";
+import { agy } from "../skills/dispatch/scripts/lib/usage/agy.ts";
+import { claudeCode } from "../skills/dispatch/scripts/lib/usage/claude.ts";
+import { codex } from "../skills/dispatch/scripts/lib/usage/codex.ts";
+import { nodeHostUsageFs } from "../skills/dispatch/scripts/lib/usage/index.ts";
+import { opencode } from "../skills/dispatch/scripts/lib/usage/opencode.ts";
+import type { HostUsageFacts } from "../skills/dispatch/scripts/lib/usage/rows.ts";
+import type { CliDeps } from "../skills/dispatch/scripts/toolkit/cli.ts";
+import { sessionFacts } from "../skills/dispatch/scripts/toolkit/diagnostics.ts";
 import {
   billedTokens,
   costCoverage,
   efficiencyOf,
   formatDuration,
   sanitizeFacts,
-} from '../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { foldLedger } from '../skills/dispatch/scripts/toolkit/ledger.ts';
-import type { Fold } from '../skills/dispatch/scripts/toolkit/ledger.ts';
-import { formatCost, resolvePricing } from '../skills/dispatch/scripts/lib/pricing.ts';
-import type { CostReason, Pricer } from '../skills/dispatch/scripts/lib/pricing.ts';
-import { orchestratorFor } from '../skills/dispatch/scripts/lib/platform.ts';
-import { nodeErrorCode, stripBom } from '../skills/dispatch/scripts/lib/fs-ext.ts';
-import { isRecord } from '../skills/dispatch/scripts/lib/config.ts';
-import type { JsonObject } from '../skills/dispatch/scripts/lib/integrity.ts';
-import { readManifest, validSessionId } from '../skills/dispatch/scripts/lib/session.ts';
-import type { Manifest } from '../skills/dispatch/scripts/lib/session.ts';
-import { nodeHostUsageFs } from '../skills/dispatch/scripts/lib/usage/index.ts';
-import { claudeCode } from '../skills/dispatch/scripts/lib/usage/claude.ts';
-import { agy } from '../skills/dispatch/scripts/lib/usage/agy.ts';
-import { codex } from '../skills/dispatch/scripts/lib/usage/codex.ts';
-import { opencode } from '../skills/dispatch/scripts/lib/usage/opencode.ts';
-import type { HostUsageFacts } from '../skills/dispatch/scripts/lib/usage/rows.ts';
+} from "../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
+import { foldLedger } from "../skills/dispatch/scripts/toolkit/ledger.ts";
 
-// SECTION: Types
+export interface PairSide {
+  label: string;
+  session: string;
+  host: string;
+  nativeId?: string;
+  reportComplete?: string;
+}
 
-export type PairSide = { label: string; session: string; host: string; nativeId?: string; reportComplete?: string };
-export type Pair = { name: string; sides: Array<PairSide> };
-export type PairsFile = {
+export interface Pair {
+  name: string;
+  sides: PairSide[];
+}
+
+export interface PairsFile {
   pricing?: string;
-  pairs: Array<Pair>;
-  confounds: Array<string>;
-};
-export type MeasureOptions = {
+  pairs: Pair[];
+  confounds: string[];
+}
+
+export interface MeasureOptions {
   baseDir: string;
   home: string;
   env: NodeJS.ProcessEnv;
   pricing: { path: string; text: string };
-};
-export type PathForm = 'canonical' | 'as-given';
-export type DenialCounts = { config: number; hook: number; other: number };
-export type Denials = (DenialCounts & { inWindow: DenialCounts }) | { unavailable: string };
-export type PerRound = { review: string; round: number; calls?: number; hostTokens?: number; hostTurns?: number };
-type CostCoverage = ReturnType<typeof costCoverage>;
-const VERIFICATION_STATES = ['verified', 'manual', 'waived', 'missing'] as const;
-type VerificationState = (typeof VERIFICATION_STATES)[number];
-type Verification = Record<VerificationState, number> & { criteria: Array<{ id: string; state: VerificationState }> };
-type Efficiency = Omit<ReturnType<typeof efficiencyOf>, 'responses'> & { verification: Verification | null };
+}
 
-export type SideResult = {
+export type PathForm = "canonical" | "as-given";
+
+export interface DenialCounts {
+  config: number;
+  hook: number;
+  other: number;
+}
+
+export type Denials =
+  | (DenialCounts & { inWindow: DenialCounts })
+  | { unavailable: string };
+
+export interface PerRound {
+  review: string;
+  round: number;
+  calls?: number;
+  hostTokens?: number;
+  hostTurns?: number;
+}
+
+type CostCoverage = ReturnType<typeof costCoverage>;
+
+const VERIFICATION_STATES = [
+  "verified",
+  "manual",
+  "waived",
+  "missing",
+] as const;
+
+type VerificationState = (typeof VERIFICATION_STATES)[number];
+
+type Verification = Record<VerificationState, number> & {
+  criteria: { id: string; state: VerificationState }[];
+};
+
+type Efficiency = Omit<ReturnType<typeof efficiencyOf>, "responses"> & {
+  verification: Verification | null;
+};
+
+export interface SideResult {
   label: string;
   session: string;
   host: string;
   nativeId: string;
   window: { startMs: number; endMs: number; pathForm: PathForm };
   rounds: { total: number; byReview: Record<string, number> };
-  perRound: Array<PerRound>;
+  perRound: PerRound[];
   hostTokens?: number;
   denials: Denials;
   cost: {
     low: number;
     high: number;
     priced: boolean;
-    reasons: Array<string>;
+    reasons: string[];
     partial: boolean;
     pricedUnits: number;
     unpricedUnits: number;
-    coverage: CostCoverage['coverage'];
-    rateBasis: CostCoverage['rateBasis'];
+    coverage: CostCoverage["coverage"];
+    rateBasis: CostCoverage["rateBasis"];
   };
-  unavailable: Array<string>;
+  unavailable: string[];
   efficiency: Efficiency;
-};
-export type Comparison = {
+}
+
+export interface Comparison {
   pricing: { path: string; asOf: string };
   generatedAt: string;
-  pairs: Array<{ name: string; sides: Array<SideResult>; comparisonLimits: Array<string> }>;
-  confounds: Array<string>;
-};
+  pairs: {
+    name: string;
+    sides: SideResult[];
+    comparisonLimits: string[];
+  }[];
+  confounds: string[];
+}
 
-const DEFAULT_PRICING = 'skills/dispatch/references/pricing.json';
-const OUTCOME = 'measured';
-const USAGE = 'Usage: node scripts/measure-runs.ts <pairs.json> --out <dir>\n';
-// NOTE: each adapter's env names receive the side's host id, so the adapter's first match is that id.
-const HOST_SESSION_ENV: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
-  ['claude', claudeCode.sessionEnv],
-  ['agy', agy.sessionEnv],
-  ['codex', codex.sessionEnv],
-  ['opencode', opencode.sessionEnv],
+const DEFAULT_PRICING = "skills/dispatch/references/pricing.json";
+const OUTCOME = "measured";
+const USAGE = "Usage: node scripts/measure-runs.ts <pairs.json> --out <dir>\n";
+
+const HOST_SESSION_ENV: ReadonlyMap<string, readonly string[]> = new Map([
+  ["claude", claudeCode.sessionEnv],
+  ["agy", agy.sessionEnv],
+  ["codex", codex.sessionEnv],
+  ["opencode", opencode.sessionEnv],
 ]);
 
-const isMissing = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes(nodeErrorCode(error) ?? '');
-const readErrorReason = (error: unknown) => `read-error:${nodeErrorCode(error) ?? 'EUNKNOWN'}`;
+const isStringValue = (value: unknown): value is string =>
+  typeof value === "string";
+
+const isNumberValue = (value: unknown): value is number =>
+  typeof value === "number";
+
+const isMissing = (error: unknown) =>
+  ["ENOENT", "ENOTDIR"].includes(nodeErrorCode(error) ?? "");
+
+const readErrorReason = (error: unknown) =>
+  `read-error:${nodeErrorCode(error) ?? "EUNKNOWN"}`;
+
 const roundKey = (review: string, round: number) => `${review}\u0000${round}`;
-// NOTE: these prefixes are the contract between measureSide and the markdown flags; renderComparison matches on them.
-const CALLS_PARTIAL = 'perRound calls partial:';
-const HOST_TOKENS_PARTIAL = 'hostTokens partial:';
 
-// SECTION: Input
+const CALLS_PARTIAL = "perRound calls partial:";
+const HOST_TOKENS_PARTIAL = "hostTokens partial:";
 
-function sideOf(value: unknown, where: string): PairSide {
+const sideOf = (value: unknown, where: string) => {
   if (!isRecord(value)) {
     throw new Error(`${where} must be an object`);
   }
+
   const { label, session, host, nativeId, reportComplete } = value;
-  if (typeof label !== 'string' || typeof session !== 'string' || typeof host !== 'string') {
+
+  if (
+    !isStringValue(label) ||
+    !isStringValue(session) ||
+    !isStringValue(host)
+  ) {
     throw new Error(`${where} needs label, session and host strings`);
   }
-  if (orchestratorFor(host, () => undefined) === null) {
+
+  // oxlint-disable-next-line eslint/no-empty-function -- probe call; the empty callback is never invoked for known hosts.
+  if (orchestratorFor(host, () => {}) === null) {
     throw new Error(`${where} host is not a known host: ${host}`);
   }
-  if (nativeId !== undefined && typeof nativeId !== 'string') {
+
+  if (nativeId !== undefined && !isStringValue(nativeId)) {
     throw new Error(`${where} nativeId must be a string`);
   }
+
   return {
     label,
     session,
     host,
-    ...(typeof nativeId === 'string' && { nativeId }),
-    ...(typeof reportComplete === 'string' && { reportComplete }),
+    ...(isStringValue(nativeId) && { nativeId }),
+    ...(isStringValue(reportComplete) && { reportComplete }),
   };
-}
+};
 
-function pairOf(value: unknown, where: string): Pair {
+const pairOf = (value: unknown, where: string) => {
   if (!isRecord(value)) {
     throw new Error(`${where} must be an object`);
   }
-  const name: unknown = value['name'];
-  const sides: unknown = value['sides'];
-  if (typeof name !== 'string' || !name || !Array.isArray(sides) || !sides.length) {
+
+  const name: unknown = value["name"];
+  const sides: unknown = value["sides"];
+
+  if (!isStringValue(name) || !name || !Array.isArray(sides) || !sides.length) {
     throw new Error(`${where} needs a name and a non-empty sides array`);
   }
-  return { name, sides: sides.map((side: unknown, index: number) => sideOf(side, `${where} sides[${index}]`)) };
-}
+
+  return {
+    name,
+    sides: sides.map((side: unknown, index: number) =>
+      sideOf(side, `${where} sides[${index}]`)
+    ),
+  };
+};
 
 /** Validates pairs.json; a relative `session` resolves later against the pairs.json folder. */
-export function parsePairs(input: unknown): PairsFile {
+export const parsePairs = (input: unknown) => {
   if (!isRecord(input)) {
-    throw new Error('pairs file must be an object');
+    throw new Error("pairs file must be an object");
   }
-  const list: unknown = input['pairs'];
+
+  const list: unknown = input["pairs"];
+
   if (!Array.isArray(list) || !list.length) {
     throw new Error('pairs file needs a non-empty "pairs" array');
   }
-  const pricing: unknown = input['pricing'];
-  const confounds: unknown = input['confounds'] ?? [];
-  if (pricing !== undefined && typeof pricing !== 'string') {
-    throw new Error('pricing must be a path string');
+
+  const pricing: unknown = input["pricing"];
+  const confounds: unknown = input["confounds"] ?? [];
+
+  if (pricing !== undefined && !isStringValue(pricing)) {
+    throw new Error("pricing must be a path string");
   }
-  if (!Array.isArray(confounds) || !confounds.every((line) => typeof line === 'string')) {
-    throw new Error('confounds must be an array of strings');
+
+  if (
+    !Array.isArray(confounds) ||
+    !confounds.every((line) => isStringValue(line))
+  ) {
+    throw new Error("confounds must be an array of strings");
   }
+
   return {
-    ...(typeof pricing === 'string' && { pricing }),
-    pairs: list.map((pair: unknown, index: number) => pairOf(pair, `pairs[${index}]`)),
+    ...(isStringValue(pricing) && { pricing }),
+    pairs: list.map((pair: unknown, index: number) =>
+      pairOf(pair, `pairs[${index}]`)
+    ),
     confounds,
   };
-}
-
-// SECTION: Session facts
+};
 
 const REPORT_PATH =
-  /^\.state\/results\/report-complete-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.json$/i;
+  /^\.state\/results\/report-complete-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.json$/iu;
+
 const MAX_REPORT_BYTES = 1024 * 1024;
 
-function verificationOf(session: string, relative: string | undefined): Verification | null {
-  if (!relative || !REPORT_PATH.test(relative) || relative.includes('\n') || relative.includes('\r')) {
+const readReportResult = (session: string, relative: string) => {
+  const results = fs.realpathSync.native(
+    path.join(session, ".state", "results")
+  );
+
+  const file = fs.realpathSync.native(path.join(session, relative));
+
+  if (
+    results === session ||
+    !isWithin(results, session) ||
+    !isWithin(file, results) ||
+    !fs.statSync(file).isFile()
+  ) {
     return null;
   }
+
+  const fd = fs.openSync(file, "r");
+  let result: unknown;
+
   try {
-    const results = fs.realpathSync.native(path.join(session, '.state', 'results'));
-    const file = fs.realpathSync.native(path.join(session, relative));
-    if (results === session || !isWithin(results, session) || !isWithin(file, results) || !fs.statSync(file).isFile()) {
+    const stat = fs.fstatSync(fd);
+
+    if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) {
       return null;
     }
-    const fd = fs.openSync(file, 'r');
-    let result: unknown;
-    try {
-      const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > MAX_REPORT_BYTES) {
-        return null;
+
+    const data = Buffer.allocUnsafe(stat.size + 1);
+    let read = 0;
+
+    while (read < data.length) {
+      const bytes = fs.readSync(fd, data, read, data.length - read, null);
+
+      if (bytes === 0) {
+        break;
       }
-      const data = Buffer.allocUnsafe(stat.size + 1);
-      let read = 0;
-      while (read < data.length) {
-        const bytes = fs.readSync(fd, data, read, data.length - read, null);
-        if (!bytes) {
-          break;
-        }
-        read += bytes;
-      }
-      if (read !== stat.size) {
-        return null;
-      }
-      result = JSON.parse(stripBom(data.toString('utf8', 0, read)));
-    } finally {
-      fs.closeSync(fd);
+
+      read += bytes;
     }
-    if (!isRecord(result)) {
+
+    if (read !== stat.size) {
       return null;
     }
-    const { delivered, statuses } = result;
+
+    result = JSON.parse(stripBom(data.toString("utf-8", 0, read)));
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return isRecord(result) ? result : null;
+};
+
+const tallyVerification = (
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- report JSON boundary; narrowing a parsed report object.
+  result: Record<string, unknown>
+) => {
+  const { delivered, statuses } = result;
+
+  if (
+    !isRecord(delivered) ||
+    !isStringValue(delivered["source"]) ||
+    !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/iu.test(delivered["source"]) ||
+    !Array.isArray(statuses)
+  ) {
+    return null;
+  }
+
+  const verification: Verification = {
+    verified: 0,
+    manual: 0,
+    waived: 0,
+    missing: 0,
+    criteria: [],
+  };
+
+  const seen = new Set<string>();
+
+  for (const status of statuses) {
+    if (!isRecord(status) || !isStringValue(status["criterion"])) {
+      return null;
+    }
+
+    const id = status["criterion"];
+
+    const state = VERIFICATION_STATES.find(
+      (candidate) => candidate === status["state"]
+    );
+
     if (
-      !isRecord(delivered) ||
-      typeof delivered['source'] !== 'string' ||
-      !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(delivered['source']) ||
-      !Array.isArray(statuses)
+      state === undefined ||
+      id === "" ||
+      seen.has(id) ||
+      (id !== "contract" && !/^SC[1-9]\d*$/u.test(id))
     ) {
       return null;
     }
-    const verification: Verification = { verified: 0, manual: 0, waived: 0, missing: 0, criteria: [] };
-    const seen = new Set<string>();
-    for (const status of statuses) {
-      if (!isRecord(status) || typeof status['criterion'] !== 'string') {
-        return null;
-      }
-      const id = status['criterion'];
-      const state = VERIFICATION_STATES.find((state) => state === status['state']);
-      if (!state || seen.has(id) || (id !== 'contract' && !/^SC[1-9]\d*$/.test(id))) {
-        return null;
-      }
-      seen.add(id);
-      if (id === 'contract') {
-        continue;
-      }
-      verification[state]++;
-      verification.criteria.push({ id, state });
+
+    seen.add(id);
+
+    if (id === "contract") {
+      continue;
     }
-    verification.criteria.sort((a, b) => a.id.localeCompare(b.id));
-    return verification;
+
+    verification[state] += 1;
+    verification.criteria.push({ id, state });
+  }
+
+  verification.criteria.sort((a, b) => a.id.localeCompare(b.id));
+
+  return verification;
+};
+
+const verificationOf = (session: string, relative: string | undefined) => {
+  if (
+    relative === undefined ||
+    relative === "" ||
+    !REPORT_PATH.test(relative) ||
+    relative.includes("\n") ||
+    relative.includes("\r")
+  ) {
+    return null;
+  }
+
+  try {
+    const result = readReportResult(session, relative);
+
+    if (result === null) {
+      return null;
+    }
+
+    return tallyVerification(result);
   } catch {
     return null;
   }
-}
+};
 
-function folderOf(given: string, where: string): string {
+const folderOf = (given: string, where: string) => {
   try {
     const folder = fs.realpathSync.native(given);
+
     if (fs.statSync(folder).isDirectory()) {
       return folder;
     }
   } catch (error) {
     if (!isMissing(error)) {
-      throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      throw new Error(
+        `${where}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
     }
   }
-  throw new Error(`${where}: session folder missing: ${given}`);
-}
 
-function manifestOf(folder: string, where: string): Manifest {
+  throw new Error(`${where}: session folder missing: ${given}`);
+};
+
+const manifestOf = (folder: string, where: string) => {
   try {
     return readManifest(folder);
   } catch (error) {
-    throw new Error(`${where}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(
+      `${where}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
+    );
   }
-}
+};
 
-function foldOf(folder: string, unavailable: Array<string>): Fold {
+const foldOf = (folder: string, unavailable: string[]) => {
   try {
     return foldLedger(folder);
   } catch (error) {
-    unavailable.push(`ledger: ${error instanceof Error ? error.message : String(error)}`);
+    unavailable.push(
+      `ledger: ${error instanceof Error ? error.message : String(error)}`
+    );
+
     return { records: [], lastSeq: 0, torn: null };
   }
-}
+};
 
-/** Latest `capture.end` across the session's diagnostics; an empty window when none exists. */
-function latestCaptureEnd(folder: string): number | undefined {
-  let latest: number | undefined;
-  try {
-    for (const name of listDir(path.join(folder, '.state', 'diagnostics'))) {
-      if (!name.endsWith('.json')) {
-        continue;
-      }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(stripBom(fs.readFileSync(path.join(folder, '.state', 'diagnostics', name), 'utf8')));
-      } catch {
-        continue;
-      }
-      const capture = isRecord(raw) ? raw['capture'] : undefined;
-      const end = isRecord(capture) ? capture['end'] : undefined;
-      if (typeof end === 'number' && Number.isFinite(end)) {
-        latest = Math.max(latest ?? end, end);
-      }
-    }
-  } catch {
-    // NOTE: an unreadable diagnostics folder is reported by sessionFacts as a partial collection.
-    return undefined;
-  }
-  return latest;
-}
-
-const hasCalls = (run: { roundWorkload?: Array<{ calls?: unknown }> }) =>
-  (run.roundWorkload ?? []).some((row) => row.calls !== undefined);
-
-/** Round folders `<session>/.state/reviews/<review>/round-<n>`, keyed as sessionFacts keys them; the number comes from the folder name because round.json may be unreadable. */
-function roundFolders(session: string, unavailable: Array<string>): Array<{ review: string; round: number }> {
-  const root = path.join(session, '.state', 'reviews');
-  try {
-    return listDir(root)
-      .filter((review) => statOrNull(path.join(root, review))?.isDirectory())
-      .flatMap((review) => {
-        const reviewRoot = path.join(root, review);
-        const key = `review-${crypto.createHash('sha256').update(reviewRoot).digest('hex').slice(0, 16)}`;
-        return listDir(reviewRoot)
-          .filter((name) => /^round-\d+$/.test(name) && statOrNull(path.join(reviewRoot, name))?.isDirectory())
-          .map((name) => ({ review: key, round: Number(name.slice('round-'.length)) }));
-      });
-  } catch (error) {
-    unavailable.push(`rounds: ${readErrorReason(error)}`);
-    return [];
-  }
-}
-
-// SECTION: Host usage
-
-function hostEnvOf(options: MeasureOptions, host: string, hostId: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...options.env, HOME: options.home, USERPROFILE: options.home };
-  for (const name of HOST_SESSION_ENV.get(host) ?? []) {
-    env[name] = hostId;
-  }
-  return env;
-}
-
-function hostTokensOf(host: HostUsageFacts): number {
-  return host.rows
-    .filter((row) => row.role === 'host')
-    .reduce((total, row) => total + billedTokens(row, host.platform ?? '', row.reasoningInOutput), 0);
-}
-
-function listDir(dir: string): Array<string> {
+const listDir = (dir: string) => {
   try {
     return fs.readdirSync(dir);
   } catch (error) {
     if (isMissing(error)) {
       return [];
     }
+
     throw error;
   }
-}
+};
 
-function statOrNull(file: string): fs.Stats | null {
+const statOrNull = (file: string) => {
   try {
     return fs.statSync(file);
   } catch (error) {
     if (isMissing(error)) {
       return null;
     }
+
     throw error;
   }
-}
+};
 
-// SECTION: Denials
+const latestCaptureEnd = (folder: string) => {
+  let latest: number | undefined;
 
-const zeroCounts = (): DenialCounts => ({ config: 0, hook: 0, other: 0 });
+  try {
+    for (const name of listDir(path.join(folder, ".state", "diagnostics"))) {
+      if (!name.endsWith(".json")) {
+        continue;
+      }
 
-/** Same location rule as the Claude usage reader: the newest `<projects>/<dir>/<id>.jsonl`. */
-function claudeTranscript(hostId: string, env: NodeJS.ProcessEnv, home: string): string | null {
-  const root = path.join(env['CLAUDE_CONFIG_DIR'] || path.join(home, '.claude'), 'projects');
+      let raw: unknown;
+
+      try {
+        raw = JSON.parse(
+          stripBom(
+            fs.readFileSync(
+              path.join(folder, ".state", "diagnostics", name),
+              "utf-8"
+            )
+          )
+        );
+      } catch {
+        continue;
+      }
+
+      const capture = isRecord(raw) ? raw["capture"] : undefined;
+      const end = isRecord(capture) ? capture["end"] : undefined;
+
+      if (isNumberValue(end) && Number.isFinite(end)) {
+        latest = Math.max(latest ?? end, end);
+      }
+    }
+  } catch {
+    latest = undefined;
+  }
+
+  return latest;
+};
+
+const hasCalls = (run: { roundWorkload?: { calls?: unknown }[] }) =>
+  (run.roundWorkload ?? []).some((row) => row.calls !== undefined);
+
+const roundFolders = (session: string, unavailable: string[]) => {
+  const root = path.join(session, ".state", "reviews");
+
+  try {
+    return listDir(root)
+      .filter(
+        (review) => statOrNull(path.join(root, review))?.isDirectory() === true
+      )
+      .flatMap((review) => {
+        const reviewRoot = path.join(root, review);
+        const key = `review-${crypto.createHash("sha256").update(reviewRoot).digest("hex").slice(0, 16)}`;
+
+        return listDir(reviewRoot)
+          .filter(
+            (name) =>
+              /^round-\d+$/u.test(name) &&
+              statOrNull(path.join(reviewRoot, name))?.isDirectory() === true
+          )
+          .map((name) => ({
+            review: key,
+            round: Number(name.slice("round-".length)),
+          }));
+      });
+  } catch (error) {
+    unavailable.push(`rounds: ${readErrorReason(error)}`);
+
+    return [];
+  }
+};
+
+const hostEnvOf = (options: MeasureOptions, host: string, hostId: string) => {
+  const env: NodeJS.ProcessEnv = {
+    ...options.env,
+    HOME: options.home,
+    USERPROFILE: options.home,
+  };
+
+  for (const name of HOST_SESSION_ENV.get(host) ?? []) {
+    env[name] = hostId;
+  }
+
+  return env;
+};
+
+const hostTokensOf = (host: HostUsageFacts) =>
+  host.rows
+    .filter((row) => row.role === "host")
+    .reduce(
+      (total, row) =>
+        total + billedTokens(row, host.platform ?? "", row.reasoningInOutput),
+      0
+    );
+
+const zeroCounts = () => ({ config: 0, hook: 0, other: 0 });
+
+const claudeTranscript = (
+  hostId: string,
+  env: NodeJS.ProcessEnv,
+  home: string
+) => {
+  const configured = env["CLAUDE_CONFIG_DIR"];
+
+  const root = path.join(
+    configured !== undefined && configured !== ""
+      ? configured
+      : path.join(home, ".claude"),
+    "projects"
+  );
+
   const candidates = listDir(root).flatMap((dir) => {
     const file = path.join(root, dir, `${hostId}.jsonl`);
     const stat = statOrNull(file);
-    return stat?.isFile() ? [{ file, mtimeMs: stat.mtimeMs }] : [];
+
+    return stat?.isFile() === true ? [{ file, mtimeMs: stat.mtimeMs }] : [];
   });
-  return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.file ?? null;
-}
 
-function subagentTranscripts(dir: string): Array<string> {
-  return listDir(dir)
-    .filter((name) => name.endsWith('.jsonl'))
+  return candidates.toSorted((a, b) => b.mtimeMs - a.mtimeMs)[0]?.file ?? null;
+};
+
+const subagentTranscripts = (dir: string) =>
+  listDir(dir)
+    .filter((name) => name.endsWith(".jsonl"))
     .map((name) => path.join(dir, name))
-    .filter((file) => statOrNull(file)?.isFile());
-}
+    .filter((file) => statOrNull(file)?.isFile() === true);
 
-function parseLine(line: string): JsonObject | null {
+const parseLine = (line: string) => {
   if (!line.trim()) {
     return null;
   }
+
   try {
     const value: unknown = JSON.parse(line);
+
     return isRecord(value) ? value : null;
   } catch {
     return null;
   }
-}
+};
 
-/** Counts lines with a `toolDenialKind` field in the host transcript and its subagent transcripts. */
-function denialsOf(
+const denialsOf = (
   host: string,
   hostId: string,
   context: { env: NodeJS.ProcessEnv; home: string },
-  window: { startMs: number; endMs: number },
-): Denials {
-  if (host !== 'claude') {
-    return { unavailable: 'no denial marker' };
+  window: { startMs: number; endMs: number }
+) => {
+  if (host !== "claude") {
+    return { unavailable: "no denial marker" };
   }
-  if (!validSessionId(hostId)) {
-    return { unavailable: 'invalid host id' };
+
+  if (validSessionId(hostId) === null) {
+    return { unavailable: "invalid host id" };
   }
+
   try {
     const transcript = claudeTranscript(hostId, context.env, context.home);
-    if (!transcript) {
-      return { unavailable: 'host transcript missing' };
+
+    if (transcript === null) {
+      return { unavailable: "host transcript missing" };
     }
-    const headline = zeroCounts(),
-      inWindow = zeroCounts();
-    for (const file of [transcript, ...subagentTranscripts(path.join(path.dirname(transcript), hostId, 'subagents'))]) {
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+
+    const headline = zeroCounts();
+    const inWindow = zeroCounts();
+
+    for (const file of [
+      transcript,
+      ...subagentTranscripts(
+        path.join(path.dirname(transcript), hostId, "subagents")
+      ),
+    ]) {
+      for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
         const entry = parseLine(line);
-        if (!entry || !Object.hasOwn(entry, 'toolDenialKind')) {
+
+        if (entry === null || !Object.hasOwn(entry, "toolDenialKind")) {
           continue;
         }
-        const permission = entry['permissionDecision'];
-        const source = isRecord(permission) ? permission['source'] : undefined;
-        const bucket = source === 'config' || source === 'hook' ? source : 'other';
-        headline[bucket]++;
-        const at = typeof entry['timestamp'] === 'string' ? Date.parse(entry['timestamp']) : Number.NaN;
+
+        const permission = entry["permissionDecision"];
+        const source = isRecord(permission) ? permission["source"] : undefined;
+
+        const bucket =
+          source === "config" || source === "hook" ? source : "other";
+
+        headline[bucket] += 1;
+
+        const at = isStringValue(entry["timestamp"])
+          ? Date.parse(entry["timestamp"])
+          : Number.NaN;
+
         if (at >= window.startMs && at <= window.endMs) {
-          inWindow[bucket]++;
+          inWindow[bucket] += 1;
         }
       }
     }
+
     return { ...headline, inWindow };
   } catch (error) {
     return { unavailable: readErrorReason(error) };
   }
-}
-
-// SECTION: Measurement
-
-// NOTE: sessionFacts reads only orchestrator, env, clock and hostUsageFs here; any other runtime use fails loudly.
-const unused = (): never => {
-  throw new Error('measure-runs has no CLI runtime');
 };
+
+const unused = (): never => {
+  throw new Error("measure-runs has no CLI runtime");
+};
+
 const UNUSED_CLI_DEPS = {
   delegate: unused,
   modes: unused,
@@ -453,26 +677,34 @@ const UNUSED_CLI_DEPS = {
   sleep: unused,
   isAlive: unused,
   pid: 0,
-  host: '',
-  skillRoot: '',
+  host: "",
+  skillRoot: "",
 } satisfies Partial<CliDeps>;
 
-function loadPricer(pricing: { path: string; text: string }): Pricer {
+const loadPricer = (pricing: { path: string; text: string }) => {
   let table: unknown;
+
   try {
     table = JSON.parse(stripBom(pricing.text));
   } catch {
     throw new Error(`pricing file is not valid JSON: ${pricing.path}`);
   }
-  // NOTE: no config override: every run is priced with the same table, so per-controller overrides stay out of the comparison.
+
   const pricer = resolvePricing(table, undefined);
+
   if (!pricer) {
     throw new Error(`pricing file has an unsupported table: ${pricing.path}`);
   }
-  return pricer;
-}
 
-function measureSide(pair: string, side: PairSide, options: MeasureOptions, pricer: Pricer): SideResult {
+  return pricer;
+};
+
+const measureSide = (
+  pair: string,
+  side: PairSide,
+  options: MeasureOptions,
+  pricer: Pricer
+) => {
   const where = `pair "${pair}" side "${side.label}"`;
   const given = path.resolve(options.baseDir, side.session);
   const folder = folderOf(given, where);
@@ -480,9 +712,10 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
   const nativeId = side.nativeId ?? manifest.sessionId;
   const startMs = Date.parse(manifest.createdAt);
   const endMs = latestCaptureEnd(folder) ?? startMs;
-  const unavailable: Array<string> = [];
+  const unavailable: string[] = [];
   const fold = foldOf(folder, unavailable);
   const env = hostEnvOf(options, side.host, nativeId);
+
   const deps: CliDeps = {
     ...UNUSED_CLI_DEPS,
     orchestrator: orchestratorFor(side.host, (name) => options.env[name]),
@@ -490,112 +723,188 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
     clock: () => endMs,
     hostUsageFs: nodeHostUsageFs,
   };
-  const measure = (session: string) => sessionFacts(session, fold, OUTCOME, { manifest, deps });
+
+  const measure = (session: string) =>
+    sessionFacts(session, fold, OUTCOME, { manifest, deps });
 
   let run = measure(folder);
-  let pathForm: PathForm = 'canonical';
+  let pathForm: PathForm = "canonical";
   let measured = folder;
-  // NOTE: round subjects hash the session string, so captures recorded from another path form need the path as given.
-  if (given !== folder && (run.roundWorkload ?? []).length > 0 && !hasCalls(run)) {
-    const asGiven = measure(given);
-    if (hasCalls(asGiven)) {
-      run = asGiven;
-      pathForm = 'as-given';
-      measured = given;
+
+  const resolveRun = () => {
+    if (
+      given !== folder &&
+      (run.roundWorkload ?? []).length > 0 &&
+      !hasCalls(run)
+    ) {
+      const asGiven = measure(given);
+
+      if (hasCalls(asGiven)) {
+        run = asGiven;
+        pathForm = "as-given";
+        measured = given;
+      }
     }
-  }
+  };
+
+  resolveRun();
 
   const host = run.hostUsage;
-  if (!host) {
+
+  if (host === undefined || host === null) {
     throw new Error(`${where}: host usage was not measured`);
   }
+
   const hostReason = host.unavailable;
-  const hostTokens = hostReason ? undefined : hostTokensOf(host);
-  if (hostReason) {
+  const hostTokens = hostReason === undefined ? hostTokensOf(host) : undefined;
+
+  if (hostReason !== undefined) {
     unavailable.push(`hostTokens: ${hostReason}`);
   }
 
-  const denials = denialsOf(side.host, nativeId, { env, home: options.home }, { startMs, endMs });
-  if ('unavailable' in denials) {
+  const denials = denialsOf(
+    side.host,
+    nativeId,
+    { env, home: options.home },
+    { startMs, endMs }
+  );
+
+  if ("unavailable" in denials) {
     unavailable.push(`denials: ${denials.unavailable}`);
   }
 
   const facts = sanitizeFacts(run);
-  const { total, priced, unpriced, coverage, rateBasis } = costCoverage([facts], pricer);
-  // Host-role notes only: a subagent note marks cost partial but leaves the host-token cell unflagged.
-  const hostRoleNotes = Object.keys(host.notes?.host ?? {}).sort();
+
+  const { total, priced, unpriced, coverage, rateBasis } = costCoverage(
+    [facts],
+    pricer
+  );
+
+  const hostRoleNotes = Object.keys(host.notes?.host ?? {}).toSorted();
+
   if (hostRoleNotes.length) {
-    unavailable.push(`${HOST_TOKENS_PARTIAL} ${hostRoleNotes.join(', ')}`);
-  }
-  if (!total.priced) {
-    unavailable.push('cost: no priced unit');
+    unavailable.push(`${HOST_TOKENS_PARTIAL} ${hostRoleNotes.join(", ")}`);
   }
 
-  const done = new Set(run.reviews.map((review) => roundKey(review.phase ?? '', review.round)));
-  // Rounds without a readable result stay out of the totals and are named once: unfinished or corrupt-findings rows first,
-  // then round folders whose round.json never reached roundWorkload.
+  if (!total.priced) {
+    unavailable.push("cost: no priced unit");
+  }
+
+  const done = new Set(
+    run.reviews.map((review) => roundKey(review.phase ?? "", review.round))
+  );
+
   const named = new Set<string>();
+
   const excluded = (review: string, round: number) => {
     const key = roundKey(review, round);
+
     if (done.has(key) || named.has(key)) {
       return;
     }
+
     named.add(key);
-    unavailable.push(`rounds: ${review} ${round} excluded: no readable round result`);
+    unavailable.push(
+      `rounds: ${review} ${round} excluded: no readable round result`
+    );
   };
-  for (const row of run.roundWorkload ?? []) {
-    excluded(row.review, row.round);
-  }
-  for (const folder of roundFolders(measured, unavailable)) {
-    excluded(folder.review, folder.round);
-  }
+
+  const collectExclusions = () => {
+    for (const row of run.roundWorkload ?? []) {
+      excluded(row.review, row.round);
+    }
+
+    for (const roundFolder of roundFolders(measured, unavailable)) {
+      excluded(roundFolder.review, roundFolder.round);
+    }
+  };
+
+  collectExclusions();
+
   const captures = run.collection?.partial ?? 0;
+
   if (captures > 0) {
     unavailable.push(
       `${CALLS_PARTIAL} captures partial (${captures})`,
-      `${HOST_TOKENS_PARTIAL} captures partial (${captures})`,
+      `${HOST_TOKENS_PARTIAL} captures partial (${captures})`
     );
   }
+
   const rows = (run.roundWorkload ?? [])
     .filter((row) => done.has(roundKey(row.review, row.round)))
-    .sort((a, b) => a.review.localeCompare(b.review) || a.round - b.round);
-  const perRound: Array<PerRound> = [];
-  for (const row of rows) {
-    perRound.push({
-      review: row.review,
-      round: row.round,
-      ...(row.calls && { calls: row.calls.total }),
-      ...(!(row.hostTokens === undefined) && { hostTokens: row.hostTokens }),
-      ...(!(row.hostTurns === undefined) && { hostTurns: row.hostTurns }),
-    });
-    if (!row.calls) {
-      unavailable.push(`perRound: ${row.review} ${row.round} calls: no round starts`);
+    .toSorted((a, b) => a.review.localeCompare(b.review) || a.round - b.round);
+
+  const perRound: PerRound[] = [];
+
+  const collectPerRound = () => {
+    for (const row of rows) {
+      perRound.push({
+        review: row.review,
+        round: row.round,
+        ...(row.calls !== undefined && { calls: row.calls.total }),
+        ...(row.hostTokens !== undefined && { hostTokens: row.hostTokens }),
+        ...(row.hostTurns !== undefined && { hostTurns: row.hostTurns }),
+      });
+
+      if (row.calls === undefined) {
+        unavailable.push(
+          `perRound: ${row.review} ${row.round} calls: no round starts`
+        );
+      }
+
+      if (row.hostTurns === undefined) {
+        const reason = hostRoleNotes.length
+          ? `partial: ${hostRoleNotes.join(", ")}`
+          : (hostReason ?? "no turn data");
+
+        unavailable.push(
+          `perRound: ${row.review} ${row.round} hostTurns: ${
+            row.calls === undefined ? "no round starts" : reason
+          }`
+        );
+      }
+
+      if (row.hostTokens === undefined) {
+        unavailable.push(
+          `perRound: ${row.review} ${row.round} hostTokens: ${row.calls === undefined ? "no round starts" : (hostReason ?? "no usage records")}`
+        );
+      }
     }
-    if (row.hostTurns === undefined) {
-      const reason = hostRoleNotes.length ? 'partial: ' + hostRoleNotes.join(', ') : (hostReason ?? 'no turn data');
-      unavailable.push(
-        'perRound: ' + row.review + ' ' + row.round + ' hostTurns: ' + (row.calls ? reason : 'no round starts'),
-      );
-    }
-    if (row.hostTokens === undefined) {
-      unavailable.push(
-        `perRound: ${row.review} ${row.round} hostTokens: ${row.calls ? (hostReason ?? 'no usage records') : 'no round starts'}`,
-      );
-    }
-  }
+  };
+
+  collectPerRound();
+
   const byReview: Record<string, number> = {};
+
   for (const row of rows) {
     byReview[row.review] = (byReview[row.review] ?? 0) + 1;
   }
 
-  const { responses: _responses, ...efficiency } = efficiencyOf([facts], pricer);
+  const { responses: _responses, ...efficiency } = efficiencyOf(
+    [facts],
+    pricer
+  );
+
   const verification = verificationOf(folder, side.reportComplete);
-  const timing = new Map(efficiency.criticalPath.map((span) => [roundKey(span.review, span.round), span]));
+
+  const timing = new Map(
+    efficiency.criticalPath.map((span) => [
+      roundKey(span.review, span.round),
+      span,
+    ])
+  );
+
   const criticalPath = perRound.map(
     ({ review, round }) =>
-      timing.get(roundKey(review, round)) ?? { review, round, elapsedMs: null, finishingSlot: null },
+      timing.get(roundKey(review, round)) ?? {
+        review,
+        round,
+        elapsedMs: null,
+        finishingSlot: null,
+      }
   );
-  return {
+
+  const output: SideResult = {
     label: side.label,
     session: measured,
     host: side.host,
@@ -603,7 +912,6 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
     window: { startMs, endMs, pathForm },
     rounds: { total: rows.length, byReview },
     perRound,
-    ...(!(hostTokens === undefined) && { hostTokens }),
     denials,
     cost: {
       low: total.low,
@@ -619,29 +927,57 @@ function measureSide(pair: string, side: PairSide, options: MeasureOptions, pric
     unavailable,
     efficiency: { ...efficiency, criticalPath, verification },
   };
-}
 
-// The default `sort` order (by string form), spelled out: the workload signature only needs a stable order.
-function byStringForm(a: number | null, b: number | null): number {
-  const left = String(a),
-    right = String(b);
-  return left < right ? -1 : left > right ? 1 : 0;
-}
+  if (hostTokens !== undefined) {
+    output.hostTokens = hostTokens;
+  }
 
-function pairedComparisonLimits(sides: ReadonlyArray<SideResult>): Array<string> {
+  return output;
+};
+
+const byStringForm = (a: number | null, b: number | null) => {
+  const left = String(a);
+  const right = String(b);
+
+  if (left < right) {
+    return -1;
+  }
+
+  return left > right ? 1 : 0;
+};
+
+const matchLabel = (observed: unknown, matchedObserved: unknown) => {
+  if (matchedObserved === null) {
+    return "none";
+  }
+
+  if (matchedObserved === observed) {
+    return "all observed";
+  }
+
+  return "some observed";
+};
+
+const pairedComparisonLimits = (sides: readonly SideResult[]) => {
   if (sides.length < 2) {
     return [];
   }
+
   const costs = sides.map((side) => side.cost);
-  const differs = <T>(value: (cost: SideResult['cost']) => T) =>
+
+  const differs = (value: (cost: SideResult["cost"]) => unknown) =>
     new Set(costs.map((cost) => JSON.stringify(value(cost)))).size > 1;
-  const limits: Array<string> = [];
+
+  const limits: string[] = [];
+
   if (differs((cost) => cost.rateBasis.periods)) {
-    limits.push('effective tariff periods differ');
+    limits.push("effective tariff periods differ");
   }
+
   if (differs((cost) => [cost.rateBasis.origins, cost.rateBasis.matches])) {
-    limits.push('rate origins or matches differ');
+    limits.push("rate origins or matches differ");
   }
+
   if (
     differs((cost) => [
       cost.coverage.partial,
@@ -651,13 +987,15 @@ function pairedComparisonLimits(sides: ReadonlyArray<SideResult>): Array<string>
         .map(([source]) => source),
     ])
   ) {
-    limits.push('usage coverage differs');
+    limits.push("usage coverage differs");
   }
+
   if (costs.some((cost) => !cost.priced)) {
-    limits.push('priced subtotal unavailable');
+    limits.push("priced subtotal unavailable");
   }
 
   const evidence = sides.map((side) => side.efficiency);
+
   const responseScope = evidence.map(({ responseEvents }) =>
     responseEvents.byStageRole
       .map(({ stage, role, basis, observed, matchedObserved, coverage }) =>
@@ -666,390 +1004,542 @@ function pairedComparisonLimits(sides: ReadonlyArray<SideResult>): Array<string>
           role,
           basis,
           coverage,
-          matchedObserved === null ? 'none' : matchedObserved === observed ? 'all observed' : 'some observed',
-        ]),
+          matchLabel(observed, matchedObserved),
+        ])
       )
-      .sort(),
+      .toSorted()
   );
+
   if (new Set(responseScope.map((scope) => JSON.stringify(scope))).size > 1) {
-    limits.push('response event basis or coverage differs');
+    limits.push("response event basis or coverage differs");
   }
-  if (evidence.some(({ uncachedInputPerResponse }) => uncachedInputPerResponse === null)) {
-    limits.push('matched response ratio unavailable');
+
+  if (
+    evidence.some(
+      ({ uncachedInputPerResponse }) => uncachedInputPerResponse === null
+    )
+  ) {
+    limits.push("matched response ratio unavailable");
   }
-  if (evidence.some(({ criticalPath }) => criticalPath.some((span) => span.elapsedMs === null))) {
-    limits.push('CLI attempt span unavailable');
+
+  if (
+    evidence.some(({ criticalPath }) =>
+      criticalPath.some((span) => span.elapsedMs === null)
+    )
+  ) {
+    limits.push("CLI attempt span unavailable");
   }
-  if (evidence.some(({ reviewOutcomes }) => reviewOutcomes === null || reviewOutcomes.recurring === null)) {
-    limits.push('review outcome evidence unavailable');
+
+  if (
+    evidence.some(
+      ({ reviewOutcomes }) =>
+        reviewOutcomes === null || reviewOutcomes.recurring === null
+    )
+  ) {
+    limits.push("review outcome evidence unavailable");
   }
+
   const workloads = sides.map((side) =>
     JSON.stringify({
-      rounds: Object.values(side.rounds.byReview).sort((a, b) => a - b),
-      calls: side.perRound.map((row) => row.calls ?? null).sort(byStringForm),
+      rounds: Object.values(side.rounds.byReview).toSorted((a, b) => a - b),
+      calls: side.perRound
+        .map((row) => row.calls ?? null)
+        .toSorted(byStringForm),
       review: side.efficiency.reviewOutcomes,
-    }),
+    })
   );
+
   if (new Set(workloads).size > 1) {
-    limits.push('review workload or outcomes differ');
-  }
-  if (sides.some((side) => flagged(side, CALLS_PARTIAL) || side.perRound.some((row) => row.calls === undefined))) {
-    limits.push('review workload evidence unavailable');
+    limits.push("review workload or outcomes differ");
   }
 
-  const verified = evidence.flatMap(({ verification }) => (verification ? [verification.criteria] : []));
+  if (
+    sides.some(
+      (side) =>
+        flagged(side, CALLS_PARTIAL) ||
+        side.perRound.some((row) => row.calls === undefined)
+    )
+  ) {
+    limits.push("review workload evidence unavailable");
+  }
+
+  const verified = evidence.flatMap(({ verification }) =>
+    verification ? [verification.criteria] : []
+  );
+
   if (verified.length !== evidence.length) {
-    limits.push('verification evidence unavailable');
+    limits.push("verification evidence unavailable");
   }
-  if (new Set(verified.map((criteria) => JSON.stringify(criteria.map(({ id }) => id)))).size > 1) {
-    limits.push('verification criteria differ');
-  } else if (new Set(verified.map((criteria) => JSON.stringify(criteria))).size > 1) {
-    limits.push('verification states differ');
+
+  if (
+    new Set(
+      verified.map((criteria) => JSON.stringify(criteria.map(({ id }) => id)))
+    ).size > 1
+  ) {
+    limits.push("verification criteria differ");
+  } else if (
+    new Set(verified.map((criteria) => JSON.stringify(criteria))).size > 1
+  ) {
+    limits.push("verification states differ");
   }
+
   return limits;
-}
+};
 
 /** Measures every side of every pair; throws naming the side when its folder or manifest is invalid. */
-export function measureRuns(input: PairsFile, options: MeasureOptions): Comparison {
+export const measureRuns = (input: PairsFile, options: MeasureOptions) => {
   const pricer = loadPricer(options.pricing);
+
   return {
     pricing: { path: options.pricing.path, asOf: pricer.meta.asOf },
     generatedAt: new Date().toISOString(),
     pairs: input.pairs.map((pair) => {
-      const sides = pair.sides.map((side) => measureSide(pair.name, side, options, pricer));
-      return { name: pair.name, sides, comparisonLimits: pairedComparisonLimits(sides) };
+      const sides = pair.sides.map((side) =>
+        measureSide(pair.name, side, options, pricer)
+      );
+
+      return {
+        name: pair.name,
+        sides,
+        comparisonLimits: pairedComparisonLimits(sides),
+      };
     }),
     confounds: input.confounds,
   };
-}
+};
 
-// SECTION: Rendering
+const withPartial = (text: string, partial: boolean) =>
+  partial ? `${text} (partial)` : text;
 
-const withPartial = (text: string, partial: boolean) => (partial ? `${text} (partial)` : text);
-const flagged = (side: SideResult, prefix: string) => side.unavailable.some((entry) => entry.startsWith(prefix));
+const flagged = (side: SideResult, prefix: string) =>
+  side.unavailable.some((entry) => entry.startsWith(prefix));
 
-const sumOf = (values: Array<number | undefined>) =>
+const sumOf = (values: (number | undefined)[]) =>
   values.length === 0 || values.some((value) => value === undefined)
-    ? '—'
+    ? "—"
     : String(values.reduce<number>((total, value) => total + (value ?? 0), 0));
 
-function denialText(side: SideResult): string {
-  const denials = side.denials;
-  return 'unavailable' in denials
+const denialText = (side: SideResult) => {
+  const { denials } = side;
+
+  return "unavailable" in denials
     ? `— (${denials.unavailable})`
     : `${denials.config} / ${denials.hook} / ${denials.other}`;
-}
+};
 
-function costText(side: SideResult): string {
+const costText = (side: SideResult) => {
   const text = formatCost({
     low: side.cost.low,
     high: side.cost.high,
     priced: side.cost.priced,
     reasons: new Set<CostReason>(),
   });
+
   return side.cost.partial && side.cost.priced ? `${text} (partial)` : text;
-}
+};
 
-const labels = (values: ReadonlyArray<string | null>, fallback: string) =>
-  values.map((value) => value ?? fallback).join(', ') || '—';
+const labels = (values: readonly (string | null)[], fallback: string) =>
+  values.map((value) => value ?? fallback).join(", ") || "—";
 
-function rateBasisText({ cost: { rateBasis } }: SideResult): string {
+const rateBasisText = ({ cost: { rateBasis } }: SideResult) => {
   const origins = Object.entries(rateBasis.originCounts)
     .filter(([, count]) => count)
     .map(([origin, count]) => `${count} ${origin}`)
-    .join(', ');
+    .join(", ");
+
   const matches = Object.entries(rateBasis.matchCounts)
     .filter(([, count]) => count)
     .map(([match, count]) => `${count} ${match}`)
-    .join(', ');
-  return `UTC day ${labels(rateBasis.effectiveDays, 'base-rate fallback')} · effective period ${labels(rateBasis.periods, 'base rate')} · ${origins || 'origin unavailable'} · ${matches || 'match unavailable'}`;
-}
+    .join(", ");
+
+  return `UTC day ${labels(rateBasis.effectiveDays, "base-rate fallback")} · effective period ${labels(rateBasis.periods, "base rate")} · ${origins || "origin unavailable"} · ${matches || "match unavailable"}`;
+};
 
 /** Markdown view of the comparison: one metric table per pair, per-round rows, then confounds and pricing. */
-export function renderComparison(comparison: Comparison): string {
+export const renderComparison = (comparison: Comparison) => {
   const lines = [
-    '# Matched measurement comparison',
-    '',
+    "# Matched measurement comparison",
+    "",
     `Generated ${comparison.generatedAt}. Results are advisory; no value gates delivery.`,
-    '',
+    "",
   ];
+
   for (const pair of comparison.pairs) {
-    const sides = pair.sides;
+    const { sides } = pair;
+
     const metric = (label: string, cell: (side: SideResult) => string) =>
-      `| ${label} | ${sides.map(cell).join(' | ')} |`;
+      `| ${label} | ${sides.map(cell).join(" | ")} |`;
+
     lines.push(
       `## ${pair.name}`,
-      '',
-      `| Metric | ${sides.map((side) => side.label).join(' | ')} |`,
-      `| --- | ${sides.map(() => '---:').join(' | ')} |`,
-      metric('Rounds', (side) => String(side.rounds.total)),
-      metric('Calls in rounds', (side) =>
-        withPartial(sumOf(side.perRound.map((row) => row.calls)), flagged(side, CALLS_PARTIAL)),
+      "",
+      `| Metric | ${sides.map((side) => side.label).join(" | ")} |`,
+      `| --- | ${sides.map(() => "---:").join(" | ")} |`,
+      metric("Rounds", (side) => String(side.rounds.total)),
+      metric("Calls in rounds", (side) =>
+        withPartial(
+          sumOf(side.perRound.map((row) => row.calls)),
+          flagged(side, CALLS_PARTIAL)
+        )
       ),
-      metric('Host tokens in rounds', (side) =>
-        withPartial(sumOf(side.perRound.map((row) => row.hostTokens)), flagged(side, HOST_TOKENS_PARTIAL)),
+      metric("Host tokens in rounds", (side) =>
+        withPartial(
+          sumOf(side.perRound.map((row) => row.hostTokens)),
+          flagged(side, HOST_TOKENS_PARTIAL)
+        )
       ),
-      metric('Denials (config / hook / other)', denialText),
-      metric('Cost (USD)', costText),
+      metric("Denials (config / hook / other)", denialText),
+      metric("Cost (USD)", costText)
     );
+
     if (sides.length >= 2 && !pair.comparisonLimits.length) {
-      lines.push(metric('Comparable priced subtotal (USD)', costText));
+      lines.push(metric("Comparable priced subtotal (USD)", costText));
     }
+
     lines.push(
-      metric('Cost coverage', ({ cost }) =>
+      metric("Cost coverage", ({ cost }) =>
         [
-          cost.partial ? 'partial' : 'complete for observed scope',
+          cost.partial ? "partial" : "complete for observed scope",
           `${cost.pricedUnits} priced, ${cost.unpricedUnits} unpriced`,
           ...cost.coverage.reasons,
-        ].join(' · '),
+        ].join(" · ")
       ),
       metric(
-        'Delegate usage source',
+        "Delegate usage source",
         ({ cost }) =>
           Object.entries(cost.coverage.sources)
             .filter(([, count]) => count)
             .map(([source, count]) => `${count} ${source}`)
-            .join(', ') || 'no recorded launches',
+            .join(", ") || "no recorded launches"
       ),
-      metric('Rate basis', rateBasisText),
+      metric("Rate basis", rateBasisText),
       metric(
-        'Response events',
+        "Response events",
         ({ efficiency: { responseEvents } }) =>
-          `${responseEvents.observed ?? 'unavailable'} observed · ${responseEvents.coverage} · ${responseEvents.matchedObserved ?? 'unavailable'} matched`,
+          `${responseEvents.observed ?? "unavailable"} observed · ${responseEvents.coverage} · ${responseEvents.matchedObserved ?? "unavailable"} matched`
       ),
-      metric('Uncached input / matched response', ({ efficiency }) =>
+      metric("Uncached input / matched response", ({ efficiency }) =>
         efficiency.uncachedInputPerResponse === null
-          ? 'unavailable'
-          : `${efficiency.uncachedInputPerResponse.toFixed(2)} · ${efficiency.matchedUncachedInput} input / ${efficiency.responseEvents.matchedObserved} events`,
+          ? "unavailable"
+          : `${efficiency.uncachedInputPerResponse.toFixed(2)} · ${efficiency.matchedUncachedInput} input / ${efficiency.responseEvents.matchedObserved} events`
       ),
       metric(
-        'Recovery (extra CLI / superseded CLI / writer relaunches)',
+        "Recovery (extra CLI / superseded CLI / writer relaunches)",
         ({ efficiency: { recovery } }) =>
-          `${recovery.extraLaunches ?? '—'} / ${recovery.reworkLaunches ?? '—'} / ${recovery.writerRelaunches ?? '—'} · ${recovery.coverage}`,
+          `${recovery.extraLaunches ?? "—"} / ${recovery.reworkLaunches ?? "—"} / ${recovery.writerRelaunches ?? "—"} · ${recovery.coverage}`
       ),
       metric(
-        'Retry and rework costs by cause',
+        "Retry and rework costs by cause",
         ({ efficiency: { recovery } }) =>
           Object.entries(recovery.byCause)
             .map(
               ([cause, { count, cost }]) =>
-                `${cause} ${count} (${cost ? withPartial(formatCost({ ...cost, priced: true, reasons: new Set() }), cost.partial) : 'unavailable'})`,
+                `${cause} ${count} (${cost ? withPartial(formatCost({ ...cost, priced: true, reasons: new Set() }), cost.partial) : "unavailable"})`
             )
-            .join(' · ') || '—',
+            .join(" · ") || "—"
       ),
-      metric('Review finding occurrences', ({ efficiency: { reviewOutcomes } }) =>
-        reviewOutcomes
-          ? `${reviewOutcomes.accepted} accepted · ${reviewOutcomes.rejected} rejected · ${reviewOutcomes.recurring ?? 'unavailable'} recurring`
-          : 'unavailable',
+      metric(
+        "Review finding occurrences",
+        ({ efficiency: { reviewOutcomes } }) =>
+          reviewOutcomes
+            ? `${reviewOutcomes.accepted} accepted · ${reviewOutcomes.rejected} rejected · ${reviewOutcomes.recurring ?? "unavailable"} recurring`
+            : "unavailable"
       ),
-      metric('Verification', ({ efficiency: { verification } }) =>
+      metric("Verification", ({ efficiency: { verification } }) =>
         verification
-          ? VERIFICATION_STATES.map((state) => `${verification[state]} ${state}`)
-              .concat(verification.criteria.map(({ id, state }) => `${id} ${state}`))
-              .join(' · ')
-          : 'unavailable',
-      ),
+          ? [
+              ...VERIFICATION_STATES.map(
+                (state) => `${verification[state]} ${state}`
+              ),
+              ...verification.criteria.map(({ id, state }) => `${id} ${state}`),
+            ].join(" · ")
+          : "unavailable"
+      )
     );
+
     if (pair.comparisonLimits.length) {
-      lines.push('', `Comparison limits — ${pair.comparisonLimits.join(', ')}`);
+      lines.push("", `Comparison limits — ${pair.comparisonLimits.join(", ")}`);
     }
+
     lines.push(
-      '',
-      '### Per-round',
-      '',
-      '| Side | Review | Round | Calls | Host tokens | Host turns |',
-      '| --- | --- | ---: | ---: | ---: | ---: |',
+      "",
+      "### Per-round",
+      "",
+      "| Side | Review | Round | Calls | Host tokens | Host turns |",
+      "| --- | --- | ---: | ---: | ---: | ---: |"
     );
-    for (const side of sides) {
-      for (const row of side.perRound) {
-        lines.push(
-          `| ${side.label} | ${row.review} | ${row.round} | ${row.calls ?? '—'} | ${row.hostTokens ?? '—'} | ${row.hostTurns ?? 'unavailable'} |`,
-        );
-      }
-    }
+
+    pushPerRound(lines, sides);
+
     lines.push(
-      '',
-      '### Response evidence by stage and role',
-      '',
-      '| Side | Stage | Role | Event basis | Observed | Coverage | Matched events | Matched input | Input / matched response |',
-      '| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: |',
+      "",
+      "### Response evidence by stage and role",
+      "",
+      "| Side | Stage | Role | Event basis | Observed | Coverage | Matched events | Matched input | Input / matched response |",
+      "| --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: |"
     );
-    for (const side of sides) {
-      for (const row of side.efficiency.responseEvents.byStageRole) {
-        lines.push(
-          `| ${side.label} | ${row.stage} | ${row.role} | ${row.basis} | ${row.observed ?? '—'} | ${row.coverage} | ${row.matchedObserved ?? '—'} | ${row.matchedUncachedInput ?? '—'} | ${row.uncachedInputPerResponse?.toFixed(2) ?? '—'} |`,
-        );
-      }
-    }
+
+    pushResponseEvidence(lines, sides);
+
     lines.push(
-      '',
-      '### Review CLI attempt spans',
-      '',
-      'Spans cover current-generation CLI launches, including retry gaps. Native completion timing is unavailable.',
-      '',
-      '| Side | Review | Round | CLI span | Finishing logical slot |',
-      '| --- | --- | ---: | ---: | --- |',
+      "",
+      "### Review CLI attempt spans",
+      "",
+      "Spans cover current-generation CLI launches, including retry gaps. Native completion timing is unavailable.",
+      "",
+      "| Side | Review | Round | CLI span | Finishing logical slot |",
+      "| --- | --- | ---: | ---: | --- |"
     );
-    for (const side of sides) {
-      for (const span of side.efficiency.criticalPath) {
-        lines.push(
-          `| ${side.label} | ${span.review} | ${span.round} | ${formatDuration(span.elapsedMs ?? undefined)} | ${span.finishingSlot ?? '—'} |`,
-        );
-      }
-    }
-    const gaps = sides.flatMap((side) => side.unavailable.map((entry) => `- ${side.label}: ${entry}`));
+
+    pushAttemptSpans(lines, sides);
+
+    const gaps = sides.flatMap((side) =>
+      side.unavailable.map((entry) => `- ${side.label}: ${entry}`)
+    );
+
     if (gaps.length) {
-      lines.push('', 'Unavailable:', ...gaps);
+      lines.push("", "Unavailable:", ...gaps);
     }
-    lines.push('');
+
+    lines.push("");
   }
+
   lines.push(
-    '## Confounds',
-    '',
+    "## Confounds",
+    "",
     ...comparison.confounds.map((line) => `- ${line}`),
-    '',
+    "",
     `Pricing: \`${comparison.pricing.path}\` as of ${comparison.pricing.asOf}; one table reprices every run.`,
-    '',
+    ""
   );
-  return lines.join('\n');
-}
 
-// SECTION: Output guard
+  return lines.join("\n");
+};
 
-/** Realpath of the nearest existing ancestor, with the folders that do not exist yet re-attached. */
-function canonicalPath(target: string): string {
-  const missing: Array<string> = [];
+const pushPerRound = (lines: string[], sides: SideResult[]) => {
+  for (const side of sides) {
+    for (const row of side.perRound) {
+      lines.push(
+        `| ${side.label} | ${row.review} | ${row.round} | ${row.calls ?? "—"} | ${row.hostTokens ?? "—"} | ${row.hostTurns ?? "unavailable"} |`
+      );
+    }
+  }
+};
+
+const pushResponseEvidence = (lines: string[], sides: SideResult[]) => {
+  for (const side of sides) {
+    for (const row of side.efficiency.responseEvents.byStageRole) {
+      lines.push(
+        `| ${side.label} | ${row.stage} | ${row.role} | ${row.basis} | ${row.observed ?? "—"} | ${row.coverage} | ${row.matchedObserved ?? "—"} | ${row.matchedUncachedInput ?? "—"} | ${row.uncachedInputPerResponse?.toFixed(2) ?? "—"} |`
+      );
+    }
+  }
+};
+
+const pushAttemptSpans = (lines: string[], sides: SideResult[]) => {
+  for (const side of sides) {
+    for (const span of side.efficiency.criticalPath) {
+      lines.push(
+        `| ${side.label} | ${span.review} | ${span.round} | ${formatDuration(span.elapsedMs ?? undefined)} | ${span.finishingSlot ?? "—"} |`
+      );
+    }
+  }
+};
+
+const canonicalPath = (target: string) => {
+  const missing: string[] = [];
   let existing = target;
+
   while (!fs.existsSync(existing) && path.dirname(existing) !== existing) {
     missing.unshift(path.basename(existing));
     existing = path.dirname(existing);
   }
-  return path.join(fs.realpathSync.native(existing), ...missing);
-}
 
-const isWithin = (child: string, parent: string): boolean => {
-  const rel = path.relative(parent, child);
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+  return path.join(fs.realpathSync.native(existing), ...missing);
 };
 
-// NOTE: each root repeats its usage adapter's rule (claude.ts, codex.ts, agy.ts, opencode-db.ts); a new store needs a row here.
-function hostStoreRoots(home: string, env: NodeJS.ProcessEnv): Array<string> {
-  return [
-    env['CLAUDE_CONFIG_DIR'] || path.join(home, '.claude'),
-    env['CODEX_HOME'] || path.join(home, '.codex'),
-    env['ANTIGRAVITY_APP_DATA_DIR'] || path.join(home, '.gemini', 'antigravity'),
-    path.join(env['XDG_DATA_HOME'] || path.join(home, '.local', 'share'), 'opencode'),
-  ];
-}
+const isWithin = (child: string, parent: string) => {
+  const rel = path.relative(parent, child);
 
-/** Refuses an --out folder inside, or equal to, a measured session folder or a host store; runs before any write. */
-function assertOutside(dir: string, comparison: Comparison, home: string, env: NodeJS.ProcessEnv): void {
+  return (
+    rel === "" ||
+    (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))
+  );
+};
+
+const envOr = (env: NodeJS.ProcessEnv, name: string, fallback: string) => {
+  const value = env[name];
+
+  return value === undefined || value === "" ? fallback : value;
+};
+
+const hostStoreRoots = (home: string, env: NodeJS.ProcessEnv) => [
+  envOr(env, "CLAUDE_CONFIG_DIR", path.join(home, ".claude")),
+  envOr(env, "CODEX_HOME", path.join(home, ".codex")),
+  envOr(
+    env,
+    "ANTIGRAVITY_APP_DATA_DIR",
+    path.join(home, ".gemini", "antigravity")
+  ),
+  path.join(
+    envOr(env, "XDG_DATA_HOME", path.join(home, ".local", "share")),
+    "opencode"
+  ),
+];
+
+const assertOutside = (
+  dir: string,
+  comparison: Comparison,
+  home: string,
+  env: NodeJS.ProcessEnv
+) => {
   const target = canonicalPath(dir);
+
   const guarded = [
     ...comparison.pairs.flatMap((pair) =>
-      pair.sides.map((side) => ({ kind: 'measured session folder', root: side.session })),
+      pair.sides.map((side) => ({
+        kind: "measured session folder",
+        root: side.session,
+      }))
     ),
-    ...hostStoreRoots(home, env).map((root) => ({ kind: 'host store', root })),
+    ...hostStoreRoots(home, env).map((root) => ({ kind: "host store", root })),
   ];
+
   for (const { kind, root } of guarded) {
     if (isWithin(target, canonicalPath(root))) {
       throw new Error(`--out must not be inside or equal a ${kind}: ${root}`);
     }
   }
-}
+};
 
-/** Refuses an --out whose comparison files are symbolic links, so no write can follow a link outside --out. */
-function assertNoLinkedOutputs(dir: string): void {
-  for (const name of ['comparison.json', 'comparison.md']) {
+const assertNoLinkedOutputs = (dir: string) => {
+  for (const name of ["comparison.json", "comparison.md"]) {
     const file = path.join(dir, name);
     let stat: fs.Stats;
+
     try {
       stat = fs.lstatSync(file);
     } catch (error) {
       if (isMissing(error)) {
         continue;
       }
+
       throw error;
     }
+
     if (stat.isSymbolicLink()) {
-      throw new Error(`--out file is a symbolic link, refusing to overwrite: ${file}`);
+      throw new Error(
+        `--out file is a symbolic link, refusing to overwrite: ${file}`
+      );
     }
   }
-}
+};
 
-// SECTION: CLI
-
-export type RunIo = {
+export interface RunIo {
   cwd: string;
   home: string;
   env: NodeJS.ProcessEnv;
-  stdout(text: string): void;
-  stderr(text: string): void;
-};
+  stdout: (text: string) => void;
+  stderr: (text: string) => void;
+}
 
-function readFile(file: string, label: string): string {
+const readFile = (file: string, label: string) => {
   try {
-    return fs.readFileSync(file, 'utf8');
+    return fs.readFileSync(file, "utf-8");
   } catch {
     throw new Error(`${label} unreadable: ${file}`);
   }
-}
+};
 
 /** Runs the maintainer command; returns the process exit code. */
-export function runMeasureRuns(argv: ReadonlyArray<string>, io: RunIo): number {
+export const runMeasureRuns = (argv: readonly string[], io: RunIo) => {
   try {
     const { values, positionals } = parseArgs({
       args: [...argv],
       allowPositionals: true,
-      options: { out: { type: 'string' } },
+      options: { out: { type: "string" } },
     });
-    const out = values.out;
+
+    const { out } = values;
     const [pairsArg] = positionals;
-    if (positionals.length !== 1 || !out || pairsArg === undefined) {
+
+    if (
+      positionals.length !== 1 ||
+      out === undefined ||
+      out === "" ||
+      pairsArg === undefined
+    ) {
       io.stderr(USAGE);
+
       return 1;
     }
+
     const pairsFile = path.resolve(io.cwd, pairsArg);
     let input: unknown;
+
     try {
-      input = JSON.parse(stripBom(readFile(pairsFile, 'pairs file')));
+      input = JSON.parse(stripBom(readFile(pairsFile, "pairs file")));
     } catch (error) {
       if (error instanceof SyntaxError) {
-        throw new Error(`pairs file is not valid JSON: ${pairsFile}`, { cause: error });
+        // oxlint-disable-next-line unicorn/prefer-type-error -- contract is Error (instanceof Error); TypeError would break callers.
+        throw new Error(`pairs file is not valid JSON: ${pairsFile}`, {
+          cause: error,
+        });
       }
+
       throw error;
     }
+
     const pairs = parsePairs(input);
     const pricingPath = pairs.pricing ?? DEFAULT_PRICING;
-    const pricingText = readFile(path.resolve(io.cwd, pricingPath), 'pricing file');
+
+    const pricingText = readFile(
+      path.resolve(io.cwd, pricingPath),
+      "pricing file"
+    );
+
     const comparison = measureRuns(pairs, {
       baseDir: path.dirname(pairsFile),
       home: io.home,
       env: io.env,
       pricing: { path: pricingPath, text: pricingText },
     });
+
     const dir = path.resolve(io.cwd, out);
     assertOutside(dir, comparison, io.home, io.env);
     assertNoLinkedOutputs(dir);
     fs.mkdirSync(dir, { recursive: true });
-    const jsonFile = path.join(dir, 'comparison.json'),
-      markdownFile = path.join(dir, 'comparison.md');
+
+    const jsonFile = path.join(dir, "comparison.json");
+    const markdownFile = path.join(dir, "comparison.md");
+
     fs.writeFileSync(jsonFile, `${JSON.stringify(comparison, null, 2)}\n`);
     fs.writeFileSync(markdownFile, renderComparison(comparison));
     io.stdout(`${jsonFile}\n${markdownFile}\n`);
+
     return 0;
   } catch (error) {
-    io.stderr(`measure-runs: ${error instanceof Error ? error.message : String(error)}\n`);
+    io.stderr(
+      `measure-runs: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+
     return 1;
   }
-}
+};
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (
+  process.argv[1] !== undefined &&
+  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+) {
   process.exitCode = runMeasureRuns(process.argv.slice(2), {
     cwd: process.cwd(),
     home: os.homedir(),
     env: process.env,
-    stdout: (text) => process.stdout.write(text),
-    stderr: (text) => process.stderr.write(text),
+    stdout: (text) => {
+      process.stdout.write(text);
+    },
+    stderr: (text) => {
+      process.stderr.write(text);
+    },
   });
 }

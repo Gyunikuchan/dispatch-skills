@@ -1,42 +1,71 @@
-// Runtime guards for the JSON that e2e tests read back, so each test names and verifies the fields it uses.
-import assert from 'node:assert/strict';
-import { isRecord } from '../../../skills/dispatch/scripts/lib/config.ts';
+import assert from "node:assert/strict";
 
-export type Guard<T> = (value: unknown) => value is T;
+import { isRecord } from "../../../skills/dispatch/scripts/lib/config.ts";
+import type { JsonValue } from "../../../skills/dispatch/scripts/lib/config.ts";
+
+export type Guard<T> = (candidate: unknown) => candidate is T;
+
 type Guarded<G> = G extends Guard<infer T> ? T : never;
-export const isString: Guard<string> = (value) => typeof value === 'string';
-export const isNumber: Guard<number> = (value) => typeof value === 'number';
-export const isBoolean: Guard<boolean> = (value) => typeof value === 'boolean';
 
-export function maybe<T>(guard: Guard<T>): Guard<T | undefined> {
-  return (value): value is T | undefined => value === undefined || guard(value);
-}
+export const isString: Guard<string> = (candidate): candidate is string =>
+  String(candidate) === candidate;
 
-export function nullable<T>(guard: Guard<T>): Guard<T | null> {
-  return (value): value is T | null => value === null || guard(value);
-}
+export const isNumber: Guard<number> = (candidate): candidate is number =>
+  Number.isFinite(candidate);
 
-export function arrayOf<T>(guard: Guard<T>): Guard<Array<T>> {
-  return (value): value is Array<T> => Array.isArray(value) && value.every((item) => guard(item));
-}
+export const isBoolean: Guard<boolean> = (candidate): candidate is boolean =>
+  candidate === true || candidate === false;
 
-export function objectWith<S extends { [key: string]: Guard<unknown> }>(
-  shape: S,
-): Guard<{ [K in keyof S]: Guarded<S[K]> }> {
-  return (value): value is { [K in keyof S]: Guarded<S[K]> } =>
-    isRecord(value) && Object.entries(shape).every(([key, guard]) => guard(value[key]));
-}
+export const maybe = <T>(guard: Guard<T>) => {
+  const maybeGuard: Guard<T | undefined> = (
+    candidate
+  ): candidate is T | undefined => candidate === undefined || guard(candidate);
+
+  return maybeGuard;
+};
+
+export const nullable = <T>(guard: Guard<T>) => {
+  const nullableGuard: Guard<T | null> = (candidate): candidate is T | null =>
+    candidate === null || guard(candidate);
+
+  return nullableGuard;
+};
+
+export const arrayOf = <T>(guard: Guard<T>) => {
+  const arrayGuard: Guard<T[]> = (candidate): candidate is T[] =>
+    Array.isArray(candidate) && candidate.every((item) => guard(item));
+
+  return arrayGuard;
+};
+
+export const objectWith = <S extends { [key: string]: Guard<unknown> }>(
+  fields: S
+) => {
+  const objectGuard: Guard<{ [K in keyof S]: Guarded<S[K]> }> = (
+    candidate
+  ): candidate is { [K in keyof S]: Guarded<S[K]> } =>
+    isRecord(candidate) &&
+    Object.entries(fields).every(([key, guard]) => guard(candidate[key]));
+
+  return objectGuard;
+};
 
 /** Returns the same value, typed; a mismatch fails the test and prints what arrived. */
-export function narrow<T>(value: unknown, guard: Guard<T>): T {
-  assert.ok(guard(value), 'unexpected JSON shape: ' + JSON.stringify(value));
-  return value;
-}
+export const narrow = <T>(candidate: JsonValue, guard: Guard<T>) => {
+  if (guard(candidate)) {
+    return candidate;
+  }
 
-export const text = (value: unknown): string => narrow(value, isString);
+  return assert.fail(`unexpected JSON shape: ${JSON.stringify(candidate)}`);
+};
+
+export const text = (candidate: JsonValue) => narrow(candidate, isString);
 
 /** The element a test requires to exist. */
-export function defined<T>(value: T | null | undefined, what = 'value'): T {
-  assert.ok(value !== null && value !== undefined, 'missing ' + what);
-  return value;
-}
+export const defined = <T>(candidate: T | null | undefined, what = "value") => {
+  if (candidate === null || candidate === undefined) {
+    assert.fail(`missing ${what}`);
+  }
+
+  return candidate;
+};

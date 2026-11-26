@@ -1,27 +1,43 @@
-import { readDelegateSession } from '../lib/usage/delegate.ts';
-import type { DelegateQuery, HostUsageFs } from '../lib/usage/rows.ts';
-import type { ProviderSpec, ProviderUsageContext } from './types.ts';
+import { readDelegateSession } from "../lib/usage/delegate.ts";
+import type { DelegateQuery, HostUsageFs } from "../lib/usage/rows.ts";
+import type { ProviderUsageContext } from "./types.ts";
 
-export function sessionUsageReader(
-  platform: DelegateQuery['platform'],
-  findSession: (raw: string, context: ProviderUsageContext) => string | null | undefined,
-  options?: (
-    context: ProviderUsageContext,
-    fs: HostUsageFs,
-  ) => Partial<Pick<DelegateQuery, 'appDataDir' | 'cwd' | 'fs'>>,
-): NonNullable<ProviderSpec['sessionUsage']> {
-  return (raw, context) => {
+export const sessionUsageReader =
+  (
+    platform: DelegateQuery["platform"],
+    findSession: (
+      raw: string,
+      context: ProviderUsageContext
+    ) => string | null | undefined,
+    options?: (
+      context: ProviderUsageContext,
+      fs: HostUsageFs
+    ) => Partial<Pick<DelegateQuery, "appDataDir" | "cwd" | "fs">>
+  ) =>
+  (
+    raw: string,
+    context: ProviderUsageContext
+  ): ReturnType<typeof readDelegateSession> | undefined => {
     const { transcripts, launchStartMs, launchEndMs } = context;
-    if (!transcripts || launchStartMs === undefined || launchEndMs === undefined) {
+
+    if (
+      transcripts === undefined ||
+      launchStartMs === undefined ||
+      launchEndMs === undefined
+    ) {
       return undefined;
     }
+
     const sessionId = findSession(raw, context);
+
     if (sessionId === undefined) {
       return undefined;
     }
-    if (!sessionId) {
+
+    if (sessionId === null || sessionId === "") {
       return { complete: false };
     }
+
     return readDelegateSession({
       platform,
       sessionId,
@@ -36,4 +52,3 @@ export function sessionUsageReader(
       ...options?.(context, transcripts.fs),
     });
   };
-}

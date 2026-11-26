@@ -1,125 +1,220 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { artifactHash, artifactKind, readArtifact } from './artifacts.ts';
-import { lint as lintDefect, outsideIncrementWarnings, parentPin, parsePlan } from './domain/plan.ts';
-import { structuralLines } from './domain/markdown-structure.ts';
-import { parseDesign, parseIncrementGraph } from './domain/design.ts';
-import { parseSpec } from './domain/spec.ts';
-import { lintContextMap } from './domain/context.ts';
-import { lintCitations } from './domain/citations.ts';
-import type { CitationDefect } from './domain/citations.ts';
-import { ToolError } from './output.ts';
-import { present } from './narrow.ts';
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
-type LintArtifactOptions = { repositoryRoot?: string };
+import { artifactHash, artifactKind, readArtifact } from "./artifacts.ts";
+import { lintCitations } from "./domain/citations.ts";
+import type { CitationDefect } from "./domain/citations.ts";
+import { lintContextMap } from "./domain/context.ts";
+import { parseDesign, parseIncrementGraph } from "./domain/design.ts";
+import { structuralLines } from "./domain/markdown-structure.ts";
+import {
+  lint as lintDefect,
+  outsideIncrementWarnings,
+  parentPin,
+  parsePlan,
+} from "./domain/plan.ts";
+import { parseSpec } from "./domain/spec.ts";
+import { present } from "./narrow.ts";
+import { ToolError } from "./output.ts";
 
-export function safeRepoPath(value: string): boolean {
+interface LintArtifactOptions {
+  repositoryRoot?: string;
+}
+
+export const safeRepoPath = (value: string) => {
   if (
     !value ||
-    value.includes('\\') ||
-    value.includes('\0') ||
+    value.includes("\\") ||
+    value.includes("\0") ||
     path.isAbsolute(value) ||
     path.win32.isAbsolute(value) ||
-    /^[A-Za-z]:/.test(value)
+    /^[A-Za-z]:/u.test(value)
   ) {
     return false;
   }
-  const normalized = path.posix.normalize(value);
-  return (
-    normalized !== '.' && normalized !== '..' && !normalized.startsWith('../') && !path.posix.isAbsolute(normalized)
-  );
-}
 
-export function within(root: string, candidate: string): boolean {
+  const normalized = path.posix.normalize(value);
+
+  return (
+    normalized !== "." &&
+    normalized !== ".." &&
+    !normalized.startsWith("../") &&
+    !path.posix.isAbsolute(normalized)
+  );
+};
+
+export const within = (root: string, candidate: string) => {
   const relative = path.relative(root, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
-}
+
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+};
 
 /** Reads only repository files whose resolved path remains inside the session's repository root. */
-export function repositoryReader(repositoryRoot: string): (relativePath: string) => string | null {
+export const repositoryReader = (repositoryRoot: string) => {
   const root = path.resolve(repositoryRoot);
   let realRoot: string;
+
   try {
     realRoot = fs.realpathSync(root);
   } catch {
     return () => null;
   }
-  return (relativePath) => {
+
+  return (relativePath: string) => {
     if (!safeRepoPath(relativePath)) {
       return null;
     }
+
     const candidate = path.resolve(root, relativePath);
+
     if (!within(root, candidate)) {
       return null;
     }
+
     try {
       const real = fs.realpathSync(candidate);
+
       if (!within(realRoot, real) || !fs.statSync(real).isFile()) {
         return null;
       }
-      return fs.readFileSync(real, 'utf8');
+
+      return fs.readFileSync(real, "utf-8");
     } catch {
       return null;
     }
   };
-}
+};
 
-// NOTE: an unreadable pin warns once; a silent skip would look like a pass.
-function pinnedIncrementWarnings(
+const pinnedIncrementWarnings = (
   source: string,
   changes: Parameters<typeof outsideIncrementWarnings>[0],
-  repositoryRoot: string,
-) {
+  repositoryRoot: string
+) => {
   const pin = parentPin(source);
-  if (pin?.kind !== 'design') {
+
+  if (pin === null || !("increment" in pin)) {
     return [];
   }
+
   const design = repositoryReader(repositoryRoot)(pin.path);
+
   const increment =
     design === null
       ? undefined
-      : parseIncrementGraph(structuralLines(design)).increments.find((row) => row.id === pin.increment);
+      : parseIncrementGraph(structuralLines(design)).increments.find(
+          (row) => row.id === pin.increment
+        );
+
   if (!increment) {
     return [
       lintDefect(
-        'outside-increment',
+        "outside-increment",
         null,
-        `Pinned design increment ${pin.increment} in ${pin.path} cannot be read; plan paths are unchecked.`,
+        `Pinned design increment ${pin.increment} in ${pin.path} cannot be read; plan paths are unchecked.`
       ),
     ];
   }
-  return outsideIncrementWarnings(changes, increment.paths, pin.increment);
-}
 
-export function lintArtifact(file: string, options: LintArtifactOptions = {}) {
-  const isContext = file.endsWith('.context.md');
+  return outsideIncrementWarnings(changes, increment.paths, pin.increment);
+};
+
+export const lintArtifact = (
+  file: string,
+  options: LintArtifactOptions = {}
+) => {
+  const isContext = file.endsWith(".context.md");
   const kind = artifactKind(file);
+
   if (!isContext && !kind) {
-    throw new ToolError(1, 'invalid-input', 'artifact must end in .spec.md, .plan.md, .design.md or .context.md');
+    throw new ToolError(
+      1,
+      "invalid-input",
+      "artifact must end in .spec.md, .plan.md, .design.md or .context.md"
+    );
   }
+
   const source = readArtifact(path.dirname(file), path.basename(file));
+
   if (source === null) {
-    throw new ToolError(1, 'invalid-input', 'artifact is missing or unreadable: ' + file);
+    throw new ToolError(
+      1,
+      "invalid-input",
+      `artifact is missing or unreadable: ${file}`
+    );
   }
+
   if (isContext) {
-    if (!options.repositoryRoot) {
-      throw new ToolError(1, 'invalid-input', 'context lint requires the session repository root');
+    if (options.repositoryRoot === undefined || options.repositoryRoot === "") {
+      throw new ToolError(
+        1,
+        "invalid-input",
+        "context lint requires the session repository root"
+      );
     }
-    const result = lintContextMap(source, { readRepoFile: repositoryReader(options.repositoryRoot) });
-    const hash = 'sha256:' + crypto.createHash('sha256').update(source).digest('hex');
-    return { kind: 'context' as const, hash, errors: result.defects, warnings: result.warnings };
+
+    const result = lintContextMap(source, {
+      readRepoFile: repositoryReader(options.repositoryRoot),
+    });
+
+    const hash = `sha256:${crypto.createHash("sha256").update(source).digest("hex")}`;
+
+    return {
+      kind: "context" as const,
+      hash,
+      errors: result.defects,
+      warnings: result.warnings,
+    };
   }
-  const result = kind === 'plan' ? parsePlan(source) : kind === 'design' ? parseDesign(source) : parseSpec(source);
-  const hash = artifactHash(present(kind, 'the artifact kind'), source);
-  const citationErrors: Array<CitationDefect> =
-    (kind === 'plan' || kind === 'design') && options.repositoryRoot
+
+  let result:
+    | ReturnType<typeof parsePlan>
+    | ReturnType<typeof parseDesign>
+    | ReturnType<typeof parseSpec>;
+
+  if (kind === "plan") {
+    result = parsePlan(source);
+  } else if (kind === "design") {
+    result = parseDesign(source);
+  } else {
+    result = parseSpec(source);
+  }
+
+  const hash = artifactHash(present(kind, "the artifact kind"), source);
+
+  const citationErrors: CitationDefect[] =
+    (kind === "plan" || kind === "design") &&
+    options.repositoryRoot !== undefined &&
+    options.repositoryRoot !== ""
       ? lintCitations(source, kind, repositoryReader(options.repositoryRoot))
       : [];
-  const errors = [...(result.ok ? [] : result.defects), ...citationErrors];
+
+  const errors = [
+    ...("defects" in result ? result.defects : []),
+    ...citationErrors,
+  ];
+
   const warnings = [...result.warnings];
-  if (result.ok && 'plan' in result && options.repositoryRoot) {
-    warnings.push(...pinnedIncrementWarnings(source, result.plan.changes, options.repositoryRoot));
+
+  if (
+    result.ok &&
+    "plan" in result &&
+    options.repositoryRoot !== undefined &&
+    options.repositoryRoot !== ""
+  ) {
+    warnings.push(
+      ...pinnedIncrementWarnings(
+        source,
+        result.plan.changes,
+        options.repositoryRoot
+      )
+    );
   }
+
   return { kind, hash, errors, warnings };
-}
+};

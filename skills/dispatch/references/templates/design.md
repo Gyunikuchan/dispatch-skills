@@ -14,6 +14,7 @@ Separate each box field with blank `>` lines so it renders as its own paragraph.
 > **Increments:** <count>
 
 ## At a Glance
+
 - **What:** <plain-language change and why it matters>
 - **How it works:** <one-line explanation>
 
@@ -25,32 +26,40 @@ flowchart LR
 Text summary: The caller reaches the component through its owned boundary.
 
 ## Execution Status
-| ID | State | Next Action |
-| --- | --- | --- |
-| I01 | complete | - |
-| I02 | ready | implement:I02 |
+
+| ID  | State    | Next Action   |
+| --- | -------- | ------------- |
+| I01 | complete | -             |
+| I02 | ready    | implement:I02 |
 
 Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | resolve-amendment:<id> | resolve-ruling:<key> | final-integration | complete>
 
 ## Approach
-*Strategy: REQ → component/increment mapping; cite REQ IDs, do not restate them.*
+
+_Strategy: REQ → component/increment mapping; cite REQ IDs, do not restate them._
+
 - REQ-<n> → <component or increment>
 
 ## Alternatives & Decisions
-*Architectural decisions AD-<n>, with trade-offs, rationale, and rejected alternatives. Intent-level and user decisions live in the governing spec DEC log.*
+
+_Architectural decisions AD-<n>, with trade-offs, rationale, and rejected alternatives. Intent-level and user decisions live in the governing spec DEC log._
 
 ## Risks, Security & Operations
-*Failure modes, security, observability, migration, rollout, rollback.*
+
+_Failure modes, security, observability, migration, rollout, rollback._
 
 ## Architecture & Boundaries
-*Constraints, components, invariants and ownership boundaries; add architecture or flow diagrams here when the visual-aid bar admits them.*
+
+_Constraints, components, invariants and ownership boundaries; add architecture or flow diagrams here when the visual-aid bar admits them._
 
 ## Increment Dependency Graph
-| ID | Priority | Summary | Prerequisites | Paths |
-| --- | ---: | --- | --- | --- |
-| I01 | 1 | <summary> | none | <paths> |
+
+| ID  | Priority | Summary   | Prerequisites | Paths   |
+| --- | -------: | --------- | ------------- | ------- |
+| I01 |        1 | <summary> | none          | <paths> |
 
 ## Increment Details
+
 ### I01
 
 - <Observable behaviour this increment implements and how it works.>
@@ -70,10 +79,12 @@ Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | reso
 </details>
 
 ## Final Integration
-*Cross-increment verification.*
+
+_Cross-increment verification._
 
 ## Review Findings & Resolutions
-*No reviews conducted yet.*
+
+_No reviews conducted yet._
 ````
 
 ## Field notes

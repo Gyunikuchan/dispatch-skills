@@ -1,244 +1,349 @@
-// Claude Code (spec §6.1): plan permission mode, read-tool allowlist, write-tool
-// denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
-
+import { isRecord } from "../lib/config.ts";
+import { parseJson } from "../lib/integrity.ts";
+import type { JsonObject, JsonValue } from "../lib/integrity.ts";
+import { validSessionId } from "../lib/session.ts";
+import { CLAUDE_INVOCATION_USAGE, claudeUsage } from "../lib/usage/claude.ts";
 import {
   classifyFailure,
   extractCleanResponse,
   extractSessionId,
   failOutcome,
   isSandboxUnsupported,
-} from './response.ts';
-import type { LaunchRequest, PlatformEnv, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
-import { validSessionId } from '../lib/session.ts';
-import { isRecord } from '../lib/config.ts';
-import { parseJson } from '../lib/integrity.ts';
-import type { JsonObject, JsonValue } from '../lib/integrity.ts';
-import { CLAUDE_INVOCATION_USAGE, claudeUsage } from '../lib/usage/claude.ts';
-import { sessionUsageReader } from './session-usage.ts';
+} from "./response.ts";
+import { sessionUsageReader } from "./session-usage.ts";
+import type {
+  LaunchRequest,
+  PlatformEnv,
+  ProcessResult,
+  ProviderSpec,
+  RunOutcome,
+} from "./types.ts";
 
-/** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 const READ_ONLY_ALLOWED_TOOLS = [
-  'Read',
-  'Glob',
-  'Grep',
-  'LS',
-  'Bash(git diff*)',
-  'Bash(git status*)',
-  'Bash(git log*)',
-  'Bash(git show*)',
-  'Bash(git blame*)',
-  'Bash(git rev-parse*)',
-  'Bash(git ls-files*)',
-  'Bash(grep *)',
-  'Bash(rg *)',
-  'Bash(ls *)',
-  'Bash(head *)',
-  'Bash(tail *)',
-  'Bash(wc *)',
-  'Bash(file *)',
-  'Bash(jq *)',
-  'Bash(diff *)',
-  'Bash(uniq *)',
-  'Bash(cut *)',
-  'Bash(tr *)',
-  'Bash(stat *)',
-  'Bash(which *)',
-  'Bash(type *)',
-  'Bash(date *)',
-  'Bash(basename *)',
-  'Bash(dirname *)',
-  'Bash(realpath *)',
-  'Bash(readlink *)',
-  'Bash(column *)',
-  'Bash(paste *)',
-  'Bash(npm ls*)',
-  'TodoWrite',
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "Bash(git diff*)",
+  "Bash(git status*)",
+  "Bash(git log*)",
+  "Bash(git show*)",
+  "Bash(git blame*)",
+  "Bash(git rev-parse*)",
+  "Bash(git ls-files*)",
+  "Bash(grep *)",
+  "Bash(rg *)",
+  "Bash(ls *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(wc *)",
+  "Bash(file *)",
+  "Bash(jq *)",
+  "Bash(diff *)",
+  "Bash(uniq *)",
+  "Bash(cut *)",
+  "Bash(tr *)",
+  "Bash(stat *)",
+  "Bash(which *)",
+  "Bash(type *)",
+  "Bash(date *)",
+  "Bash(basename *)",
+  "Bash(dirname *)",
+  "Bash(realpath *)",
+  "Bash(readlink *)",
+  "Bash(column *)",
+  "Bash(paste *)",
+  "Bash(npm ls*)",
+  "TodoWrite",
 ] as const;
-const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'] as const;
-/** Current CLI versions name the subagent control `Agent`; older versions know only `Task`. */
-const DISALLOWED_SUBAGENT_TOOLS = ['Agent', 'Task'] as const;
+
+const DISALLOWED_WRITE_TOOLS = ["Write", "Edit", "NotebookEdit"] as const;
+
+const DISALLOWED_SUBAGENT_TOOLS = ["Agent", "Task"] as const;
 const SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: true } });
 
-const MODEL_NOT_FOUND = /selected model|model\b[^\n]*\bnot found/i;
-const CLI_OUTDATED = /claude_code_version_too_old|Claude Code \S+ does not support this model/i;
-const ADVISORY = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$/gim;
+const MODEL_NOT_FOUND = /selected model|model\b[^\n]*\bnot found/iu;
 
-const exe = (env: PlatformEnv): string => (env.os === 'win32' ? '.exe' : '');
-const join = (env: PlatformEnv, ...parts: Array<string>): string => parts.join(env.os === 'win32' ? '\\' : '/');
+const CLI_OUTDATED =
+  /claude_code_version_too_old|Claude Code \S+ does not support this model/iu;
 
-type Envelope = {
-  text: string;
-  sessionId: string | null;
-  isError: boolean;
-  subtype: string | null;
-  status: number | null;
-  code: string | null;
+const ADVISORY = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$/gimu;
+
+const exe = (env: PlatformEnv) => (env.os === "win32" ? ".exe" : "");
+
+const join = (env: PlatformEnv, ...parts: string[]) =>
+  parts.join(env.os === "win32" ? "\\" : "/");
+
+const claudeDesktopCandidates = (env: PlatformEnv) => {
+  if (env.os === "darwin") {
+    return [
+      "/Applications/Claude.app/Contents/Resources/claude-code/claude",
+      join(
+        env,
+        env.home,
+        "Applications/Claude.app/Contents/Resources/claude-code/claude"
+      ),
+    ];
+  }
+
+  if (env.os === "win32") {
+    return [
+      join(
+        env,
+        env.home,
+        "AppData",
+        "Roaming",
+        "Claude",
+        "claude-code",
+        "*",
+        "claude.exe"
+      ),
+    ];
+  }
+
+  return [];
 };
 
-function parseEnvelope(stdout: string): Envelope | null {
+const parseEnvelope = (stdout: string) => {
   const trimmed = stdout.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
     return null;
   }
+
   let parsed: JsonValue;
+
   try {
     parsed = parseJson(trimmed);
   } catch {
     return null;
   }
+
   const pick = Array.isArray(parsed)
-    ? parsed.findLast((entry) => isRecord(entry) && entry['type'] === 'result')
+    ? parsed.findLast((entry) => isRecord(entry) && entry["type"] === "result")
     : parsed;
-  if (typeof pick !== 'object' || pick === null) {
+
+  if (typeof pick !== "object" || pick === null) {
     return null;
   }
+
   const record: JsonObject = isRecord(pick) ? pick : {};
-  const status = record['api_error_status'];
-  const text =
-    typeof record['result'] === 'string'
-      ? record['result']
-      : typeof record['error'] === 'string'
-        ? record['error']
-        : '';
+  const status = record["api_error_status"];
+
+  let text = "";
+
+  if (typeof record["result"] === "string") {
+    text = record["result"];
+  } else if (typeof record["error"] === "string") {
+    text = record["error"];
+  }
+
   return {
     text: text.trim(),
-    sessionId: typeof record['session_id'] === 'string' ? record['session_id'] : null,
-    isError: record['is_error'] === true,
-    subtype: typeof record['subtype'] === 'string' ? record['subtype'] : null,
-    status: typeof status === 'number' && Number.isInteger(status) ? status : null,
-    code: typeof record['api_error_code'] === 'string' ? record['api_error_code'] : null,
+    sessionId:
+      typeof record["session_id"] === "string" ? record["session_id"] : null,
+    isError: record["is_error"] === true,
+    subtype: typeof record["subtype"] === "string" ? record["subtype"] : null,
+    status:
+      typeof status === "number" && Number.isInteger(status) ? status : null,
+    code:
+      typeof record["api_error_code"] === "string"
+        ? record["api_error_code"]
+        : null,
   };
-}
+};
+
+const earlyClaudeFailure = (diagnostics: string) =>
+  isSandboxUnsupported(diagnostics, { includeSettings: true, strict: true })
+    ? "sandbox-unsupported"
+    : null;
+
+const claudeSuccess = (
+  out: ProcessResult,
+  envelope: ReturnType<typeof parseEnvelope>
+): RunOutcome => {
+  const early =
+    classifyFailure(out.stderrTail) ??
+    earlyClaudeFailure(out.stderrTail.replaceAll(ADVISORY, ""));
+
+  if (early !== null) {
+    return failOutcome(early, `claude: ${out.stderrTail.trim().slice(0, 300)}`);
+  }
+
+  const text = envelope ? envelope.text : extractCleanResponse(out.stdout);
+
+  if (text === "") {
+    return failOutcome("empty-output", "claude exited 0 with no response text");
+  }
+
+  const sessionId =
+    envelope?.sessionId ?? extractSessionId(out.stdout, "claude");
+
+  return {
+    status: "ok",
+    text,
+    sessionId,
+    resume:
+      sessionId !== undefined && sessionId !== null && sessionId !== ""
+        ? `claude --resume ${sessionId}`
+        : null,
+  };
+};
 
 export const claude: ProviderSpec = {
   usage: claudeUsage,
   sessionUsage: sessionUsageReader(
-    'claude',
+    "claude",
     (raw) => parseEnvelope(raw)?.sessionId ?? null,
-    (context) => (context.cwd === undefined ? {} : { cwd: context.cwd }),
+    (context) => (context.cwd === undefined ? {} : { cwd: context.cwd })
   ),
   perLaunchUsageProvenance: CLAUDE_INVOCATION_USAGE,
-  resumeUsage: 'cumulative',
-  id: 'claude',
+  resumeUsage: "cumulative",
+  id: "claude",
   modes: [
     {
-      id: 'cli',
+      id: "cli",
       candidates: (env) => [
-        env.os === 'win32' ? 'claude.exe' : 'claude',
-        ...(env.os === 'win32' ? ['claude.cmd'] : []),
-        join(env, env.home, '.local', 'bin', `claude${exe(env)}`),
-        join(env, env.home, '.claude', 'local', `claude${exe(env)}`),
+        env.os === "win32" ? "claude.exe" : "claude",
+        ...(env.os === "win32" ? ["claude.cmd"] : []),
+        join(env, env.home, ".local", "bin", `claude${exe(env)}`),
+        join(env, env.home, ".claude", "local", `claude${exe(env)}`),
       ],
     },
     {
-      id: 'desktop',
-      candidates: (env) =>
-        env.os === 'darwin'
-          ? [
-              '/Applications/Claude.app/Contents/Resources/claude-code/claude',
-              join(env, env.home, 'Applications/Claude.app/Contents/Resources/claude-code/claude'),
-            ]
-          : env.os === 'win32'
-            ? [join(env, env.home, 'AppData', 'Roaming', 'Claude', 'claude-code', '*', 'claude.exe')]
-            : [],
+      id: "desktop",
+      candidates: (env) => claudeDesktopCandidates(env),
     },
     {
-      id: 'vscode',
+      id: "vscode",
       candidates: (env) =>
-        ['.vscode', '.vscode-insiders', '.vscode-server', '.cursor'].map((dir) =>
-          join(
-            env,
-            env.home,
-            dir,
-            'extensions',
-            'anthropic.claude-code-*',
-            'resources',
-            'native-binary',
-            `claude${exe(env)}`,
-          ),
+        [".vscode", ".vscode-insiders", ".vscode-server", ".cursor"].map(
+          (dir) =>
+            join(
+              env,
+              env.home,
+              dir,
+              "extensions",
+              "anthropic.claude-code-*",
+              "resources",
+              "native-binary",
+              `claude${exe(env)}`
+            )
         ),
     },
   ],
   readOnlyFlags: [
-    '--permission-mode',
-    'plan',
-    '--disallowedTools',
+    "--permission-mode",
+    "plan",
+    "--disallowedTools",
     ...DISALLOWED_WRITE_TOOLS,
     ...DISALLOWED_SUBAGENT_TOOLS,
   ],
   sandbox: {
-    flags: ['--settings', SANDBOX_SETTINGS],
-    inactive: /Sandbox disabled[^\n]*not active/i,
-    // Seatbelt on macOS, Bubblewrap on Linux/WSL2; native Windows has none.
-    supported: (env) => env.os !== 'win32',
+    flags: ["--settings", SANDBOX_SETTINGS],
+    inactive: /Sandbox disabled[^\n]*not active/iu,
+
+    supported: (env) => env.os !== "win32",
   },
   schema: true,
-  native: 'claude',
+  native: "claude",
   modeCascadeOn: [],
   resumeCommand: (id) => `claude --resume ${id}`,
-  // `--output-format json` prints one envelope at exit.
+
   silentUntilExit: true,
-  // NOTE: claude never idle-stops, so a stopped launch resumes the preset session id.
+
   presetsSession: true,
-  attemptSession: (out: ProcessResult, req: LaunchRequest): string | null =>
+  attemptSession: (out: ProcessResult, req: LaunchRequest) =>
     validSessionId(parseEnvelope(out.stdout)?.sessionId ?? null) ??
     (out.wrapUpStop ? validSessionId(req.sessionPreset) : null),
   argv(req) {
-    const argv = [req.binary, '-p', req.prompt, '--output-format', 'json', '--permission-mode', 'plan'];
-    if (req.resume) {
-      argv.push('--resume', req.resume);
-    } else if (req.sessionPreset) {
-      argv.push('--session-id', req.sessionPreset);
+    const argv = [
+      req.binary,
+      "-p",
+      req.prompt,
+      "--output-format",
+      "json",
+      "--permission-mode",
+      "plan",
+    ];
+
+    if (req.resume !== undefined && req.resume !== null && req.resume !== "") {
+      argv.push("--resume", req.resume);
+    } else if (
+      req.sessionPreset !== undefined &&
+      req.sessionPreset !== null &&
+      req.sessionPreset !== ""
+    ) {
+      argv.push("--session-id", req.sessionPreset);
     }
-    if (req.model) {
-      argv.push('--model', req.model);
+
+    if (req.model !== undefined && req.model !== null && req.model !== "") {
+      argv.push("--model", req.model);
     }
-    if (req.effort) {
-      argv.push('--effort', req.effort);
+
+    if (req.effort !== undefined && req.effort !== null && req.effort !== "") {
+      argv.push("--effort", req.effort);
     }
-    if (req.schemaText) {
-      argv.push('--json-schema', req.schemaText);
+
+    if (
+      req.schemaText !== undefined &&
+      req.schemaText !== null &&
+      req.schemaText !== ""
+    ) {
+      argv.push("--json-schema", req.schemaText);
     }
+
     if (req.sandbox) {
-      argv.push('--settings', SANDBOX_SETTINGS);
+      argv.push("--settings", SANDBOX_SETTINGS);
     }
+
     for (const tool of READ_ONLY_ALLOWED_TOOLS) {
-      argv.push('--allowedTools', tool);
+      argv.push("--allowedTools", tool);
     }
+
     for (const command of req.readCommands ?? []) {
-      argv.push('--allowedTools', `Bash(${command}*)`);
+      argv.push("--allowedTools", `Bash(${command}*)`);
     }
-    argv.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS, ...DISALLOWED_SUBAGENT_TOOLS);
+
+    argv.push(
+      "--disallowedTools",
+      ...DISALLOWED_WRITE_TOOLS,
+      ...DISALLOWED_SUBAGENT_TOOLS
+    );
+
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },
-  parse(out): RunOutcome {
+  parse(out) {
     const envelope = parseEnvelope(out.stdout);
-    const diagnostics = out.stderrTail.replaceAll(ADVISORY, '');
+    const diagnostics = out.stderrTail.replaceAll(ADVISORY, "");
     const both = `${out.stderrTail}\n${out.stdout}`;
-    if (out.exit === 0 && !envelope?.isError) {
-      const early =
-        classifyFailure(out.stderrTail) ??
-        (isSandboxUnsupported(diagnostics, { includeSettings: true, strict: true }) ? 'sandbox-unsupported' : null);
-      if (early) {
-        return failOutcome(early, `claude: ${out.stderrTail.trim().slice(0, 300)}`);
-      }
-      const text = envelope ? envelope.text : extractCleanResponse(out.stdout);
-      if (!text) {
-        return failOutcome('empty-output', 'claude exited 0 with no response text');
-      }
-      const sessionId = envelope?.sessionId ?? extractSessionId(out.stdout, 'claude');
-      return { status: 'ok', text, sessionId, resume: sessionId ? `claude --resume ${sessionId}` : null };
+
+    if (out.exit === 0 && envelope?.isError !== true) {
+      return claudeSuccess(out, envelope);
     }
-    const detail = `claude exit ${String(out.exit)}: ${(envelope?.text || out.stderrTail).trim().slice(0, 300)}`;
+
+    const detailText =
+      envelope?.text !== undefined && envelope.text !== ""
+        ? envelope.text
+        : out.stderrTail;
+
+    const detail = `claude exit ${String(out.exit)}: ${detailText.trim().slice(0, 300)}`;
+
     if (isSandboxUnsupported(diagnostics, { includeSettings: true })) {
-      return failOutcome('sandbox-unsupported', detail);
+      return failOutcome("sandbox-unsupported", detail);
     }
-    if (envelope?.code === 'claude_code_version_too_old' || CLI_OUTDATED.test(both)) {
-      return failOutcome('cli-outdated', detail);
+
+    if (
+      envelope?.code === "claude_code_version_too_old" ||
+      CLI_OUTDATED.test(both)
+    ) {
+      return failOutcome("cli-outdated", detail);
     }
+
     if (envelope?.status === 404 || MODEL_NOT_FOUND.test(both)) {
-      return failOutcome('model-not-found', detail);
+      return failOutcome("model-not-found", detail);
     }
-    return failOutcome(classifyFailure(both) ?? 'empty-output', detail);
+
+    return failOutcome(classifyFailure(both) ?? "empty-output", detail);
   },
 };

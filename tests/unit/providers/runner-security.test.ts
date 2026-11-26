@@ -1,107 +1,191 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import { test } from "node:test";
 
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
-import type { HostUsageFs } from '../../../skills/dispatch/scripts/lib/usage/rows.ts';
+import type { HostUsageFs } from "../../../skills/dispatch/scripts/lib/usage/rows.ts";
+import { claude } from "../../../skills/dispatch/scripts/providers/claude.ts";
+import { opencode } from "../../../skills/dispatch/scripts/providers/opencode.ts";
+import {
+  batchInvocation,
+  killArgv,
+  mustSpill,
+  sanitizeEnv,
+} from "../../../skills/dispatch/scripts/providers/process-policy.ts";
 import {
   buildAttachmentBlock,
   findSensitiveMatch,
   formatSafetyPrompt,
   GUARDRAIL_HEADER,
   runDelegate,
-} from '../../../skills/dispatch/scripts/providers/runner.ts';
-import type { RunnerFs, RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
-import {
-  batchInvocation,
-  killArgv,
-  mustSpill,
-  sanitizeEnv,
-} from '../../../skills/dispatch/scripts/providers/process-policy.ts';
+} from "../../../skills/dispatch/scripts/providers/runner.ts";
+import type { RunnerPorts } from "../../../skills/dispatch/scripts/providers/runner.ts";
 import type {
   DelegateRequest,
   Launch,
   PlatformEnv,
   ProcessResult,
-} from '../../../skills/dispatch/scripts/providers/types.ts';
+} from "../../../skills/dispatch/scripts/providers/types.ts";
+
+const defaultFiles = () => ({
+  "/r/p.md": "Review it",
+});
+
+const EMPTY_FILES: Record<string, string | Buffer> = {};
+const EMPTY_USAGE_FS: Partial<HostUsageFs> = {};
+
+function memUsageFs(
+  files: Record<string, string | Buffer> = EMPTY_FILES,
+  extra: Partial<HostUsageFs> = EMPTY_USAGE_FS
+): HostUsageFs {
+  const find = (file: string) => {
+    const norm = file.replaceAll("\\", "/");
+    const val = files[norm] ?? files[file];
+
+    // eslint-disable-next-line eslint/no-nested-ternary -- compact fixture expectation table.
+    return val === undefined
+      ? undefined
+      : typeof val === "string"
+        ? Buffer.from(val, "utf-8")
+        : val;
+  };
+
+  return {
+    list: (dir) => {
+      const prefix = `${dir.replaceAll("\\", "/").replace(/\/$/u, "")}/`;
+      const names = new Set<string>();
+
+      for (const rawKey of Object.keys(files)) {
+        const k = rawKey.replaceAll("\\", "/");
+
+        if (k.startsWith(prefix)) {
+          const rest = k.slice(prefix.length);
+          // eslint-disable-next-line eslint/prefer-destructuring -- intentional test pattern.
+          const seg = rest.split("/")[0];
+
+          if (seg !== undefined && seg !== null && seg !== "") {
+            names.add(seg);
+          }
+        }
+      }
+
+      return [...names];
+    },
+    stat: (file) => {
+      const buf = find(file);
+
+      return buf ? { size: buf.length, mtimeMs: 0 } : null;
+    },
+    read: (file, maxBytes) => {
+      const buf = find(file);
+
+      if (!buf) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+
+      return buf.subarray(0, maxBytes);
+    },
+    decompress: null,
+    ...extra,
+  };
+}
 
 const posix: PlatformEnv = {
-  os: 'linux',
-  arch: 'x64',
+  os: "linux",
+  arch: "x64",
   wsl: false,
   bubblewrap: true,
   argvLimit: 100_000,
-  home: '/h',
+  home: "/h",
   path: [],
   pathExt: [],
 };
-const windows: PlatformEnv = { ...posix, os: 'win32', bubblewrap: false, argvLimit: 24_000 };
+
+const windows: PlatformEnv = {
+  ...posix,
+  os: "win32",
+  bubblewrap: false,
+  argvLimit: 24_000,
+};
+
 const req: DelegateRequest = {
-  promptPath: '/r/p.md',
+  promptPath: "/r/p.md",
   model: null,
   effort: null,
   sandbox: false,
   schemaPath: null,
   resume: null,
-  cwd: '/repo',
+  cwd: "/repo",
   timeoutMs: 5000,
   outputCapBytes: 100,
   attachments: [],
-  logPath: '/r/log',
-  briefPath: '/r/brief.md',
+  logPath: "/r/log",
+  briefPath: "/r/brief.md",
 };
-const ok = (over: Partial<ProcessResult> = {}): ProcessResult => ({
+
+const ok = (over: Partial<ProcessResult> = {}) => ({
   exit: 0,
   signal: null,
   stdout: '{"result":"R"}',
-  stdoutPath: '/r/log',
-  stderrTail: '',
+  stdoutPath: "/r/log",
+  stderrTail: "",
   durationMs: 1,
   timedOut: false,
   truncated: false,
   ...over,
 });
 
-function memFs(
+const memFs = (
   files: Record<string, string>,
-  links: Record<string, string> = {},
-): RunnerFs & { files: Map<string, string> } {
+  links: Record<string, string> = {}
+) => {
   const map = new Map(Object.entries(files));
+
   return {
     files: map,
-    readText: (f) => map.get(f) ?? '',
-    writeText: (f, t) => {
+    // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    readText: (f: string) => map.get(f) ?? "",
+    writeText: (f: string, t: string) => {
+      // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
       map.set(f, t);
     },
-    realpath: (f) => links[f] ?? (map.has(f) ? f : null),
-    readdir: () => [],
-    size: (f) => (map.has(f) ? Buffer.byteLength(map.get(f) ?? '') : null),
-    readPrefix: (f, n) =>
-      Buffer.from(map.get(f) ?? '')
+    // eslint-disable-next-line typescript/no-unsafe-return, typescript/no-unsafe-member-access, typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    realpath: (f: string) => links[f] ?? (map.has(f) ? f : null),
+    readdir: (_dir: string): string[] => [],
+    // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    size: (f: string) =>
+      map.has(f) ? Buffer.byteLength(map.get(f) ?? "") : null,
+    readPrefix: (f: string, n: number) =>
+      // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+      Buffer.from(map.get(f) ?? "")
+        // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
         .subarray(0, n)
-        .toString('utf8'),
+        .toString("utf-8"),
   };
-}
+};
 
-/** Placeholder until the fake process registers its real callback. */
-const noop = (): void => {};
+const noop = () => {};
 
-/** Manual clock: timers fire only when the test advances time. */
-function manualClock() {
+const manualClock = () => {
   let now = 0;
-  const timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
+
+  const timers: { at: number; ms: number; fn: () => void; live: boolean }[] =
+    [];
+
   return {
     now: () => now,
     every: (ms: number, fn: () => void) => {
       const t = { at: now + ms, ms, fn, live: true };
       timers.push(t);
+
       return () => {
         t.live = false;
       };
     },
     advance(ms: number) {
       now += ms;
-      for (const t of timers.slice()) {
+
+      // SAFETY: snapshot because t.fn() may mutate timers while iterating.
+      // eslint-disable-next-line unicorn/no-useless-spread
+      for (const t of [...timers]) {
         while (t.live && t.at <= now) {
           t.at += t.ms;
           t.fn();
@@ -109,31 +193,40 @@ function manualClock() {
       }
     },
   };
-}
+};
 
-function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.md': 'Review it' }) {
-  const launches: Array<Launch> = [];
-  const signals: Array<string> = [];
+const harness = (
+  platform: PlatformEnv,
+  files: Record<string, string> = defaultFiles()
+) => {
+  const launches: Launch[] = [];
+  const signals: string[] = [];
   const clock = manualClock();
   let finish: (r: ProcessResult) => void = noop;
   let activity: () => void = noop;
   let line: (value: string, fragment?: boolean) => void = noop;
   const fs = memFs(files);
+
   const ports: RunnerPorts = {
     process: {
       start: (launch, io) => {
         launches.push(launch);
+
         if (io.onActivity) {
           activity = io.onActivity;
         }
+
         if (io.onLine) {
           line = io.onLine;
         }
-        if (launch.argv[0] === 'taskkill') {
+
+        if (launch.argv[0] === "taskkill") {
           return { pid: 99, done: Promise.resolve(ok()) };
         }
+
         return {
           pid: 50,
+          // eslint-disable-next-line typescript/avoid-new -- intentional test pattern.
           done: new Promise<ProcessResult>((resolve) => {
             finish = resolve;
           }),
@@ -147,298 +240,459 @@ function harness(platform: PlatformEnv, files: Record<string, string> = { '/r/p.
     fs,
     usageFs: memUsageFs({}),
     platform,
-    binary: 'claude',
-    nonce: () => 'N0NCE',
+    binary: "claude",
+    nonce: () => "N0NCE",
     env: {
-      PATH: '/bin',
-      HOME: '/h',
-      ANTHROPIC_API_KEY: 'sk-1',
-      GITHUB_TOKEN: 'ghp',
-      AWS_SECRET_ACCESS_KEY: 'x',
-      HTTPS_PROXY: 'http://p',
+      PATH: "/bin",
+      HOME: "/h",
+      ANTHROPIC_API_KEY: "sk-1",
+      GITHUB_TOKEN: "ghp",
+      AWS_SECRET_ACCESS_KEY: "x",
+      HTTPS_PROXY: "http://p",
     },
   };
+
   return {
     ports,
     launches,
     signals,
     clock,
     fs,
-    finish: (r: ProcessResult) => finish(r),
-    activity: () => activity(),
+    finish: (r: ProcessResult) => {
+      finish(r);
+    },
+    activity: () => {
+      activity();
+    },
     line: (value: string, fragment?: boolean) => {
       activity();
       line(value, fragment);
     },
   };
-}
+};
 
-const flush = () =>
-  new Promise<void>((resolve) => {
+const flush = async () => {
+  // eslint-disable-next-line typescript/avoid-new -- intentional test pattern.
+  await new Promise<void>((resolve) => {
     setImmediate(resolve);
   });
+};
 
-function memUsageFs(files: Record<string, string | Buffer> = {}, extra: Partial<HostUsageFs> = {}): HostUsageFs {
-  const find = (file: string): Buffer | undefined => {
-    const norm = file.replaceAll('\\', '/');
-    const val = files[norm] ?? files[file];
-    return val === undefined ? undefined : typeof val === 'string' ? Buffer.from(val, 'utf8') : val;
-  };
-  return {
-    list: (dir) => {
-      const prefix = dir.replaceAll('\\', '/').replace(/\/$/, '') + '/';
-      const names = new Set<string>();
-      for (const rawKey of Object.keys(files)) {
-        const k = rawKey.replaceAll('\\', '/');
-        if (k.startsWith(prefix)) {
-          const rest = k.slice(prefix.length);
-          const seg = rest.split('/')[0];
-          if (seg) {
-            names.add(seg);
-          }
-        }
-      }
-      return [...names];
-    },
-    stat: (file) => {
-      const buf = find(file);
-      return buf ? { size: buf.length, mtimeMs: 0 } : null;
-    },
-    read: (file, maxBytes) => {
-      const buf = find(file);
-      if (!buf) {
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      return buf.subarray(0, maxBytes);
-    },
-    decompress: null,
-    ...extra,
-  };
-}
-
-// T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
-
-test('delegates-credential-stripping: the delegate env keeps the whitelist and drops every credential', async () => {
-  assert.deepEqual(sanitizeEnv({ PATH: '/bin', OPENAI_API_KEY: 'k', GH_TOKEN: 't', MY_PASSWORD: 'p', NO_PROXY: 'x' }), {
-    PATH: '/bin',
-    NO_PROXY: 'x',
-  });
+test("delegates-credential-stripping: the delegate env keeps the whitelist and drops every credential", async () => {
   assert.deepEqual(
     sanitizeEnv({
-      OPENCODE_CONFIG: '/config',
-      OPENCODE_CONFIG_DIR: '/dir',
-      JETSKI_APP_DATA_DIR: 'antigravity-cli',
-      OPENCODE_API_KEY: 'secret',
+      PATH: "/bin",
+      OPENAI_API_KEY: "k",
+      GH_TOKEN: "t",
+      MY_PASSWORD: "p",
+      NO_PROXY: "x",
     }),
-    { OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli' },
+    {
+      PATH: "/bin",
+      NO_PROXY: "x",
+    }
+  );
+  assert.deepEqual(
+    sanitizeEnv({
+      OPENCODE_CONFIG: "/config",
+      OPENCODE_CONFIG_DIR: "/dir",
+      JETSKI_APP_DATA_DIR: "antigravity-cli",
+      OPENCODE_API_KEY: "secret",
+    }),
+    {
+      OPENCODE_CONFIG: "/config",
+      OPENCODE_CONFIG_DIR: "/dir",
+      JETSKI_APP_DATA_DIR: "antigravity-cli",
+    }
   );
   const h = harness(posix);
-  const run = runDelegate(claude, req, 'cli', h.ports);
+  const run = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.finish(ok());
   await run;
   const env = h.launches[0]?.env ?? {};
-  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'HTTPS_PROXY', 'PATH']);
+  assert.deepEqual(Object.keys(env).toSorted(), [
+    "HOME",
+    "HTTPS_PROXY",
+    "PATH",
+  ]);
 });
 
-test('delegates-sensitive-file-guardrail: launched prompts prepend the guardrail to the request', async () => {
+test("delegates-sensitive-file-guardrail: launched prompts prepend the guardrail to the request", async () => {
   const h = harness(posix);
-  const run = runDelegate(claude, req, 'cli', h.ports);
+  const run = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.finish(ok());
   await run;
-  const prompt = h.launches[0]?.argv[2] ?? '';
+  const prompt = h.launches[0]?.argv[2] ?? "";
   assert.ok(prompt.startsWith(GUARDRAIL_HEADER));
   assert.match(
     prompt,
-    /MUST NOT edit, overwrite, create, or delete any project repository files; read tools and permitted read commands may create or update only their own internal cache or index directory \(such as a code index\)/,
+    /MUST NOT edit, overwrite, create, or delete any project repository files; read tools and permitted read commands may create or update only their own internal cache or index directory \(such as a code index\)/u
   );
-  assert.match(prompt, /MUST NOT execute modifying shell commands or external network requests/);
-  assert.ok(prompt.endsWith('Review it'));
+  assert.match(
+    prompt,
+    /MUST NOT execute modifying shell commands or external network requests/u
+  );
+  assert.ok(prompt.endsWith("Review it"));
 });
 
-const unresolved = (f: string): string | null => f;
+const unresolved = (f: string) => f;
 
-test('delegates-sensitive-file-guardrail: sensitive symlink targets are checked by realpath', () => {
+test("delegates-sensitive-file-guardrail: sensitive symlink targets are checked by realpath", () => {
   assert.equal(
-    findSensitiveMatch('/repo/notes.txt', () => '/home/u/.ssh/id_rsa'),
-    'file',
+    findSensitiveMatch("/repo/notes.txt", () => "/home/u/.ssh/id_rsa"),
+    "file"
   );
   assert.equal(
-    findSensitiveMatch('/repo/link', () => '/home/u/.aws/config'),
-    'dir',
+    findSensitiveMatch("/repo/link", () => "/home/u/.aws/config"),
+    "dir"
   );
   assert.equal(
-    findSensitiveMatch('/repo/my-token-service/app.ts', (f) => f),
-    null,
+    findSensitiveMatch("/repo/my-token-service/app.ts", (f) => f),
+    null
   );
-  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml', 'token']) {
-    assert.ok(findSensitiveMatch('/repo/' + name, unresolved), name);
+
+  for (const name of [
+    "api_token.txt",
+    "client_secret.json",
+    "my-secrets.yml",
+    "token",
+    // Kelvin sign and long s stay separators; `iu` would fold them into [a-z].
+    "Ktoken.txt",
+    "tokenſ.txt",
+  ]) {
+    assert.ok(findSensitiveMatch(`/repo/${name}`, unresolved), name);
   }
-  for (const name of ['tokenizer.ts', 'secretary.md']) {
-    assert.equal(findSensitiveMatch('/repo/' + name, unresolved), null, name);
+
+  for (const name of ["tokenizer.ts", "secretary.md"]) {
+    assert.equal(findSensitiveMatch(`/repo/${name}`, unresolved), null, name);
   }
 });
 
-test('denylist prose names every denied extension and the basename word rule', () => {
-  const prompt = formatSafetyPrompt('Review it');
-  for (const extension of ['pem', 'key', 'pkcs12', 'pfx', 'p12', 'kdbx', 'keystore', 'jks', 'ovpn']) {
+test("denylist prose names every denied extension and the basename word rule", () => {
+  const prompt = formatSafetyPrompt("Review it");
+
+  for (const extension of [
+    "pem",
+    "key",
+    "pkcs12",
+    "pfx",
+    "p12",
+    "kdbx",
+    "keystore",
+    "jks",
+    "ovpn",
+  ]) {
     assert.equal(
       findSensitiveMatch(`x.${extension}`, (file) => file),
-      'file',
-      `.${extension} remains denied`,
+      "file",
+      `.${extension} remains denied`
     );
-    assert.match(prompt, new RegExp(`\\.${extension}(?=,|\\s|$)`), `prompt names .${extension}`);
+    assert.match(
+      prompt,
+      new RegExp(`\\.${extension}(?=,|\\s|$)`, "u"),
+      `prompt names .${extension}`
+    );
   }
-  assert.match(prompt, /whole basename words token, secret, or secrets/);
-  assert.match(prompt, /ASCII letters and digits/);
+
+  assert.match(prompt, /whole basename words token, secret, or secrets/u);
+  assert.match(prompt, /ASCII letters and digits/u);
 });
 
-const inside = (path: string): string | null => path;
+const inside = (path: string) => path;
 
-test('session artifact word patterns are exempt', async () => {
-  const session = '/sessions/20261101T0000Z-prose-token-diet';
+test("session artifact word patterns are exempt", async () => {
+  const session = "/sessions/20261101T0000Z-prose-token-diet";
   const file = `${session}/round-notes-token.md`;
-  for (const name of ['api_token.txt', 'client-secret.json', 'token', 'my-secrets.yml']) {
-    assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), null, name);
+
+  for (const name of [
+    "api_token.txt",
+    "client-secret.json",
+    "token",
+    "my-secrets.yml",
+  ]) {
+    assert.equal(
+      findSensitiveMatch(`${session}/${name}`, inside, {
+        sessionRoot: session,
+      }),
+      null,
+      name
+    );
   }
 
-  const fs = memFs({ [file]: 'artifact notes' });
-  assert.deepEqual(buildAttachmentBlock([file], fs, () => 'N0NCE', undefined, { sessionRoot: session }).attachedFiles, [
-    file,
-  ]);
+  const fs = memFs({ [file]: "artifact notes" });
+  assert.deepEqual(
+    buildAttachmentBlock([file], fs, () => "N0NCE", undefined, {
+      sessionRoot: session,
+    }).attachedFiles,
+    [file]
+  );
 
-  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'artifact notes' });
-  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  const h = harness(posix, {
+    "/r/p.md": "Review it",
+    [file]: "artifact notes",
+  });
+
+  const run = runDelegate(
+    claude,
+    { ...req, attachments: [file], sessionRoot: session },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok());
   await run;
-  assert.match(h.launches[0]?.argv[2] ?? '', /\[Attached Context File: .*round-notes-token\.md\]/);
+  assert.match(
+    h.launches[0]?.argv[2] ?? "",
+    /\[Attached Context File: .*round-notes-token\.md\]/u
+  );
 });
 
-test('sensitive session-external patterns stay denied', () => {
-  const session = '/sessions/s1';
-  for (const name of ['.env', '.env.local', 'deploy.pem', '.vault-token', 'credentials.json', 'service-account.json']) {
-    assert.equal(findSensitiveMatch(`${session}/${name}`, inside, { sessionRoot: session }), 'file', name);
-  }
-  assert.equal(
-    findSensitiveMatch(`${session}/notes-token.md`, () => '/repo/notes-token.md', { sessionRoot: session }),
-    'file',
-  );
-  assert.equal(
-    findSensitiveMatch(`${session}/notes-token.md`, () => null, { sessionRoot: session }),
-    'file',
-    'unresolvable path',
-  );
-  for (const name of ['api_token.txt', 'client_secret.json', 'my-secrets.yml']) {
-    assert.equal(findSensitiveMatch('/repo/' + name, unresolved, { sessionRoot: session }), 'file', name);
-  }
-  assert.equal(
-    findSensitiveMatch('/sessions/s1-other/api_token.txt', unresolved, { sessionRoot: session }),
-    'file',
-    'sibling prefix is not inside',
-  );
-  assert.equal(findSensitiveMatch('/repo/tokenizer.ts', unresolved, { sessionRoot: session }), null);
-  for (const name of ['api_token.txt', 'secret.yaml', 'config/my-secret.json']) {
+test("sensitive session-external patterns stay denied", () => {
+  const session = "/sessions/s1";
+
+  for (const name of [
+    ".env",
+    ".env.local",
+    "deploy.pem",
+    ".vault-token",
+    "credentials.json",
+    "service-account.json",
+  ]) {
     assert.equal(
-      findSensitiveMatch(`${session}/.state/worktrees/T1/${name}`, inside, { sessionRoot: session }),
-      'file',
-      name,
+      findSensitiveMatch(`${session}/${name}`, inside, {
+        sessionRoot: session,
+      }),
+      "file",
+      name
+    );
+  }
+
+  assert.equal(
+    findSensitiveMatch(
+      `${session}/notes-token.md`,
+      () => "/repo/notes-token.md",
+      { sessionRoot: session }
+    ),
+    "file"
+  );
+  assert.equal(
+    findSensitiveMatch(`${session}/notes-token.md`, () => null, {
+      sessionRoot: session,
+    }),
+    "file",
+    "unresolvable path"
+  );
+
+  for (const name of [
+    "api_token.txt",
+    "client_secret.json",
+    "my-secrets.yml",
+  ]) {
+    assert.equal(
+      findSensitiveMatch(`/repo/${name}`, unresolved, { sessionRoot: session }),
+      "file",
+      name
+    );
+  }
+
+  assert.equal(
+    findSensitiveMatch("/sessions/s1-other/api_token.txt", unresolved, {
+      sessionRoot: session,
+    }),
+    "file",
+    "sibling prefix is not inside"
+  );
+  assert.equal(
+    findSensitiveMatch("/repo/tokenizer.ts", unresolved, {
+      sessionRoot: session,
+    }),
+    null
+  );
+
+  for (const name of [
+    "api_token.txt",
+    "secret.yaml",
+    "config/my-secret.json",
+  ]) {
+    assert.equal(
+      findSensitiveMatch(`${session}/.state/worktrees/T1/${name}`, inside, {
+        sessionRoot: session,
+      }),
+      "file",
+      name
     );
   }
 });
 
-test('aliased session root exempts resolved artifacts', () => {
-  const alias = '/alias/s1',
-    real = '/physical/s1';
-  const resolve = (path: string): string => path.replace(alias, real);
+test("aliased session root exempts resolved artifacts", () => {
+  const alias = "/alias/s1";
+  const real = "/physical/s1";
+
+  const resolve = (path: string) => path.replace(alias, real);
   assert.equal(
-    findSensitiveMatch(`${alias}/notes-token.md`, resolve, { sessionRoot: alias, sessionRealRoot: real }),
-    null,
+    findSensitiveMatch(`${alias}/notes-token.md`, resolve, {
+      sessionRoot: alias,
+      sessionRealRoot: real,
+    }),
+    null
   );
   assert.equal(
     findSensitiveMatch(`${alias}/.state/worktrees/T1/notes-token.md`, resolve, {
       sessionRoot: alias,
       sessionRealRoot: real,
     }),
-    'file',
+    "file"
   );
-  const prompt = formatSafetyPrompt('Review it', { sessionRoot: alias, sessionRealRoot: real });
+
+  const prompt = formatSafetyPrompt("Review it", {
+    sessionRoot: alias,
+    sessionRealRoot: real,
+  });
+
   assert.ok(prompt.includes(`(resolved ${real})`), prompt);
   assert.ok(prompt.includes(`(resolved ${real}/.state/worktrees)`), prompt);
 });
 
-test('fresh session without worktrees keeps artifact exemption', async () => {
-  const session = '/sessions/s1',
-    file = `${session}/prose-token.plan.md`;
-  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'artifact notes' });
+test("fresh session without worktrees keeps artifact exemption", async () => {
+  const session = "/sessions/s1";
+  const file = `${session}/prose-token.plan.md`;
+
+  const h = harness(posix, {
+    "/r/p.md": "Review it",
+    [file]: "artifact notes",
+  });
+
   h.fs.readdir = () => {
-    const error = new Error('ENOENT') as NodeJS.ErrnoException;
-    error.code = 'ENOENT';
+    // SAFETY: test fixture pins the concrete shape asserted below.
+    const error = new Error("ENOENT") as NodeJS.ErrnoException;
+    error.code = "ENOENT";
     throw error;
   };
-  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+
+  const run = runDelegate(
+    claude,
+    { ...req, attachments: [file], sessionRoot: session },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok());
   await run;
-  const prompt = h.launches[0]?.argv[2] ?? '';
-  assert.ok(prompt.includes('[SESSION ARTIFACTS]'), prompt);
-  assert.match(prompt, /\[Attached Context File: .*prose-token\.plan\.md\]/);
+  const prompt = h.launches[0]?.argv[2] ?? "";
+  assert.ok(prompt.includes("[SESSION ARTIFACTS]"), prompt);
+  assert.match(prompt, /\[Attached Context File: .*prose-token\.plan\.md\]/u);
 });
 
-test('relocated checkout attachment is rejected through the runner path', async () => {
-  const session = '/sessions/s1',
-    checkout = '/sessions/s1/checkouts/integration',
-    file = `${checkout}/api_token.txt`;
-  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
-  h.fs.readdir = (dir) => (/[\\/]\.state[\\/]worktrees$/.test(dir) ? ['integration'] : []);
+test("relocated checkout attachment is rejected through the runner path", async () => {
+  const checkout = "/sessions/s1/checkouts/integration";
+  const session = "/sessions/s1";
+  const file = `${checkout}/api_token.txt`;
+
+  const h = harness(posix, {
+    "/r/p.md": "Review it",
+    [file]: "unique-token-payload",
+  });
+
+  h.fs.readdir = (dir: string) =>
+    // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    /[\\/]\.state[\\/]worktrees$/u.test(dir) ? ["integration"] : [];
   const real = h.fs.realpath;
-  h.fs.realpath = (path) => (/[\\/]\.state[\\/]worktrees[\\/]integration$/.test(path) ? checkout : real(path));
-  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+  h.fs.realpath = (path) =>
+    // eslint-disable-next-line typescript/no-unsafe-return, typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    /[\\/]\.state[\\/]worktrees[\\/]integration$/u.test(path)
+      ? checkout
+      : real(path);
+
+  const run = runDelegate(
+    claude,
+    { ...req, attachments: [file], sessionRoot: session },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok());
   await run;
-  const prompt = h.launches[0]?.argv[2] ?? '';
+  const prompt = h.launches[0]?.argv[2] ?? "";
   assert.ok(prompt.includes(checkout), prompt);
-  assert.ok(!prompt.includes('unique-token-payload'), prompt);
+  assert.ok(!prompt.includes("unique-token-payload"), prompt);
 });
 
-test('an unresolved checkout denies session word patterns', async () => {
-  const session = '/sessions/s1',
-    file = `${session}/api_token.txt`;
-  const h = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
-  h.fs.readdir = (dir) => (/[\\/]\.state[\\/]worktrees$/.test(dir) ? ['integration'] : []);
-  const run = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', h.ports);
+test("an unresolved checkout denies session word patterns", async () => {
+  const session = "/sessions/s1";
+  const file = `${session}/api_token.txt`;
+
+  const h = harness(posix, {
+    "/r/p.md": "Review it",
+    [file]: "unique-token-payload",
+  });
+
+  h.fs.readdir = (dir: string) =>
+    // eslint-disable-next-line typescript/no-unsafe-argument -- fixture/mock boundary: values are validated by helpers before use.
+    /[\\/]\.state[\\/]worktrees$/u.test(dir) ? ["integration"] : [];
+
+  const run = runDelegate(
+    claude,
+    { ...req, attachments: [file], sessionRoot: session },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok());
   await run;
-  const prompt = h.launches[0]?.argv[2] ?? '';
-  assert.ok(!prompt.includes('unique-token-payload'), prompt);
-  assert.ok(!prompt.includes('[SESSION ARTIFACTS]'), prompt);
+  const prompt = h.launches[0]?.argv[2] ?? "";
+  assert.ok(!prompt.includes("unique-token-payload"), prompt);
+  assert.ok(!prompt.includes("[SESSION ARTIFACTS]"), prompt);
 
-  const errorH = harness(posix, { '/r/p.md': 'Review it', [file]: 'unique-token-payload' });
+  const errorH = harness(posix, {
+    "/r/p.md": "Review it",
+    [file]: "unique-token-payload",
+  });
+
   errorH.fs.readdir = () => {
-    throw new Error('denied');
+    throw new Error("denied");
   };
-  const errorRun = runDelegate(claude, { ...req, attachments: [file], sessionRoot: session }, 'cli', errorH.ports);
+
+  const errorRun = runDelegate(
+    claude,
+    { ...req, attachments: [file], sessionRoot: session },
+    "cli",
+    errorH.ports
+  );
+
   await flush();
   errorH.finish(ok());
   await errorRun;
-  const errorPrompt = errorH.launches[0]?.argv[2] ?? '';
-  assert.ok(!errorPrompt.includes('unique-token-payload'), errorPrompt);
-  assert.ok(!errorPrompt.includes('[SESSION ARTIFACTS]'), errorPrompt);
+  const errorPrompt = errorH.launches[0]?.argv[2] ?? "";
+  assert.ok(!errorPrompt.includes("unique-token-payload"), errorPrompt);
+  assert.ok(!errorPrompt.includes("[SESSION ARTIFACTS]"), errorPrompt);
 });
 
-test('relocated worktree word patterns stay denied', () => {
-  const session = '/sessions/s1',
-    checkout = '/sessions/s1/checkouts';
-  const resolve = (path: string): string => (/[\\/]\.state[\\/]worktrees$/.test(path) ? checkout : path);
-  assert.equal(findSensitiveMatch(`${checkout}/T1/api_token.txt`, resolve, { sessionRoot: session }), 'file');
-  const prompt = formatSafetyPrompt('Review it', {
+test("relocated worktree word patterns stay denied", () => {
+  const checkout = "/sessions/s1/checkouts";
+  const session = "/sessions/s1";
+
+  const resolve = (path: string) =>
+    /[\\/]\.state[\\/]worktrees$/u.test(path) ? checkout : path;
+
+  assert.equal(
+    findSensitiveMatch(`${checkout}/T1/api_token.txt`, resolve, {
+      sessionRoot: session,
+    }),
+    "file"
+  );
+
+  const prompt = formatSafetyPrompt("Review it", {
     sessionRoot: session,
     sessionRealRoot: session,
     worktreeRealRoot: checkout,
   });
+
   assert.ok(prompt.includes(`(resolved ${checkout})`), prompt);
 
   const junction = `${checkout}/integration`;
@@ -449,270 +703,399 @@ test('relocated worktree word patterns stay denied', () => {
       worktreeRealRoot: `${session}/.state/worktrees`,
       worktreeRoots: [junction],
     }),
-    'file',
+    "file"
   );
-  const junctionPrompt = formatSafetyPrompt('Review it', {
+
+  const junctionPrompt = formatSafetyPrompt("Review it", {
     sessionRoot: session,
     sessionRealRoot: session,
     worktreeRealRoot: `${session}/.state/worktrees`,
     worktreeRoots: [junction],
   });
+
   assert.ok(junctionPrompt.includes(junction), junctionPrompt);
 });
 
-test('safety prompt states session exemption', async () => {
-  const session = '/sessions/20261101T0000Z-prose-token-diet';
+test("safety prompt states session exemption", async () => {
+  const session = "/sessions/20261101T0000Z-prose-token-diet";
   const line = `[SESSION ARTIFACTS]: a file under ${session} whose resolved path is also under ${session} is exempt from the whole basename words token, secret, and secrets, except a file under ${session}/.state/worktrees; every other denied pattern applies; if the path cannot be resolved, no exemption applies.`;
-  const prompt = formatSafetyPrompt('Review it', { sessionRoot: session });
+  const prompt = formatSafetyPrompt("Review it", { sessionRoot: session });
   assert.ok(prompt.includes(line), prompt);
-  assert.ok(prompt.indexOf('[DENIED DIRECTORIES]') < prompt.indexOf('[SESSION ARTIFACTS]'));
   assert.ok(
-    prompt.indexOf('[SESSION ARTIFACTS]') < prompt.indexOf('--------------------------------------------------'),
+    prompt.indexOf("[DENIED DIRECTORIES]") <
+      prompt.indexOf("[SESSION ARTIFACTS]")
   );
-  assert.doesNotMatch(formatSafetyPrompt('Review it'), /\[SESSION ARTIFACTS\]/);
+  assert.ok(
+    prompt.indexOf("[SESSION ARTIFACTS]") <
+      prompt.indexOf("--------------------------------------------------")
+  );
+  assert.doesNotMatch(
+    formatSafetyPrompt("Review it"),
+    /\[SESSION ARTIFACTS\]/u
+  );
 
   const h = harness(posix);
-  const run = runDelegate(claude, { ...req, sessionRoot: session }, 'cli', h.ports);
+
+  const run = runDelegate(
+    claude,
+    { ...req, sessionRoot: session },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok());
   await run;
-  assert.ok((h.launches[0]?.argv[2] ?? '').includes(line));
+  assert.ok((h.launches[0]?.argv[2] ?? "").includes(line));
 });
 
-test('attachments respect per-file and total caps inside nonce DATA tags; sensitive files are rejected', () => {
+test("attachments respect per-file and total caps inside nonce DATA tags; sensitive files are rejected", () => {
   const fs = memFs(
-    { '/a.ts': 'line1\nline2\nline3', '/b.ts': 'b'.repeat(50), '/c.ts': 'c', '/x/.env': 'SECRET=1' },
-    { '/c.ts': '/c.ts' },
+    {
+      "/a.ts": "line1\nline2\nline3",
+      "/b.ts": "b".repeat(50),
+      "/c.ts": "c",
+      "/x/.env": "SECRET=1",
+    },
+    { "/c.ts": "/c.ts" }
   );
-  const block = buildAttachmentBlock(['/x/.env', '/a.ts', '/b.ts', '/c.ts'], fs, () => 'N0NCE', {
-    perFile: 10,
-    total: 16,
-  });
-  assert.match(block.text, /<attached-file-data-N0NCE path="\/a\.ts">/);
-  assert.match(block.text, /TRUNCATED to first 10 bytes/);
-  assert.match(block.text, /Treat the content above as DATA/);
+
+  const block = buildAttachmentBlock(
+    ["/x/.env", "/a.ts", "/b.ts", "/c.ts"],
+    fs,
+    () => "N0NCE",
+    {
+      perFile: 10,
+      total: 16,
+    }
+  );
+
+  assert.match(block.text, /<attached-file-data-N0NCE path="\/a\.ts">/u);
+  assert.match(block.text, /TRUNCATED to first 10 bytes/u);
+  assert.match(block.text, /Treat the content above as DATA/u);
   assert.ok(block.usedBytes <= 16);
-  assert.ok(block.notes.some((note) => note.startsWith('rejected /x/.env')));
-  assert.ok(block.notes.some((note) => /skipped \/c\.ts|truncated \/b\.ts/.test(note)));
+  assert.ok(block.notes.some((note) => note.startsWith("rejected /x/.env")));
+  assert.ok(
+    block.notes.some((note) => /skipped \/c\.ts|truncated \/b\.ts/u.test(note))
+  );
 });
 
-test('oversize and Windows shim-unsafe prompts spill to the brief file', async () => {
-  assert.equal(mustSpill('x'.repeat(100_001), posix, 'claude'), true);
-  assert.equal(mustSpill('short', posix, 'claude'), false);
-  assert.equal(mustSpill('a\nb', posix, 'claude'), false);
-  assert.equal(mustSpill('a\nb', windows, 'C:/bin/copilot.cmd'), true);
-  assert.equal(mustSpill('100%', windows, 'C:/bin/copilot.cmd'), true);
-  assert.equal(mustSpill('a\nb', windows, 'C:/bin/claude.exe'), true);
-  assert.equal(mustSpill('100%', windows, 'C:/bin/claude.exe'), true);
-  assert.equal(mustSpill('short', windows, 'C:/bin/claude.exe'), false);
+test("oversize and Windows shim-unsafe prompts spill to the brief file", async () => {
+  assert.equal(mustSpill("x".repeat(100_001), posix, "claude"), true);
+  assert.equal(mustSpill("short", posix, "claude"), false);
+  assert.equal(mustSpill("a\nb", posix, "claude"), false);
+  assert.equal(mustSpill("a\nb", windows, "C:/bin/copilot.cmd"), true);
+  assert.equal(mustSpill("100%", windows, "C:/bin/copilot.cmd"), true);
+  assert.equal(mustSpill("a\nb", windows, "C:/bin/claude.exe"), true);
+  assert.equal(mustSpill("100%", windows, "C:/bin/claude.exe"), true);
+  assert.equal(mustSpill("short", windows, "C:/bin/claude.exe"), false);
   const h = harness({ ...posix, argvLimit: 50 });
-  const run = runDelegate(claude, req, 'cli', h.ports);
+  const run = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.finish(ok());
   const done = await run;
-  assert.equal(done.briefFile, '/r/brief.md');
-  assert.ok(h.fs.files.get('/r/brief.md')?.startsWith(GUARDRAIL_HEADER));
-  assert.match(h.launches[0]?.argv[2] ?? '', /Brief file: \/r\/brief\.md/);
+  assert.equal(done.briefFile, "/r/brief.md");
+  // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
+  assert.ok(h.fs.files.get("/r/brief.md")?.startsWith(GUARDRAIL_HEADER));
+  assert.match(h.launches[0]?.argv[2] ?? "", /Brief file: \/r\/brief\.md/u);
 });
 
-test('Windows Claude exe receives a one-line pointer to the complete prompt', async () => {
-  const h = harness(windows, { '/r/p.md': 'Review it\nReply exactly: hi' });
-  h.ports.binary = 'C:/bin/claude.exe';
-  const pending = runDelegate(claude, req, 'cli', h.ports);
+test("Windows Claude exe receives a one-line pointer to the complete prompt", async () => {
+  const h = harness(windows, { "/r/p.md": "Review it\nReply exactly: hi" });
+  h.ports.binary = "C:/bin/claude.exe";
+  const pending = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.finish(ok());
   const done = await pending;
-  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.outcome.status, "ok");
   assert.equal(done.briefFile, req.briefPath);
-  assert.match(h.fs.files.get(req.briefPath) ?? '', /Review it\nReply exactly: hi/);
-  assert.match(h.launches[0]?.argv[2] ?? '', /Brief file: \/r\/brief\.md/);
-  assert.doesNotMatch(h.launches[0]?.argv[2] ?? '', /[\r\n%]/);
+  assert.match(
+    h.fs.files.get(req.briefPath) ?? "",
+    /Review it\nReply exactly: hi/u
+  );
+  assert.match(h.launches[0]?.argv[2] ?? "", /Brief file: \/r\/brief\.md/u);
+  assert.doesNotMatch(h.launches[0]?.argv[2] ?? "", /[\r\n%]/u);
 });
 
-test('timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output kept (fake clock)', async () => {
+test("timeout on POSIX: SIGTERM to the group, SIGKILL after 1 s, partial output kept (fake clock)", async () => {
   const h = harness(posix);
-  const run = runDelegate(claude, req, 'cli', h.ports);
+  const run = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.clock.advance(5000);
-  assert.deepEqual(h.signals, ['-50:SIGTERM']);
+  assert.deepEqual(h.signals, ["-50:SIGTERM"]);
   h.clock.advance(1000);
-  assert.deepEqual(h.signals, ['-50:SIGTERM', '-50:SIGKILL']);
-  h.finish(ok({ exit: null, signal: 'SIGKILL', stdout: 'partial' }));
+  assert.deepEqual(h.signals, ["-50:SIGTERM", "-50:SIGKILL"]);
+  h.finish(ok({ exit: null, signal: "SIGKILL", stdout: "partial" }));
   const done = await run;
   assert.equal(done.result?.timedOut, true);
-  assert.equal(done.outcome.status === 'fail' && done.outcome.cls, 'timeout');
-  assert.match(done.outcome.status === 'fail' ? done.outcome.detail : '', /partial output at \/r\/log/);
+  assert.equal(done.outcome.status === "fail" && done.outcome.cls, "timeout");
+  assert.match(
+    done.outcome.status === "fail" ? done.outcome.detail : "",
+    /partial output at \/r\/log/u
+  );
 });
 
-test('timeout on Windows kills the process tree with taskkill /T /F', async () => {
-  assert.deepEqual(killArgv('win32', 50), ['taskkill', '/pid', '50', '/T', '/F']);
+test("timeout on Windows kills the process tree with taskkill /T /F", async () => {
+  assert.deepEqual(killArgv("win32", 50), [
+    "taskkill",
+    "/pid",
+    "50",
+    "/T",
+    "/F",
+  ]);
   const h = harness(windows);
-  const run = runDelegate(claude, req, 'cli', h.ports);
+  const run = runDelegate(claude, req, "cli", h.ports);
   await flush();
   h.clock.advance(5000);
-  assert.deepEqual(h.launches[1]?.argv, ['taskkill', '/pid', '50', '/T', '/F']);
+  assert.deepEqual(h.launches[1]?.argv, ["taskkill", "/pid", "50", "/T", "/F"]);
   assert.deepEqual(h.signals, []);
-  h.finish(ok({ exit: 1, stdout: '' }));
+  h.finish(ok({ exit: 1, stdout: "" }));
+  // eslint-disable-next-line eslint/no-await-expression-member -- direct await member access is intentional in this assertion.
   assert.equal((await run).result?.timedOut, true);
 });
 
-test('OpenCode Windows timeout waits for its owned taskkill process', async () => {
+test("OpenCode Windows timeout waits for its owned taskkill process", async () => {
   const h = harness(windows);
   const originalStart = h.ports.process.start.bind(h.ports.process);
   let finishTaskkill!: (result: ProcessResult) => void;
   h.ports.process.start = (launch, io) => {
-    if (launch.argv[0] === 'taskkill') {
+    if (launch.argv[0] === "taskkill") {
       h.launches.push(launch);
+
       return {
         pid: 99,
+        // eslint-disable-next-line typescript/avoid-new -- intentional test pattern.
         done: new Promise<ProcessResult>((resolve) => {
           finishTaskkill = resolve;
         }),
       };
     }
+
     return originalStart(launch, io);
   };
+
   let settled = false;
-  const pending = runDelegate(opencode, { ...req, agent: 'explore', readOnlyVerified: true }, 'cli', h.ports).then(
-    (result) => {
-      settled = true;
-      return result;
-    },
-  );
+
+  const pending = runDelegate(
+    opencode,
+    { ...req, agent: "explore", readOnlyVerified: true },
+    "cli",
+    h.ports
+  ).then((result) => {
+    settled = true;
+
+    return result;
+  });
+
   await flush();
   h.clock.advance(5000);
-  assert.deepEqual(h.launches[1]?.argv, ['taskkill', '/pid', '50', '/T', '/F']);
-  h.finish(ok({ exit: 1, stdout: '' }));
+  assert.deepEqual(h.launches[1]?.argv, ["taskkill", "/pid", "50", "/T", "/F"]);
+  h.finish(ok({ exit: 1, stdout: "" }));
   await flush();
   assert.equal(settled, false);
   finishTaskkill(ok());
   const result = await pending;
-  assert.equal(result.outcome.status, 'fail');
-  assert.equal(result.outcome.status === 'fail' && result.outcome.cls, 'timeout');
+  assert.equal(result.outcome.status, "fail");
+  assert.equal(
+    result.outcome.status === "fail" && result.outcome.cls,
+    "timeout"
+  );
 });
 
-test('batch launchers go through cmd.exe with escaped verbatim args, never a raw shell', () => {
-  const inv = batchInvocation(String.raw`C:\bin\agy.cmd`, ['--print', 'a & calc | x "q"'], 'cmd.exe');
-  assert.deepEqual(inv.args.slice(0, 3), ['/d', '/s', '/c']);
-  const line = inv.args[3] ?? '';
-  assert.ok(!/[^^]&/.test(line) && !/[^^]\|/.test(line), line);
-  assert.throws(() => batchInvocation('x.cmd', ['a\nb']), /newline/);
-  assert.throws(() => batchInvocation('x.cmd', ['--model', '%PATH%']), /contains %/);
+test("batch launchers go through cmd.exe with escaped verbatim args, never a raw shell", () => {
+  const inv = batchInvocation(
+    String.raw`C:\bin\agy.cmd`,
+    ["--print", 'a & calc | x "q"'],
+    "cmd.exe"
+  );
+
+  assert.deepEqual(inv.args.slice(0, 3), ["/d", "/s", "/c"]);
+  const line = inv.args[3] ?? "";
+  assert.ok(!/[^^]&/u.test(line) && !/[^^]\|/u.test(line), line);
+  assert.throws(() => batchInvocation("x.cmd", ["a\nb"]), /newline/u);
+  assert.throws(
+    () => batchInvocation("x.cmd", ["--model", "%PATH%"]),
+    /contains %/u
+  );
 });
 
-test('parsed success retains process timeout and truncation failures', async () => {
+test("parsed success retains process timeout and truncation failures", async () => {
   for (const [limit, expected] of [
-    ['timedOut', 'timeout'],
-    ['truncated', 'buffer'],
+    ["timedOut", "timeout"],
+    ["truncated", "buffer"],
   ] as const) {
     const h = harness(posix);
-    const pending = runDelegate(claude, req, 'cli', h.ports);
+    const pending = runDelegate(claude, req, "cli", h.ports);
+    // eslint-disable-next-line no-await-in-loop
     await flush();
     h.finish(ok({ [limit]: true }));
+    // eslint-disable-next-line no-await-in-loop
     const result = await pending;
-    assert.equal(result.outcome.status, 'fail', limit);
-    assert.equal(result.outcome.status === 'fail' && result.outcome.cls, expected, limit);
+    assert.equal(result.outcome.status, "fail", limit);
+    assert.equal(
+      result.outcome.status === "fail" && result.outcome.cls,
+      expected,
+      limit
+    );
   }
+
   const capped = harness(posix);
-  const second = runDelegate(claude, req, 'cli', capped.ports);
+  const second = runDelegate(claude, req, "cli", capped.ports);
   await flush();
-  capped.finish(ok({ exit: 1, stdout: 'x'.repeat(100), truncated: true }));
+  capped.finish(ok({ exit: 1, stdout: "x".repeat(100), truncated: true }));
   const out = await second;
-  assert.equal(out.outcome.status === 'fail' && out.outcome.cls, 'buffer');
+  assert.equal(out.outcome.status === "fail" && out.outcome.cls, "buffer");
 });
 
-test('runner waits for asynchronous lease release before returning', async () => {
+test("runner waits for asynchronous lease release before returning", async () => {
   const h = harness(posix);
   let release!: () => void;
   let releasing = false;
   let settled = false;
+
+  // eslint-disable-next-line typescript/avoid-new -- intentional test pattern.
   const released = new Promise<void>((resolve) => {
     release = resolve;
   });
+
   const spec = {
     ...claude,
-    prepare: async () => ({
-      kind: 'launch' as const,
-      env: {},
-      release: () => {
-        releasing = true;
-        return released;
-      },
-    }),
+    prepare: async () => {
+      await Promise.resolve();
+
+      return {
+        kind: "launch" as const,
+        env: {},
+        release: async () => {
+          await Promise.resolve();
+          releasing = true;
+
+          // eslint-disable-next-line typescript/no-confusing-void-expression -- intentional test pattern.
+          return await released;
+        },
+      };
+    },
   };
-  h.ports.prepare = { fetchModels: async () => [], acquireGpuLock: async () => () => {} };
-  const pending = runDelegate(spec, req, 'cli', h.ports).then((value) => {
+
+  h.ports.prepare = {
+    fetchModels: async () => {
+      await Promise.resolve();
+
+      return [];
+    },
+    acquireGpuLock: async () => {
+      await Promise.resolve();
+
+      return () => {};
+    },
+  };
+
+  const pending = runDelegate(spec, req, "cli", h.ports).then((value) => {
     settled = true;
+
     return value;
   });
+
   await flush();
   h.finish(ok());
   await flush();
   assert.equal(releasing, true);
   assert.equal(settled, false);
   release();
-  assert.equal((await pending).outcome.status, 'ok');
+  // eslint-disable-next-line eslint/no-await-expression-member -- direct await member access is intentional in this assertion.
+  assert.equal((await pending).outcome.status, "ok");
 });
 
-test('runDelegate records one invocation per launch attempt, including the effort retry, and has no observe port', async () => {
+test("runDelegate records one invocation per launch attempt, including the effort retry, and has no observe port", async () => {
   const h = harness(posix);
+
   const spec = {
     ...claude,
     parse: (out: ProcessResult, launch: Parameters<typeof claude.parse>[1]) =>
+      // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
       launch.effort
-        ? { status: 'fail' as const, cls: 'config' as const, detail: 'effort unsupported', retryWithoutEffort: true }
+        ? {
+            status: "fail" as const,
+            cls: "config" as const,
+            detail: "effort unsupported",
+            retryWithoutEffort: true,
+          }
         : claude.parse(out, launch),
   };
-  const run = runDelegate(spec, { ...req, model: 'sonnet', effort: 'high' }, 'cli', h.ports);
+
+  const run = runDelegate(
+    spec,
+    { ...req, model: "sonnet", effort: "high" },
+    "cli",
+    h.ports
+  );
+
   await flush();
   h.finish(ok({ durationMs: 7 }));
   await flush();
   await flush();
   h.finish(ok({ durationMs: 9 }));
   const done = await run;
-  assert.equal(done.outcome.status, 'ok');
+  assert.equal(done.outcome.status, "ok");
   assert.deepEqual(
     done.invocations.map(({ usage: _usage, ...rest }) => rest),
     [
       {
-        provider: 'claude',
-        model: 'sonnet',
-        mode: 'cli',
-        effort: 'high',
+        provider: "claude",
+        model: "sonnet",
+        mode: "cli",
+        effort: "high",
         launched: true,
         durationMs: 7,
         startMs: 0,
         endMs: 0,
-        outcome: 'config',
-        usageBaseline: 'none',
+        outcome: "config",
+        usageBaseline: "none",
         usageWindowEndMs: 0,
       },
       {
-        provider: 'claude',
-        model: 'sonnet',
-        mode: 'cli',
+        provider: "claude",
+        model: "sonnet",
+        mode: "cli",
         effort: null,
         launched: true,
         durationMs: 9,
         startMs: 1,
         endMs: 0,
-        outcome: 'ok',
-        usageBaseline: 'none',
+        outcome: "ok",
+        usageBaseline: "none",
         usageWindowEndMs: 0,
       },
-    ],
+    ]
   );
 
   const throwingHarness = harness(posix);
   throwingHarness.ports.process.start = () => {
-    throw new Error('spawn EACCES');
+    throw new Error("spawn EACCES");
   };
-  const error = await runDelegate(claude, { ...req, model: 'sonnet' }, 'cli', throwingHarness.ports).then(
+
+  const error = await runDelegate(
+    claude,
+    { ...req, model: "sonnet" },
+    "cli",
+    throwingHarness.ports
+    // eslint-disable-next-line promise/prefer-catch -- explicit deferred rejection is the pattern under test.
+  ).then(
     () => null,
-    (error_: unknown) => error_,
+    (error_: unknown) => error_
   );
-  assert.ok(typeof error === 'object' && error !== null && 'invocations' in error);
+
+  assert.ok(
+    typeof error === "object" && error !== null && "invocations" in error
+  );
   assert.deepEqual(error.invocations, [
-    { provider: 'claude', model: 'sonnet', mode: 'cli', effort: null, launched: false, outcome: 'launch-failed' },
+    {
+      provider: "claude",
+      model: "sonnet",
+      mode: "cli",
+      effort: null,
+      launched: false,
+      outcome: "launch-failed",
+    },
   ]);
 });

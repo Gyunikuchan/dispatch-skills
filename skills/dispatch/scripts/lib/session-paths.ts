@@ -1,1 +1,1 @@
-export const SESSION_WORKTREES = '.state/worktrees';
+export const SESSION_WORKTREES = ".state/worktrees";

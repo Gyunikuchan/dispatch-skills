@@ -1,5 +1,4 @@
-Review the implementation plan adversarially: challenge the requirement, its premise, and the plan.
-Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius. Inspect critically.
+Review the implementation plan adversarially: challenge the requirement, its premise, and the plan. Judge whether this unimplemented plan delivers the requested features or technical-design increment: concrete files and symbols, step order, error behavior, prerequisite evidence, exact verification, and bounded blast radius. Inspect critically.
 
 ### Context
 - Plan: .scratch/example/example.plan.md
@@ -24,10 +23,7 @@ Read the whole spec at Spec Path first.
 Report host-rule violations on changed lines or sections as `standards`; elsewhere, report them as `adjacent`.
 A pattern that matches established local convention is not a finding;
 when the convention itself is defective, report it once and name the other instances in `defect`.
-For a spec finding, use § Spec: <heading>.
-Use the authoritative plan. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
-Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks.
-Judge the plan against its Plan standard. Report a missing decision that prevents safe implementation; report a routine writer choice only with a concrete consequence, such as a failed criterion, broken invariant or ownership conflict.
+For a spec finding, use § Spec: <heading>. Use the authoritative plan. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim. Check task-specific constraints (including rationale for non-obvious prerequisites), nested file ownership and each criterion's specific checks. Judge the plan against its Plan standard. Report a missing decision that prevents safe implementation; report a routine writer choice only with a concrete consequence, such as a failed criterion, broken invariant or ownership conflict.
 For every review kind, findings apply to the captured revision and Scope. Inspect required callers, interfaces, host rules and governing material even outside Scope. Report concrete existing-code defects encountered in the selected target or during that required inspection; inspect other adjacent material only to substantiate a defect. Spend no extra turns hunting for adjacent findings. Preserve original provenance; the host selects applicability to later content under review rules.
 The governing spec's Decisions and Non-goals, and decisions recorded in an approved governing design or plan other than the artifact under review, are settled: contest one only by naming it and citing concrete evidence it did not weigh; do not re-raise style preferences or checks enforced by configured linters, formatters or type checkers.
 - Host rule files: before judging or editing, find every file that sets conventions for in-scope paths. Check `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, linked style guides, and in-scope nested copies; nearest wins. Read applicable rules; skip rules enforced by configured linters, formatters or type checkers.
@@ -75,6 +71,7 @@ CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` tim
 
 ### Severity
 Rate each finding on two dimensions; the toolkit derives severity from them. Report `impact` and `trigger`, never `severity`.
+
 - `impact`: `critical` — security breach or irreversible data loss; `blocks` — the promised outcome or a binding constraint fails; `degrades` — a real defect that lowers the outcome without blocking it; `minor` — a small defect with negligible effect or an optional improvement (always `CONSIDER`).
 - `trigger`: `realistic` — normal use or one plausible fault produces it; `contrived` — it needs several independent faults, contrived input, or no failure at all.
 
@@ -85,11 +82,8 @@ Rate each finding on two dimensions; the toolkit derives severity from them. Rep
 | `degrades` | `SHOULD` | `CONSIDER` |
 | `minor` | `CONSIDER` | `CONSIDER` |
 
-A `critical` finding's `defect` names the boundary crossed or the data lost.
-Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
-In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding
-constraint. A gap that the plan's own Check gates would surface deterministically during
-implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
+A `critical` finding's `defect` names the boundary crossed or the data lost. Severity is resolution priority: resolve `MUST` first, then `SHOULD`; `CONSIDER` is optional.
+In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Check gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.
 In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
@@ -108,5 +102,4 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"§ <Plan heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Cite existing code as `path/to/file:L<line>` inside `defect`.
-For an adjacent finding, use the nearest plan heading as locus.
+Cite existing code as `path/to/file:L<line>` inside `defect`. For an adjacent finding, use the nearest plan heading as locus.

@@ -1,91 +1,153 @@
-import { withLockFile } from '../../../skills/dispatch/scripts/toolkit/lock.ts';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { parseJson, shape, text } from './helpers/json.ts';
-import { sessionFixture } from './helpers/session.ts';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
 
-test('fan-out claim creates parents refuses a live owner and reclaims a dead owner', async () => {
+import { main } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
+import { withLockFile } from "../../../skills/dispatch/scripts/toolkit/lock.ts";
+import { parseJson, withFields, text } from "./helpers/json.ts";
+import { sessionFixture } from "./helpers/session.ts";
+
+test("fan-out claim creates parents refuses a live owner and reclaims a dead owner", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const file = path.join(f.session, '.state', 'reviews', 'plan', 'claim');
-    assert.equal(await withLockFile(file, 'review', f.deps, 0, async () => 7), 7);
+    const file = path.join(f.session, ".state", "reviews", "plan", "claim");
+    assert.equal(
+      // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+      await withLockFile(file, "review", f.deps, 0, async () => 7),
+      7
+    );
     assert.equal(fs.existsSync(file), false);
-    fs.writeFileSync(file, JSON.stringify({ pid: 99, host: f.deps.host, at: 'now' }));
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ pid: 99, host: f.deps.host, at: "now" })
+    );
     f.deps.isAlive = () => true;
     await assert.rejects(
-      withLockFile(file, 'review', f.deps, 0, async () => {
-        throw new Error('launched');
+      // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+      withLockFile(file, "review", f.deps, 0, async () => {
+        throw new Error("launched");
       }),
-      { exit: 3, reason: 'lock-held' },
+      { exit: 3, reason: "lock-held" }
     );
     assert.deepEqual(f.sleeps, []);
     f.deps.isAlive = () => false;
-    assert.equal(await withLockFile(file, 'review', f.deps, 0, async (broken) => broken?.pid), 99);
+    assert.equal(
+      await withLockFile(
+        file,
+        "review",
+        f.deps,
+        0,
+        // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+        async (broken) => broken?.pid
+      ),
+      99
+    );
     assert.equal(fs.existsSync(file), false);
   } finally {
     f.cleanup();
   }
 });
 
-test('session lock waits refuses reclaims and releases on failure', async () => {
+test("session lock waits refuses reclaims and releases on failure", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const state = path.join(f.session, '.state');
+    const state = path.join(f.session, ".state");
     fs.mkdirSync(state);
-    const lock = path.join(state, 'lock');
-    const input = f.artifact('r.json', JSON.stringify({ kind: 'note', key: 'a', by: 'tool', data: { text: 'ok' } }));
+    const lock = path.join(state, "lock");
+
+    const input = f.artifact(
+      "r.json",
+      JSON.stringify({
+        kind: "note",
+        key: "a",
+        by: "tool",
+        data: { text: "ok" },
+      })
+    );
+
     const run = async () => {
       f.lines.length = 0;
-      return main(['ledger', 'append', '--session', f.session, input], f.deps);
+
+      return await main(
+        ["ledger", "append", "--session", f.session, input],
+        f.deps
+      );
     };
+
     f.deps.isAlive = () => true;
-    fs.writeFileSync(lock, JSON.stringify({ pid: 99, host: f.deps.host, at: 'now', tool: 'test' }));
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({ pid: 99, host: f.deps.host, at: "now", tool: "test" })
+    );
     assert.equal(await run(), 3);
     assert.equal(
       f.sleeps.reduce((a, b) => a + b, 0),
-      10_000,
+      10_000
     );
-    assert.match(f.output().summary, /99/);
+    assert.match(f.output().summary, /99/u);
     f.deps.isAlive = () => false;
     assert.equal(await run(), 0);
     assert.equal(fs.existsSync(lock), false);
+
     const records = fs
-      .readFileSync(path.join(f.session, 'ledger.jsonl'), 'utf8')
+      .readFileSync(path.join(f.session, "ledger.jsonl"), "utf-8")
       .trim()
-      .split('\n')
-      .map((x) => parseJson(x, shape({ kind: text, by: text })));
-    assert.equal(records[0]?.kind, 'note');
-    assert.equal(records[0]?.by, 'tool');
+      .split("\n")
+      .map((x) => parseJson(x, withFields({ kind: text, by: text })));
+
+    assert.equal(records[0]?.kind, "note");
+    assert.equal(records[0]?.by, "tool");
     assert.equal(records.length, 2);
     fs.writeFileSync(input, '{"kind":"bad"}');
     assert.equal(await run(), 1);
     assert.equal(fs.existsSync(lock), false);
-    fs.writeFileSync(lock, JSON.stringify({ pid: 99, host: 'foreign', at: 'now', tool: 'test' }));
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({ pid: 99, host: "foreign", at: "now", tool: "test" })
+    );
     assert.equal(await run(), 3);
     assert.equal(fs.existsSync(lock), true);
     fs.unlinkSync(lock);
-    const breaker = path.join(state, 'lock.break');
-    fs.writeFileSync(input, JSON.stringify({ kind: 'note', key: 'b', by: 'tool', data: { text: 'ok' } }));
+    const breaker = path.join(state, "lock.break");
+    fs.writeFileSync(
+      input,
+      JSON.stringify({
+        kind: "note",
+        key: "b",
+        by: "tool",
+        data: { text: "ok" },
+      })
+    );
     f.deps.isAlive = (pid) => pid === 999;
-    fs.writeFileSync(breaker, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now' }));
+    fs.writeFileSync(
+      breaker,
+      JSON.stringify({ pid: 999, host: f.deps.host, at: "now" })
+    );
     assert.equal(await run(), 3);
-    assert.match(f.output().summary, /999/);
+    assert.match(f.output().summary, /999/u);
     assert.equal(fs.existsSync(breaker), true);
-    fs.writeFileSync(breaker, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now' }));
+    fs.writeFileSync(
+      breaker,
+      JSON.stringify({ pid: 999, host: f.deps.host, at: "now" })
+    );
     f.deps.isAlive = () => false;
-    fs.writeFileSync(lock, JSON.stringify({ pid: 999, host: f.deps.host, at: 'now', tool: 'test' }));
+    fs.writeFileSync(
+      lock,
+      JSON.stringify({ pid: 999, host: f.deps.host, at: "now", tool: "test" })
+    );
     assert.equal(await run(), 0);
     assert.deepEqual(
       fs
         .readdirSync(state)
-        .filter((x) => x.startsWith('lock'))
-        .sort(),
-      ['lock.break'],
+        .filter((x) => x.startsWith("lock"))
+        .toSorted(),
+      ["lock.break"]
     );
-    assert.equal(JSON.parse(fs.readFileSync(breaker, 'utf8')).pid, 999);
+    // eslint-disable-next-line typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
+    assert.equal(JSON.parse(fs.readFileSync(breaker, "utf-8")).pid, 999);
   } finally {
     f.cleanup();
   }

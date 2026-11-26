@@ -1,8 +1,6 @@
 # dispatch-skills
 
-[![Version](https://img.shields.io/badge/version-v0.8.6-blue.svg)](package.json)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v0.8.6-blue.svg)](package.json) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
 
 ![Dispatch Skills — Orchestrator, Explorers, Reviewers, Writers, Verifiers, and Cleaners](docs/assets/banner.webp)
 
@@ -13,7 +11,7 @@
 Single-agent workflows ask one model to make assumptions, burn its context window reading files, write the code, and grade its own work. Dispatch separates those roles across native subagents and cross-platform CLI delegates:
 
 | Benefit | How Dispatch delivers it |
-|---|---|
+| --- | --- |
 | **🧭 Host agent as your deputy** | Your current agent orchestrates the workflow—routing tasks to native subagents and cross-platform CLI delegates while keeping your main context clean. |
 | **⚡ Specialized native subagents** | Fast explorer and utility subagents map the codebase and prune redundant tests; scoped writer and verifier subagents build and prove changes in parallel. |
 | **🎲 Cross-platform perspectives** | Independent reviewers on other platforms run first and your host platform runs last, catching shared blind spots across model families. |
@@ -102,6 +100,7 @@ node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-
 ```
 
 > [!NOTE]
+>
 > - Install all skills in the same scope (all project-local or all global `-g`) so aliases can find sibling `dispatch`.
 > - Exclude installed skill directories from formatters and linters; Dispatch verifies its own script and reference integrity.
 
@@ -110,7 +109,7 @@ node skills/dispatch/scripts/dispatch.ts doctor run --session <returned-session-
 Only `dispatch` runs the workflow; the aliases map familiar slash commands to `dispatch`.
 
 | Skill | Purpose |
-|---|---|
+| --- | --- |
 | [`dispatch`](skills/dispatch/README.md) | Full operational user guide (all verbs) |
 | [`dispatch-plan`](skills/dispatch/references/readme/plan.md) | Alias for `/dispatch plan:` |
 | [`dispatch-implement`](skills/dispatch/references/readme/implement.md) | Alias for `/dispatch implement:` |

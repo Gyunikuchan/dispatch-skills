@@ -1,23 +1,31 @@
-// Provider contracts (spec §6.1–§6.3). Specs are declarative data plus pure `argv`/`parse`; the runner owns I/O
-// through `ProcessPort` (core `SpawnPort` is buffered and cannot stream, cap, or kill a tree).
+import type { readOpencodeMessages } from "../lib/opencode-db.ts";
+import type { PlatformEnv, ProviderKey } from "../lib/platform.ts";
+import type { SessionRead } from "../lib/usage/delegate.ts";
+import type {
+  CoverageReason,
+  DelegateResponse,
+  DiagnosticUsage,
+  HostUsageFs,
+  ReadBudget,
+} from "../lib/usage/rows.ts";
+import type { FailureClass } from "../toolkit/types.ts";
 
-import type { FailureClass } from '../toolkit/types.ts';
-import type { readOpencodeMessages } from '../lib/opencode-db.ts';
-import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
-import type { SessionRead } from '../lib/usage/delegate.ts';
-import type { CoverageReason, DelegateResponse, DiagnosticUsage, HostUsageFs, ReadBudget } from '../lib/usage/rows.ts';
-
-export type { PlatformEnv } from '../lib/platform.ts';
+export type { PlatformEnv } from "../lib/platform.ts";
 
 export type ProviderId = ProviderKey;
-export type ModeId = 'cli' | 'desktop' | 'vscode';
-export const MODE_IDS: ReadonlyArray<ModeId> = ['cli', 'desktop', 'vscode'];
 
-type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => ReadonlyArray<string> };
+export type ModeId = "cli" | "desktop" | "vscode";
 
-export type UsageBaseline = 'cumulative' | 'none';
+export const MODE_IDS: readonly ModeId[] = ["cli", "desktop", "vscode"];
 
-export type DelegateRequest = {
+interface ModeSpec {
+  id: ModeId;
+  candidates: (env: PlatformEnv) => readonly string[];
+}
+
+export type UsageBaseline = "cumulative" | "none";
+
+export interface DelegateRequest {
   onInvocation?: (row: Invocation) => void;
   onResume?: (sessionId: string, resumesUsed: number) => void;
   collectUsage?: boolean;
@@ -41,7 +49,7 @@ export type DelegateRequest = {
   targetSlot?: string;
   timeoutMs: number;
   outputCapBytes: number;
-  attachments: ReadonlyArray<string>;
+  attachments: readonly string[];
   /** Slot log (stdout stream); the spill brief is written beside it. */
   logPath: string;
   /** Spill target when the prompt cannot ride on argv. */
@@ -54,8 +62,8 @@ export type DelegateRequest = {
   readOnlyBestEffort?: boolean;
   configSelectors?: Readonly<Record<string, string>>;
   /** Host read-command prefixes from config; providers with command allowlists permit them. */
-  readCommands?: ReadonlyArray<string>;
-};
+  readCommands?: readonly string[];
+}
 
 /** What `argv` receives: the request plus the runner-prepared prompt and resolved binary. */
 export type LaunchRequest = DelegateRequest & {
@@ -69,15 +77,15 @@ export type LaunchRequest = DelegateRequest & {
   sessionPreset?: string | null;
 };
 
-export type Launch = {
-  argv: ReadonlyArray<string>;
+export interface Launch {
+  argv: readonly string[];
   stdin: string | null;
   env: Readonly<Record<string, string>>;
   cwd: string;
   promptFile?: string;
-};
+}
 
-export type ProcessResult = {
+export interface ProcessResult {
   exit: number | null;
   signal: string | null;
   /** Captured stdout text (at most the output cap). */
@@ -93,22 +101,33 @@ export type ProcessResult = {
   wrapUpStop?: true;
   /** OpenCode-owned teardown failure; callers must retain the path and report the unconfirmed exit. */
   lifecycleError?: string;
-};
+}
 
 export type RunOutcome =
-  | { status: 'ok'; text: string; sessionId: string | null; resume: string | null }
-  | { status: 'fail'; cls: FailureClass; detail: string; retryAfterMs?: number; retryWithoutEffort?: boolean };
+  | {
+      status: "ok";
+      text: string;
+      sessionId: string | null;
+      resume: string | null;
+    }
+  | {
+      status: "fail";
+      cls: FailureClass;
+      detail: string;
+      retryAfterMs?: number;
+      retryWithoutEffort?: boolean;
+    };
 
 /** One measured OpenCode lifecycle step: enums and bounded integers only, never raw output or configuration. */
-export type LifecycleStep = {
-  step: 'debug-config' | 'debug-agents' | 'prepare' | 'response' | 'teardown';
+export interface LifecycleStep {
+  step: "debug-config" | "debug-agents" | "prepare" | "response" | "teardown";
   elapsedMs: number;
   budgetMs: number;
-  outcome: 'ok' | 'failed' | 'timeout' | 'unconfirmed';
-};
+  outcome: "ok" | "failed" | "timeout" | "unconfirmed";
+}
 
 /** One launch attempt, journaled on the slot row; `outcome` is `ok` or a failure class (`launch-failed` when the launch threw). */
-export type Invocation = {
+export interface Invocation {
   provider: ProviderId;
   model: string | null;
   mode: ModeId;
@@ -120,44 +139,53 @@ export type Invocation = {
   endMs?: number;
   outcome: string;
   usage?: DiagnosticUsage;
-  responses?: Array<DelegateResponse>;
-  coverage?: Array<CoverageReason>;
+  responses?: DelegateResponse[];
+  coverage?: CoverageReason[];
   usageBaseline?: UsageBaseline;
   usageWindowEndMs?: number;
-  lifecycleSteps?: Array<LifecycleStep>;
-  /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */ nudge?: true;
-  /** Set on the wrap-up resume launch. */ wrapUp?: true;
-};
+  lifecycleSteps?: LifecycleStep[];
+  /** Set on every launch with a resume id: idle stop, empty answer, capacity failure or missing report. */
+  nudge?: true;
+  /** Set on the wrap-up resume launch. */
+  wrapUp?: true;
+}
 
 /** What a wave worker run returns: the provider outcome plus every attempt it took. */
-export type RunResult = { outcome: RunOutcome; invocations: Array<Invocation> };
+export interface RunResult {
+  outcome: RunOutcome;
+  invocations: Invocation[];
+}
 
 export type Prelaunch =
-  | { kind: 'launch'; env: Readonly<Record<string, string>>; release: () => void | Promise<void> }
-  | { kind: 'fail'; outcome: Extract<RunOutcome, { status: 'fail' }> };
+  | {
+      kind: "launch";
+      env: Readonly<Record<string, string>>;
+      release: () => void | Promise<void>;
+    }
+  | { kind: "fail"; outcome: Extract<RunOutcome, { status: "fail" }> };
 
-export type PreparePorts = {
+export interface PreparePorts {
   /** GET `<endpoint>/models`: model ids, or null when the server is offline. */
-  fetchModels(endpoint: string): Promise<ReadonlyArray<string> | null>;
+  fetchModels: (endpoint: string) => Promise<readonly string[] | null>;
   /** Acquires the local GPU concurrency lock; resolves to its release. */
-  acquireGpuLock(): Promise<() => void | Promise<void>>;
-};
+  acquireGpuLock: () => Promise<() => void | Promise<void>>;
+}
 
-type SandboxSpec = {
+interface SandboxSpec {
   /** Flags `argv` adds only when `sandbox: true`. */
-  flags: ReadonlyArray<string>;
+  flags: readonly string[];
   /** Output signature meaning the sandbox did not take effect. */
   inactive: RegExp;
-  supported(env: PlatformEnv): boolean;
-};
+  supported: (env: PlatformEnv) => boolean;
+}
 
 /** What a usage parser receives; DB-backed providers count only rows created inside the launch window. */
-export type ProviderUsageContext = {
+export interface ProviderUsageContext {
   mode: ModeId;
   platform: PlatformEnv;
   env: Readonly<Record<string, string | undefined>>;
   appDataDir?: string;
-  readSqliteGenMetadata?: (dbPath: string) => ReadonlyArray<Uint8Array> | null;
+  readSqliteGenMetadata?: (dbPath: string) => readonly Uint8Array[] | null;
   /** Epoch ms immediately before the launch and after its teardown. */
   launchStartMs?: number;
   launchEndMs?: number;
@@ -167,32 +195,41 @@ export type ProviderUsageContext = {
   sessionId?: string | undefined;
   collectResponses?: true;
   transcripts?: { fs: HostUsageFs; budget: ReadBudget };
-};
+}
 
-export type ProviderSpec = {
+export interface ProviderSpec {
   id: ProviderId;
-  modes: ReadonlyArray<ModeSpec>;
+  modes: readonly ModeSpec[];
   /** Read-only controls `argv` always includes. */
-  readOnlyFlags: ReadonlyArray<string>;
-  argv(req: LaunchRequest, mode: ModeId): Launch;
-  parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
+  readOnlyFlags: readonly string[];
+  argv: (req: LaunchRequest, mode: ModeId) => Launch;
+  parse: (out: ProcessResult, req: LaunchRequest) => RunOutcome;
   /** Process-tree ownership requires bounded settlement and optional lifecycle evidence. */
   ownedTreeLabel?: string;
-  stepEvent?(line: string): 'step-start' | 'step-end' | null;
-  usage?(raw: string, context?: ProviderUsageContext): DiagnosticUsage | undefined;
-  sessionUsage?(raw: string, context: ProviderUsageContext): SessionRead | undefined;
+  stepEvent?: (line: string) => "step-start" | "step-end" | null;
+  usage?: (
+    raw: string,
+    context?: ProviderUsageContext
+  ) => DiagnosticUsage | undefined;
+  sessionUsage?: (
+    raw: string,
+    context: ProviderUsageContext
+  ) => SessionRead | undefined;
   /** An attempt can identify a session even when stdout has no session ID. */
   sessionUsageFromAttempt?: true;
   /** The collector can return valid counters with partial transcript coverage. */
   acceptPartialSessionUsage?: true;
-  resumeUsage?: 'per-launch' | 'cumulative' | undefined;
+  resumeUsage?: "per-launch" | "cumulative" | undefined;
   /** A stdout record kind that reports only the current launch inside a cumulative session. */
   perLaunchUsageProvenance?: string;
   /** A completed event that proves a zero-token response was observed. */
   zeroUsageProvenance?: string;
   invocationAttribution?: {
-    normalize?(model: string | null, effort: string | null): { model: string | null; effort: string | null };
-    measured: 'prefer-measured' | 'measured-only';
+    normalize?: (
+      model: string | null,
+      effort: string | null
+    ) => { model: string | null; effort: string | null };
+    measured: "prefer-measured" | "measured-only";
     /** A report kind that establishes model attribution even when per-model baselines are missing. */
     retainWithoutBaselineProvenance?: string;
   };
@@ -205,29 +242,29 @@ export type ProviderSpec = {
   /** Host platform whose native subagents can serve this provider's targets. */
   native?: ProviderId;
   /** Classes that advance to the next mode (spec §6.4). */
-  modeCascadeOn: ReadonlyArray<FailureClass>;
-  resumeCommand(id: string): string;
+  modeCascadeOn: readonly FailureClass[];
+  resumeCommand: (id: string) => string;
   /** True when argv sets `--session-id <sessionPreset>` on a fresh launch. */
   presetsSession?: true;
   /** Session id of a finished or killed attempt when the attempt shows the session exists; null otherwise. */
-  attemptSession?(out: ProcessResult, req: LaunchRequest): string | null;
+  attemptSession?: (out: ProcessResult, req: LaunchRequest) => string | null;
   /** The CLI writes nothing until exit (single JSON envelope), so silence is not idleness; only the deadline applies. */
   silentUntilExit?: true;
-  prepare?(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch>;
-};
+  prepare?: (req: LaunchRequest, ports: PreparePorts) => Promise<Prelaunch>;
+}
 
 export interface ProcessPort {
   /** Launches detached (own process group on POSIX), streaming stdout to `logPath` up to `capBytes`; `onActivity` fires per stdout or stderr chunk. */
-  start(
+  start: (
     launch: Launch,
     io: {
       logPath: string;
       capBytes: number;
       onActivity?: () => void;
       onLine?: (line: string, fragment?: boolean) => void;
-    },
-  ): { pid: number; done: Promise<ProcessResult> };
-  signal(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void;
+    }
+  ) => { pid: number; done: Promise<ProcessResult> };
+  signal: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
   /** Settle only the invocation's POSIX group; false means exit is unconfirmed, not permission to remove its directory. */
-  settleGroup?(pid: number, budgetMs: number): Promise<boolean>;
+  settleGroup?: (pid: number, budgetMs: number) => Promise<boolean>;
 }

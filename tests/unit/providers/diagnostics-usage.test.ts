@@ -1,38 +1,45 @@
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { test } from 'node:test';
-import { DatabaseSync } from 'node:sqlite';
-import { codex } from '../../../skills/dispatch/scripts/providers/codex.ts';
-import { claude } from '../../../skills/dispatch/scripts/providers/claude.ts';
-import { agy } from '../../../skills/dispatch/scripts/providers/agy.ts';
-import { opencode } from '../../../skills/dispatch/scripts/providers/opencode.ts';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { test } from "node:test";
+
+import { currentPlatform } from "../../../skills/dispatch/scripts/lib/platform.ts";
 import {
   normalizeAgyModelEffort,
   decodeAgyGenMetadata,
   readAgySqliteGenMetadata,
-} from '../../../skills/dispatch/scripts/lib/usage/agy.ts';
-import type { PlatformEnv } from '../../../skills/dispatch/scripts/providers/types.ts';
-import { observeTool } from '../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts';
-import { sessionFacts } from '../../../skills/dispatch/scripts/toolkit/diagnostics.ts';
-import { sanitizeFacts } from '../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts';
-import { sessionFixture } from '../toolkit/helpers/session.ts';
-import { lines, memoryFs } from '../lib/usage/helpers/memory-fs.ts';
-import { copilot } from '../../../skills/dispatch/scripts/providers/copilot.ts';
-import { currentPlatform } from '../../../skills/dispatch/scripts/lib/platform.ts';
-import { delegateRequest } from '../../helpers/delegate-request.ts';
+} from "../../../skills/dispatch/scripts/lib/usage/agy.ts";
+import { agy } from "../../../skills/dispatch/scripts/providers/agy.ts";
+import { claude } from "../../../skills/dispatch/scripts/providers/claude.ts";
+import { codex } from "../../../skills/dispatch/scripts/providers/codex.ts";
+import { copilot } from "../../../skills/dispatch/scripts/providers/copilot.ts";
+import { opencode } from "../../../skills/dispatch/scripts/providers/opencode.ts";
+import type { PlatformEnv } from "../../../skills/dispatch/scripts/providers/types.ts";
+import { observeTool } from "../../../skills/dispatch/scripts/toolkit/diagnostics-capture.ts";
+import { sessionFacts } from "../../../skills/dispatch/scripts/toolkit/diagnostics.ts";
+import { sanitizeFacts } from "../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
+import { delegateRequest } from "../../helpers/delegate-request.ts";
+import { defined } from "../../helpers/guards.ts";
+import { lines, memoryFs } from "../lib/usage/helpers/memory-fs.ts";
+import { sessionFixture } from "../toolkit/helpers/session.ts";
 
-test('Copilot provider collection uses proven session identity', () => {
+test("Copilot provider collection uses proven session identity", () => {
+  // eslint-disable-next-line eslint/no-shadow -- fixture-local name intentionally mirrors the outer contract.
   const fs = memoryFs({
-    '/home/.copilot/session-state/proven/events.jsonl': lines({
-      type: 'session.usage_record',
+    "/home/.copilot/session-state/proven/events.jsonl": lines({
+      type: "session.usage_record",
       timestamp: new Date(1000).toISOString(),
       data: {
         usage: {
-          accounting: { sourceSessionId: 'source', sequence: 1, usageId: 'usage' },
-          model: 'custom/model',
-          reasoningEffort: 'max',
+          accounting: {
+            sourceSessionId: "source",
+            sequence: 1,
+            usageId: "usage",
+          },
+          model: "custom/model",
+          reasoningEffort: "max",
           inputTokens: 100,
           cacheReadTokens: 10,
           cacheWriteTokens: 20,
@@ -41,132 +48,208 @@ test('Copilot provider collection uses proven session identity', () => {
       },
     }),
   });
+
   const context = {
-    mode: 'cli' as const,
+    mode: "cli" as const,
     platform: {
-      os: 'linux' as const,
-      arch: 'x64',
+      os: "linux" as const,
+      arch: "x64",
       wsl: false,
       bubblewrap: true,
       argvLimit: 10_000,
-      home: '/home',
+      home: "/home",
       path: [],
       pathExt: [],
     },
-    env: { COPILOT_AGENT_SESSION_ID: 'inherited' },
+    env: { COPILOT_AGENT_SESSION_ID: "inherited" },
     launchStartMs: 0,
     launchEndMs: 2000,
     transcripts: { fs, budget: { remaining: 10_000 } },
   };
-  assert.equal(copilot.sessionUsage!('Session ID: proven', context)?.usage, undefined);
+
+  assert.equal(
+    defined(copilot.sessionUsage)("Session ID: proven", context)?.usage,
+    undefined
+  );
   assert.deepEqual(fs.reads, []);
-  const result = copilot.sessionUsage!('', { ...context, sessionId: 'proven' });
+
+  const result = defined(copilot.sessionUsage)("", {
+    ...context,
+    sessionId: "proven",
+  });
+
   assert.equal(result?.usage?.input, 70);
-  assert.equal(result?.usage?.actualEffort, 'max');
-  assert.deepEqual(result?.usage?.actualModels, ['custom/model']);
+  assert.equal(result?.usage?.actualEffort, "max");
+  assert.deepEqual(result?.usage?.actualModels, ["custom/model"]);
 });
 
-type RawFixture = { cliVersion: string; stdout: string };
+interface RawFixture {
+  cliVersion: string;
+  stdout: string;
+}
+
 const rawFixtures = new Map<string, RawFixture>([
-  ['codex', JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-codex.json', import.meta.url), 'utf8'))],
-  ['claude', JSON.parse(fs.readFileSync(new URL('./fixtures/diagnostics-claude.json', import.meta.url), 'utf8'))],
+  [
+    "codex",
+    JSON.parse(
+      fs.readFileSync(
+        new URL("fixtures/diagnostics-codex.json", import.meta.url),
+        "utf-8"
+      )
+    ),
+  ],
+  [
+    "claude",
+    JSON.parse(
+      fs.readFileSync(
+        new URL("fixtures/diagnostics-claude.json", import.meta.url),
+        "utf-8"
+      )
+    ),
+  ],
 ]);
+
 const fixture = (provider: string) => {
-  const base = rawFixtures.get(provider)!;
+  const base = defined(rawFixtures.get(provider));
+
   return { cliVersion: base.cliVersion, stdout: base.stdout };
 };
 
-test('Codex completed turn maps token usage to uncached input', () => {
-  const f = fixture('codex'),
-    result = codex.usage!(f.stdout);
+test("Codex completed turn maps token usage to uncached input", () => {
+  const f = fixture("codex");
+  const result = defined(codex.usage)(f.stdout);
+
   assert.deepEqual(result, {
     input: 54_559,
     output: 1468,
-    scope: 'invocation',
-    provenance: 'codex.turn.completed',
-    inputSemantics: 'uncached',
+    scope: "invocation",
+    provenance: "codex.turn.completed",
+    inputSemantics: "uncached",
     cacheRead: 221_056,
     cacheWrite: 0,
     reasoning: 70,
   });
 });
 
-test('repeated completed summaries never add counters', () => {
-  const f = fixture('codex');
-  assert.deepEqual(codex.usage!(`${f.stdout}\n${f.stdout}`), codex.usage!(f.stdout));
+test("repeated completed summaries never add counters", () => {
+  const f = fixture("codex");
+  assert.deepEqual(
+    defined(codex.usage)(`${f.stdout}\n${f.stdout}`),
+    defined(codex.usage)(f.stdout)
+  );
 });
 
-test('malformed or truncated structured output is unavailable', () => {
+test("malformed or truncated structured output is unavailable", () => {
   for (const p of [codex, claude]) {
-    for (const raw of ['text only', '{', '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}']) {
-      assert.equal(p.usage!(raw), undefined);
+    for (const raw of [
+      "text only",
+      "{",
+      '{"type":"result","usage":{"input_tokens":-1,"output_tokens":1}}',
+    ]) {
+      assert.equal(defined(p.usage)(raw), undefined);
     }
   }
 });
 
-test('Claude whole-tree thinking counters remain separate and reject unsafe sums', () => {
-  const event = JSON.parse(fixture('claude').stdout);
-  const model = Object.keys(event.modelUsage)[0]!;
+test("Claude whole-tree thinking counters remain separate and reject unsafe sums", () => {
+  // eslint-disable-next-line typescript/no-unsafe-assignment -- fixture/mock boundary: values are validated by helpers before use.
+  const event = JSON.parse(fixture("claude").stdout);
+  // eslint-disable-next-line typescript/no-unsafe-argument, typescript/no-unsafe-member-access -- fixture/mock boundary: values are validated by helpers before use.
+  const model = defined(Object.keys(event.modelUsage)[0]);
+  // eslint-disable-next-line typescript/no-unsafe-member-access -- fixture/mock boundary: values are validated by helpers before use.
   event.modelUsage[model].thinkingTokens = 4;
-  event.modelUsage.second = { inputTokens: 1, outputTokens: 2, thinkingTokens: 7 };
-  const parsed = claude.usage!(JSON.stringify(event));
+  // eslint-disable-next-line typescript/no-unsafe-member-access -- fixture/mock boundary: values are validated by helpers before use.
+  event.modelUsage.second = {
+    inputTokens: 1,
+    outputTokens: 2,
+    thinkingTokens: 7,
+  };
+  const parsed = defined(claude.usage)(JSON.stringify(event));
   assert.equal(parsed?.reasoning, 11);
   assert.equal(parsed?.models?.[model]?.reasoning, 4);
-  assert.equal(parsed?.models?.['second']?.reasoning, 7);
-  event.modelUsage['second'].thinkingTokens = Number.MAX_SAFE_INTEGER;
-  assert.equal(claude.usage!(JSON.stringify(event)), undefined);
+  assert.equal(parsed?.models?.["second"]?.reasoning, 7);
+  // eslint-disable-next-line typescript/no-unsafe-member-access -- fixture/mock boundary: values are validated by helpers before use.
+  event.modelUsage["second"].thinkingTokens = Number.MAX_SAFE_INTEGER;
+  assert.equal(defined(claude.usage)(JSON.stringify(event)), undefined);
 });
 
-test('Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none', () => {
-  const f = fixture('claude'),
-    base = claude.usage!(f.stdout);
-  assert.equal(base?.input, 2759);
-  assert.equal(base?.actualModels?.[0], 'claude-haiku-4-5-20251001');
-  assert.equal(base?.inputSemantics, 'uncached');
+test("Claude modelUsage keeps per-model counters beside the aggregate; Codex reports none", () => {
+  const f = fixture("claude");
+  const base = defined(claude.usage)(f.stdout);
 
+  assert.equal(base?.input, 2759);
+  assert.equal(base?.actualModels?.[0], "claude-haiku-4-5-20251001");
+  assert.equal(base?.inputSemantics, "uncached");
+
+  // eslint-disable-next-line typescript/no-unsafe-assignment -- fixture/mock boundary: values are validated by helpers before use.
   const event = JSON.parse(f.stdout);
-  event.modelUsage['claude-opus-4-1'] = {
+  // eslint-disable-next-line typescript/no-unsafe-member-access -- fixture/mock boundary: values are validated by helpers before use.
+  event.modelUsage["claude-opus-4-1"] = {
     inputTokens: 10,
     outputTokens: 20,
     cacheReadInputTokens: 30,
     cacheCreationInputTokens: 40,
   };
-  const result = claude.usage!(JSON.stringify(event));
+  const result = defined(claude.usage)(JSON.stringify(event));
   assert.deepEqual(result?.models, {
-    'claude-haiku-4-5-20251001': { input: 2759, output: 16, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
-    'claude-opus-4-1': { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 },
+    "claude-haiku-4-5-20251001": {
+      input: 2759,
+      output: 16,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+    },
+    "claude-opus-4-1": { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 },
   });
   assert.equal(result?.input, 2769);
-  assert.equal(codex.usage!(fixture('codex').stdout)?.models, undefined);
+  assert.equal(
+    defined(codex.usage)(fixture("codex").stdout)?.models,
+    undefined
+  );
 });
 
-test('agy usage maps the print JSON usage block to uncached counters', () => {
+test("agy usage maps the print JSON usage block to uncached counters", () => {
   // Shape of a recorded agy `--output-format json` envelope; counts are synthetic.
   const stdout = JSON.stringify({
-    conversation_id: 'c1',
-    status: 'success',
-    response: 'ok',
+    conversation_id: "c1",
+    status: "success",
+    response: "ok",
     duration_seconds: 12,
     num_turns: 3,
-    usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824, total_tokens: 409 },
+    usage: {
+      input_tokens: 364,
+      output_tokens: 45,
+      thinking_tokens: 39,
+      cache_read_tokens: 7824,
+      total_tokens: 409,
+    },
   });
+
   assert.deepEqual(agy.usage?.(stdout), {
     input: 364,
     output: 45,
     cacheRead: 7824,
     reasoning: 39,
-    scope: 'invocation',
-    provenance: 'agy.usage',
-    inputSemantics: 'uncached',
+    scope: "invocation",
+    provenance: "agy.usage",
+    inputSemantics: "uncached",
   });
-  for (const raw of ['text only', '{', '{"usage":{"input_tokens":-1,"output_tokens":1}}']) {
+
+  for (const raw of [
+    "text only",
+    "{",
+    '{"usage":{"input_tokens":-1,"output_tokens":1}}',
+  ]) {
     assert.equal(agy.usage?.(raw), undefined);
   }
 });
 
-const opencodeProbe = fs.readFileSync(new URL('./fixtures/opencode-format-json.jsonl', import.meta.url), 'utf8');
+const opencodeProbe = fs.readFileSync(
+  new URL("fixtures/opencode-format-json.jsonl", import.meta.url),
+  "utf-8"
+);
 
-test('opencode json usage parses probe fixture', () => {
+test("opencode json usage parses probe fixture", () => {
   // Copy of the sanitized live probe: `tokens.input` excludes cache reads (installed v2.2.5 maps
   // nonCachedInputTokens to input and cache.read to cacheReadInputTokens).
   assert.deepEqual(opencode.usage?.(opencodeProbe), {
@@ -175,16 +258,17 @@ test('opencode json usage parses probe fixture', () => {
     reasoning: 40,
     cacheRead: 70,
     cacheWrite: 0,
-    scope: 'invocation',
-    provenance: 'opencode.step.finish',
-    inputSemantics: 'uncached',
+    scope: "invocation",
+    provenance: "opencode.step.finish",
+    inputSemantics: "uncached",
   });
 });
 
-const codexStarted = () => JSON.stringify({ type: 'turn.started' });
+const codexStarted = () => JSON.stringify({ type: "turn.started" });
+
 const codexCompleted = (input: number, output: number) =>
   JSON.stringify({
-    type: 'turn.completed',
+    type: "turn.completed",
     usage: {
       input_tokens: input,
       output_tokens: output,
@@ -194,45 +278,74 @@ const codexCompleted = (input: number, output: number) =>
     },
   });
 
-test('codex sums distinct turns with uncached input', () => {
-  const usage = codex.usage!(
-    [codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(200, 20)].join('\n'),
+test("codex sums distinct turns with uncached input", () => {
+  const usage = defined(codex.usage)(
+    [
+      codexStarted(),
+      codexCompleted(100, 10),
+      codexStarted(),
+      codexCompleted(200, 20),
+    ].join("\n")
   );
+
   assert.deepEqual(usage, {
     input: 300,
     output: 30,
     cacheRead: 0,
     cacheWrite: 0,
     reasoning: 0,
-    scope: 'invocation',
-    provenance: 'codex.turn.completed',
-    inputSemantics: 'uncached',
+    scope: "invocation",
+    provenance: "codex.turn.completed",
+    inputSemantics: "uncached",
   });
-  const equalTurns = codex.usage!(
-    [codexStarted(), codexCompleted(100, 10), codexStarted(), codexCompleted(100, 10)].join('\n'),
+
+  const equalTurns = defined(codex.usage)(
+    [
+      codexStarted(),
+      codexCompleted(100, 10),
+      codexStarted(),
+      codexCompleted(100, 10),
+    ].join("\n")
   );
+
   assert.equal(equalTurns?.input, 200);
   assert.equal(equalTurns?.output, 20);
 });
 
-function encodeVarint(val: number | bigint): Array<number> {
-  const bytes: Array<number> = [];
+const encodeVarint = (val: number | bigint) => {
+  const bytes: number[] = [];
   let n = BigInt(val);
+
   while (n > 0x7fn) {
+    // eslint-disable-next-line no-bitwise
     bytes.push(Number((n & 0x7fn) | 0x80n));
+    // eslint-disable-next-line no-bitwise
     n >>= 7n;
   }
+
+  // eslint-disable-next-line no-bitwise
   bytes.push(Number(n & 0x7fn));
+
   return bytes;
-}
-function encodeTag(fieldNum: number, wireType: number): Array<number> {
-  return encodeVarint((fieldNum << 3) | wireType);
-}
-function encodeLengthDelimited(fieldNum: number, content: Uint8Array | Array<number> | string): Array<number> {
-  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : Buffer.from(content);
+};
+
+const encodeTag = (fieldNum: number, wireType: number) =>
+  // eslint-disable-next-line no-bitwise
+  encodeVarint((fieldNum << 3) | wireType);
+
+const encodeLengthDelimited = (
+  fieldNum: number,
+  content: Uint8Array | number[] | string
+) => {
+  const buf =
+    typeof content === "string"
+      ? Buffer.from(content, "utf-8")
+      : Buffer.from(content);
+
   return [...encodeTag(fieldNum, 2), ...encodeVarint(buf.length), ...buf];
-}
-function buildGenMetadataBlob(options: {
+};
+
+const buildGenMetadataBlob = (options: {
   input?: number;
   output?: number;
   cacheRead?: number;
@@ -241,46 +354,57 @@ function buildGenMetadataBlob(options: {
   displayName?: string;
   lastStepIndex?: number;
   unknownField?: boolean;
-}): Uint8Array {
-  const tag1Fields: Array<number> = [];
-  const counters: Array<number> = [];
+}) => {
+  const tag1Fields: number[] = [];
+  const counters: number[] = [];
+
   if (options.input !== undefined) {
     counters.push(...encodeTag(2, 0), ...encodeVarint(options.input));
   }
+
   if (options.output !== undefined) {
     counters.push(...encodeTag(3, 0), ...encodeVarint(options.output));
   }
+
   if (options.cacheRead !== undefined) {
     counters.push(...encodeTag(5, 0), ...encodeVarint(options.cacheRead));
   }
+
   if (options.reasoning !== undefined) {
     counters.push(...encodeTag(9, 0), ...encodeVarint(options.reasoning));
   }
+
   if (counters.length > 0) {
     tag1Fields.push(...encodeLengthDelimited(4, counters));
   }
+
   if (options.modelSlug !== undefined) {
     tag1Fields.push(...encodeLengthDelimited(19, options.modelSlug));
   }
+
   if (options.lastStepIndex !== undefined) {
     const kv = [
-      ...encodeLengthDelimited(1, 'last_step_index'),
+      ...encodeLengthDelimited(1, "last_step_index"),
       ...encodeLengthDelimited(2, String(options.lastStepIndex)),
     ];
+
     tag1Fields.push(...encodeLengthDelimited(20, kv));
   }
+
   if (options.displayName !== undefined) {
     tag1Fields.push(...encodeLengthDelimited(21, options.displayName));
   }
-  if (options.unknownField) {
+
+  if (options.unknownField === true) {
     tag1Fields.push(...encodeTag(99, 1), 1, 2, 3, 4, 5, 6, 7, 8);
   }
-  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
-}
 
-const makePlatform = (home: string): PlatformEnv => ({
+  return new Uint8Array(encodeLengthDelimited(1, tag1Fields));
+};
+
+const makePlatform = (home: string) => ({
   os: currentPlatform().os,
-  arch: 'x64',
+  arch: "x64",
   wsl: false,
   bubblewrap: false,
   argvLimit: 100_000,
@@ -289,47 +413,82 @@ const makePlatform = (home: string): PlatformEnv => ({
   pathExt: [],
 });
 
-test('agy model and effort normalization and gen_metadata attribution', () => {
+// eslint-disable-next-line eslint/complexity -- scenario matrix test keeps all cases in one place.
+test("agy model and effort normalization and gen_metadata attribution", () => {
   // 1. normalizeAgyModelEffort
   // display-name effort precedence over rawEffort and rawModel suffix
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash (Medium)'), {
-    model: 'gemini-3.8-flash',
-    effort: 'medium',
-  });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', 'high', 'Gemini 3.8 Flash'), {
-    model: 'gemini-3.8-flash',
-    effort: 'high',
-  });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-low', null, 'Gemini 3.8 Flash'), {
-    model: 'gemini-3.8-flash',
-    effort: 'low',
-  });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash', null, null), {
-    model: 'gemini-3.8-flash',
+  assert.deepEqual(
+    normalizeAgyModelEffort(
+      "gemini-3.8-flash-low",
+      "high",
+      "Gemini 3.8 Flash (Medium)"
+    ),
+    {
+      model: "gemini-3.8-flash",
+      effort: "medium",
+    }
+  );
+  assert.deepEqual(
+    normalizeAgyModelEffort("gemini-3.8-flash-low", "high", "Gemini 3.8 Flash"),
+    {
+      model: "gemini-3.8-flash",
+      effort: "high",
+    }
+  );
+  assert.deepEqual(
+    normalizeAgyModelEffort("gemini-3.8-flash-low", null, "Gemini 3.8 Flash"),
+    {
+      model: "gemini-3.8-flash",
+      effort: "low",
+    }
+  );
+  assert.deepEqual(normalizeAgyModelEffort("gemini-3.8-flash", null, null), {
+    model: "gemini-3.8-flash",
     effort: null,
   });
 
   // backend suffixes -trial, -tiered, -control, -n
-  assert.deepEqual(normalizeAgyModelEffort('gemini-4-argon-trial'), { model: 'gemini-4-argon', effort: null });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-tiered'), { model: 'gemini-3.8-flash', effort: null });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-control'), { model: 'gemini-3.8-flash', effort: null });
-  assert.deepEqual(normalizeAgyModelEffort('gemini-3.8-flash-n'), { model: 'gemini-3.8-flash', effort: null });
+  assert.deepEqual(normalizeAgyModelEffort("gemini-4-argon-trial"), {
+    model: "gemini-4-argon",
+    effort: null,
+  });
+  assert.deepEqual(normalizeAgyModelEffort("gemini-3.8-flash-tiered"), {
+    model: "gemini-3.8-flash",
+    effort: null,
+  });
+  assert.deepEqual(normalizeAgyModelEffort("gemini-3.8-flash-control"), {
+    model: "gemini-3.8-flash",
+    effort: null,
+  });
+  assert.deepEqual(normalizeAgyModelEffort("gemini-3.8-flash-n"), {
+    model: "gemini-3.8-flash",
+    effort: null,
+  });
 
   // Claude / Gemini / GPT-OSS naming
-  assert.deepEqual(normalizeAgyModelEffort('c0', 'low', 'Claude Opus 5.5 (Low)'), {
-    model: 'claude-opus-5-5',
-    effort: 'low',
-  });
-  assert.deepEqual(normalizeAgyModelEffort(null, null, 'Gemini 4 Argon (Medium)'), {
-    model: 'gemini-4-argon',
-    effort: 'medium',
-  });
-  assert.deepEqual(normalizeAgyModelEffort(null, null, 'GPT-OSS 120B (High)'), {
-    model: 'gpt-oss-120b',
-    effort: 'high',
+  assert.deepEqual(
+    normalizeAgyModelEffort("c0", "low", "Claude Opus 5.5 (Low)"),
+    {
+      model: "claude-opus-5-5",
+      effort: "low",
+    }
+  );
+  assert.deepEqual(
+    normalizeAgyModelEffort(null, null, "Gemini 4 Argon (Medium)"),
+    {
+      model: "gemini-4-argon",
+      effort: "medium",
+    }
+  );
+  assert.deepEqual(normalizeAgyModelEffort(null, null, "GPT-OSS 120B (High)"), {
+    model: "gpt-oss-120b",
+    effort: "high",
   });
   // rawModel containing display name with parenthesized effort
-  assert.deepEqual(normalizeAgyModelEffort('Gemini 4 Argon (Medium)'), { model: 'gemini-4-argon', effort: 'medium' });
+  assert.deepEqual(normalizeAgyModelEffort("Gemini 4 Argon (Medium)"), {
+    model: "gemini-4-argon",
+    effort: "medium",
+  });
 
   // 2. decodeAgyGenMetadata
   const blob = buildGenMetadataBlob({
@@ -337,15 +496,16 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
     output: 80,
     cacheRead: 300,
     reasoning: 50,
-    modelSlug: 'gemini-4-argon-trial',
-    displayName: 'Gemini 4 Argon (Medium)',
+    modelSlug: "gemini-4-argon-trial",
+    displayName: "Gemini 4 Argon (Medium)",
     lastStepIndex: 42,
     unknownField: true,
   });
+
   const decoded = decodeAgyGenMetadata(blob);
   assert.deepEqual(decoded, {
-    model: 'gemini-4-argon',
-    effort: 'medium',
+    model: "gemini-4-argon",
+    effort: "medium",
     hasDisplayName: true,
     lastStepIndex: 42,
     input: 1200,
@@ -356,21 +516,34 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
 
   // non-throwing on truncated or malformed buffers
   assert.doesNotThrow(() => decodeAgyGenMetadata(blob.subarray(0, 15)));
-  assert.doesNotThrow(() => decodeAgyGenMetadata(new Uint8Array([0xff, 0xff, 0xff])));
-  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array(0)), { model: null, effort: null });
-  // varint negative/overflow does not hang
-  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array([0x0a, 0xfa, 0xff, 0xff, 0xff, 0x0f])), {
+  assert.doesNotThrow(() =>
+    decodeAgyGenMetadata(new Uint8Array([0xff, 0xff, 0xff]))
+  );
+  assert.deepEqual(decodeAgyGenMetadata(new Uint8Array(0)), {
     model: null,
     effort: null,
   });
+  // varint negative/overflow does not hang
+  assert.deepEqual(
+    decodeAgyGenMetadata(new Uint8Array([0x0a, 0xfa, 0xff, 0xff, 0xff, 0x0f])),
+    {
+      model: null,
+      effort: null,
+    }
+  );
 
   // 3. readAgySqliteGenMetadata
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-usage-test-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-usage-test-"));
+
   try {
-    const dbPath = path.join(tmpDir, 'test.db');
+    const dbPath = path.join(tmpDir, "test.db");
     const db = new DatabaseSync(dbPath);
-    db.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
-    const insertStmt = db.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+    db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+
+    const insertStmt = db.prepare(
+      "INSERT INTO gen_metadata (idx, data) VALUES (?, ?)"
+    );
+
     insertStmt.run(0, blob);
     db.close();
 
@@ -380,169 +553,227 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
 
     // 64 MiB MAX_FILE_BYTES cap
     assert.equal(readAgySqliteGenMetadata(dbPath, { maxBytes: 10 }), null);
-    assert.throws(() => readAgySqliteGenMetadata(dbPath, { maxBytes: 10, throwOnError: true }), /maxBytes/);
+    assert.throws(
+      () =>
+        readAgySqliteGenMetadata(dbPath, { maxBytes: 10, throwOnError: true }),
+      /maxBytes/u
+    );
 
     // 4. agy.usage with context and profile resolution
-    const tempHome = path.join(tmpDir, 'home');
-    const cliConvDir = path.join(tempHome, '.gemini', 'antigravity-cli', 'conversations');
+    const tempHome = path.join(tmpDir, "home");
+
+    const cliConvDir = path.join(
+      tempHome,
+      ".gemini",
+      "antigravity-cli",
+      "conversations"
+    );
+
     fs.mkdirSync(cliConvDir, { recursive: true });
 
     // multi-turn DB: turn 0 has effort, turn 1 has no effort
-    const conv1Id = 'c1-multi';
+    const conv1Id = "c1-multi";
     const conv1Path = path.join(cliConvDir, `${conv1Id}.db`);
     const db1 = new DatabaseSync(conv1Path);
-    db1.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
-    const insert1 = db1.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+    db1.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+
+    const insert1 = db1.prepare(
+      "INSERT INTO gen_metadata (idx, data) VALUES (?, ?)"
+    );
+
     const turn0 = buildGenMetadataBlob({
       input: 100,
       output: 10,
-      displayName: 'Gemini 4 Argon (High)',
-      modelSlug: 'gemini-4-argon',
+      displayName: "Gemini 4 Argon (High)",
+      modelSlug: "gemini-4-argon",
     });
+
     const turn1 = buildGenMetadataBlob({
       input: 264,
       output: 35,
-      displayName: 'Gemini 4 Argon',
-      modelSlug: 'gemini-4-argon',
+      displayName: "Gemini 4 Argon",
+      modelSlug: "gemini-4-argon",
     });
+
     insert1.run(0, turn0);
     insert1.run(1, turn1);
     db1.close();
 
     const stdout1 = JSON.stringify({
       conversation_id: conv1Id,
-      usage: { input_tokens: 364, output_tokens: 45, thinking_tokens: 39, cache_read_tokens: 7824 },
+      usage: {
+        input_tokens: 364,
+        output_tokens: 45,
+        thinking_tokens: 39,
+        cache_read_tokens: 7824,
+      },
     });
+
     const parsed1 = agy.usage?.(stdout1, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
-      env: { ANTIGRAVITY_APP_DATA_DIR: '/other/host/dir' },
+      env: { ANTIGRAVITY_APP_DATA_DIR: "/other/host/dir" },
     });
+
     assert.deepEqual(parsed1, {
       input: 364,
       output: 45,
       cacheRead: 7824,
       reasoning: 39,
-      scope: 'invocation',
-      provenance: 'agy.usage',
-      inputSemantics: 'uncached',
-      actualModels: ['gemini-4-argon'],
+      scope: "invocation",
+      provenance: "agy.usage",
+      inputSemantics: "uncached",
+      actualModels: ["gemini-4-argon"],
       models: {
-        'gemini-4-argon': { input: 364, output: 45, cacheRead: 7824, reasoning: 39 },
+        "gemini-4-argon": {
+          input: 364,
+          output: 45,
+          cacheRead: 7824,
+          reasoning: 39,
+        },
       },
-      actualEffort: null, // turn 1 had Tag 1.21 without effort!
+      actualEffort: null,
     });
 
     // DB where Tag 1.21 is absent
-    const conv2Id = 'c2-no-display';
+    const conv2Id = "c2-no-display";
     const conv2Path = path.join(cliConvDir, `${conv2Id}.db`);
     const db2 = new DatabaseSync(conv2Path);
-    db2.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
-    const insert2 = db2.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
-    insert2.run(0, buildGenMetadataBlob({ input: 50, output: 5, modelSlug: 'gemini-3.8-flash' }));
+    db2.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+
+    const insert2 = db2.prepare(
+      "INSERT INTO gen_metadata (idx, data) VALUES (?, ?)"
+    );
+
+    insert2.run(
+      0,
+      buildGenMetadataBlob({
+        input: 50,
+        output: 5,
+        modelSlug: "gemini-3.8-flash",
+      })
+    );
     db2.close();
 
     const stdout2 = JSON.stringify({
       conversation_id: conv2Id,
       usage: { input_tokens: 50, output_tokens: 5 },
     });
+
     const parsed2 = agy.usage?.(stdout2, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
+
     assert.equal(parsed2?.actualEffort, undefined);
-    assert.deepEqual(parsed2?.actualModels, ['gemini-3.8-flash']);
+    assert.deepEqual(parsed2?.actualModels, ["gemini-3.8-flash"]);
 
     // Envelope model/effort fallback when DB is absent
     const stdoutEnv = JSON.stringify({
-      conversation_id: 'c-no-db',
-      model: 'gemini-3.8-flash-tiered',
-      effort: 'high',
+      conversation_id: "c-no-db",
+      model: "gemini-3.8-flash-tiered",
+      effort: "high",
       usage: { input_tokens: 20, output_tokens: 5 },
     });
+
     const parsedEnv = agy.usage?.(stdoutEnv, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
+
     assert.deepEqual(parsedEnv, {
       input: 20,
       output: 5,
-      scope: 'invocation',
-      provenance: 'agy.usage.envelope',
-      inputSemantics: 'uncached',
-      actualModels: ['gemini-3.8-flash'],
-      actualEffort: 'high',
+      scope: "invocation",
+      provenance: "agy.usage.envelope",
+      inputSemantics: "uncached",
+      actualModels: ["gemini-3.8-flash"],
+      actualEffort: "high",
       models: {
-        'gemini-3.8-flash': { input: 20, output: 5 },
+        "gemini-3.8-flash": { input: 20, output: 5 },
       },
     });
 
     // Envelope with display name and per-model usage when DB is absent
     const stdoutEnvModels = JSON.stringify({
-      conversation_id: 'c-models-env',
-      model: 'Gemini 4 Argon (Medium)',
+      conversation_id: "c-models-env",
+      model: "Gemini 4 Argon (Medium)",
       usage: { input_tokens: 300, output_tokens: 40 },
       models: {
-        'Gemini 4 Argon (Medium)': { input_tokens: 200, output_tokens: 30 },
-        'gemini-3.8-flash': { input_tokens: 100, output_tokens: 10 },
+        "Gemini 4 Argon (Medium)": { input_tokens: 200, output_tokens: 30 },
+        "gemini-3.8-flash": { input_tokens: 100, output_tokens: 10 },
       },
     });
+
     const parsedEnvModels = agy.usage?.(stdoutEnvModels, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
-    assert.deepEqual(parsedEnvModels?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
-    assert.equal(parsedEnvModels?.actualEffort, 'medium');
-    assert.equal(parsedEnvModels?.models?.['gemini-4-argon']?.input, 200);
+
+    assert.deepEqual(parsedEnvModels?.actualModels, [
+      "gemini-4-argon",
+      "gemini-3.8-flash",
+    ]);
+    assert.equal(parsedEnvModels?.actualEffort, "medium");
+    assert.equal(parsedEnvModels?.models?.["gemini-4-argon"]?.input, 200);
 
     // Envelope models map keys accumulate counters across identical slugs and infer key effort
     const stdoutCollision = JSON.stringify({
-      conversation_id: 'c-collision',
+      conversation_id: "c-collision",
       usage: { input_tokens: 300, output_tokens: 40 },
       models: {
-        'Gemini 4 Argon (Low)': { input_tokens: 150, output_tokens: 20 },
-        'Gemini 4 Argon (High)': { input_tokens: 150, output_tokens: 20 },
+        "Gemini 4 Argon (Low)": { input_tokens: 150, output_tokens: 20 },
+        "Gemini 4 Argon (High)": { input_tokens: 150, output_tokens: 20 },
       },
     });
+
     const parsedCollision = agy.usage?.(stdoutCollision, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
-    assert.deepEqual(parsedCollision?.actualModels, ['gemini-4-argon']);
+
+    assert.deepEqual(parsedCollision?.actualModels, ["gemini-4-argon"]);
     assert.equal(parsedCollision?.actualEffort, null);
-    assert.equal(parsedCollision?.models?.['gemini-4-argon']?.input, 300);
+    assert.equal(parsedCollision?.models?.["gemini-4-argon"]?.input, 300);
 
     // Consensus key effort when all model keys agree
     const stdoutAgree = JSON.stringify({
-      conversation_id: 'c-agree',
+      conversation_id: "c-agree",
       usage: { input_tokens: 300, output_tokens: 40 },
       models: {
-        'Gemini 4 Argon (Medium)': { input_tokens: 150, output_tokens: 20 },
-        'Gemini 3.8 Flash (Medium)': { input_tokens: 150, output_tokens: 20 },
+        "Gemini 4 Argon (Medium)": { input_tokens: 150, output_tokens: 20 },
+        "Gemini 3.8 Flash (Medium)": { input_tokens: 150, output_tokens: 20 },
       },
     });
+
     const parsedAgree = agy.usage?.(stdoutAgree, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
-    assert.deepEqual(parsedAgree?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
-    assert.equal(parsedAgree?.actualEffort, 'medium');
+
+    assert.deepEqual(parsedAgree?.actualModels, [
+      "gemini-4-argon",
+      "gemini-3.8-flash",
+    ]);
+    assert.equal(parsedAgree?.actualEffort, "medium");
 
     // Traversal conversation_id rejection
     const stdoutTraversal = JSON.stringify({
-      conversation_id: '../../x',
+      conversation_id: "../../x",
       usage: { input_tokens: 10, output_tokens: 2 },
     });
+
     const parsedTraversal = agy.usage?.(stdoutTraversal, {
-      mode: 'cli',
+      mode: "cli",
       platform: makePlatform(tempHome),
       env: {},
     });
+
     assert.equal(parsedTraversal?.actualModels, undefined);
     assert.equal(parsedTraversal?.actualEffort, undefined);
   } finally {
@@ -550,67 +781,91 @@ test('agy model and effort normalization and gen_metadata attribution', () => {
   }
 });
 
-test('delegate session id extraction across providers and agy budget skip', () => {
+test("delegate session id extraction across providers and agy budget skip", () => {
   const platform: PlatformEnv = {
     os: currentPlatform().os,
-    arch: 'x64',
+    arch: "x64",
     wsl: false,
     bubblewrap: false,
     argvLimit: 100_000,
-    home: '/home',
+    home: "/home",
     path: [],
     pathExt: [],
   };
-  const startMs = Date.parse('2026-11-14T08:00:10.500Z');
-  const endMs = Date.parse('2026-11-14T08:00:20.000Z');
+
+  const startMs = Date.parse("2026-11-14T08:00:10.500Z");
+  const endMs = Date.parse("2026-11-14T08:00:20.000Z");
 
   // Claude session_id
-  const claudeFile = '/home/.claude/projects/-repo/c-sess-1.jsonl';
+  const claudeFile = "/home/.claude/projects/-repo/c-sess-1.jsonl";
+
   const claudeFs = memoryFs({
     [claudeFile]: lines({
-      type: 'assistant',
-      timestamp: '2026-11-14T08:00:12.100Z',
-      message: { id: 'm1', model: 'claude-haiku-5-5', usage: { input_tokens: 15, output_tokens: 3 } },
+      type: "assistant",
+      timestamp: "2026-11-14T08:00:12.100Z",
+      message: {
+        id: "m1",
+        model: "claude-haiku-5-5",
+        usage: { input_tokens: 15, output_tokens: 3 },
+      },
     }),
   });
-  const claudeRes = claude.sessionUsage?.(JSON.stringify({ type: 'result', session_id: 'c-sess-1', result: 'ok' }), {
-    mode: 'cli',
-    platform,
-    env: {},
-    cwd: '/repo',
-    launchStartMs: startMs,
-    launchEndMs: endMs,
-    transcripts: { fs: claudeFs, budget: { remaining: 100_000 } },
-  });
+
+  const claudeRes = claude.sessionUsage?.(
+    JSON.stringify({ type: "result", session_id: "c-sess-1", result: "ok" }),
+    {
+      mode: "cli",
+      platform,
+      env: {},
+      cwd: "/repo",
+      launchStartMs: startMs,
+      launchEndMs: endMs,
+      transcripts: { fs: claudeFs, budget: { remaining: 100_000 } },
+    }
+  );
+
   assert.equal(claudeRes?.complete, true);
   assert.equal(claudeRes?.usage?.input, 15);
 
   // Codex thread.started.thread_id
-  const codexFile = '/home/.codex/sessions/2026/11/14/rollout-2026-11-14T08-00-00-x-sess-1.jsonl';
+  const codexFile =
+    "/home/.codex/sessions/2026/11/14/rollout-2026-11-14T08-00-00-x-sess-1.jsonl";
+
   const codexFs = memoryFs(
     {
       [codexFile]: lines(
-        { type: 'turn_context', payload: { model: 'gpt-6.1-terra', effort: 'high' } },
         {
-          type: 'event_msg',
-          timestamp: '2026-11-14T08:00:12.100Z',
-          payload: {
-            type: 'token_count',
-            info: { total_token_usage: { total_tokens: 25 }, last_token_usage: { input_tokens: 20, output_tokens: 5 } },
-          },
+          type: "turn_context",
+          payload: { model: "gpt-6.1-terra", effort: "high" },
         },
+        {
+          type: "event_msg",
+          timestamp: "2026-11-14T08:00:12.100Z",
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: { total_tokens: 25 },
+              last_token_usage: { input_tokens: 20, output_tokens: 5 },
+            },
+          },
+        }
       ),
     },
-    { [codexFile]: startMs },
+    { [codexFile]: startMs }
   );
-  const codexRes = codex.sessionUsage?.(lines({ type: 'thread.started', thread_id: 'x-sess-1' }), {
-    mode: 'cli',
-    platform,
-    env: {},
-    launchStartMs: startMs,
-    launchEndMs: endMs,
-    transcripts: { fs: codexFs, budget: { remaining: 100_000 } },
-  });
+
+  const codexRes = codex.sessionUsage?.(
+    lines({ type: "thread.started", thread_id: "x-sess-1" }),
+    {
+      mode: "cli",
+      platform,
+      env: {},
+      launchStartMs: startMs,
+      launchEndMs: endMs,
+      transcripts: { fs: codexFs, budget: { remaining: 100_000 } },
+    }
+  );
+
   assert.equal(codexRes?.complete, true);
   assert.equal(codexRes?.usage?.input, 20);
 
@@ -618,92 +873,119 @@ test('delegate session id extraction across providers and agy budget skip', () =
   const opencodeFs = {
     ...memoryFs({}),
     opencodeMessages: () => ({
-      messages: [{ depth: 0, createdMs: startMs + 1000, model: 'opencode-go/m1', effort: 'low', input: 30, output: 6 }],
+      messages: [
+        {
+          depth: 0,
+          createdMs: startMs + 1000,
+          model: "opencode-go/m1",
+          effort: "low",
+          input: 30,
+          output: 6,
+        },
+      ],
       skipped: 0,
       truncated: null,
     }),
   };
+
   const opencodeRes = opencode.sessionUsage?.(
-    lines({ type: 'step_finish', sessionID: 'o-sess-1', part: { tokens: { input: 30, output: 6 } } }),
+    lines({
+      type: "step_finish",
+      sessionID: "o-sess-1",
+      part: { tokens: { input: 30, output: 6 } },
+    }),
     {
-      mode: 'cli',
+      mode: "cli",
       platform,
       env: {},
       launchStartMs: startMs,
       launchEndMs: endMs,
       transcripts: { fs: opencodeFs, budget: { remaining: 100_000 } },
-    },
+    }
   );
+
   assert.equal(opencodeRes?.complete, true);
   assert.equal(opencodeRes?.usage?.input, 30);
 
   // agy conversationId, conversation_id, conversation.id
-  const agyTranscript = '/home/.gemini/antigravity-cli/brain/a-sess-1/.system_generated/logs/transcript.jsonl';
-  const agyDb = '/home/.gemini/antigravity-cli/conversations/a-sess-1.db';
+  const agyTranscript =
+    "/home/.gemini/antigravity-cli/brain/a-sess-1/.system_generated/logs/transcript.jsonl";
+
+  const agyDb = "/home/.gemini/antigravity-cli/conversations/a-sess-1.db";
+
   const agyBlob = buildGenMetadataBlob({
     input: 40,
     output: 8,
-    modelSlug: 'gemini-4-argon',
-    displayName: 'Gemini 4 Argon (High)',
+    modelSlug: "gemini-4-argon",
+    displayName: "Gemini 4 Argon (High)",
     lastStepIndex: 0,
   });
+
   const agyFs = {
     ...memoryFs({
       [agyTranscript]: lines({
         step_index: 1,
-        type: 'PLANNER_RESPONSE',
-        created_at: '2026-11-14T08:00:12.100Z',
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-11-14T08:00:12.100Z",
         input_tokens: 40,
         output_tokens: 8,
       }),
-      [agyDb]: Buffer.from('sqlite'),
+      [agyDb]: Buffer.from("sqlite"),
     }),
     sqliteGenMetadata: () => [agyBlob],
   };
+
   for (const payload of [
-    { conversationId: 'a-sess-1', response: 'ok' },
-    { conversation_id: 'a-sess-1', response: 'ok' },
-    { conversation: { id: 'a-sess-1' }, response: 'ok' },
+    { conversationId: "a-sess-1", response: "ok" },
+    { conversation_id: "a-sess-1", response: "ok" },
+    { conversation: { id: "a-sess-1" }, response: "ok" },
   ]) {
     const agyRes = agy.sessionUsage?.(JSON.stringify(payload), {
-      mode: 'cli',
+      mode: "cli",
       platform,
       env: {},
       launchStartMs: startMs,
       launchEndMs: endMs,
       transcripts: { fs: agyFs, budget: { remaining: 100_000 } },
     });
+
     assert.equal(agyRes?.complete, true);
     assert.equal(agyRes?.usage?.input, 40);
   }
 
   // agy usage skips SQLite read when budget is spent
   let sqliteCalls = 0;
+
   const spentAgy = agy.usage?.(
-    JSON.stringify({ conversation_id: 'a-sess-1', usage: { input_tokens: 10, output_tokens: 2 } }),
+    JSON.stringify({
+      conversation_id: "a-sess-1",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    }),
     {
-      mode: 'cli',
+      mode: "cli",
       platform,
       env: {},
       readSqliteGenMetadata: () => {
-        sqliteCalls++;
+        sqliteCalls += 1;
+
         return [];
       },
       transcripts: { fs: agyFs, budget: { remaining: 0 } },
-    },
+    }
   );
+
   assert.equal(sqliteCalls, 0);
   assert.equal(spentAgy?.input, 10);
 });
 
-test('agy fallback models omits models map on mismatched sums or undecodable model row', () => {
+test("agy fallback models omits models map on mismatched sums or undecodable model row", () => {
   const platform: PlatformEnv = {
     os: currentPlatform().os,
-    arch: 'x64',
+    arch: "x64",
     wsl: false,
     bubblewrap: false,
     argvLimit: 100_000,
-    home: '/home',
+    home: "/home",
     path: [],
     pathExt: [],
   };
@@ -711,55 +993,85 @@ test('agy fallback models omits models map on mismatched sums or undecodable mod
   const blobA = buildGenMetadataBlob({
     input: 100,
     output: 10,
-    modelSlug: 'gemini-4-argon',
-    displayName: 'Gemini 4 Argon (High)',
+    modelSlug: "gemini-4-argon",
+    displayName: "Gemini 4 Argon (High)",
   });
+
   const blobB = buildGenMetadataBlob({
     input: 50,
     output: 5,
-    modelSlug: 'gemini-3.8-flash',
-    displayName: 'Gemini 3.8 Flash (Low)',
+    modelSlug: "gemini-3.8-flash",
+    displayName: "Gemini 3.8 Flash (Low)",
   });
+
   const blobNoModel = buildGenMetadataBlob({ input: 50, output: 5 });
 
   // Multi-model sums differ from envelope totals (150 != 200)
   const mismatched = agy.usage?.(
-    JSON.stringify({ conversation_id: 'c-mismatch', usage: { input_tokens: 200, output_tokens: 15 } }),
-    { mode: 'cli', platform, env: {}, readSqliteGenMetadata: () => [blobA, blobB] },
+    JSON.stringify({
+      conversation_id: "c-mismatch",
+      usage: { input_tokens: 200, output_tokens: 15 },
+    }),
+    {
+      mode: "cli",
+      platform,
+      env: {},
+      readSqliteGenMetadata: () => [blobA, blobB],
+    }
   );
-  assert.deepEqual(mismatched?.actualModels, ['gemini-4-argon', 'gemini-3.8-flash']);
+
+  assert.deepEqual(mismatched?.actualModels, [
+    "gemini-4-argon",
+    "gemini-3.8-flash",
+  ]);
   assert.equal(mismatched?.models, undefined);
 
   // One known model + one undecodable model row
   const undecodable = agy.usage?.(
-    JSON.stringify({ conversation_id: 'c-undecodable', usage: { input_tokens: 150, output_tokens: 15 } }),
-    { mode: 'cli', platform, env: {}, readSqliteGenMetadata: () => [blobA, blobNoModel] },
+    JSON.stringify({
+      conversation_id: "c-undecodable",
+      usage: { input_tokens: 150, output_tokens: 15 },
+    }),
+    {
+      mode: "cli",
+      platform,
+      env: {},
+      readSqliteGenMetadata: () => [blobA, blobNoModel],
+    }
   );
-  assert.deepEqual(undecodable?.actualModels, ['gemini-4-argon']);
+
+  assert.deepEqual(undecodable?.actualModels, ["gemini-4-argon"]);
   assert.equal(undecodable?.models, undefined);
 });
 
-test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeTool -> sanitizeFacts without leaking session data', async () => {
-  const claudeFile = '/home/.claude/projects/-repo/c-wrapup-1.jsonl';
+test("wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeTool -> sanitizeFacts without leaking session data", async () => {
+  const claudeFile = "/home/.claude/projects/-repo/c-wrapup-1.jsonl";
+
   const platform: PlatformEnv = {
     os: currentPlatform().os,
-    arch: 'x64',
+    arch: "x64",
     wsl: false,
     bubblewrap: false,
     argvLimit: 100_000,
-    home: '/home',
+    home: "/home",
     path: [],
     pathExt: [],
   };
-  const startMs = Date.parse('2026-11-14T08:00:10.500Z');
-  const endMs = Date.parse('2026-11-14T08:00:20.000Z');
+
+  const startMs = Date.parse("2026-11-14T08:00:10.500Z");
+  const endMs = Date.parse("2026-11-14T08:00:20.000Z");
+
   const sessionRead = claude.sessionUsage?.(
-    JSON.stringify({ type: 'result', session_id: 'c-wrapup-1', result: 'secret text' }),
+    JSON.stringify({
+      type: "result",
+      session_id: "c-wrapup-1",
+      result: "secret text",
+    }),
     {
-      mode: 'cli',
+      mode: "cli",
       platform,
       env: {},
-      cwd: '/repo',
+      cwd: "/repo",
       launchStartMs: startMs,
       launchEndMs: endMs,
       collectResponses: true,
@@ -767,76 +1079,119 @@ test('wrapUp and delegate turns/toolCalls/toolTurns survive runner -> observeToo
         fs: memoryFs({
           [claudeFile]: lines(
             {
-              type: 'assistant',
-              timestamp: '2026-11-14T08:00:12.100Z',
+              type: "assistant",
+              timestamp: "2026-11-14T08:00:12.100Z",
               message: {
-                id: 'm1',
-                model: 'claude-haiku-5-5',
-                content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: '/secret/private.ts' } }],
+                id: "m1",
+                model: "claude-haiku-5-5",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "tu1",
+                    name: "Read",
+                    input: { file_path: "/secret/private.ts" },
+                  },
+                ],
                 usage: { input_tokens: 15, output_tokens: 3 },
               },
             },
             {
-              type: 'assistant',
-              timestamp: '2026-11-14T08:00:13.100Z',
+              type: "assistant",
+              timestamp: "2026-11-14T08:00:13.100Z",
               message: {
-                id: 'm2',
-                model: 'claude-haiku-5-5',
-                content: [{ type: 'text', text: 'secret transcript answer' }],
+                id: "m2",
+                model: "claude-haiku-5-5",
+                content: [{ type: "text", text: "secret transcript answer" }],
                 usage: { input_tokens: 20, output_tokens: 5 },
               },
-            },
+            }
           ),
         }),
         budget: { remaining: 100_000 },
       },
-    },
+    }
   );
+
   assert.equal(sessionRead?.complete, true);
   const f = sessionFixture({ memory: true });
-  try {
-    const skill = path.join(f.root, 'skill');
-    fs.mkdirSync(skill, { recursive: true });
-    fs.writeFileSync(path.join(skill, 'config.jsonc'), JSON.stringify({ diagnostics: true }));
-    f.deps.skillRoot = skill;
-    f.deps.delegate = async () => ({
-      outcome: { status: 'ok', text: 'done', sessionId: 'c-wrapup-1', resume: 'c-wrapup-1' },
-      invocations: [
-        {
-          provider: 'claude',
-          model: 'claude-haiku-5-5',
-          effort: null,
-          mode: 'cli',
-          launched: true,
-          outcome: 'ok',
-          wrapUp: true,
-          ...(sessionRead?.usage && { usage: sessionRead.usage }),
-          ...(sessionRead?.responses && { responses: sessionRead.responses }),
-        },
-      ],
-    });
-    const observer = observeTool(f.session, 'ask', 'run', undefined, f.deps)!;
-    await observer.deps.delegate(
-      'claude',
-      delegateRequest({ logPath: path.join(f.session, 'logs', 'claude[0].log') }),
-      'cli',
-    );
-    observer.finish({ ok: true, exit: 0, summary: 'done', value: null });
 
-    const facts = sanitizeFacts(sessionFacts(f.session, { records: [], lastSeq: 0, torn: null }, 'complete'));
-    const inv = facts.invocations[0]!;
+  try {
+    const skill = path.join(f.root, "skill");
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(
+      path.join(skill, "config.jsonc"),
+      JSON.stringify({ diagnostics: true })
+    );
+    f.deps.skillRoot = skill;
+    f.deps.delegate = async () => {
+      await Promise.resolve();
+
+      return {
+        outcome: {
+          status: "ok",
+          text: "done",
+          sessionId: "c-wrapup-1",
+          resume: "c-wrapup-1",
+        },
+        invocations: [
+          {
+            provider: "claude",
+            model: "claude-haiku-5-5",
+            effort: null,
+            mode: "cli",
+            launched: true,
+            outcome: "ok",
+            wrapUp: true,
+            ...(sessionRead?.usage && { usage: sessionRead.usage }),
+            ...(sessionRead?.responses && { responses: sessionRead.responses }),
+          },
+        ],
+      };
+    };
+
+    const observer = defined(
+      observeTool(f.session, "ask", "run", undefined, f.deps)
+    );
+
+    await observer.deps.delegate(
+      "claude",
+      delegateRequest({
+        logPath: path.join(f.session, "logs", "claude[0].log"),
+      }),
+      "cli"
+    );
+    observer.finish({ ok: true, exit: 0, summary: "done", value: null });
+
+    const facts = sanitizeFacts(
+      sessionFacts(
+        f.session,
+        { records: [], lastSeq: 0, torn: null },
+        "complete"
+      )
+    );
+
+    const inv = defined(facts.invocations[0]);
     assert.equal(inv.wrapUp, true);
-    assert.deepEqual([inv.usage?.turns, inv.usage?.toolCalls, inv.usage?.toolTurns], [2, 1, 1]);
+    assert.deepEqual(
+      [inv.usage?.turns, inv.usage?.toolCalls, inv.usage?.toolTurns],
+      [2, 1, 1]
+    );
     assert.deepEqual(
       [
-        inv.usage?.models?.['claude-haiku-5-5#']?.turns,
-        inv.usage?.models?.['claude-haiku-5-5#']?.toolCalls,
-        inv.usage?.models?.['claude-haiku-5-5#']?.toolTurns,
+        inv.usage?.models?.["claude-haiku-5-5#"]?.turns,
+        inv.usage?.models?.["claude-haiku-5-5#"]?.toolCalls,
+        inv.usage?.models?.["claude-haiku-5-5#"]?.toolTurns,
       ],
-      [2, 1, 1],
+      [2, 1, 1]
     );
-    assert.deepEqual([inv.responses?.[0]?.toolCalls, inv.responses?.[0]?.toolTurns], [1, 1]);
-    assert.doesNotMatch(JSON.stringify(facts), /c-wrapup-1|secret|private\.ts/);
+    assert.deepEqual(
+      [inv.responses?.[0]?.toolCalls, inv.responses?.[0]?.toolTurns],
+      [1, 1]
+    );
+    assert.doesNotMatch(
+      JSON.stringify(facts),
+      /c-wrapup-1|secret|private\.ts/u
+    );
   } finally {
     f.cleanup();
   }

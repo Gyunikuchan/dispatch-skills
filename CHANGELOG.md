@@ -2,8 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
@@ -40,7 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native subagent routing is built directly into the root skill, pairing writers with platform utility explorers to reduce orchestrator context load.
 - Quality standards unify test expectations under objective retention gates (contract, defect, oracle, unique kill), keeping test suites fast and focused.
 - Faster, leaner execution with fewer round-trip exchanges, event-driven task waits without polling, and reduced prompt token overhead.
-
 
 ## [0.8.2] - 2026-11-01
 

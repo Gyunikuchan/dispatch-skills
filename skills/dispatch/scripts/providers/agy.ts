@@ -1,151 +1,257 @@
-// Antigravity (spec §6.1): headless plan mode; token, subscription, and execution
-// failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
+import path from "node:path";
 
-import path from 'node:path';
-import { isRecord } from '../lib/config.ts';
-import type { JsonObject } from '../lib/integrity.ts';
-import { AGY_ENVELOPE_USAGE, agyUsage, normalizeAgyModelEffort } from '../lib/usage/agy.ts';
-import { sessionUsageReader } from './session-usage.ts';
-import { classifyFailure, failOutcome } from './response.ts';
-import type { ModeId, PlatformEnv, ProcessResult, ProviderSpec, ProviderUsageContext, RunOutcome } from './types.ts';
-import { validSessionId } from '../lib/session.ts';
+import { isRecord } from "../lib/config.ts";
+import type { JsonObject } from "../lib/integrity.ts";
+import { validSessionId } from "../lib/session.ts";
+import {
+  AGY_ENVELOPE_USAGE,
+  agyUsage,
+  normalizeAgyModelEffort,
+} from "../lib/usage/agy.ts";
+import { classifyFailure, failOutcome } from "./response.ts";
+import { sessionUsageReader } from "./session-usage.ts";
+import type {
+  ModeId,
+  PlatformEnv,
+  ProcessResult,
+  ProviderSpec,
+  ProviderUsageContext,
+} from "./types.ts";
 
 const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = {
-  cli: 'antigravity-cli',
-  desktop: 'antigravity',
-  vscode: 'antigravity-ide',
+  cli: "antigravity-cli",
+  desktop: "antigravity",
+  vscode: "antigravity-ide",
 };
 
-function usageAppDataDir(context: ProviderUsageContext | undefined): string | undefined {
+const usageAppDataDir = (context: ProviderUsageContext | undefined) => {
   const home = context?.platform?.home;
+
+  const mode = context?.mode;
+
   return (
     context?.appDataDir ??
-    (home && context?.mode ? path.join(home, '.gemini', AGY_MODE_PROFILES[context.mode]) : undefined)
+    (home !== undefined && home !== "" && mode !== undefined
+      ? path.join(home, ".gemini", AGY_MODE_PROFILES[mode])
+      : undefined)
   );
-}
+};
 
-const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
+const TOKEN_OR_SUBSCRIPTION =
+  /\b(?<rg1>not signed in|no tokens?|subscription|license|selfassignlicense)/iu;
 
-const join = (env: PlatformEnv, ...parts: Array<string>): string => parts.join(env.os === 'win32' ? '\\' : '/');
-const dirname = (file: string): string => file.replace(/[/\\][^/\\]*$/, '') || file;
+const join = (env: PlatformEnv, ...parts: string[]) =>
+  parts.join(env.os === "win32" ? "\\" : "/");
 
-function parseEnvelope(stdout: string): { conversationId: string | null; text: string | null } | null {
-  const start = stdout.indexOf('{');
+const dirname = (file: string) => file.replace(/[/\\][^/\\]*$/u, "") || file;
+
+const desktopCandidates = (env: PlatformEnv) => {
+  if (env.os === "darwin") {
+    return ["/Applications/Antigravity.app/Contents/Resources/app/bin/agy"];
+  }
+
+  if (env.os === "win32") {
+    return [
+      join(
+        env,
+        env.home,
+        "AppData",
+        "Local",
+        "Programs",
+        "Antigravity",
+        "bin",
+        "agy.cmd"
+      ),
+    ];
+  }
+
+  return ["/usr/share/antigravity/bin/agy"];
+};
+
+const parseEnvelope = (stdout: string) => {
+  const start = stdout.indexOf("{");
+
   if (start === -1) {
     return null;
   }
+
   let value: unknown;
+
   try {
     value = JSON.parse(stdout.slice(start));
   } catch {
     return null;
   }
-  if (typeof value !== 'object' || value === null) {
+
+  if (typeof value !== "object" || value === null) {
     return null;
   }
+
   const record: JsonObject = isRecord(value) ? value : {};
-  const nested = record['conversation'];
-  const id = record['conversationId'] ?? record['conversation_id'] ?? (isRecord(nested) ? nested['id'] : undefined);
-  const text = record['response'] ?? record['result'] ?? record['text'] ?? record['output'];
-  return { conversationId: typeof id === 'string' && id ? id : null, text: typeof text === 'string' ? text : null };
-}
+  const nested = record["conversation"];
+
+  const id =
+    record["conversationId"] ??
+    record["conversation_id"] ??
+    (isRecord(nested) ? nested["id"] : undefined);
+
+  const text =
+    record["response"] ??
+    record["result"] ??
+    record["text"] ??
+    record["output"];
+
+  return {
+    conversationId: typeof id === "string" && id ? id : null,
+    text: typeof text === "string" ? text : null,
+  };
+};
 
 export const agy: ProviderSpec = {
-  id: 'agy',
+  id: "agy",
   invocationAttribution: {
     normalize: normalizeAgyModelEffort,
-    measured: 'prefer-measured',
+    measured: "prefer-measured",
     retainWithoutBaselineProvenance: AGY_ENVELOPE_USAGE,
   },
   modes: [
     {
-      id: 'cli',
+      id: "cli",
       candidates: (env) => [
-        env.os === 'win32' ? 'agy.exe' : 'agy',
-        env.os === 'win32' ? 'agy.cmd' : join(env, env.home, '.local', 'bin', 'agy'),
+        env.os === "win32" ? "agy.exe" : "agy",
+        env.os === "win32"
+          ? "agy.cmd"
+          : join(env, env.home, ".local", "bin", "agy"),
       ],
     },
     {
-      id: 'desktop',
-      candidates: (env) =>
-        env.os === 'darwin'
-          ? ['/Applications/Antigravity.app/Contents/Resources/app/bin/agy']
-          : env.os === 'win32'
-            ? [join(env, env.home, 'AppData', 'Local', 'Programs', 'Antigravity', 'bin', 'agy.cmd')]
-            : ['/usr/share/antigravity/bin/agy'],
+      id: "desktop",
+      candidates: (env) => desktopCandidates(env),
     },
     {
-      id: 'vscode',
+      id: "vscode",
       candidates: (env) => [
         join(
           env,
           env.home,
-          '.vscode',
-          'extensions',
-          'google.antigravity-*',
-          'bin',
-          env.os === 'win32' ? 'agy.exe' : 'agy',
+          ".vscode",
+          "extensions",
+          "google.antigravity-*",
+          "bin",
+          env.os === "win32" ? "agy.exe" : "agy"
         ),
       ],
     },
   ],
-  readOnlyFlags: ['--mode', 'plan'],
-  native: 'agy',
-  // token/subscription → quota or auth; execution → not-found (mode unreachable or crashed).
-  modeCascadeOn: ['quota', 'auth', 'not-found'],
+  readOnlyFlags: ["--mode", "plan"],
+  native: "agy",
+
+  modeCascadeOn: ["quota", "auth", "not-found"],
   resumeCommand: (id) => `conversation://${id}`,
-  // `--output-format json` prints one envelope at exit.
+
   silentUntilExit: true,
   usage(raw, context) {
     const appDataDir = usageAppDataDir(context);
+
     return agyUsage(raw, {
-      ...(appDataDir && { appDataDir }),
-      ...(context?.readSqliteGenMetadata && { readSqliteGenMetadata: context.readSqliteGenMetadata }),
-      ...(context?.transcripts?.budget && { budget: context.transcripts.budget }),
+      ...(appDataDir !== undefined && appDataDir !== "" && { appDataDir }),
+      ...(context?.readSqliteGenMetadata && {
+        readSqliteGenMetadata: context.readSqliteGenMetadata,
+      }),
+      ...(context?.transcripts?.budget && {
+        budget: context.transcripts.budget,
+      }),
     });
   },
   sessionUsage: sessionUsageReader(
-    'agy',
+    "agy",
     (raw) => parseEnvelope(raw)?.conversationId ?? null,
     (context) => {
       const appDataDir = usageAppDataDir(context);
-      return appDataDir ? { appDataDir } : {};
-    },
+
+      return appDataDir !== undefined && appDataDir !== ""
+        ? { appDataDir }
+        : {};
+    }
   ),
-  resumeUsage: 'cumulative',
-  attemptSession: (out: ProcessResult): string | null =>
+  resumeUsage: "cumulative",
+  attemptSession: (out: ProcessResult) =>
     validSessionId(parseEnvelope(out.stdout)?.conversationId ?? null),
   argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));
-    const argv = [req.binary, '--print', req.prompt, '--output-format', 'json', `--print-timeout=${seconds}s`];
-    if (req.briefFile) {
-      argv.push('--add-dir', dirname(req.briefFile));
+
+    const argv = [
+      req.binary,
+      "--print",
+      req.prompt,
+      "--output-format",
+      "json",
+      `--print-timeout=${seconds}s`,
+    ];
+
+    if (
+      req.briefFile !== undefined &&
+      req.briefFile !== null &&
+      req.briefFile !== ""
+    ) {
+      argv.push("--add-dir", dirname(req.briefFile));
     }
-    if (req.model) {
-      argv.push('--model', req.model);
+
+    if (req.model !== undefined && req.model !== null && req.model !== "") {
+      argv.push("--model", req.model);
     }
-    if (req.effort) {
-      argv.push('--effort', req.effort);
+
+    if (req.effort !== undefined && req.effort !== null && req.effort !== "") {
+      argv.push("--effort", req.effort);
     }
-    if (req.resume) {
-      argv.push('--conversation', req.resume);
+
+    if (req.resume !== undefined && req.resume !== null && req.resume !== "") {
+      argv.push("--conversation", req.resume);
     }
-    argv.push('--mode', 'plan', '--dangerously-skip-permissions');
-    return { argv, stdin: null, env: { JETSKI_APP_DATA_DIR: AGY_MODE_PROFILES[mode] }, cwd: req.cwd };
+
+    argv.push("--mode", "plan", "--dangerously-skip-permissions");
+
+    return {
+      argv,
+      stdin: null,
+      env: { JETSKI_APP_DATA_DIR: AGY_MODE_PROFILES[mode] },
+      cwd: req.cwd,
+    };
   },
-  parse(out): RunOutcome {
+  parse(out) {
     const envelope = parseEnvelope(out.stdout);
-    // A parsed envelope with no answer text is an empty exit, not a raw-JSON answer; plain-text stdout stays valid.
-    const text = envelope ? (envelope.text ?? '').trim() : out.stdout.trim();
+
+    const text = envelope ? (envelope.text ?? "").trim() : out.stdout.trim();
+
     if (out.exit === 0 && text) {
       const id = envelope?.conversationId ?? null;
-      return { status: 'ok', text, sessionId: id, resume: id ? `conversation://${id}` : null };
+
+      return {
+        status: "ok",
+        text,
+        sessionId: id,
+        resume:
+          id !== undefined && id !== null && id !== ""
+            ? `conversation://${id}`
+            : null,
+      };
     }
+
     const both = `${out.stderrTail}\n${out.stdout}`;
     const detail = `agy exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
-    const cls =
-      classifyFailure(both) ??
-      (TOKEN_OR_SUBSCRIPTION.test(both) ? 'auth' : out.exit === 0 ? 'empty-output' : 'not-found');
+
+    let cls = classifyFailure(both);
+
+    if (cls === null) {
+      if (TOKEN_OR_SUBSCRIPTION.test(both)) {
+        cls = "auth";
+      } else if (out.exit === 0) {
+        cls = "empty-output";
+      } else {
+        cls = "not-found";
+      }
+    }
+
     return failOutcome(cls, detail);
   },
 };

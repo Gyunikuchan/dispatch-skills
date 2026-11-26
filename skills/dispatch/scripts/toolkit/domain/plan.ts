@@ -13,9 +13,16 @@ export {
   lintSummaryBox,
   placeholderVocabulary,
   type PlaceholderVocabulary,
-} from './document-lint.ts';
-export { governedPlanText, isTestPath, normalizePlanPath } from './plan-lint.ts';
-export { parentPin, parseGlance, parsePlan } from './plan-parse.ts';
+} from "./document-lint.ts";
+
+export {
+  governedPlanText,
+  isTestPath,
+  normalizePlanPath,
+} from "./plan-lint.ts";
+
+export { parentPin, parseGlance, parsePlan } from "./plan-parse.ts";
+
 export {
   outsideIncrementWarnings,
   selectTaskBrief,
@@ -23,7 +30,8 @@ export {
   taskMapRows,
   validateDesignTraceability,
   validateSpecTraceability,
-} from './plan-graph.ts';
+} from "./plan-graph.ts";
+
 export {
   FENCE,
   commentOpenOutsideCode,
@@ -31,4 +39,4 @@ export {
   structuralLines,
   withoutSections,
   type StructuralLine,
-} from './markdown-structure.ts';
+} from "./markdown-structure.ts";

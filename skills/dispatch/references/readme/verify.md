@@ -23,6 +23,7 @@ Add a `## Verification` section to your host rule file to give the verifier repo
 
 ```markdown
 ## Verification
+
 - **Launch:** Start the local service with the repository's documented boot command and wait until it accepts requests.
 - **Health check:** Query the read-only status endpoint before driving any scenario.
 - **Drive:** Exercise the documented user workflow using the disposable test account from the setup guide.

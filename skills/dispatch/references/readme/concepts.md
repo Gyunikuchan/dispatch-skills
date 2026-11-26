@@ -7,7 +7,7 @@ Dispatch keeps independent review and implementation inside your current agent w
 Dispatch follows **Spec → Design (optional) → Plan → Implementation**. Each layer cites upstream decisions to keep them in one place.
 
 | Layer | Purpose |
-|---|---|
+| --- | --- |
 | **Spec** (mission brief) | Why the work matters: problem, requirements, acceptance conditions, constraints, alternatives, and your decisions. |
 | **Design** (optional strategy) | Architecture, component boundaries, risks, and ordered delivery increments. Optional `Grounding leads:` carry tentative hints to increment planning. |
 | **Plan** (tactics) | Concrete tasks, file ownership, prerequisites, `[SC<n>]` criteria, and `Check:` commands. |

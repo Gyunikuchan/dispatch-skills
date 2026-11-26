@@ -9,7 +9,7 @@ Copy `config.sample.jsonc` to `config.local.jsonc` or `config.jsonc`, then remov
 If both files exist, `config.local.jsonc` is used on its own; settings are not merged. Keep machine-specific settings in the local file.
 
 | Setting | Needed for | What it controls |
-|---|---|---|
+| --- | --- | --- |
 | `diagnostics` | Optional | Retrospective `diagnostics.md` report for Dispatch maintainers |
 | `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
@@ -27,16 +27,14 @@ For example, a host agent running on Codex can use one configured read target an
 {
   "read-delegates": {
     "codex": {
-      "targets": [
-        { "low": { "model": "your-read-model" } }
-      ]
-    }
+      "targets": [{ "low": { "model": "your-read-model" } }],
+    },
   },
   "write-subagents": {
     "codex": {
-      "low": { "model": "your-writer-model" }
-    }
-  }
+      "low": { "model": "your-writer-model" },
+    },
+  },
 }
 ```
 
@@ -60,11 +58,11 @@ Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The lev
 
 Pins affect one invocation:
 
-| Pin | Effect |
-|---|---|
+| Pin            | Effect                                    |
+| -------------- | ----------------------------------------- |
 | `(claude,agy)` | Use eligible targets from those providers |
-| `(3)` | Select three eligible targets |
-| `(all)` | Select every eligible configured target |
+| `(3)`          | Select three eligible targets             |
+| `(all)`        | Select every eligible configured target   |
 
 Each entry in a provider's `targets` list is a separate voice. A model array inside one target is a fallback list for that voice, not extra reviewers.
 
@@ -131,13 +129,31 @@ Use the strongest available model for the orchestrator, because cheap explorers 
 {
   "pricing": {
     "lmstudio/qwen3.8-27b-ridge": { "rates": { "input": 0.1, "output": 0.2 } },
-    "lmstudio/*": { "rates": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite5m": 0, "cacheWrite1h": 0 } },
+    "lmstudio/*": {
+      "rates": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 0,
+      },
+    },
     "my-model": {
       "rates": { "input": 0.5, "output": 2, "cacheRead": 0.05 },
-      "tiers": [{ "abovePromptTokens": 100000, "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }],
-      "periods": [{ "from": "2026-12-01", "rates": { "input": 1, "output": 4, "cacheRead": 0.1 } }]
-    }
-  }
+      "tiers": [
+        {
+          "abovePromptTokens": 100000,
+          "rates": { "input": 1, "output": 4, "cacheRead": 0.1 },
+        },
+      ],
+      "periods": [
+        {
+          "from": "2026-12-01",
+          "rates": { "input": 1, "output": 4, "cacheRead": 0.1 },
+        },
+      ],
+    },
+  },
 }
 ```
 

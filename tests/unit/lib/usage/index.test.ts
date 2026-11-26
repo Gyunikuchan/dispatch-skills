@@ -1,83 +1,131 @@
-import { test } from 'node:test';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
-import { zstdCompressSync } from 'node:zlib';
-import { hostSessionId, nodeHostUsageFs, readHostUsage } from '../../../../skills/dispatch/scripts/lib/usage/index.ts';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { test } from "node:test";
+import { zstdCompressSync } from "node:zlib";
+
+import {
+  hostSessionId,
+  nodeHostUsageFs,
+  readHostUsage,
+} from "../../../../skills/dispatch/scripts/lib/usage/index.ts";
 import {
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
   readTranscript,
   stageAt,
-} from '../../../../skills/dispatch/scripts/lib/usage/read.ts';
-import { memoryFs, query } from './helpers/memory-fs.ts';
-import { lines } from './helpers/memory-fs.ts';
+} from "../../../../skills/dispatch/scripts/lib/usage/read.ts";
+import { defined } from "../../../helpers/guards.ts";
+import { memoryFs, query, lines } from "./helpers/memory-fs.ts";
 
 const env = (name: string) =>
-  name === 'COPILOT_AGENT_SESSION_ID'
-    ? 'agent-session'
-    : name === 'COPILOT_CLI_SESSION_ID'
-      ? 'wrong-session'
+  // eslint-disable-next-line eslint/no-nested-ternary -- compact fixture expectation table.
+  name === "COPILOT_AGENT_SESSION_ID"
+    ? "agent-session"
+    : name === "COPILOT_CLI_SESSION_ID"
+      ? "wrong-session"
       : undefined;
 
-test('Copilot host folding preserves bounded actors and unknown effort', () => {
+test("Copilot host folding preserves bounded actors and unknown effort", () => {
   const records = Array.from({ length: 35 }, (_, i) => ({
-    type: 'session.usage_record',
+    type: "session.usage_record",
     timestamp: new Date(1000).toISOString(),
     agentId: `private-actor-${i}`,
     data: {
       usage: {
-        accounting: { sourceSessionId: 'private-source', usageId: `receipt-${i}`, sequence: i },
-        model: 'custom/model',
+        accounting: {
+          sourceSessionId: "private-source",
+          usageId: `receipt-${i}`,
+          sequence: i,
+        },
+        model: "custom/model",
         inputTokens: 10,
         outputTokens: 2,
         copilotUsage: { totalNanoAiu: 100 },
         cost: 1,
-        aiCreditsStatus: 'complete',
+        aiCreditsStatus: "complete",
       },
     },
   }));
-  const fs = memoryFs({ '/home/.copilot/session-state/agent-session/events.jsonl': lines(...records) });
-  const result = readHostUsage('copilot', { ...query, env }, fs);
+
+  // eslint-disable-next-line eslint/no-shadow -- fixture-local name intentionally mirrors the outer contract.
+  const fs = memoryFs({
+    "/home/.copilot/session-state/agent-session/events.jsonl": lines(
+      ...records
+    ),
+  });
+
+  const result = readHostUsage("copilot", { ...query, env }, fs);
   assert.equal(
     result.rows.reduce((sum, r) => sum + r.input, 0),
-    350,
+    350
   );
   assert.equal(new Set(result.rows.flatMap((r) => r.agent ?? [])).size, 32);
-  const overflow = result.rows.find((r) => !r.agent)!;
+
+  const overflow = defined(
+    result.rows.find(
+      (r) => r.agent === undefined || r.agent === null || r.agent === ""
+    )
+  );
+
   assert.equal(overflow.input, 30);
   assert.equal(overflow.copilot?.billing.totalNanoAiu, 300);
-  assert.equal(overflow.copilot?.actorCoverage, 'partial');
-  assert.ok(result.rows.every((r) => r.effort === null && r.maxDepth === undefined));
-  assert.doesNotMatch(JSON.stringify(result), /private-|wrong-session/);
-  assert.deepEqual(fs.reads, [path.normalize('/home/.copilot/session-state/agent-session/events.jsonl')]);
+  assert.equal(overflow.copilot?.actorCoverage, "partial");
+  assert.ok(
+    result.rows.every((r) => r.effort === null && r.maxDepth === undefined)
+  );
+  assert.doesNotMatch(JSON.stringify(result), /private-|wrong-session/u);
+  assert.deepEqual(fs.reads, [
+    path.normalize("/home/.copilot/session-state/agent-session/events.jsonl"),
+  ]);
 });
 
-const input = { ...query, env: (_: string): string | undefined => undefined };
+const input = {
+  ...query,
+  // eslint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps the host query env contract.
+  env: (_: string): string | undefined => undefined,
+};
 
-test('registry requires a registered host and its declared safe session id', () => {
+test("registry requires a registered host and its declared safe session id", () => {
+  // eslint-disable-next-line eslint/no-shadow -- fixture-local name intentionally mirrors the outer contract.
   const fs = memoryFs({});
-  assert.equal(readHostUsage(null, input, fs).unavailable, 'no adapter');
+  assert.equal(readHostUsage(null, input, fs).unavailable, "no adapter");
   assert.equal(
-    readHostUsage('codex', { ...input, env: (name) => (name === 'DISPATCH_CHAT_ID' ? 'host' : undefined) }, fs)
-      .unavailable,
-    'no host id',
+    readHostUsage(
+      "codex",
+      {
+        ...input,
+        env: (name) => (name === "DISPATCH_CHAT_ID" ? "host" : undefined),
+      },
+      fs
+    ).unavailable,
+    "no host id"
   );
-  assert.equal(readHostUsage('codex', { ...input, env: () => '../host' }, fs).unavailable, 'invalid host id');
-  const invalidStart = readHostUsage('codex', { ...input, startMs: Number.NaN, env: () => 'host' }, fs);
-  assert.equal(invalidStart.unavailable, 'invalid session start');
+  assert.equal(
+    readHostUsage("codex", { ...input, env: () => "../host" }, fs).unavailable,
+    "invalid host id"
+  );
+
+  const invalidStart = readHostUsage(
+    "codex",
+    { ...input, startMs: Number.NaN, env: () => "host" },
+    fs
+  );
+
+  assert.equal(invalidStart.unavailable, "invalid session start");
   assert.deepEqual(fs.reads, []);
-  const result = readHostUsage('codex', { ...input, env: () => 'host' }, fs, {
+
+  const result = readHostUsage("codex", { ...input, env: () => "host" }, fs, {
     codex: {
-      sessionEnv: ['CODEX_THREAD_ID'],
+      sessionEnv: ["CODEX_THREAD_ID"],
       read: (q) => ({
         rows: [
           {
-            stage: 'spec',
-            role: 'host',
-            model: 'm',
+            stage: "spec",
+            role: "host",
+            model: "m",
             effort: null,
             depth: 0,
             atMs: 0,
@@ -89,203 +137,296 @@ test('registry requires a registered host and its declared safe session id', () 
       }),
     },
   });
+
   assert.equal(result.rows[0]?.input, MAX_TOTAL_BYTES);
 
   let openCalls = 0;
+
   const openRead = (id: string | undefined) =>
     readHostUsage(
-      'opencode',
+      "opencode",
       { ...input, env: () => id },
       {
         ...memoryFs({}),
         opencodeMessages: () => {
-          openCalls++;
+          openCalls += 1;
+
           return { messages: [], skipped: 0, truncated: null };
         },
-      },
+      }
     );
-  assert.equal(openRead(undefined).unavailable, 'no host id');
-  assert.equal(openRead('ses_session-1').unavailable, 'no usage records');
+
+  assert.equal(openRead(undefined).unavailable, "no host id");
+  assert.equal(openRead("ses_session-1").unavailable, "no usage records");
   assert.equal(openCalls, 1);
-  for (const id of ['ses/1', 'ses_1.2', '../ses_1']) {
-    assert.equal(openRead(id).unavailable, 'invalid host id');
+
+  for (const id of ["ses/1", "ses_1.2", "../ses_1"]) {
+    assert.equal(openRead(id).unavailable, "invalid host id");
   }
+
   assert.equal(openCalls, 1);
 });
 
-test('reader caps growing plain files and decoded compressed data', () => {
+test("reader caps growing plain files and decoded compressed data", () => {
   let readMax = 0;
   let size = 1;
   let reads = 0;
   assert.ok(nodeHostUsageFs.decompress);
+
+  // eslint-disable-next-line eslint/no-shadow -- fixture-local name intentionally mirrors the outer contract.
   const fs = {
     list: () => [],
     stat: () => ({ size, mtimeMs: 0 }),
     read: (_: string, max: number) => {
-      reads++;
+      reads += 1;
       readMax = max;
+
       return Buffer.alloc(max);
     },
     decompress: nodeHostUsageFs.decompress,
   };
+
   const budget = { remaining: 4 };
-  assert.equal(readTranscript(fs, 'x', budget).stop, 'budget');
+  assert.equal(readTranscript(fs, "x", budget).stop, "budget");
   assert.equal(readMax, 5);
   assert.equal(budget.remaining, 0);
 
   let budgetReads = 0;
+
   const budgetFs = {
     ...fs,
     stat: () => ({ size: 6, mtimeMs: 0 }),
     read: () => {
-      budgetReads++;
+      budgetReads += 1;
+
       return Buffer.alloc(0);
     },
   };
-  assert.equal(readTranscript(budgetFs, 'x', { remaining: 5 }).stop, 'budget');
+
+  assert.equal(readTranscript(budgetFs, "x", { remaining: 5 }).stop, "budget");
   assert.equal(budgetReads, 0);
 
-  const compressed = zstdCompressSync(Buffer.from('abcdefghij'));
-  const compressedFs = { ...fs, stat: () => ({ size: compressed.length, mtimeMs: 0 }), read: () => compressed };
+  const compressed = zstdCompressSync(Buffer.from("abcdefghij"));
+
+  const compressedFs = {
+    ...fs,
+    stat: () => ({ size: compressed.length, mtimeMs: 0 }),
+    read: () => compressed,
+  };
+
   const decoded = { remaining: 20 };
-  assert.equal(readTranscript(compressedFs, 'x.zst', decoded).text, 'abcdefghij');
+  assert.equal(
+    readTranscript(compressedFs, "x.zst", decoded).text,
+    "abcdefghij"
+  );
   assert.equal(decoded.remaining, 10);
   const stopped = { remaining: 5 };
-  assert.equal(readTranscript(compressedFs, 'x.zst', stopped).stop, 'budget');
+  assert.equal(readTranscript(compressedFs, "x.zst", stopped).stop, "budget");
   assert.equal(stopped.remaining, 0);
 
   size = MAX_FILE_BYTES + 1;
-  assert.equal(readTranscript(fs, 'x', { remaining: MAX_TOTAL_BYTES }).stop, 'file cap');
+  assert.equal(
+    readTranscript(fs, "x", { remaining: MAX_TOTAL_BYTES }).stop,
+    "file cap"
+  );
   size = MAX_FILE_BYTES * 2 + 1;
-  assert.equal(readTranscript(fs, 'x.zst', { remaining: 1 }).stop, 'file cap');
+  assert.equal(readTranscript(fs, "x.zst", { remaining: 1 }).stop, "file cap");
   assert.equal(reads, 1);
 
   const overflowFs = {
     list: () => [],
     stat: () => ({ size: 1, mtimeMs: 0 }),
-    read: () => Buffer.from('x'),
+    read: () => Buffer.from("x"),
     decompress: () => {
-      throw Object.assign(Error('large'), { code: 'ERR_BUFFER_TOO_LARGE' });
+      throw Object.assign(new Error("large"), { code: "ERR_BUFFER_TOO_LARGE" });
     },
   };
+
   const overflowBudget = { remaining: MAX_FILE_BYTES * 2 };
-  assert.equal(readTranscript(overflowFs, 'a.zst', overflowBudget).stop, 'file cap');
+  assert.equal(
+    readTranscript(overflowFs, "a.zst", overflowBudget).stop,
+    "file cap"
+  );
   assert.equal(overflowBudget.remaining, MAX_FILE_BYTES);
-  assert.equal(readTranscript(overflowFs, 'b.zst', overflowBudget).stop, 'file cap');
+  assert.equal(
+    readTranscript(overflowFs, "b.zst", overflowBudget).stop,
+    "file cap"
+  );
   assert.equal(overflowBudget.remaining, 0);
-  assert.equal(readTranscript(overflowFs, 'c.zst', overflowBudget).stop, 'budget');
+  assert.equal(
+    readTranscript(overflowFs, "c.zst", overflowBudget).stop,
+    "budget"
+  );
 });
 
 const invoke = (code: string) =>
-  readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
+  readHostUsage("codex", { ...input, env: () => "host" }, memoryFs({}), {
     codex: {
-      sessionEnv: ['CODEX_THREAD_ID'],
+      sessionEnv: ["CODEX_THREAD_ID"],
       read: () => {
-        throw Object.assign(new Error('secret'), { code });
+        throw Object.assign(new Error("secret"), { code });
       },
     },
   });
 
-test('adapter exceptions expose allowlisted codes without their messages', () => {
-  assert.equal(invoke('EACCES').unavailable, 'read-error:EACCES');
-  assert.equal(invoke('SECRET').unavailable, 'read-error:EUNKNOWN');
-  assert.ok(!JSON.stringify(invoke('SECRET')).includes('secret'));
+test("adapter exceptions expose allowlisted codes without their messages", () => {
+  assert.equal(invoke("EACCES").unavailable, "read-error:EACCES");
+  assert.equal(invoke("SECRET").unavailable, "read-error:EUNKNOWN");
+  assert.ok(!JSON.stringify(invoke("SECRET")).includes("secret"));
 });
 
-test('node filesystem treats paths beneath regular files as absent', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'host-usage-'));
-  const file = path.join(dir, 'file');
+test("node filesystem treats paths beneath regular files as absent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "host-usage-"));
+  const file = path.join(dir, "file");
+
   try {
-    fs.writeFileSync(file, 'x');
-    assert.deepEqual(nodeHostUsageFs.list(path.join(file, 'missing')), []);
-    assert.equal(nodeHostUsageFs.stat(path.join(file, 'missing')), null);
+    fs.writeFileSync(file, "x");
+    assert.deepEqual(nodeHostUsageFs.list(path.join(file, "missing")), []);
+    assert.equal(nodeHostUsageFs.stat(path.join(file, "missing")), null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-test('host discovery ignores non-directory entries without masking missing ids', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'host-discovery-'));
+
+test("host discovery ignores non-directory entries without masking missing ids", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "host-discovery-"));
+
   try {
-    const projects = path.join(home, '.claude', 'projects');
-    const sessions = path.join(home, '.codex', 'sessions');
-    fs.mkdirSync(path.join(projects, 'project'), { recursive: true });
-    fs.mkdirSync(path.join(sessions, '1970', '01', '01'), { recursive: true });
-    fs.writeFileSync(path.join(projects, '.DS_Store'), 'x');
-    fs.writeFileSync(path.join(sessions, '1999'), 'x');
+    const projects = path.join(home, ".claude", "projects");
+    const sessions = path.join(home, ".codex", "sessions");
+    fs.mkdirSync(path.join(projects, "project"), { recursive: true });
+    fs.mkdirSync(path.join(sessions, "1970", "01", "01"), { recursive: true });
+    fs.writeFileSync(path.join(projects, ".DS_Store"), "x");
+    fs.writeFileSync(path.join(sessions, "1999"), "x");
+
     const claude = {
-      type: 'assistant',
+      type: "assistant",
       timestamp: new Date(3000).toISOString(),
-      message: { id: 'x', model: 'm', usage: { input_tokens: 2, output_tokens: 1 } },
-    };
-    const context = { type: 'turn_context', payload: { model: 'm' } };
-    const event = {
-      type: 'event_msg',
-      timestamp: new Date(3000).toISOString(),
-      payload: {
-        type: 'token_count',
-        info: { total_token_usage: { total_tokens: 3 }, last_token_usage: { input_tokens: 2, output_tokens: 1 } },
+      message: {
+        id: "x",
+        model: "m",
+        usage: { input_tokens: 2, output_tokens: 1 },
       },
     };
-    fs.writeFileSync(path.join(projects, 'project', 'host.jsonl'), JSON.stringify(claude));
+
+    const context = { type: "turn_context", payload: { model: "m" } };
+
+    const event = {
+      type: "event_msg",
+      timestamp: new Date(3000).toISOString(),
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { total_tokens: 3 },
+          last_token_usage: { input_tokens: 2, output_tokens: 1 },
+        },
+      },
+    };
+
     fs.writeFileSync(
-      path.join(sessions, '1970', '01', '01', 'rollout-1970-01-01T00-00-01-host.jsonl'),
-      [context, event].map((x) => JSON.stringify(x)).join('\n'),
+      path.join(projects, "project", "host.jsonl"),
+      JSON.stringify(claude)
     );
-    for (const platform of ['claude', 'codex'] as const) {
+    fs.writeFileSync(
+      path.join(
+        sessions,
+        "1970",
+        "01",
+        "01",
+        "rollout-1970-01-01T00-00-01-host.jsonl"
+      ),
+      [context, event].map((x) => JSON.stringify(x)).join("\n")
+    );
+
+    for (const platform of ["claude", "codex"] as const) {
       const result = readHostUsage(
         platform,
         {
           ...input,
           home,
-          env: (name) => (name === 'CODEX_THREAD_ID' || name === 'CLAUDE_CODE_SESSION_ID' ? 'host' : undefined),
+          env: (name) =>
+            name === "CODEX_THREAD_ID" || name === "CLAUDE_CODE_SESSION_ID"
+              ? "host"
+              : undefined,
         },
-        nodeHostUsageFs,
+        nodeHostUsageFs
       );
+
       assert.equal(result.unavailable, undefined);
       assert.equal(result.rows.length, 1);
+
       const missing = readHostUsage(
         platform,
         {
           ...input,
           home,
-          env: (name) => (name === 'CODEX_THREAD_ID' || name === 'CLAUDE_CODE_SESSION_ID' ? 'missing' : undefined),
+          env: (name) =>
+            name === "CODEX_THREAD_ID" || name === "CLAUDE_CODE_SESSION_ID"
+              ? "missing"
+              : undefined,
         },
-        nodeHostUsageFs,
+        nodeHostUsageFs
       );
-      assert.equal(missing.unavailable, 'host id file missing');
+
+      assert.equal(missing.unavailable, "host id file missing");
     }
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test('agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageFs', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-discovery-'));
+test("agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageFs", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agy-discovery-"));
+
   try {
-    const brain = path.join(home, '.gemini', 'antigravity', 'brain', 'host-session', '.system_generated', 'logs');
-    const conv = path.join(home, '.gemini', 'antigravity', 'conversations');
+    const brain = path.join(
+      home,
+      ".gemini",
+      "antigravity",
+      "brain",
+      "host-session",
+      ".system_generated",
+      "logs"
+    );
+
+    const conv = path.join(home, ".gemini", "antigravity", "conversations");
     fs.mkdirSync(brain, { recursive: true });
     fs.mkdirSync(conv, { recursive: true });
 
     const step = {
       step_index: 2,
-      type: 'PLANNER_RESPONSE',
+      type: "PLANNER_RESPONSE",
       created_at: new Date(3000).toISOString(),
       input_tokens: 120,
       output_tokens: 15,
       cache_read_tokens: 30,
     };
-    fs.writeFileSync(path.join(brain, 'transcript.jsonl'), JSON.stringify(step) + '\n');
 
-    const dbPath = path.join(conv, 'host-session.db');
+    fs.writeFileSync(
+      path.join(brain, "transcript.jsonl"),
+      `${JSON.stringify(step)}\n`
+    );
+
+    const dbPath = path.join(conv, "host-session.db");
     const db = new DatabaseSync(dbPath);
+
     try {
-      db.exec('CREATE TABLE gen_metadata (idx INTEGER, data BLOB)');
+      db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
       // Build protobuf blob: Tag 1.4 (input: 120, output: 15, cacheRead: 30, reasoning: 10), Tag 1.19, Tag 1.20, Tag 1.21
       const tag14 = [16, 120, 24, 15, 40, 30, 72, 10];
-      const kv = [0x0a, 15, ...Buffer.from('last_step_index', 'utf8'), 0x12, 1, ...Buffer.from('1', 'utf8')];
-      const modelSlug = Buffer.from('gemini-4-argon-trial', 'utf8');
-      const dispName = Buffer.from('Gemini 4 Argon (Medium)', 'utf8');
+
+      const kv = [
+        0x0a,
+        15,
+        ...Buffer.from("last_step_index", "utf-8"),
+        0x12,
+        1,
+        ...Buffer.from("1", "utf-8"),
+      ];
+
+      const modelSlug = Buffer.from("gemini-4-argon-trial", "utf-8");
+      const dispName = Buffer.from("Gemini 4 Argon (Medium)", "utf-8");
+
       const tag1 = [
         0x22,
         tag14.length,
@@ -303,58 +444,71 @@ test('agy adapter is registered and reads sqlite gen_metadata via nodeHostUsageF
         dispName.length,
         ...dispName,
       ];
+
       const blob = new Uint8Array([0x0a, tag1.length, ...tag1]);
-      const stmt = db.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)');
+
+      const stmt = db.prepare(
+        "INSERT INTO gen_metadata (idx, data) VALUES (?, ?)"
+      );
+
       stmt.run(0, blob);
     } finally {
       db.close();
     }
 
-    assert.ok(nodeHostUsageFs.sqliteGenMetadata, 'sqliteGenMetadata is defined on nodeHostUsageFs');
+    assert.ok(
+      nodeHostUsageFs.sqliteGenMetadata,
+      "sqliteGenMetadata is defined on nodeHostUsageFs"
+    );
     const readBlobs = nodeHostUsageFs.sqliteGenMetadata(dbPath);
     assert.equal(readBlobs?.length, 1);
 
     const result = readHostUsage(
-      'agy',
+      "agy",
       {
         ...input,
         home,
-        env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'host-session' : undefined),
+        env: (name) =>
+          name === "ANTIGRAVITY_CONVERSATION_ID" ? "host-session" : undefined,
       },
-      nodeHostUsageFs,
+      nodeHostUsageFs
     );
 
     assert.equal(result.unavailable, undefined);
     assert.equal(result.rows.length, 1);
-    assert.equal(result.rows[0]?.role, 'host');
-    assert.equal(result.rows[0]?.model, 'gemini-4-argon');
-    assert.equal(result.rows[0]?.effort, 'medium');
+    assert.equal(result.rows[0]?.role, "host");
+    assert.equal(result.rows[0]?.model, "gemini-4-argon");
+    assert.equal(result.rows[0]?.effort, "medium");
     assert.equal(result.rows[0]?.input, 120);
     assert.equal(result.rows[0]?.output, 15);
     assert.equal(result.rows[0]?.cacheRead, 30);
     assert.equal(result.rows[0]?.reasoning, 10);
 
     const missing = readHostUsage(
-      'agy',
+      "agy",
       {
         ...input,
         home,
-        env: (name) => (name === 'ANTIGRAVITY_CONVERSATION_ID' ? 'missing-session' : undefined),
+        env: (name) =>
+          name === "ANTIGRAVITY_CONVERSATION_ID"
+            ? "missing-session"
+            : undefined,
       },
-      nodeHostUsageFs,
+      nodeHostUsageFs
     );
-    assert.equal(missing.unavailable, 'host id file missing');
+
+    assert.equal(missing.unavailable, "host id file missing");
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
-test('index usage row fields project to the persisted HostUsageRow shape', () => {
+test("index usage row fields project to the persisted HostUsageRow shape", () => {
   const row = {
-    stage: 'spec' as const,
-    role: 'host' as const,
-    model: 'm',
-    effort: 'high',
+    stage: "spec" as const,
+    role: "host" as const,
+    model: "m",
+    effort: "high",
     input: 10,
     output: 2,
     cacheRead: 1,
@@ -362,15 +516,22 @@ test('index usage row fields project to the persisted HostUsageRow shape', () =>
     depth: 0,
     reasoningInOutput: true,
   };
-  const result = readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
-    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows: [row] }) },
-  });
+
+  const result = readHostUsage(
+    "codex",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      codex: { sessionEnv: ["CODEX_THREAD_ID"], read: () => ({ rows: [row] }) },
+    }
+  );
+
   assert.deepEqual(result.rows, [
     {
-      stage: 'spec',
-      role: 'host',
-      model: 'm',
-      effort: 'high',
+      stage: "spec",
+      role: "host",
+      model: "m",
+      effort: "high",
       input: 10,
       output: 2,
       cacheRead: 1,
@@ -378,18 +539,18 @@ test('index usage row fields project to the persisted HostUsageRow shape', () =>
       reasoningInOutput: true,
     },
   ]);
-  assert.equal('atMs' in result.rows[0]!, false);
-  assert.equal('depth' in result.rows[0]!, false);
+  assert.equal("atMs" in defined(result.rows[0]), false);
+  assert.equal("depth" in defined(result.rows[0]), false);
   assert.equal(result.rows[0]?.reasoningInOutput, true);
 });
 
-test('host phase: folds rows per stage, phase, role and key with bands and bounds each group', () => {
+test("host phase: folds rows per stage, phase, role and key with bands and bounds each group", () => {
   const rows = [
     {
-      stage: 'plan' as const,
-      role: 'host' as const,
-      model: 'm',
-      effort: 'high',
+      stage: "plan" as const,
+      role: "host" as const,
+      model: "m",
+      effort: "high",
       input: 10,
       output: 1,
       atMs: 500,
@@ -397,10 +558,10 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
       reasoningInOutput: true,
     },
     {
-      stage: 'plan' as const,
-      role: 'host' as const,
-      model: 'm',
-      effort: 'high',
+      stage: "plan" as const,
+      role: "host" as const,
+      model: "m",
+      effort: "high",
       input: 20,
       output: 2,
       atMs: 1500,
@@ -408,10 +569,10 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
       reasoningInOutput: true,
     },
     {
-      stage: 'plan' as const,
-      role: 'host' as const,
-      model: 'm',
-      effort: 'high',
+      stage: "plan" as const,
+      role: "host" as const,
+      model: "m",
+      effort: "high",
       input: 30,
       output: 3,
       atMs: 2500,
@@ -419,10 +580,10 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
       reasoningInOutput: true,
     },
     {
-      stage: 'plan' as const,
-      role: 'host' as const,
-      model: 'm',
-      effort: 'high',
+      stage: "plan" as const,
+      role: "host" as const,
+      model: "m",
+      effort: "high",
       input: 40,
       output: 4,
       atMs: 3500,
@@ -430,46 +591,48 @@ test('host phase: folds rows per stage, phase, role and key with bands and bound
       reasoningInOutput: true,
     },
   ];
+
   const result = readHostUsage(
-    'codex',
+    "codex",
     {
       ...input,
-      env: () => 'host',
+      env: () => "host",
       phases: [
-        { phase: 'phase-a', atMs: 1000 },
-        { phase: 'phase-b', atMs: 2000 },
-        { phase: 'phase-a', atMs: 3000 },
+        { phase: "phase-a", atMs: 1000 },
+        { phase: "phase-b", atMs: 2000 },
+        { phase: "phase-a", atMs: 3000 },
       ],
     },
     memoryFs({}),
     {
-      codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows }) },
-    },
+      codex: { sessionEnv: ["CODEX_THREAD_ID"], read: () => ({ rows }) },
+    }
   );
+
   assert.equal(result.rows.length, 3);
-  assert.equal(result.rows[0]!.phase, undefined);
-  assert.equal(result.rows[1]!.phase, 'phase-a');
+  assert.equal(defined(result.rows[0]).phase, undefined);
+  assert.equal(defined(result.rows[1]).phase, "phase-a");
   assert.equal(result.rows[1]?.input, 60);
-  assert.equal(result.rows[2]!.phase, 'phase-b');
+  assert.equal(defined(result.rows[2]).phase, "phase-b");
   assert.equal(result.rows[2]?.input, 30);
   assert.ok(result.rows[1].bands);
   assert.equal(
     stageAt(
       [
-        { stage: 'spec', atMs: 100 },
-        { stage: 'plan', atMs: 200 },
+        { stage: "spec", atMs: 100 },
+        { stage: "plan", atMs: 200 },
       ],
-      0,
+      0
     ),
-    'spec',
+    "spec"
   );
 });
 
-test('turns: host rows sum per key only when all inputs for that key carry turns', () => {
+test("turns: host rows sum per key only when all inputs for that key carry turns", () => {
   const row = {
-    stage: 'spec' as const,
-    role: 'host' as const,
-    model: 'complete',
+    stage: "spec" as const,
+    role: "host" as const,
+    model: "complete",
     effort: null,
     input: 10,
     output: 2,
@@ -477,31 +640,39 @@ test('turns: host rows sum per key only when all inputs for that key carry turns
     depth: 0,
     reasoningInOutput: true,
   };
+
   const rows = [
     { ...row, turns: 1 },
     { ...row, turns: 2 },
-    { ...row, model: 'missing' },
-    { ...row, model: 'mixed', turns: 1 },
-    { ...row, model: 'mixed' },
+    { ...row, model: "missing" },
+    { ...row, model: "mixed", turns: 1 },
+    { ...row, model: "mixed" },
   ];
-  const result = readHostUsage('codex', { ...input, env: () => 'host' }, memoryFs({}), {
-    codex: { sessionEnv: ['CODEX_THREAD_ID'], read: () => ({ rows }) },
-  });
+
+  const result = readHostUsage(
+    "codex",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      codex: { sessionEnv: ["CODEX_THREAD_ID"], read: () => ({ rows }) },
+    }
+  );
+
   assert.deepEqual(
     result.rows.map((item) => [item.model, item.input, item.turns]),
     [
-      ['complete', 20, 3],
-      ['missing', 10, undefined],
-      ['mixed', 20, undefined],
-    ],
+      ["complete", 20, 3],
+      ["missing", 10, undefined],
+      ["mixed", 20, undefined],
+    ]
   );
 });
 
-test('Response counts retain stage and agent coverage while token totals reconcile', () => {
+test("Response counts retain stage and agent coverage while token totals reconcile", () => {
   const base = {
-    stage: 'spec' as const,
-    role: 'subagent' as const,
-    model: 'm',
+    stage: "spec" as const,
+    role: "subagent" as const,
+    model: "m",
     effort: null,
     input: 10,
     output: 2,
@@ -509,47 +680,70 @@ test('Response counts retain stage and agent coverage while token totals reconci
     depth: 1,
     reasoningInOutput: true,
   };
+
   const rows = [
-    { ...base, responseActor: 'private-first' },
-    { ...base, responseActor: 'private-second' },
-    { ...base, responseActor: 'private-first', stage: 'plan' as const, atMs: 200 },
-    { ...base, responseActor: 'private-root', role: 'host' as const, depth: 0, atMs: 10 },
+    { ...base, responseActor: "private-first" },
+    { ...base, responseActor: "private-second" },
+    {
+      ...base,
+      responseActor: "private-first",
+      stage: "plan" as const,
+      atMs: 200,
+    },
+    {
+      ...base,
+      responseActor: "private-root",
+      role: "host" as const,
+      depth: 0,
+      atMs: 10,
+    },
   ];
-  const response = { basis: 'claude-assistant-message' as const };
+
+  const response = { basis: "claude-assistant-message" as const };
+
   const facts = readHostUsage(
-    'claude',
+    "claude",
     {
       ...input,
-      env: () => 'host',
+      env: () => "host",
       stages: [
-        { stage: 'spec', atMs: 100 },
-        { stage: 'plan', atMs: 200 },
+        { stage: "spec", atMs: 100 },
+        { stage: "plan", atMs: 200 },
       ],
     },
     memoryFs({}),
-    { claude: { sessionEnv: ['HOST'], read: () => ({ rows, response }) } },
+    { claude: { sessionEnv: ["HOST"], read: () => ({ rows, response }) } }
   );
+
   assert.deepEqual(
-    facts.responses?.map((row) => [row.stage, row.role, row.agent, row.observed, row.uncachedInput]).sort(),
+    facts.responses
+      ?.map((row) => [
+        row.stage,
+        row.role,
+        row.agent,
+        row.observed,
+        row.uncachedInput,
+      ])
+      .toSorted(),
     [
-      ['plan', 'subagent', 'subagent-1', 1, 10],
-      ['spec', 'subagent', 'subagent-1', 1, 10],
-      ['spec', 'subagent', 'subagent-2', 1, 10],
-      ['unattributed', 'host', 'host-1', 1, 10],
-    ],
+      ["plan", "subagent", "subagent-1", 1, 10],
+      ["spec", "subagent", "subagent-1", 1, 10],
+      ["spec", "subagent", "subagent-2", 1, 10],
+      ["unattributed", "host", "host-1", 1, 10],
+    ]
   );
   assert.equal(
     facts.rows.reduce((sum, row) => sum + row.input, 0),
-    40,
+    40
   );
-  assert.doesNotMatch(JSON.stringify(facts), /private-/);
+  assert.doesNotMatch(JSON.stringify(facts), /private-/u);
 });
 
-test('response overflow keeps the observed count and same-subset input by stage', () => {
+test("response overflow keeps the observed count and same-subset input by stage", () => {
   const row = {
-    stage: 'plan' as const,
-    role: 'subagent' as const,
-    model: 'm',
+    stage: "plan" as const,
+    role: "subagent" as const,
+    model: "m",
     effort: null,
     input: 4,
     output: 2,
@@ -557,37 +751,53 @@ test('response overflow keeps the observed count and same-subset input by stage'
     depth: 1,
     reasoningInOutput: true,
   };
-  const rows = Array.from({ length: 34 }, (_, i) => ({ ...row, responseActor: `private-${i}` }));
-  const result = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
-    claude: { sessionEnv: ['HOST'], read: () => ({ rows, response: { basis: 'claude-assistant-message' } }) },
-  });
+
+  const rows = Array.from({ length: 34 }, (_, i) => ({
+    ...row,
+    responseActor: `private-${i}`,
+  }));
+
+  const result = readHostUsage(
+    "claude",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      claude: {
+        sessionEnv: ["HOST"],
+        read: () => ({ rows, response: { basis: "claude-assistant-message" } }),
+      },
+    }
+  );
+
   const responses = result.responses ?? [];
+  // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
   assert.equal(responses.filter((r) => r.agent).length, 32);
   assert.deepEqual(
+    // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
     responses.filter((r) => !r.agent),
     [
       {
-        stage: 'plan',
-        role: 'subagent',
-        basis: 'claude-assistant-message',
-        coverage: 'partial',
+        stage: "plan",
+        role: "subagent",
+        basis: "claude-assistant-message",
+        coverage: "partial",
         observed: 2,
         uncachedInput: 8,
       },
-    ],
+    ]
   );
   assert.equal(
     responses.reduce((sum, r) => sum + (r.observed ?? 0), 0),
-    34,
+    34
   );
   assert.equal(result.rows[0]?.input, 136);
 });
 
-test('readHostUsage computes subagentCount across 40 distinct subagents before 32-alias cap and tracks maxSubagentDepth', () => {
+test("readHostUsage computes subagentCount across 40 distinct subagents before 32-alias cap and tracks maxSubagentDepth", () => {
   const hostRow = {
-    stage: 'plan' as const,
-    role: 'host' as const,
-    model: 'm',
+    stage: "plan" as const,
+    role: "host" as const,
+    model: "m",
     effort: null,
     input: 10,
     output: 2,
@@ -597,12 +807,13 @@ test('readHostUsage computes subagentCount across 40 distinct subagents before 3
     turns: 1,
     toolCalls: 2,
     toolTurns: 1,
-    responseActor: 'private-host',
+    responseActor: "private-host",
   };
+
   const subRows = Array.from({ length: 40 }, (_, i) => ({
-    stage: 'plan' as const,
-    role: 'subagent' as const,
-    model: 'm',
+    stage: "plan" as const,
+    role: "subagent" as const,
+    model: "m",
     effort: null,
     input: 4,
     output: 1,
@@ -614,47 +825,62 @@ test('readHostUsage computes subagentCount across 40 distinct subagents before 3
     toolTurns: 1,
     responseActor: `private-sub-${i}`,
   }));
-  const result = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
-    claude: {
-      sessionEnv: ['HOST'],
-      read: () => ({
-        rows: [hostRow, ...subRows],
-        response: { basis: 'claude-assistant-message' },
-        userTurns: 2,
-        userTurnsByStage: { plan: 2 },
-      }),
-    },
-  });
+
+  const result = readHostUsage(
+    "claude",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      claude: {
+        sessionEnv: ["HOST"],
+        read: () => ({
+          rows: [hostRow, ...subRows],
+          response: { basis: "claude-assistant-message" },
+          userTurns: 2,
+          userTurnsByStage: { plan: 2 },
+        }),
+      },
+    }
+  );
+
   assert.equal(result.subagentCount, 40);
   assert.equal(result.maxSubagentDepth, 3);
   assert.equal(result.userTurns, 2);
   assert.deepEqual(result.userTurnsByStage, { plan: 2 });
+  // eslint-disable-next-line typescript/strict-boolean-expressions -- test predicate intentionally checks fixture value truthiness.
   assert.equal(result.responses?.filter((r) => r.agent).length, 32);
-  const subSummary = result.rows.find((r) => r.role === 'subagent');
+  const subSummary = result.rows.find((r) => r.role === "subagent");
   assert.equal(subSummary?.turns, 40);
   assert.equal(subSummary?.toolCalls, 40);
   assert.equal(subSummary?.toolTurns, 40);
   assert.equal(subSummary?.maxDepth, 3);
-  assert.doesNotMatch(JSON.stringify(result), /private-/);
+  assert.doesNotMatch(JSON.stringify(result), /private-/u);
 
-  const { responseActor: _omitActor, ...subWithoutActor } = subRows[0]!;
-  const missingActor = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
-    claude: {
-      sessionEnv: ['HOST'],
-      read: () => ({
-        rows: [hostRow, subWithoutActor],
-        response: { basis: 'claude-assistant-message' },
-      }),
-    },
-  });
+  const { responseActor: _omitActor, ...subWithoutActor } = defined(subRows[0]);
+
+  const missingActor = readHostUsage(
+    "claude",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      claude: {
+        sessionEnv: ["HOST"],
+        read: () => ({
+          rows: [hostRow, subWithoutActor],
+          response: { basis: "claude-assistant-message" },
+        }),
+      },
+    }
+  );
+
   assert.equal(missingActor.subagentCount, undefined);
 });
 
-test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/tool counters on partial transcript reads', () => {
+test("readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/tool counters on partial transcript reads", () => {
   const hostRow = {
-    stage: 'plan' as const,
-    role: 'host' as const,
-    model: 'm',
+    stage: "plan" as const,
+    role: "host" as const,
+    model: "m",
     effort: null,
     input: 10,
     output: 2,
@@ -664,12 +890,13 @@ test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/t
     turns: 1,
     toolCalls: 2,
     toolTurns: 1,
-    responseActor: 'h',
+    responseActor: "h",
   };
+
   const subRow = {
-    stage: 'plan' as const,
-    role: 'subagent' as const,
-    model: 'm',
+    stage: "plan" as const,
+    role: "subagent" as const,
+    model: "m",
     effort: null,
     input: 5,
     output: 1,
@@ -679,25 +906,32 @@ test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/t
     turns: 1,
     toolCalls: 1,
     toolTurns: 1,
-    responseActor: 's',
+    responseActor: "s",
   };
 
-  const hostNoted = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
-    claude: {
-      sessionEnv: ['HOST'],
-      read: () => ({
-        rows: [hostRow, subRow],
-        response: { basis: 'claude-assistant-message' },
-        notes: { host: { 'unparsed lines': 1 } },
-        userTurns: 3,
-        userTurnsByStage: { plan: 3 },
-      }),
-    },
-  });
+  const hostNoted = readHostUsage(
+    "claude",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      claude: {
+        sessionEnv: ["HOST"],
+        read: () => ({
+          rows: [hostRow, subRow],
+          response: { basis: "claude-assistant-message" },
+          notes: { host: { "unparsed lines": 1 } },
+          userTurns: 3,
+          userTurnsByStage: { plan: 3 },
+        }),
+      },
+    }
+  );
+
   assert.equal(hostNoted.userTurns, undefined);
   assert.equal(hostNoted.userTurnsByStage, undefined);
   assert.equal(hostNoted.subagentCount, undefined);
   assert.equal(hostNoted.maxSubagentDepth, undefined);
+
   for (const row of hostNoted.rows) {
     assert.equal(row.turns, undefined);
     assert.equal(row.toolCalls, undefined);
@@ -705,23 +939,29 @@ test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/t
     assert.equal(row.maxDepth, undefined);
   }
 
-  const subNoted = readHostUsage('claude', { ...input, env: () => 'host' }, memoryFs({}), {
-    claude: {
-      sessionEnv: ['HOST'],
-      read: () => ({
-        rows: [hostRow, subRow],
-        response: { basis: 'claude-assistant-message' },
-        notes: { subagent: { 'read budget reached': 1 } },
-        userTurns: 3,
-        userTurnsByStage: { plan: 3 },
-      }),
-    },
-  });
+  const subNoted = readHostUsage(
+    "claude",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      claude: {
+        sessionEnv: ["HOST"],
+        read: () => ({
+          rows: [hostRow, subRow],
+          response: { basis: "claude-assistant-message" },
+          notes: { subagent: { "read budget reached": 1 } },
+          userTurns: 3,
+          userTurnsByStage: { plan: 3 },
+        }),
+      },
+    }
+  );
+
   assert.equal(subNoted.userTurns, 3);
   assert.equal(subNoted.subagentCount, undefined);
   assert.equal(subNoted.maxSubagentDepth, undefined);
-  const hostOut = subNoted.rows.find((r) => r.role === 'host');
-  const subOut = subNoted.rows.find((r) => r.role === 'subagent');
+  const hostOut = subNoted.rows.find((r) => r.role === "host");
+  const subOut = subNoted.rows.find((r) => r.role === "subagent");
   assert.equal(hostOut?.turns, 1);
   assert.equal(hostOut?.toolCalls, 2);
   assert.equal(subOut?.turns, undefined);
@@ -729,52 +969,63 @@ test('readHostUsage omits subagentCount, maxSubagentDepth, userTurns, and turn/t
   assert.equal(subOut?.maxDepth, undefined);
 });
 
-test('foldHostRows excludes skipResponse rows from turns and tool sums', () => {
+test("foldHostRows excludes skipResponse rows from turns and tool sums", () => {
   const base = {
-    stage: 'spec' as const,
-    role: 'host' as const,
-    model: 'm',
+    stage: "spec" as const,
+    role: "host" as const,
+    model: "m",
     effort: null,
     input: 10,
     output: 2,
     atMs: 1000,
     depth: 0,
     reasoningInOutput: true,
-    responseActor: 'h',
+    responseActor: "h",
   };
-  const result = readHostUsage('agy', { ...input, env: () => 'host' }, memoryFs({}), {
-    agy: {
-      sessionEnv: ['ANTIGRAVITY_CONVERSATION_ID'],
-      read: () => ({
-        rows: [
-          { ...base, turns: 1, toolCalls: 2, toolTurns: 1 },
-          { ...base, skipResponse: true as const },
-        ],
-        response: { basis: 'agy-planner-response', limited: true },
-      }),
-    },
-  });
+
+  const result = readHostUsage(
+    "agy",
+    { ...input, env: () => "host" },
+    memoryFs({}),
+    {
+      agy: {
+        sessionEnv: ["ANTIGRAVITY_CONVERSATION_ID"],
+        read: () => ({
+          rows: [
+            { ...base, turns: 1, toolCalls: 2, toolTurns: 1 },
+            { ...base, skipResponse: true as const },
+          ],
+          response: { basis: "agy-planner-response", limited: true },
+        }),
+      },
+    }
+  );
+
   assert.equal(result.rows[0]?.input, 20);
   assert.equal(result.rows[0]?.turns, 1);
   assert.equal(result.rows[0]?.toolCalls, 2);
   assert.equal(result.rows[0]?.toolTurns, 1);
 });
 
-test('hostSessionId validates env session ids and returns undefined when absent or unsafe', () => {
+test("hostSessionId validates env session ids and returns undefined when absent or unsafe", () => {
   assert.equal(
-    hostSessionId('claude', (n) => (n === 'CLAUDE_CODE_SESSION_ID' ? 'sess-123' : undefined)),
-    'sess-123',
+    hostSessionId("claude", (n) =>
+      n === "CLAUDE_CODE_SESSION_ID" ? "sess-123" : undefined
+    ),
+    "sess-123"
   );
   assert.equal(
-    hostSessionId('claude', (n) => (n === 'CLAUDE_CODE_SESSION_ID' ? '../bad' : undefined)),
-    undefined,
+    hostSessionId("claude", (n) =>
+      n === "CLAUDE_CODE_SESSION_ID" ? "../bad" : undefined
+    ),
+    undefined
   );
   assert.equal(
-    hostSessionId('copilot', () => 'sess-123'),
-    'sess-123',
+    hostSessionId("copilot", () => "sess-123"),
+    "sess-123"
   );
   assert.equal(
-    hostSessionId(null, () => 'sess-123'),
-    undefined,
+    hostSessionId(null, () => "sess-123"),
+    undefined
   );
 });

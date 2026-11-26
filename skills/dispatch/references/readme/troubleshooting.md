@@ -49,7 +49,7 @@ Doctor returns a JSON summary and result path. Read the result for integrity, co
 ## Common problems
 
 | Problem | What to do |
-|---|---|
+| --- | --- |
 | No delegates are available | Add at least one entry to `read-delegates`. Confirm the provider CLI is installed and authenticated, and that a model is configured for the requested level. |
 | The model or number of reviewers is unexpected | Check which configuration file is active, then review the requested level, pins, and `phases` policy. Utility entries are per platform and ignore level; run Doctor to see the declared host, resolved writer models and the `utility` entry for explorer and utility subagents. |
 | Missing or invalid utility subagent configuration | Add a `utility-subagents` entry for the host platform with `model` and a positive integer `context-limit` (tokens) in `config.jsonc` or `config.local.jsonc`. |
@@ -70,7 +70,7 @@ In `diagnostics.md`, `—` marks an unavailable value and `~` marks a cost estim
 - After adding a missing rate, render again to reprice stored usage. After a collection gap, inspect the host thread or delegate session before drawing conclusions from the subtotal. See the [toolkit reference](../toolkit.md#diagnostics-render) for field definitions.
 
 | Reason | Meaning | What to do |
-|---|---|---|
+| --- | --- | --- |
 | `unpriced model` | No rate matched the model id, usage held more than 32 model/effort keys (`other`), or a counter rate is missing. | Add a [`pricing` entry](configuration.md#override-rates-for-cost-estimates) with every counter rate the route reports, then render again. |
 | `no usage` | A launched delegate reported no usable usage. | Check its identified session's supported local records. |
 | `tier unknown` | An aggregate or a stored band crosses a tier threshold. | Read the range as bounds. |

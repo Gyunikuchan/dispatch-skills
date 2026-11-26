@@ -1,12 +1,17 @@
-import { doctorReport, doctorReportWithProbe } from '../../../skills/dispatch/scripts/toolkit/doctor.ts';
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { test } from 'node:test';
-import type { ProbeDeps } from '../../../skills/dispatch/scripts/providers/probe.ts';
-import { main } from '../../../skills/dispatch/scripts/toolkit/cli.ts';
-import { generateSkillHashes } from '../../../skills/dispatch/scripts/lib/integrity.ts';
-import { appendRecord } from '../../../skills/dispatch/scripts/toolkit/ledger.ts';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+
+import { generateSkillHashes } from "../../../skills/dispatch/scripts/lib/integrity.ts";
+import type { ProbeDeps } from "../../../skills/dispatch/scripts/providers/probe.ts";
+import { main } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
+import {
+  doctorReport,
+  doctorReportWithProbe,
+} from "../../../skills/dispatch/scripts/toolkit/doctor.ts";
+import { appendRecord } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
+import { defined } from "../../helpers/guards.ts";
 import {
   anything,
   dictionaryOf,
@@ -16,419 +21,629 @@ import {
   numeric,
   optional,
   readJson,
-  shape,
+  withFields,
   text,
-} from './helpers/json.ts';
-import { sessionFixture } from './helpers/session.ts';
+} from "./helpers/json.ts";
+import { sessionFixture } from "./helpers/session.ts";
 
-const doctorRunShape = shape({
+const doctorRunCheck = withFields({
   ok: flag,
   level: optional(text),
   reason: optional(text),
   explorers: optional(anything),
   sandboxRemoved: optional(listOf(text)),
   writeConcurrency: optional(numeric),
-  config: shape({
+  config: withFields({
     path: optional(text),
     problems: listOf(text),
     warnings: optional(listOf(text)),
   }),
-  writers: optional(dictionaryOf(shape({ models: listOf(text), effort: nullable(text), launchAs: text }))),
+  writers: optional(
+    dictionaryOf(
+      withFields({
+        models: listOf(text),
+        effort: nullable(text),
+        launchAs: text,
+      })
+    )
+  ),
   utility: optional(
-    dictionaryOf(shape({ models: listOf(text), effort: nullable(text), contextLimit: numeric, launchAs: text })),
+    dictionaryOf(
+      withFields({
+        models: listOf(text),
+        effort: nullable(text),
+        contextLimit: numeric,
+        launchAs: text,
+      })
+    )
   ),
 });
 
-function readDoctorOutput(filePath: string | null | undefined) {
-  assert.ok(filePath, 'doctor output path');
-  return readJson(filePath, doctorRunShape);
-}
+const readDoctorOutput = (filePath: string | null | undefined) => {
+  assert.ok((filePath ?? "") !== "", "doctor output path");
 
-test('doctor report resolves writers and level and reports integrity and config failures', async () => {
+  return readJson(defined(filePath), doctorRunCheck);
+};
+
+test("doctor report resolves writers and level and reports integrity and config failures", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
-    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    const config = path.join(skill, "config.jsonc");
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
-        'write-subagents': {
-          codex: { low: { model: ['first', 'second'], effort: 'low' }, high: { model: 'large', effort: 'max' } },
-          claude: { high: { model: 'other' } },
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
         },
-      }),
+        "utility-subagents": {
+          codex: { model: "reader", "context-limit": 300_000 },
+        },
+        "write-subagents": {
+          codex: {
+            low: { model: ["first", "second"], effort: "low" },
+            high: { model: "large", effort: "max" },
+          },
+          claude: { high: { model: "other" } },
+        },
+      })
     );
-    const run = async (args: Array<string> = []) => {
+
+    const run = async (args: string[] = []) => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
-          ...f.deps,
-          skillRoot: skill,
-        }),
-        0,
+        await main(
+          ["doctor", "run", "--session", f.session, "--host", "codex", ...args],
+          {
+            ...f.deps,
+            skillRoot: skill,
+          }
+        ),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
+
     let report = await run();
     assert.equal(report.ok, true);
-    assert.equal(report.level, 'medium');
+    assert.equal(report.level, "medium");
     assert.equal(report.config.path, config);
     assert.deepEqual(report.writers, {
-      codex: { models: ['first', 'second'], effort: 'low', launchAs: 'launch: model first, effort low, else second' },
-      claude: { models: ['other'], effort: null, launchAs: 'launch: model other, no effort set' },
+      codex: {
+        models: ["first", "second"],
+        effort: "low",
+        launchAs: "launch: model first, effort low, else second",
+      },
+      claude: {
+        models: ["other"],
+        effort: null,
+        launchAs: "launch: model other, no effort set",
+      },
     });
-    await appendRecord(f.session, { kind: 'level', by: 'orchestrator', key: 'level', data: { level: 'high' } }, f.deps);
+    await appendRecord(
+      f.session,
+      {
+        kind: "level",
+        by: "orchestrator",
+        key: "level",
+        data: { level: "high" },
+      },
+      f.deps
+    );
     report = await run();
-    assert.equal(report.level, 'high');
-    assert.deepEqual(report.writers?.['codex'], {
-      models: ['large'],
-      effort: 'max',
-      launchAs: 'launch: model large, effort max',
+    assert.equal(report.level, "high");
+    assert.deepEqual(report.writers?.["codex"], {
+      models: ["large"],
+      effort: "max",
+      launchAs: "launch: model large, effort max",
     });
-    assert.equal((await run(['--level', 'low'])).level, 'low');
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'drift');
+    const runResult = await run(["--level", "low"]);
+
+    assert.equal(runResult.level, "low");
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "drift");
     report = await run();
-    assert.equal(report.reason, 'integrity-drift');
+    assert.equal(report.reason, "integrity-drift");
     assert.equal(f.output().ok, false);
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
     fs.writeFileSync(config, '{"unknown":true}');
     report = await run();
-    assert.equal(report.reason, 'config-invalid');
+    assert.equal(report.reason, "config-invalid");
     assert.ok(report.config.problems.length > 0);
-    fs.writeFileSync(config, '{');
+    fs.writeFileSync(config, "{");
     report = await run();
-    assert.equal(report.reason, 'config-invalid');
+    assert.equal(report.reason, "config-invalid");
     assert.equal(report.config.path, config);
-    assert.equal(fs.existsSync(path.join(f.session, '.state', 'lock')), false);
+    assert.equal(fs.existsSync(path.join(f.session, ".state", "lock")), false);
   } finally {
     f.cleanup();
   }
 });
 
-test('doctor utility entry resolves contextLimit, reports missing host entry, and removes writer fallback', async () => {
+test("doctor utility entry resolves contextLimit, reports missing host entry, and removes writer fallback", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
-    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    const config = path.join(skill, "config.jsonc");
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'write-subagents': { codex: { low: { model: 'writer-low', effort: 'low' } } },
-        'utility-subagents': {
-          codex: { model: 'fast-explorer', effort: 'low', 'context-limit': 300_000 },
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
         },
-      }),
+        "write-subagents": {
+          codex: { low: { model: "writer-low", effort: "low" } },
+        },
+        "utility-subagents": {
+          codex: {
+            model: "fast-explorer",
+            effort: "low",
+            "context-limit": 300_000,
+          },
+        },
+      })
     );
-    const run = async (args: Array<string> = []) => {
+
+    const run = async (args: string[] = []) => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
-          ...f.deps,
-          skillRoot: skill,
-        }),
-        0,
+        await main(
+          ["doctor", "run", "--session", f.session, "--host", "codex", ...args],
+          {
+            ...f.deps,
+            skillRoot: skill,
+          }
+        ),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
 
-    // Resolves contextLimit and removes explorers field
     const report = await run();
     assert.equal(report.ok, true);
     assert.equal(report.explorers, undefined);
-    assert.deepEqual(report.utility?.['codex'], {
-      models: ['fast-explorer'],
-      effort: 'low',
+    assert.deepEqual(report.utility?.["codex"], {
+      models: ["fast-explorer"],
+      effort: "low",
       contextLimit: 300_000,
-      launchAs: 'launch: model fast-explorer, effort low',
+      launchAs: "launch: model fast-explorer, effort low",
     });
 
-    // Missing host entry: config has utility-subagents for claude only, but host is codex
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': {
-          claude: { model: 'cheap', effort: 'medium', 'context-limit': 150_000 },
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
         },
-      }),
+        "utility-subagents": {
+          claude: {
+            model: "cheap",
+            effort: "medium",
+            "context-limit": 150_000,
+          },
+        },
+      })
     );
     const missingHost = await run();
     assert.equal(missingHost.ok, false);
-    assert.equal(missingHost.reason, 'config-invalid');
-    assert.ok(missingHost.config.problems.some((p: string) => p.includes('utility-subagents.codex')));
+    assert.equal(missingHost.reason, "config-invalid");
+    assert.ok(
+      missingHost.config.problems.some((p: string) =>
+        p.includes("utility-subagents.codex")
+      )
+    );
 
-    // No utility-subagents table at all
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+      })
     );
     const absentTable = await run();
     assert.equal(absentTable.ok, false);
-    assert.equal(absentTable.reason, 'config-invalid');
-    assert.ok(absentTable.config.problems.some((p: string) => p.includes('utility-subagents.codex')));
+    assert.equal(absentTable.reason, "config-invalid");
+    assert.ok(
+      absentTable.config.problems.some((p: string) =>
+        p.includes("utility-subagents.codex")
+      )
+    );
 
-    // No writer fallback: write-subagents present for codex, but no utility-subagents
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'write-subagents': { codex: { low: { model: 'writer-low', effort: 'low' } } },
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "write-subagents": {
+          codex: { low: { model: "writer-low", effort: "low" } },
+        },
+      })
     );
     const writerFallback = await run();
-    assert.equal(writerFallback.utility?.['codex'], undefined);
-    assert.ok(writerFallback.config.problems.some((p: string) => p.includes('utility-subagents.codex')));
+    assert.equal(writerFallback.utility?.["codex"], undefined);
+    assert.ok(
+      writerFallback.config.problems.some((p: string) =>
+        p.includes("utility-subagents.codex")
+      )
+    );
   } finally {
     f.cleanup();
   }
 });
 
-test('doctor resolves the utility subagent per canonical platform', async () => {
+test("doctor resolves the utility subagent per canonical platform", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
-    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    const config = path.join(skill, "config.jsonc");
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': {
-          'claude-code': { model: 'cheap', effort: 'medium', 'context-limit': 150_000 },
-          'openai-codex': { model: ['mid-a', 'mid-b'], effort: 'low', 'context-limit': 300_000 },
-          agy: { model: 'agy-high', 'context-limit': 300_000 },
-          opencode: { model: 'anthropic/claude-haiku', effort: 'low', 'context-limit': 200_000 },
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
         },
-        'write-subagents': {
-          claude: { low: { model: 'writer-low', effort: 'low' } },
-          'openai-codex': {
-            medium: { model: ['mid-a', 'mid-b'], effort: 'low' },
-            max: { model: 'huge', effort: 'max' },
+        "utility-subagents": {
+          "claude-code": {
+            model: "cheap",
+            effort: "medium",
+            "context-limit": 150_000,
           },
-          agy: { high: { model: 'agy-high' } },
-          opencode: { max: { model: 'openai/gpt-5', effort: 'high' } },
+          "openai-codex": {
+            model: ["mid-a", "mid-b"],
+            effort: "low",
+            "context-limit": 300_000,
+          },
+          agy: { model: "agy-high", "context-limit": 300_000 },
+          opencode: {
+            model: "anthropic/claude-haiku",
+            effort: "low",
+            "context-limit": 200_000,
+          },
         },
-      }),
+        "write-subagents": {
+          claude: { low: { model: "writer-low", effort: "low" } },
+          "openai-codex": {
+            medium: { model: ["mid-a", "mid-b"], effort: "low" },
+            max: { model: "huge", effort: "max" },
+          },
+          agy: { high: { model: "agy-high" } },
+          opencode: { max: { model: "openai/gpt-5", effort: "high" } },
+        },
+      })
     );
-    const run = async (args: Array<string> = []) => {
+
+    const run = async (args: string[] = []) => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', 'codex', ...args], {
-          ...f.deps,
-          skillRoot: skill,
-        }),
-        0,
+        await main(
+          ["doctor", "run", "--session", f.session, "--host", "codex", ...args],
+          {
+            ...f.deps,
+            skillRoot: skill,
+          }
+        ),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
+
     const expected = {
       claude: {
-        models: ['cheap'],
-        effort: 'medium',
+        models: ["cheap"],
+        effort: "medium",
         contextLimit: 150_000,
-        launchAs: 'launch: model cheap, effort medium',
+        launchAs: "launch: model cheap, effort medium",
       },
       codex: {
-        models: ['mid-a', 'mid-b'],
-        effort: 'low',
+        models: ["mid-a", "mid-b"],
+        effort: "low",
         contextLimit: 300_000,
-        launchAs: 'launch: model mid-a, effort low, else mid-b',
+        launchAs: "launch: model mid-a, effort low, else mid-b",
       },
       agy: {
-        models: ['agy-high'],
+        models: ["agy-high"],
         effort: null,
         contextLimit: 300_000,
-        launchAs: 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set',
+        launchAs:
+          "launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set",
       },
       opencode: {
-        models: ['anthropic/claude-haiku'],
-        effort: 'low',
+        models: ["anthropic/claude-haiku"],
+        effort: "low",
         contextLimit: 200_000,
         launchAs:
           'launch: `subagent` with `model: "anthropic/claude-haiku#low"` (user-configured; set it despite the tool\'s default guidance)',
       },
     };
-    for (const level of ['low', 'medium', 'max']) {
-      const report = await run(['--level', level]);
+
+    for (const level of ["low", "medium", "max"]) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      const report = await run(["--level", level]);
       assert.deepEqual(report.utility, expected, level);
-      assert.equal(Object.hasOwn(report.utility, 'copilot'), false);
+      assert.equal(Object.hasOwn(report.utility, "copilot"), false);
     }
-    const max = await run(['--level', 'max']);
+
+    const max = await run(["--level", "max"]);
     assert.equal(max.explorers, undefined);
     assert.deepEqual(max.writers, {
-      claude: { models: ['writer-low'], effort: 'low', launchAs: 'launch: model writer-low, effort low' },
-      codex: { models: ['huge'], effort: 'max', launchAs: 'launch: model huge, effort max' },
+      claude: {
+        models: ["writer-low"],
+        effort: "low",
+        launchAs: "launch: model writer-low, effort low",
+      },
+      codex: {
+        models: ["huge"],
+        effort: "max",
+        launchAs: "launch: model huge, effort max",
+      },
       agy: {
-        models: ['agy-high'],
+        models: ["agy-high"],
         effort: null,
-        launchAs: 'launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set',
+        launchAs:
+          "launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-high, no effort set",
       },
       opencode: {
-        models: ['openai/gpt-5'],
-        effort: 'high',
+        models: ["openai/gpt-5"],
+        effort: "high",
         launchAs:
           'launch: `subagent` with `model: "openai/gpt-5#high"` (user-configured; set it despite the tool\'s default guidance)',
       },
     });
     fs.writeFileSync(config, '{"unknown":true}');
     const invalid = await run();
-    assert.equal(invalid.reason, 'config-invalid');
+    assert.equal(invalid.reason, "config-invalid");
     assert.deepEqual(invalid.utility, {});
   } finally {
     f.cleanup();
   }
 });
 
-const entry = (name: string) => ({ low: { model: name + '-model-with-a-long-identifier', effort: 'low' } });
+const entry = (name: string) => ({
+  low: { model: `${name}-model-with-a-long-identifier`, effort: "low" },
+});
 
-test('doctor reports the session host and keeps it inside the capped summary', async () => {
+test("doctor reports the session host and keeps it inside the capped summary", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
 
-    const platforms = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
+    const platforms = ["claude", "agy", "copilot", "opencode", "codex"];
     fs.writeFileSync(
-      path.join(skill, 'config.jsonc'),
+      path.join(skill, "config.jsonc"),
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'write-subagents': Object.fromEntries(platforms.map((name) => [name, entry(name)])),
-        'utility-subagents': Object.fromEntries(
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "write-subagents": Object.fromEntries(
+          platforms.map((name) => [name, entry(name)])
+        ),
+        "utility-subagents": Object.fromEntries(
           platforms.map((name) => [
             name,
-            { model: name + '-explorer-with-a-long-identifier', effort: 'low', 'context-limit': 300_000 },
-          ]),
+            {
+              model: `${name}-explorer-with-a-long-identifier`,
+              effort: "low",
+              "context-limit": 300_000,
+            },
+          ])
         ),
-      }),
+      })
     );
-    const manifestFile = path.join(f.session, 'manifest.json');
+    const manifestFile = path.join(f.session, "manifest.json");
+
     const run = async (host: string) => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', host], { ...f.deps, skillRoot: skill }),
-        0,
+        await main(["doctor", "run", "--session", f.session, "--host", host], {
+          ...f.deps,
+          skillRoot: skill,
+        }),
+        0
       );
       const out = f.output();
-      return { out, value: JSON.parse(fs.readFileSync(out.path!, 'utf8')) };
+
+      return {
+        out,
+        // eslint-disable-next-line typescript/no-unsafe-assignment -- test binds the untyped JSON/fixture surface for assertions; narrowing would not change assertions
+        value: JSON.parse(fs.readFileSync(defined(out.path), "utf-8")),
+      };
     };
+
     fs.writeFileSync(
       manifestFile,
-      JSON.stringify({ ...JSON.parse(fs.readFileSync(manifestFile, 'utf8')), host: 'copilot' }),
+      JSON.stringify({
+        ...JSON.parse(fs.readFileSync(manifestFile, "utf-8")),
+        host: "copilot",
+      })
     );
-    const declared = await run('copilot');
-    assert.deepEqual(declared.value.host, { platform: 'copilot', source: 'declared' });
+    const declared = await run("copilot");
+    // eslint-disable-next-line typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
+    assert.deepEqual(declared.value.host, {
+      platform: "copilot",
+      source: "declared",
+    });
     assert.ok(Buffer.byteLength(JSON.stringify(declared.value)) > 1024);
     assert.ok(Buffer.byteLength(declared.out.summary) <= 1024);
-    assert.ok(declared.out.summary.includes('"host":{"platform":"copilot","source":"declared"}'));
+    assert.ok(
+      declared.out.summary.includes(
+        '"host":{"platform":"copilot","source":"declared"}'
+      )
+    );
   } finally {
     f.cleanup();
   }
 });
 
-test('doctor lists sandbox removals only for dropped delegates excluding the host provider', async () => {
+test("doctor lists sandbox removals only for dropped delegates excluding the host provider", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    const targets = [{ low: { model: 'reader' } }];
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    const targets = [{ low: { model: "reader" } }];
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
     fs.writeFileSync(
-      path.join(skill, 'config.jsonc'),
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    fs.writeFileSync(
+      path.join(skill, "config.jsonc"),
       JSON.stringify({
-        'read-delegates': {
+        "read-delegates": {
           opencode: { targets },
           claude: { targets },
           codex: { sandbox: false, targets },
           copilot: { targets },
         },
-        'write-subagents': { agy: { low: { model: 'writer' } } },
-        'utility-subagents': { agy: { model: 'sub', 'context-limit': 300_000 } },
-      }),
+        "write-subagents": { agy: { low: { model: "writer" } } },
+        "utility-subagents": {
+          agy: { model: "sub", "context-limit": 300_000 },
+        },
+      })
     );
-    const run = async (sandboxSupported: Record<string, boolean> | undefined, liveness: Record<string, boolean>) => {
+
+    const run = async (
+      sandboxSupported: Record<string, boolean> | undefined,
+      liveness: Record<string, boolean>
+    ) => {
       f.lines.length = 0;
-      await main(['doctor', 'run', '--session', f.session, '--host', 'agy'], {
+      await main(["doctor", "run", "--session", f.session, "--host", "agy"], {
         ...f.deps,
         skillRoot: skill,
         liveness,
         ...(sandboxSupported && { sandboxSupported }),
       });
+
       return readDoctorOutput(f.output().path);
     };
+
     const live = { opencode: true, claude: true, codex: true, copilot: true };
-    const unsupported = { opencode: false, claude: false, codex: false, copilot: true };
+
+    const unsupported = {
+      opencode: false,
+      claude: false,
+      codex: false,
+      copilot: true,
+    };
+
     const report = await run(unsupported, live);
-    assert.deepEqual(report.sandboxRemoved, ['opencode', 'claude']);
+    assert.deepEqual(report.sandboxRemoved, ["opencode", "claude"]);
     assert.equal(report.ok, true);
     assert.equal(report.reason, undefined);
-    assert.deepEqual((await run(unsupported, { ...live, opencode: false })).sandboxRemoved, ['claude']);
-    assert.deepEqual((await run(undefined, live)).sandboxRemoved, []);
+    const runResult2 = await run(unsupported, { ...live, opencode: false });
+
+    assert.deepEqual(runResult2.sandboxRemoved, ["claude"]);
+    const runResult3 = await run(undefined, live);
+
+    assert.deepEqual(runResult3.sandboxRemoved, []);
+
     const hostUnsupported = await run(
-      { opencode: false, claude: false, codex: false, agy: false, copilot: true },
-      { ...live, agy: true },
+      {
+        opencode: false,
+        claude: false,
+        codex: false,
+        agy: false,
+        copilot: true,
+      },
+      { ...live, agy: true }
+    );
+
+    assert.ok(
+      hostUnsupported.sandboxRemoved?.includes("agy") !== true,
+      `host leaves sandboxRemoved: ${JSON.stringify(hostUnsupported.sandboxRemoved)}`
     );
     assert.ok(
-      !hostUnsupported.sandboxRemoved?.includes('agy'),
-      'host leaves sandboxRemoved: ' + JSON.stringify(hostUnsupported.sandboxRemoved),
-    );
-    assert.ok(
-      hostUnsupported.sandboxRemoved?.includes('claude'),
-      'non-host stays: ' + JSON.stringify(hostUnsupported.sandboxRemoved),
+      hostUnsupported.sandboxRemoved?.includes("claude") === true,
+      `non-host stays: ${JSON.stringify(hostUnsupported.sandboxRemoved)}`
     );
   } finally {
     f.cleanup();
   }
 });
 
-test('doctor reports configured writeConcurrency defaulting to 1 when omitted or invalid', async () => {
+test("doctor reports configured writeConcurrency defaulting to 1 when omitted or invalid", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
-    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    const config = path.join(skill, "config.jsonc");
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'write-subagents': { codex: { low: { model: 'writer' } } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
-        'write-concurrency': 3,
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "write-subagents": { codex: { low: { model: "writer" } } },
+        "utility-subagents": {
+          codex: { model: "reader", "context-limit": 300_000 },
+        },
+        "write-concurrency": 3,
+      })
     );
+
     const run = async () => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }),
-        0,
+        await main(
+          ["doctor", "run", "--session", f.session, "--host", "codex"],
+          { ...f.deps, skillRoot: skill }
+        ),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
+
     const configured = await run();
     assert.equal(configured.writeConcurrency, 3);
 
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'write-subagents': { codex: { low: { model: 'writer' } } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "write-subagents": { codex: { low: { model: "writer" } } },
+        "utility-subagents": {
+          codex: { model: "reader", "context-limit": 300_000 },
+        },
+      })
     );
     const omitted = await run();
     assert.equal(omitted.writeConcurrency, 1);
@@ -441,183 +656,277 @@ test('doctor reports configured writeConcurrency defaulting to 1 when omitted or
   }
 });
 
-test('doctor pricing override problems are warnings that never fail the report', async () => {
+test("doctor pricing override problems are warnings that never fail the report", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+
     const base = {
-      'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-      'write-subagents': { codex: { low: { model: 'writer' } } },
-      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
+      "read-delegates": { codex: { targets: [{ low: { model: "reader" } }] } },
+      "write-subagents": { codex: { low: { model: "writer" } } },
+      "utility-subagents": {
+        codex: { model: "reader", "context-limit": 300_000 },
+      },
     };
+
     const run = async (config: string) => {
-      fs.writeFileSync(path.join(skill, 'config.jsonc'), config);
+      fs.writeFileSync(path.join(skill, "config.jsonc"), config);
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', 'codex'], { ...f.deps, skillRoot: skill }),
-        0,
+        await main(
+          ["doctor", "run", "--session", f.session, "--host", "codex"],
+          { ...f.deps, skillRoot: skill }
+        ),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
+
     let report = await run(JSON.stringify(base));
-    assert.deepEqual([report.ok, report.config.problems, report.config.warnings], [true, [], []]);
+    assert.deepEqual(
+      [report.ok, report.config.problems, report.config.warnings],
+      [true, [], []]
+    );
     report = await run(
       JSON.stringify({
         ...base,
         pricing: {
-          'house-model': { rates: { input: 1, output: 1 } },
+          "house-model": { rates: { input: 1, output: 1 } },
           bad: { rates: { output: 1 } },
           worse: 5,
-          legacy: { rates: { input: 1, output: 1 }, reasoning: 'output' },
+          legacy: { rates: { input: 1, output: 1 }, reasoning: "output" },
           badPeriod: {
             rates: { input: 1, output: 1 },
-            periods: [{ from: '2026-13-01', rates: { input: 2, output: 2 } }],
+            periods: [{ from: "2026-13-01", rates: { input: 2, output: 2 } }],
           },
         },
-      }),
+      })
     );
     assert.equal(report.ok, true);
     assert.equal(report.reason, undefined);
     assert.deepEqual(report.config.problems, []);
     assert.deepEqual(report.config.warnings, [
-      'pricing.bad: rates.input missing',
-      'pricing.worse: not an object',
-      'pricing.legacy: unknown key reasoning',
-      'pricing.badPeriod: periods[0].from must be a valid YYYY-MM-DD date',
+      "pricing.bad: rates.input missing",
+      "pricing.worse: not an object",
+      "pricing.legacy: unknown key reasoning",
+      "pricing.badPeriod: periods[0].from must be a valid YYYY-MM-DD date",
     ]);
-    report = await run(JSON.stringify({ ...base, pricing: 'cheap' }));
-    assert.deepEqual([report.ok, report.config.warnings], [true, ['pricing: not an object']]);
+    report = await run(JSON.stringify({ ...base, pricing: "cheap" }));
+    assert.deepEqual(
+      [report.ok, report.config.warnings],
+      [true, ["pricing: not an object"]]
+    );
     report = await run('{"unknown":true,"pricing":{"bad":1}}');
-    assert.equal(report.reason, 'config-invalid');
+    assert.equal(report.reason, "config-invalid");
     assert.deepEqual(
       report.config.warnings,
-      ['pricing.bad: not an object'],
-      'warnings do not depend on other config problems',
+      ["pricing.bad: not an object"],
+      "warnings do not depend on other config problems"
     );
-    report = await run('{');
+    report = await run("{");
     assert.deepEqual(
       [report.reason, report.config.warnings],
-      ['config-invalid', []],
-      'a config that fails to load has no warnings',
+      ["config-invalid", []],
+      "a config that fails to load has no warnings"
     );
   } finally {
     f.cleanup();
   }
 });
 
-test('doctor requires an alias-normalized write-subagents entry for the host', async () => {
+test("doctor requires an alias-normalized write-subagents entry for the host", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    fs.writeFileSync(path.join(skill, 'SKILL.md'), 'test');
-    fs.writeFileSync(path.join(skill, 'skill-hashes.json'), JSON.stringify(generateSkillHashes(skill)));
-    const config = path.join(skill, 'config.jsonc');
+    fs.writeFileSync(path.join(skill, "SKILL.md"), "test");
+    fs.writeFileSync(
+      path.join(skill, "skill-hashes.json"),
+      JSON.stringify(generateSkillHashes(skill))
+    );
+    const config = path.join(skill, "config.jsonc");
+
     const run = async (host: string) => {
       f.lines.length = 0;
       assert.equal(
-        await main(['doctor', 'run', '--session', f.session, '--host', host], { ...f.deps, skillRoot: skill }),
-        0,
+        await main(["doctor", "run", "--session", f.session, "--host", host], {
+          ...f.deps,
+          skillRoot: skill,
+        }),
+        0
       );
+
       return readDoctorOutput(f.output().path);
     };
 
-    // Missing host writer entry (other host present)
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
-        'write-subagents': { claude: { low: { model: 'writer', effort: 'low' } } },
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "utility-subagents": {
+          codex: { model: "reader", "context-limit": 300_000 },
+        },
+        "write-subagents": {
+          claude: { low: { model: "writer", effort: "low" } },
+        },
+      })
     );
-    const missing = await run('codex');
+    const missing = await run("codex");
     assert.equal(missing.ok, false);
-    assert.equal(missing.reason, 'config-invalid');
-    assert.ok(missing.config.problems.some((p: string) => p.includes('write-subagents.codex')));
+    assert.equal(missing.reason, "config-invalid");
+    assert.ok(
+      missing.config.problems.some((p: string) =>
+        p.includes("write-subagents.codex")
+      )
+    );
 
-    // Alias key satisfies canonical host and normalizes writers key
     fs.writeFileSync(
       config,
       JSON.stringify({
-        'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } },
-        'utility-subagents': { claude: { model: 'reader', 'context-limit': 150_000 } },
-        'write-subagents': { 'claude-code': { low: { model: 'writer', effort: 'low' } } },
-      }),
+        "read-delegates": {
+          codex: { targets: [{ low: { model: "reader" } }] },
+        },
+        "utility-subagents": {
+          claude: { model: "reader", "context-limit": 150_000 },
+        },
+        "write-subagents": {
+          "claude-code": { low: { model: "writer", effort: "low" } },
+        },
+      })
     );
-    const aliased = await run('claude');
+    const aliased = await run("claude");
     assert.equal(aliased.ok, true);
     assert.deepEqual(aliased.writers, {
-      claude: { models: ['writer'], effort: 'low', launchAs: 'launch: model writer, effort low' },
+      claude: {
+        models: ["writer"],
+        effort: "low",
+        launchAs: "launch: model writer, effort low",
+      },
     });
   } finally {
     f.cleanup();
   }
 });
-test('doctorReportWithProbe preserves static doctor output and wires sandboxRequired and probe-failed', async () => {
+
+test("doctorReportWithProbe preserves static doctor output and wires sandboxRequired and probe-failed", async () => {
   const f = sessionFixture({ memory: true });
+
   try {
-    const skill = path.join(f.root, 'skill');
+    const skill = path.join(f.root, "skill");
     fs.mkdirSync(skill);
-    const config = path.join(skill, 'config.jsonc');
-    const targets = [{ low: { model: 'reader' } }];
+    const config = path.join(skill, "config.jsonc");
+    const targets = [{ low: { model: "reader" } }];
+
     const base = {
-      'write-subagents': { codex: { low: { model: 'writer' } } },
-      'utility-subagents': { codex: { model: 'reader', 'context-limit': 300_000 } },
+      "write-subagents": { codex: { low: { model: "writer" } } },
+      "utility-subagents": {
+        codex: { model: "reader", "context-limit": 300_000 },
+      },
     };
-    const calls: Array<string> = [];
+
+    const calls: string[] = [];
+
     const probe: ProbeDeps = {
       platform: {
-        os: 'win32',
+        os: "win32",
         bubblewrap: false,
-        arch: 'x64',
+        arch: "x64",
         wsl: false,
         argvLimit: 10_000,
-        home: '/home/probe',
+        home: "/home/probe",
         path: [],
         pathExt: [],
       },
-      discovery: { resolve: (name) => ({ status: 'path', path: name }), doctor: () => [], probes: 0 },
+      discovery: {
+        resolve: (name) => ({ status: "path", path: name }),
+        doctor: () => [],
+        probes: 0,
+      },
+      // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
       spawn: async (name) => {
         calls.push(name);
-        return { exit: 0, stdout: '1.2.3', stderr: '' };
+
+        return { exit: 0, stdout: "1.2.3", stderr: "" };
       },
     };
-    const args = [f.session, skill, 'low', 'codex', undefined, undefined, undefined] as const;
+
+    const args = [
+      f.session,
+      skill,
+      "low",
+      "codex",
+      undefined,
+      undefined,
+      undefined,
+    ] as const;
+
     fs.writeFileSync(config, '{"unknown":true}');
-    assert.deepEqual(await doctorReportWithProbe(...args, probe), doctorReport(...args));
+    assert.deepEqual(
+      await doctorReportWithProbe(...args, probe),
+      doctorReport(...args)
+    );
     assert.equal(calls.length, 0);
 
-    fs.writeFileSync(config, JSON.stringify({ ...base, 'read-delegates': { claude: { sandbox: false, targets } } }));
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        ...base,
+        "read-delegates": { claude: { sandbox: false, targets } },
+      })
+    );
     const staticReport = doctorReport(...args);
     assert.equal(staticReport.ok, true);
-    assert.equal('probes' in staticReport, false);
+    assert.equal("probes" in staticReport, false);
     const passing = await doctorReportWithProbe(...args, probe);
-    assert.deepEqual(calls, ['claude']);
-    assert.ok('probeSummary' in passing);
-    assert.deepEqual([passing.ok, passing.probeSummary], [true, { ok: 1, failed: 0, unprobeable: 1, unverified: 0 }]);
+    assert.deepEqual(calls, ["claude"]);
+    assert.ok("probeSummary" in passing);
+    assert.deepEqual(
+      [passing.ok, passing.probeSummary],
+      [true, { ok: 1, failed: 0, unprobeable: 1, unverified: 0 }]
+    );
 
     calls.length = 0;
-    fs.writeFileSync(config, JSON.stringify({ ...base, 'read-delegates': { 'openai-codex': { targets } } }));
+    fs.writeFileSync(
+      config,
+      JSON.stringify({
+        ...base,
+        "read-delegates": { "openai-codex": { targets } },
+      })
+    );
+
     const failing = await doctorReportWithProbe(...args, {
       ...probe,
       discovery: {
-        ...probe.discovery!,
+        ...defined(probe.discovery),
         resolve(name) {
           calls.push(name);
-          return { status: 'missing', path: null };
+
+          return { status: "missing", path: null };
         },
       },
-      spawn: async () => assert.fail('a missing host binary must not spawn'),
+      spawn: () => assert.fail("a missing host binary must not spawn"),
     });
-    assert.ok(calls.length > 0 && calls.every((name) => name === 'codex'));
-    assert.ok('probeSummary' in failing);
+
+    assert.ok(calls.length > 0 && calls.every((name) => name === "codex"));
+    assert.ok("probeSummary" in failing);
     assert.deepEqual(
       [failing.ok, failing.reason, failing.probeSummary],
-      [false, 'probe-failed', { ok: 0, failed: 1, unprobeable: 0, unverified: 1 }],
+      [
+        false,
+        "probe-failed",
+        { ok: 0, failed: 1, unprobeable: 0, unverified: 1 },
+      ]
     );
   } finally {
     f.cleanup();

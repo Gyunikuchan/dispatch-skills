@@ -1,27 +1,27 @@
 {
-	"$schema": "https://opencode.ai/config.json",
-	"compaction": {
-		"auto": true,
-		// 1M window - 300k trigger to match Claude (400k window @ 75%) / Codex (300k).
-		"buffer": "70%"
-	},
-	// "providers": {
-	// 	"lmstudio": {
-	// 		"package": "aisdk:@ai-sdk/openai-compatible",
-	// 		"name": "LM Studio Local",
-	// 		"settings": {
-	// 			"baseURL": "http://127.0.0.1:1234/v1",
-	// 			"apiKey": "lm-studio"
-	// 		},
-	// 		"models": {
-	// 			"qwen3.8-27b-ridge": {
-	// 				"name": "Qwen 3.8 27B Local",
-	// 				"limit": {
-	// 					"context": 65536,
-	// 					"output": 8192
-	// 				}
-	// 			}
-	// 		}
-	// 	}
-	// }
+  "$schema": "https://opencode.ai/config.json",
+  "compaction": {
+    "auto": true,
+    // 1M window - 300k trigger to match Claude (400k window @ 75%) / Codex (300k).
+    "buffer": "70%",
+  },
+  // "providers": {
+  // 	"lmstudio": {
+  // 		"package": "aisdk:@ai-sdk/openai-compatible",
+  // 		"name": "LM Studio Local",
+  // 		"settings": {
+  // 			"baseURL": "http://127.0.0.1:1234/v1",
+  // 			"apiKey": "lm-studio"
+  // 		},
+  // 		"models": {
+  // 			"qwen3.8-27b-ridge": {
+  // 				"name": "Qwen 3.8 27B Local",
+  // 				"limit": {
+  // 					"context": 65536,
+  // 					"output": 8192
+  // 				}
+  // 			}
+  // 		}
+  // 	}
+  // }
 }

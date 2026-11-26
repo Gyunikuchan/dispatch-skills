@@ -1,8 +1,8 @@
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { test } from 'node:test';
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
 
 import {
   findRepoRoot,
@@ -11,113 +11,189 @@ import {
   initSession,
   readManifest,
   reactivateSession,
-} from '../../../skills/dispatch/scripts/lib/session.ts';
+} from "../../../skills/dispatch/scripts/lib/session.ts";
 
-const now = new Date('2026-09-29T17:54:00.000Z');
+const now = new Date("2026-09-29T17:54:00.000Z");
 
-function repo() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'session-'));
-  const root = path.join(base, 'repo');
-  fs.mkdirSync(path.join(root, '.git'), { recursive: true });
-  const temp = path.join(base, 'tmp');
+const repo = () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "session-"));
+  const root = path.join(base, "repo");
+  fs.mkdirSync(path.join(root, ".git"), { recursive: true });
+  const temp = path.join(base, "tmp");
   fs.mkdirSync(temp);
+
   return { root, temp };
-}
+};
 
-// SECTION: Session directory and lifecycle
-
-test('timestamp-slug format without session ID', () => {
-  assert.equal(folderName(now, 'Rewrite Dispatch As!'), '20260929T1754Z-rewrite-dispatch-as');
-  assert.match(folderName(now, 'x'), FOLDER_NAME);
+test("timestamp-slug format without session ID", () => {
+  assert.equal(
+    folderName(now, "Rewrite Dispatch As!"),
+    "20260929T1754Z-rewrite-dispatch-as"
+  );
+  assert.match(folderName(now, "x"), FOLDER_NAME);
 });
 
-test('repository root: ancestor Git metadata identifies the root; absence returns null', () => {
-  const existing = new Set([path.resolve('/w/repo/.git')]);
+test("repository root: ancestor Git metadata identifies the root; absence returns null", () => {
+  const existing = new Set([path.resolve("/w/repo/.git")]);
   assert.equal(
-    findRepoRoot('/w/repo/src/deep', (file) => existing.has(path.resolve(file))),
-    path.resolve('/w/repo'),
+    findRepoRoot("/w/repo/src/deep", (file) =>
+      existing.has(path.resolve(file))
+    ),
+    path.resolve("/w/repo")
   );
   assert.equal(
-    findRepoRoot('/nowhere', () => false),
-    null,
+    findRepoRoot("/nowhere", () => false),
+    null
   );
 });
 
-test('session matching skips corrupt unrelated directories and matches by manifest', () => {
+test("session matching skips corrupt unrelated directories and matches by manifest", () => {
   const { root } = repo();
-  const created = initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now });
-  assert.equal(created.reused, false);
-  const dir = created.path;
-  assert.equal(path.basename(dir), '20260929T1754Z-demo');
-  assert.equal(readManifest(dir).location, 'workspace');
-  assert.deepEqual(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'other', now }), {
-    path: dir,
-    reused: true,
+
+  const created = initSession({
+    repositoryRoot: root,
+    sessionId: "s1",
+    sessionTitle: "demo",
+    now,
   });
 
+  assert.equal(created.reused, false);
+  const dir = created.path;
+  assert.equal(path.basename(dir), "20260929T1754Z-demo");
+  assert.equal(readManifest(dir).location, "workspace");
+  assert.deepEqual(
+    initSession({
+      repositoryRoot: root,
+      sessionId: "s1",
+      sessionTitle: "other",
+      now,
+    }),
+    {
+      path: dir,
+      reused: true,
+    }
+  );
+
   // Corrupt or unreadable unrelated directory does not block session matching or initialization.
-  const damaged = path.join(path.dirname(dir), '20260929T1754Z-damaged');
+  const damaged = path.join(path.dirname(dir), "20260929T1754Z-damaged");
   fs.mkdirSync(damaged);
-  fs.writeFileSync(path.join(damaged, 'corrupt.txt'), 'data');
+  fs.writeFileSync(path.join(damaged, "corrupt.txt"), "data");
 
   // Existing session matching still succeeds despite damaged sibling.
-  assert.equal(initSession({ repositoryRoot: root, sessionId: 's1', sessionTitle: 'demo', now }).path, dir);
+  assert.equal(
+    initSession({
+      repositoryRoot: root,
+      sessionId: "s1",
+      sessionTitle: "demo",
+      now,
+    }).path,
+    dir
+  );
 
   // Initializing an unrelated session still succeeds.
-  const session = initSession({ repositoryRoot: root, sessionId: 's3', sessionTitle: 'healthy', now }).path;
-  assert.equal(path.basename(session), '20260929T1754Z-healthy');
-  assert.equal(readManifest(session).sessionId, 's3');
+  const session = initSession({
+    repositoryRoot: root,
+    sessionId: "s3",
+    sessionTitle: "healthy",
+    now,
+  }).path;
+
+  assert.equal(path.basename(session), "20260929T1754Z-healthy");
+  assert.equal(readManifest(session).sessionId, "s3");
 
   // Initializing with same title as damaged folder avoids conflict by appending suffix.
-  const salvaged = initSession({ repositoryRoot: root, sessionId: 's4', sessionTitle: 'damaged', now }).path;
-  assert.equal(path.basename(salvaged), '20260929T1754Z-damaged-1');
-  assert.equal(readManifest(salvaged).sessionId, 's4');
+  const salvaged = initSession({
+    repositoryRoot: root,
+    sessionId: "s4",
+    sessionTitle: "damaged",
+    now,
+  }).path;
+
+  assert.equal(path.basename(salvaged), "20260929T1754Z-damaged-1");
+  assert.equal(readManifest(salvaged).sessionId, "s4");
 });
 
-test('held claim waits for the winner and reuses its folder', (t) => {
+test("held claim waits for the winner and reuses its folder", (t) => {
   const { root } = repo();
-  const first = initSession({ repositoryRoot: root, sessionId: 'c1', sessionTitle: 'demo', now }).path;
-  const claim = path.join(path.dirname(first), '.claim-c2');
+
+  const first = initSession({
+    repositoryRoot: root,
+    sessionId: "c1",
+    sessionTitle: "demo",
+    now,
+  }).path;
+
+  const claim = path.join(path.dirname(first), ".claim-c2");
   fs.mkdirSync(claim);
-  const winner = path.join(path.dirname(first), '20260929T1754Z-demo-1');
+  const winner = path.join(path.dirname(first), "20260929T1754Z-demo-1");
   fs.mkdirSync(winner);
   fs.writeFileSync(
-    path.join(winner, 'manifest.json'),
+    path.join(winner, "manifest.json"),
     fs
-      .readFileSync(path.join(first, 'manifest.json'), 'utf8')
+      .readFileSync(path.join(first, "manifest.json"), "utf-8")
       .replaceAll('"c1"', '"c2"')
-      .replace('20260929T1754Z-demo', '20260929T1754Z-demo-1'),
+      .replace("20260929T1754Z-demo", "20260929T1754Z-demo-1")
   );
   assert.equal(
-    initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 50 }).path,
-    fs.realpathSync(winner),
+    initSession({
+      repositoryRoot: root,
+      sessionId: "c2",
+      sessionTitle: "demo",
+      now,
+      waitMs: 50,
+    }).path,
+    fs.realpathSync(winner)
   );
   fs.rmSync(winner, { recursive: true });
   let elapsed = 0;
-  t.mock.method(Date, 'now', () => elapsed);
-  t.mock.method(Atomics, 'wait', () => {
+  t.mock.method(Date, "now", () => elapsed);
+  t.mock.method(Atomics, "wait", () => {
     elapsed += 10;
-    return 'timed-out';
+
+    return "timed-out";
   });
   assert.throws(
-    () => initSession({ repositoryRoot: root, sessionId: 'c2', sessionTitle: 'demo', now, waitMs: 30 }),
-    /still claimed/,
+    () =>
+      initSession({
+        repositoryRoot: root,
+        sessionId: "c2",
+        sessionTitle: "demo",
+        now,
+        waitMs: 30,
+      }),
+    /still claimed/u
   );
 });
 
-test('session reactivate validates repository and rejects external locations', () => {
+test("session reactivate validates repository and rejects external locations", () => {
   const { root, temp } = repo();
-  const dir = initSession({ repositoryRoot: root, sessionId: 'r1', sessionTitle: 'demo', now }).path;
+
+  const dir = initSession({
+    repositoryRoot: root,
+    sessionId: "r1",
+    sessionTitle: "demo",
+    now,
+  }).path;
+
   assert.equal(reactivateSession(dir, root), dir);
 
   // Different repository root is rejected.
-  const otherRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'other-repo-'));
-  fs.mkdirSync(path.join(otherRepo, '.git'), { recursive: true });
-  assert.throws(() => reactivateSession(dir, otherRepo), /different repository/);
+  const otherRepo = fs.mkdtempSync(path.join(os.tmpdir(), "other-repo-"));
+  fs.mkdirSync(path.join(otherRepo, ".git"), { recursive: true });
+  assert.throws(
+    () => reactivateSession(dir, otherRepo),
+    /different repository/u
+  );
 
   // External location with valid repo in manifest is rejected.
   const external = path.join(temp, path.basename(dir));
   fs.mkdirSync(external, { recursive: true });
-  fs.writeFileSync(path.join(external, 'manifest.json'), fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
-  assert.throws(() => reactivateSession(external, root), /outside the workspace session root/);
+  fs.writeFileSync(
+    path.join(external, "manifest.json"),
+    fs.readFileSync(path.join(dir, "manifest.json"), "utf-8")
+  );
+  assert.throws(
+    () => reactivateSession(external, root),
+    /outside the workspace session root/u
+  );
 });

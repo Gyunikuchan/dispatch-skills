@@ -1,80 +1,128 @@
-import crypto from 'node:crypto';
-import path from 'node:path';
-import type { TestFs } from './fake-ports.ts';
+import crypto from "node:crypto";
+import path from "node:path";
+
+import type { TestFs } from "./fake-ports.ts";
 
 const key = (file: string) => path.resolve(file);
+
 const fail = (code: string, file: string): never => {
   throw Object.assign(new Error(`${code}: ${file}`), { code });
 };
 
 /** In-memory run storage; caller files and external artifacts retain their real filesystem port. */
-export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
-  const real = ports.fs,
-    base = path.resolve(root);
-  type Entry = { kind: 'file' | 'directory' | 'symlink'; bytes: Buffer; mode: number };
+export const memoryRunFs = (ports: { fs: TestFs }, root: string) => {
+  const real = ports.fs;
+  const base = path.resolve(root);
+
+  interface Entry {
+    kind: "file" | "directory" | "symlink";
+    bytes: Buffer;
+    mode: number;
+  }
+
   const entries = new Map<string, Entry>();
-  const managed = (file: string) => key(file) === base || key(file).startsWith(`${base}${path.sep}`);
-  const get = (file: string): Entry => entries.get(key(file)) ?? fail('ENOENT', file);
-  const mkdir = (dir: string, recursive: boolean): void => {
+
+  const managed = (file: string) =>
+    key(file) === base || key(file).startsWith(`${base}${path.sep}`);
+
+  const get = (file: string) => entries.get(key(file)) ?? fail("ENOENT", file);
+
+  const mkdir = (dir: string, recursive: boolean) => {
     if (!managed(dir)) {
       real.mkdir(dir, { recursive });
+
       return;
     }
+
     const current = entries.get(key(dir));
+
     if (current) {
-      if (current.kind !== 'directory' || !recursive) {
-        fail('EEXIST', dir);
+      if (current.kind !== "directory" || !recursive) {
+        fail("EEXIST", dir);
       }
+
       return;
     }
+
     const parent = path.dirname(key(dir));
+
     if (managed(parent) && !entries.has(parent)) {
       if (!recursive) {
-        fail('ENOENT', parent);
+        fail("ENOENT", parent);
       }
+
       mkdir(parent, true);
     }
-    if (managed(parent) && get(parent).kind !== 'directory') {
-      fail('ENOTDIR', parent);
+
+    if (managed(parent) && get(parent).kind !== "directory") {
+      fail("ENOTDIR", parent);
     }
-    entries.set(key(dir), { kind: 'directory', bytes: Buffer.alloc(0), mode: 0o700 });
+
+    entries.set(key(dir), {
+      kind: "directory",
+      bytes: Buffer.alloc(0),
+      mode: 0o700,
+    });
   };
-  const write = (file: string, bytes: Buffer, exclusive = false): void => {
+
+  const write = (file: string, bytes: Buffer, exclusive = false) => {
     mkdir(path.dirname(key(file)), true);
     const current = entries.get(key(file));
+
     if (current && exclusive) {
-      fail('EEXIST', file);
+      fail("EEXIST", file);
     }
-    if (current?.kind === 'directory') {
-      fail('EISDIR', file);
+
+    if (current?.kind === "directory") {
+      fail("EISDIR", file);
     }
-    entries.set(key(file), { kind: 'file', bytes: Buffer.from(bytes), mode: current?.mode ?? 0o600 });
+
+    entries.set(key(file), {
+      kind: "file",
+      bytes: Buffer.from(bytes),
+      mode: current?.mode ?? 0o600,
+    });
   };
-  const read = (file: string): Buffer => {
+
+  const read = (file: string) => {
     const entry = get(file);
-    if (entry.kind !== 'file') {
-      fail(entry.kind === 'directory' ? 'EISDIR' : 'ELOOP', file);
+
+    if (entry.kind !== "file") {
+      fail(entry.kind === "directory" ? "EISDIR" : "ELOOP", file);
     }
+
     return entry.bytes;
   };
-  const copy = (source: string, destination: string, exclusive: boolean): boolean => {
-    const bytes = managed(source) ? read(source) : Buffer.from(real.readBase64(source), 'base64');
+
+  const copy = (source: string, destination: string, exclusive: boolean) => {
+    const bytes = managed(source)
+      ? read(source)
+      : Buffer.from(real.readBase64(source), "base64");
+
     if (!managed(destination)) {
       if (exclusive && real.exists(destination)) {
         return false;
       }
-      real.writeBase64Atomic(destination, bytes.toString('base64'));
+
+      real.writeBase64Atomic(destination, bytes.toString("base64"));
+
       return true;
     }
+
     if (exclusive && entries.has(key(destination))) {
       return false;
     }
+
     write(destination, bytes, exclusive);
+
     return true;
   };
+
   const overlay: TestFs = {
     hashFile: (file) =>
-      managed(file) ? crypto.createHash('sha256').update(read(file)).digest('hex') : real.hashFile(file),
+      managed(file)
+        ? crypto.createHash("sha256").update(read(file)).digest("hex")
+        : real.hashFile(file),
     copyFileAtomic: (source, destination) => {
       if (!managed(source) && !managed(destination)) {
         real.copyFileAtomic(source, destination);
@@ -91,23 +139,27 @@ export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
         ...new Set([
           ...(managed(dir) ? [] : real.listFiles(dir)),
           ...[...entries].flatMap(([file, entry]) =>
-            entry.kind !== 'directory' && file.startsWith(`${key(dir)}${path.sep}`)
-              ? [path.relative(dir, file).split(path.sep).join('/')]
-              : [],
+            entry.kind !== "directory" &&
+            file.startsWith(`${key(dir)}${path.sep}`)
+              ? [path.relative(dir, file).split(path.sep).join("/")]
+              : []
           ),
         ]),
-      ].sort(),
+      ].toSorted(),
     inspectPath: (file) => {
       if (!managed(file)) {
         return real.inspectPath(file);
       }
+
       const entry = entries.get(key(file));
+
       return entry
         ? {
             kind: entry.kind,
             mode: entry.mode,
-            linkTarget: entry.kind === 'symlink' ? entry.bytes.toString('base64') : null,
-            realPath: entry.kind === 'symlink' ? null : key(file),
+            linkTarget:
+              entry.kind === "symlink" ? entry.bytes.toString("base64") : null,
+            realPath: entry.kind === "symlink" ? null : key(file),
           }
         : null;
     },
@@ -119,41 +171,64 @@ export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
       }
     },
     writeLinkAtomic: (file, target) => {
-      if (!managed(file)) {
-        real.writeLinkAtomic(file, target);
-      } else {
+      if (managed(file)) {
         mkdir(path.dirname(file), true);
-        entries.set(key(file), { kind: 'symlink', bytes: Buffer.from(target, 'base64'), mode: 0o777 });
+        entries.set(key(file), {
+          kind: "symlink",
+          bytes: Buffer.from(target, "base64"),
+          mode: 0o777,
+        });
+      } else {
+        real.writeLinkAtomic(file, target);
       }
     },
-    readText: (file) => (managed(file) ? read(file).toString('utf8') : real.readText(file)),
+    readText: (file) =>
+      managed(file) ? read(file).toString("utf-8") : real.readText(file),
     *readChunks(file, chunkBytes = 64 * 1024) {
       if (!managed(file)) {
         yield* real.readChunks(file, chunkBytes);
+
         return;
       }
-      if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1024 * 1024) {
-        throw new Error('Invalid chunk size.');
+
+      if (
+        !Number.isSafeInteger(chunkBytes) ||
+        chunkBytes < 1 ||
+        chunkBytes > 1024 * 1024
+      ) {
+        throw new Error("Invalid chunk size.");
       }
+
       const bytes = read(file);
+
       for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
         yield Buffer.from(bytes.subarray(offset, offset + chunkBytes));
       }
     },
-    readBase64: (file) => (managed(file) ? read(file).toString('base64') : real.readBase64(file)),
+    readBase64: (file) =>
+      managed(file) ? read(file).toString("base64") : real.readBase64(file),
     writeBase64Atomic: (file, bytes) => {
       if (managed(file)) {
-        write(file, Buffer.from(bytes, 'base64'));
+        write(file, Buffer.from(bytes, "base64"));
       } else {
         real.writeBase64Atomic(file, bytes);
       }
     },
-    exists: (file) => (managed(file) ? entries.has(key(file)) : real.exists(file)),
+    exists: (file) =>
+      managed(file) ? entries.has(key(file)) : real.exists(file),
     size: (file) => (managed(file) ? read(file).length : real.size(file)),
-    mkdir: (dir, options) => mkdir(dir, options.recursive),
+    mkdir: (dir, options) => {
+      mkdir(dir, options.recursive);
+    },
     appendDurable: (file, text) => {
       if (managed(file)) {
-        write(file, Buffer.concat([entries.has(key(file)) ? read(file) : Buffer.alloc(0), Buffer.from(text)]));
+        write(
+          file,
+          Buffer.concat([
+            entries.has(key(file)) ? read(file) : Buffer.alloc(0),
+            Buffer.from(text),
+          ])
+        );
       } else {
         real.appendDurable(file, text);
       }
@@ -169,10 +244,13 @@ export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
       if (!managed(file)) {
         return real.publishExclusive(file, text);
       }
+
       if (entries.has(key(file))) {
         return false;
       }
+
       write(file, Buffer.from(text), true);
+
       return true;
     },
     writeAtomic: (file, text) => {
@@ -183,29 +261,35 @@ export function memoryRunFs(ports: { fs: TestFs }, root: string): void {
       }
     },
     truncate: (file, length) => {
-      if (!managed(file)) {
-        real.truncate(file, length);
-      } else {
-        const bytes = read(file),
-          next = Buffer.alloc(length);
+      if (managed(file)) {
+        const bytes = read(file);
+        const next = Buffer.alloc(length);
+
         bytes.copy(next);
         write(file, next);
+      } else {
+        real.truncate(file, length);
       }
     },
     remove: (file) => {
-      if (!managed(file)) {
-        real.remove(file);
-      } else {
+      if (managed(file)) {
         const entry = entries.get(key(file));
+
         if (
-          entry?.kind === 'directory' &&
-          [...entries.keys()].some((child) => child.startsWith(`${key(file)}${path.sep}`))
+          entry?.kind === "directory" &&
+          [...entries.keys()].some((child) =>
+            child.startsWith(`${key(file)}${path.sep}`)
+          )
         ) {
-          fail('ENOTEMPTY', file);
+          fail("ENOTEMPTY", file);
         }
+
         entries.delete(key(file));
+      } else {
+        real.remove(file);
       }
     },
   };
+
   ports.fs = overlay;
-}
+};

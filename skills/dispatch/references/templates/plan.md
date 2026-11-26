@@ -18,10 +18,11 @@ Separate each box field with blank `>` lines so it renders as its own paragraph.
 > **Scope:** <components or top-level paths>
 
 ## At a Glance
+
 - **What:** <plain-language change and why it matters>
 - **How it works:** <one-line explanation>
 
-*Optional orientation visual, only when the visual-aid bar admits it:*
+_Optional orientation visual, only when the visual-aid bar admits it:_
 
 ```mermaid
 flowchart LR
@@ -31,22 +32,28 @@ flowchart LR
 Text summary: Tasks apply the change, then verification checks the outcome.
 
 ## Background
-*Optional: current behaviour a fresh reader needs, with `file:line` pointers.*
+
+_Optional: current behaviour a fresh reader needs, with `file:line` pointers._
 
 ## Key Interfaces & Data
+
 - <optional contract sketch, data shape or layout tree needed by every task>
 
 ## Key Decisions & Context
-*Tactical decisions with rationale; cite spec DEC-<n> and design AD-<n> by ID.*
+
+_Tactical decisions with rationale; cite spec DEC-<n> and design AD-<n> by ID._
 
 ## Constraints
+
 - <shared limit every task must preserve>
 
 ## Open Questions & Assumptions
-*Tactical assumptions and defaults. Open user questions belong in the governing spec Open Questions.*
+
+_Tactical assumptions and defaults. Open user questions belong in the governing spec Open Questions._
 
 ## Out of Scope
-*Plan-local exclusions and deferred follow-ups only.*
+
+_Plan-local exclusions and deferred follow-ups only._
 
 ## Task Map
 
@@ -55,6 +62,7 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 | T<n> | <Task title> | <Plain-language outcome> | none | SC<n>[, SC<n>...] |
 
 ## Technical-Design Traceability
+
 - Approved revision: `sha256:<64 hex>`
 - Increment ID and inherited contract: I<nn> — <inherited outcome, invariants, rollback boundary>
 - Prerequisite evidence: <prerequisite completion evidence>
@@ -63,6 +71,7 @@ Text summary: Tasks apply the change, then verification checks the outcome.
 ## Proposed Changes
 
 ### T<n> — <Task title>
+
 - Constraints: <optional task-specific constraints, including why each non-obvious prerequisite is needed>
 - Overlap: <path> — <why this unordered task also writes the path>
 - <Observable behaviour this task implements and how it works.>
@@ -94,6 +103,7 @@ Text summary: Optional visual under the visual-aid bar.
 </details>
 
 ## Success Criteria
+
 - [SC1] <checkable outcome>
   <details>
 
@@ -112,19 +122,25 @@ Text summary: Optional visual under the visual-aid bar.
   </details>
 
 ## Verification Plan
+
 - Seams: <test entry point>[, <test entry point>...]
+
 ### Automated Tests
+
 - `<one executable command>`
 - None: <reason>
+
 ### Manual Verification
+
 - Manual steps, edge cases, and failure scenarios.
 
 ## Rollback & Blast Radius
-*Include inspected callers or consumers the plan leaves unchanged when they matter for review, plus migrations and rollback paths; omit when empty.*
+
+_Include inspected callers or consumers the plan leaves unchanged when they matter for review, plus migrations and rollback paths; omit when empty._
 
 ## Review Findings & Resolutions
-*No reviews conducted yet.*
 
+_No reviews conducted yet._
 ````
 
 ## Field notes

@@ -1,9 +1,9 @@
-import fs from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 
-export type OpencodeMessage = {
+export interface OpencodeMessage {
   depth: number;
   sessionId?: string;
   createdMs: number;
@@ -15,104 +15,275 @@ export type OpencodeMessage = {
   cacheRead?: number;
   cacheWrite?: number;
   toolCalls?: number;
-};
-export type OpencodeRead = {
-  messages: Array<OpencodeMessage>;
+}
+
+export interface OpencodeRead {
+  messages: OpencodeMessage[];
   skipped: number;
-  truncated: 'sessions' | 'rows' | null;
-  userMessageTimes?: Array<number>;
+  truncated: "sessions" | "rows" | null;
+  userMessageTimes?: number[];
   userTurnsTruncated?: true;
-};
-export type OpencodeReadOptions = {
+}
+
+export interface OpencodeReadOptions {
   fromMs: number;
   toMs: number;
   maxSessions?: number;
   maxRows?: number;
   includeSessionIdentity?: true;
-};
+}
 
 const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_ROWS = 100_000;
 
-type SqliteModule = { DatabaseSync: typeof DatabaseSync };
+interface SqliteModule {
+  DatabaseSync: typeof DatabaseSync;
+}
 
 const isSqliteModule = (value: unknown): value is SqliteModule =>
-  typeof value === 'object' && value !== null && 'DatabaseSync' in value && typeof value.DatabaseSync === 'function';
+  typeof value === "object" &&
+  value !== null &&
+  "DatabaseSync" in value &&
+  typeof value.DatabaseSync === "function";
 
 let sqliteModule: SqliteModule | null = null;
+
 /** Loads `node:sqlite` on first use only, so runs that never open a database do not pay for it. */
-export function getSqlite(): SqliteModule {
+export const getSqlite = () => {
   if (!sqliteModule) {
-    const loaded: unknown = createRequire(import.meta.url)('node:sqlite');
+    const loaded: unknown = createRequire(import.meta.url)("node:sqlite");
+
     if (!isSqliteModule(loaded)) {
-      throw new Error('node:sqlite does not provide DatabaseSync');
+      throw new Error("node:sqlite does not provide DatabaseSync");
     }
+
     sqliteModule = loaded;
   }
+
   return sqliteModule;
+};
+
+type SqlCell = SQLOutputValue | undefined;
+
+interface OpencodeRow {
+  [field: string]: SqlCell;
 }
 
-const token = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-const optionalToken = (value: unknown): number | undefined | false =>
-  value === null ? undefined : token(value) ? value : false;
-const cap = (value: number | undefined, fallback: number): number =>
-  value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.floor(value));
+const token = (value: SqlCell): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-export function opencodeDbPath(home: string, env: (name: string) => string | undefined): string {
-  const dataHome = env('XDG_DATA_HOME');
-  return path.join(dataHome ? dataHome : path.join(home, '.local', 'share'), 'opencode', 'opencode.db');
+const optionalToken = (value: SqlCell): number | undefined | false => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  return token(value) ? value : false;
+};
+
+const cap = (value: number | undefined, fallback: number) =>
+  value === undefined || !Number.isFinite(value)
+    ? fallback
+    : Math.max(0, Math.floor(value));
+
+export const opencodeDbPath = (
+  home: string,
+  env: (name: string) => string | undefined
+) => {
+  const dataHome = env("XDG_DATA_HOME");
+
+  const dataDir =
+    dataHome !== undefined && dataHome !== ""
+      ? dataHome
+      : path.join(home, ".local", "share");
+
+  return path.join(dataDir, "opencode", "opencode.db");
+};
+
+interface DepthWalk {
+  ids: string[];
+  depths: Map<string, number>;
+  truncated: "sessions" | null;
 }
 
-export function readOpencodeMessages(
+const walkDepths = (
+  db: DatabaseSync,
+  rootSessionId: string,
+  maxSessions: number
+): DepthWalk => {
+  const depths = new Map<string, number>([[rootSessionId, 0]]);
+  let truncated: "sessions" | null = null;
+  let frontier = [rootSessionId];
+  let depth = 0;
+  let remaining = maxSessions;
+
+  while (frontier.length > 0) {
+    const placeholders = frontier.map(() => "?").join(",");
+
+    const children = db
+      .prepare(
+        `SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`
+      )
+      .all(...frontier, remaining + 1);
+
+    if (children.length === 0) {
+      break;
+    }
+
+    const next: string[] = [];
+
+    for (const child of children) {
+      const { id } = child;
+
+      if (typeof id !== "string" || depths.has(id)) {
+        continue;
+      }
+
+      if (next.length >= remaining) {
+        truncated = "sessions";
+        break;
+      }
+
+      depths.set(id, depth + 1);
+      next.push(id);
+    }
+
+    if (truncated !== null) {
+      break;
+    }
+
+    frontier = next;
+    remaining -= next.length;
+    depth += 1;
+  }
+
+  return { ids: [...depths.keys()], depths, truncated };
+};
+
+const readToolCounts = (
+  db: DatabaseSync,
+  placeholders: string,
+  ids: string[],
+  options: OpencodeReadOptions
+) => {
+  const tables = new Set(
+    db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`
+      )
+      .all()
+      .map((r) => r["name"])
+      .filter((n): n is string => typeof n === "string")
+  );
+
+  let partQuery: string | null;
+
+  if (tables.has("part")) {
+    partQuery = `SELECT message_id, COUNT(*) AS tool_calls FROM part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND json_extract(data, '$.type') = 'tool' GROUP BY message_id`;
+  } else if (tables.has("session_part")) {
+    partQuery = `SELECT message_id, COUNT(*) AS tool_calls FROM session_part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND type = 'tool' GROUP BY message_id`;
+  } else {
+    partQuery = null;
+  }
+
+  if (partQuery === null) {
+    return null;
+  }
+
+  const counts = new Map<string, number>();
+
+  const toolRows = db
+    .prepare(partQuery)
+    .all(...ids, options.fromMs, options.toMs);
+
+  for (const tr of toolRows) {
+    const msgId = tr["message_id"];
+    const cnt = tr["tool_calls"];
+
+    if (typeof msgId === "string" && token(cnt)) {
+      counts.set(msgId, cnt);
+    }
+  }
+
+  return counts;
+};
+
+const buildMessage = (
+  row: OpencodeRow,
+  depths: Map<string, number>,
+  options: OpencodeReadOptions,
+  toolCounts: Map<string, number> | null
+): OpencodeMessage | null => {
+  const sessionId = row["session_id"];
+
+  if (typeof sessionId !== "string") {
+    return null;
+  }
+
+  const createdMs = row["time_created"];
+  const { input } = row;
+  const { output } = row;
+  const messageDepth = depths.get(sessionId);
+
+  if (
+    messageDepth === undefined ||
+    !token(createdMs) ||
+    !token(input) ||
+    !token(output)
+  ) {
+    return null;
+  }
+
+  const reasoning = optionalToken(row["reasoning"]);
+  const cacheRead = optionalToken(row["cache_read"]);
+  const cacheWrite = optionalToken(row["cache_write"]);
+
+  if (reasoning === false || cacheRead === false || cacheWrite === false) {
+    return null;
+  }
+
+  const providerId = row["provider_id"];
+  const modelId = row["model_id"];
+  const { variant } = row;
+  const msgId = row["id"];
+
+  return {
+    depth: messageDepth,
+    ...(options.includeSessionIdentity && { sessionId }),
+    createdMs,
+    model:
+      typeof providerId === "string" && typeof modelId === "string"
+        ? `${providerId}/${modelId}`
+        : null,
+    effort: typeof variant === "string" ? variant : null,
+    input,
+    output,
+    ...(reasoning !== undefined && { reasoning }),
+    ...(cacheRead !== undefined && { cacheRead }),
+    ...(cacheWrite !== undefined && { cacheWrite }),
+    ...(toolCounts !== null &&
+      typeof msgId === "string" && {
+        toolCalls: toolCounts.get(msgId) ?? 0,
+      }),
+  };
+};
+
+export const readOpencodeMessages: (
   dbPath: string,
   rootSessionId: string,
-  options: OpencodeReadOptions,
-): OpencodeRead {
-  // A read-only open of a missing file must not create it; stat keeps the native ENOENT code for callers.
+  options: OpencodeReadOptions
+) => OpencodeRead = (dbPath, rootSessionId, options) => {
   fs.statSync(dbPath);
   const maxSessions = cap(options.maxSessions, DEFAULT_MAX_SESSIONS);
   const maxRows = cap(options.maxRows, DEFAULT_MAX_ROWS);
-  const depths = new Map<string, number>([[rootSessionId, 0]]);
   const { DatabaseSync } = getSqlite();
   const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    let truncated: OpencodeRead['truncated'] = null;
-    let frontier = [rootSessionId];
-    let depth = 0;
-    let remaining = maxSessions;
-    while (frontier.length > 0) {
-      const placeholders = frontier.map(() => '?').join(',');
-      // The extra row only signals that descendants exceed the cap; it never enters the visited set.
-      const children = db
-        .prepare(`SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`)
-        .all(...frontier, remaining + 1);
-      if (children.length === 0) {
-        break;
-      }
-      const next: Array<string> = [];
-      for (const child of children) {
-        const id = child['id'];
-        if (typeof id !== 'string' || depths.has(id)) {
-          continue;
-        }
-        if (next.length >= remaining) {
-          truncated = 'sessions';
-          break;
-        }
-        depths.set(id, depth + 1);
-        next.push(id);
-      }
-      if (truncated) {
-        break;
-      }
-      frontier = next;
-      remaining -= next.length;
-      depth++;
-    }
 
-    const ids = [...depths.keys()];
-    const placeholders = ids.map(() => '?').join(',');
+  try {
+    const walk = walkDepths(db, rootSessionId, maxSessions);
+    let truncated: OpencodeRead["truncated"] = walk.truncated;
+    const { ids, depths } = walk;
+    const placeholders = ids.map(() => "?").join(",");
+
     const rows = db
       .prepare(`
       SELECT id, session_id, time_created,
@@ -132,75 +303,24 @@ export function readOpencodeMessages(
     `)
       .all(...ids, options.fromMs, options.toMs, maxRows + 1);
 
-    const tables = new Set(
-      db
-        .prepare(`SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name IN ('part', 'session_part')`)
-        .all()
-        .map((r) => r['name'])
-        .filter((n): n is string => typeof n === 'string'),
-    );
-    let toolCounts: Map<string, number> | null = null;
-    const partQuery = tables.has('part')
-      ? `SELECT message_id, COUNT(*) AS tool_calls FROM part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND json_extract(data, '$.type') = 'tool' GROUP BY message_id`
-      : tables.has('session_part')
-        ? `SELECT message_id, COUNT(*) AS tool_calls FROM session_part WHERE message_id IN (SELECT id FROM session_message WHERE type = 'assistant' AND session_id IN (${placeholders}) AND time_created >= ? AND time_created <= ?) AND type = 'tool' GROUP BY message_id`
-        : null;
-    if (partQuery) {
-      toolCounts = new Map<string, number>();
-      const toolRows = db.prepare(partQuery).all(...ids, options.fromMs, options.toMs);
-      for (const tr of toolRows) {
-        const msgId = tr['message_id'];
-        const cnt = tr['tool_calls'];
-        if (typeof msgId === 'string' && token(cnt)) {
-          toolCounts.set(msgId, cnt);
-        }
+    const toolCounts = readToolCounts(db, placeholders, ids, options);
+
+    const messages: OpencodeMessage[] = [];
+    let skipped = 0;
+
+    for (const row of rows.slice(0, maxRows)) {
+      const message = buildMessage(row, depths, options, toolCounts);
+
+      if (message === null) {
+        skipped += 1;
+        continue;
       }
+
+      messages.push(message);
     }
 
-    const messages: Array<OpencodeMessage> = [];
-    let skipped = 0;
-    for (const row of rows.slice(0, maxRows)) {
-      const sessionId = row['session_id'];
-      if (typeof sessionId !== 'string') {
-        skipped++;
-        continue;
-      }
-      const createdMs = row['time_created'];
-      const input = row['input'];
-      const output = row['output'];
-      const messageDepth = depths.get(sessionId);
-      if (messageDepth === undefined || !token(createdMs) || !token(input) || !token(output)) {
-        skipped++;
-        continue;
-      }
-      const reasoning = optionalToken(row['reasoning']);
-      const cacheRead = optionalToken(row['cache_read']);
-      const cacheWrite = optionalToken(row['cache_write']);
-      if (reasoning === false || cacheRead === false || cacheWrite === false) {
-        skipped++;
-        continue;
-      }
-      const providerId = row['provider_id'];
-      const modelId = row['model_id'];
-      const variant = row['variant'];
-      const msgId = row['id'];
-      messages.push({
-        depth: messageDepth,
-        ...(options.includeSessionIdentity && { sessionId }),
-        createdMs,
-        model: typeof providerId === 'string' && typeof modelId === 'string' ? `${providerId}/${modelId}` : null,
-        effort: typeof variant === 'string' ? variant : null,
-        input,
-        output,
-        ...(reasoning !== undefined && { reasoning }),
-        ...(cacheRead !== undefined && { cacheRead }),
-        ...(cacheWrite !== undefined && { cacheWrite }),
-        ...(toolCounts !== null && typeof msgId === 'string' && { toolCalls: toolCounts.get(msgId) ?? 0 }),
-      });
-    }
-    // Session truncation wins: it limits which sessions the row cap is applied to.
     if (rows.length > maxRows && truncated === null) {
-      truncated = 'rows';
+      truncated = "rows";
     }
 
     const userRows = db
@@ -213,6 +333,7 @@ export function readOpencodeMessages(
       LIMIT ?
     `)
       .all(rootSessionId, options.fromMs, options.toMs, maxRows + 1);
+
     const userTurnsTruncated = userRows.length > maxRows;
 
     return {
@@ -221,9 +342,13 @@ export function readOpencodeMessages(
       truncated,
       ...(userTurnsTruncated
         ? { userTurnsTruncated: true as const }
-        : { userMessageTimes: userRows.map((r) => r['time_created']).filter(token) }),
+        : {
+            userMessageTimes: userRows
+              .map((r) => r["time_created"])
+              .filter(token),
+          }),
     };
   } finally {
     db.close();
   }
-}
+};
