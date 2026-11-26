@@ -109,6 +109,7 @@ const tryNormalize = (host: string) => {
 };
 
 export const fixture = async (bound = true, confirmed = true) => {
+  // A shallow virtual root avoids physical ancestor probes in quota-path validation.
   const root = path.join(
     path.parse(os.tmpdir()).root,
     `review-${crypto.randomUUID()}`
@@ -320,6 +321,7 @@ export const fixture = async (bound = true, confirmed = true) => {
         }
       }
 
+      /* NOTE: an unreadable manifest falls back to the config-derived host. */
       const fileConfig: JsonValue | null = tryReadJson(
         path.join(f.deps.skillRoot, "config.jsonc")
       );

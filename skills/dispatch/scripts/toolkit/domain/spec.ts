@@ -1,3 +1,5 @@
+// Spec parse + lint (governing spec, KD-8). Pure: callers supply the source text.
+
 import { CRITERION_ID_SOURCE } from "./criterion-id.ts";
 import { defined } from "./defined.ts";
 import {
@@ -55,6 +57,7 @@ const defect = (
 /** Governed text is the raw source; `artifactHash` canonicalizes it before hashing. */
 export const governedSpecText = (source: string) => source;
 
+// NOTE: plan, criterion, increment, and finding ID shapes; a spec heading using one would collide with downstream IDs.
 const COLLIDING = new RegExp(
   `^(?:T\\d+|${CRITERION_ID_SOURCE}|I\\d{2}|R\\d+(?:-F\\d+)?)\\b`,
   "iu"
@@ -66,6 +69,7 @@ interface Block {
   body: StructuralLine[];
 }
 
+/** Lints every `heading` section; a repeat is a defect, and its blocks still lint so no ID or acceptance gap hides. */
 const lintIds = (
   lines: readonly StructuralLine[],
   heading: string,

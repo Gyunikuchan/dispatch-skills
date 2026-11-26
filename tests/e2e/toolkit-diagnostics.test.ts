@@ -66,6 +66,7 @@ test("diagnostics stay observational across CLI recovery and report completion",
 
     const entry = path.join(skill, "scripts/dispatch.ts");
 
+    // The host comes from `session init --host`; the fixture session predates it, so copy the recorded host over.
     const init = spawnSync(
       process.execPath,
       [
@@ -162,6 +163,7 @@ test("diagnostics stay observational across CLI recovery and report completion",
 
     assert.ok(fs.readdirSync(captures).length > 0);
 
+    // An interrupted optional collection must survive process readback as partial evidence.
     fs.writeFileSync(
       path.join(captures, "interrupted.json"),
       JSON.stringify({

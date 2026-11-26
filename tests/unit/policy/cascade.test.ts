@@ -21,6 +21,8 @@ const agy: Voice = {
 
 const lastModel = { model: 1, mode: 0 };
 
+// SECTION: Failure dispositions
+
 test("delegates-failure-classes: every class has a disposition; integrity and config end the run", () => {
   const classes: FailureClass[] = [
     "quota",
@@ -61,6 +63,8 @@ test("delegates-failure-classes: every class has a disposition; integrity and co
   });
 });
 
+// SECTION: Model and mode cascade
+
 test("delegates-model-array-cascade: cascade classes advance to the next model", () => {
   // One ordinary representative plus auth/quota, which ADR 0001 explicitly keeps cascading;
   // cascade membership for the remaining classes is pinned by the dispositions test above.
@@ -94,6 +98,8 @@ test("delegates-mode-cascade: only provider-declared classes advance the mode, r
   });
   assert.equal(nextVoice("quota", { model: 1, mode: 1 }, agy).kind, "terminal");
 });
+
+// SECTION: Reserves and substitution pool
 
 test("delegates-reserves: exhausted voices prefer reserves then stop", () => {
   assert.deepEqual(

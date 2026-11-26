@@ -231,6 +231,7 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
       });
     } catch {
       void 0;
+      // Diagnostics never alter routing.
     }
   };
 
@@ -287,6 +288,7 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
 
   let state = readState(input.dir);
   const useNativeWave = hasNativeFirstNow || !!state.nativeFirst;
+  // Reserve ownership persists across calls; in-memory copy guards concurrent targets in one call.
   let reserveOwner: string | undefined = state.reserveUsedBy;
 
   const patchState = (patch: FanoutState) => {
@@ -294,6 +296,8 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
     writeState(input.dir, state);
   };
 
+  // Synchronous claim before any async launch: check and claim stay adjacent
+  // with no await between, so concurrent cascades cannot double-claim.
   const claimReserve = (logical: string) => {
     if (reserveOwner === logical) {
       return;
@@ -303,6 +307,11 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
     patchState({ reserveUsedBy: logical });
   };
 
+  // Durable per-generation evidence that a native voice launched, covering
+  // every native descriptor (native-first, native-only, reserve
+  // substitutes). The change check reads it to tell a lost baseline from a
+  // round that never needed one. It never affects routing: only nativeFirst
+  // selects the wave path.
   const markNativeLaunched = () => {
     if (state.nativeLaunched === true) {
       return;
@@ -314,6 +323,7 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
   const finishCliWave = () => {
     state = { ...readState(input.dir), cliWaveDone: true };
 
+    // Preserve reserveUsedBy from in-memory owner.
     if (reserveOwner !== undefined) {
       state.reserveUsedBy = reserveOwner;
     }
@@ -365,10 +375,18 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
     prepareHostBlocked,
   } = native;
 
+  // CLI-only path: the roster has no native-first target. Keeps today's immediate
+  // CLI with persistent reserve; reserve substitutes stay here too (no wave is
+  // advertised for them) and are consumed via their physical route.
   const savedBlocked = new Map<string, BlockedAttempt[]>();
   const savedOutcomes = new Map<string, SlotOutcome>();
   const matchedReportAttempts = new Set<string>();
   const prepassDone = new Set<string>();
+  // Independent prepass fallbacks run together in one concurrent batch (as
+  // the wave does): each slot decides synchronously, and the fallback
+  // marker precedes its CLI inside fallbackToCli, so batching changes
+  // timing but not durable transition ordering. Reserve claims stay
+  // synchronous claimReserve calls before any launch.
   const deferredFallbacks: Promise<void>[] = [];
 
   const deferFallback = (
@@ -395,6 +413,13 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
 
     const nativeSaved = saved?.state === "native" ? saved : undefined;
 
+    // Same physical-route gate as the wave and consume paths: a missing physical fails closed instead of consuming under saved provider.
+    // Route validity follows the current providers and opt-outs: a saved
+    // native whose physical provider is still native-first consumes here, so
+    // a crash between a reserve save and its wave flag replays with
+    // native-first behavior. A native-only attempt from the current host
+    // consumes like a native-only slot; its provider never runs the CLI
+    // cascade. Anything else takes the full fallback below.
     const route = nativeSaved
       ? routeForNative(nativeSaved)
       : { physical: undefined, routeOk: false, first: false };
@@ -406,6 +431,7 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
       nativeSaved !== undefined && !slot.native && !routeTrue && route.routeOk;
 
     if (nativeSaved && (slot.native || nativeOnlyAttempt)) {
+      // Native-only immediate consume, as today, plus report handling.
       const report = nativeFailures.find(
         (entry) => nativeSaved.attempt === entry.attempt
       );
@@ -484,6 +510,11 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
     }
 
     if (nativeSaved && routeTrue) {
+      // Valid native-first route: a saved fallback transition resumes
+      // without its report, before any report or reply check, so an
+      // interrupted fallback is never returned as pending and a late reply
+      // is never consumed for it. A report wins over any reply file, and a
+      // BLOCKED or invalid reply falls back instead of validating as an answer.
       if (nativeSaved.cliFallback === true) {
         deferFallback(slot, nativeSaved, nativeSaved.nativeError ?? "failed");
         continue;
@@ -559,6 +590,10 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
     }
 
     if (nativeSaved && !slot.native && !routeTrue) {
+      // Route is now false in this CLI-only directory: take the full fallback
+      // transition. A matching report wins over the host-change reason with its
+      // BLOCKED evidence, like the wave path. A substitute never takes a second
+      // reserve, and a native-only attempt with no host route saves failed.
       const report = nativeFailures.find(
         (entry) => entry.attempt === nativeSaved.attempt
       );
@@ -580,6 +615,7 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
 
     if (saved?.state === "done" && !input.validate(saved.text, slot.slot).ok) {
       void 0;
+      // Drop stale done, rerun below.
     } else if (saved && saved.state !== "failed") {
       savedOutcomes.set(slot.slot, saved);
       continue;
@@ -588,6 +624,8 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
 
   throwRejected(await Promise.allSettled(deferredFallbacks));
 
+  // Report unmatched attempts as ignored. Matched reports were consumed above,
+  // even when the saved file no longer holds the native attempt.
   for (const report of nativeFailures) {
     if (matchedReportAttempts.has(report.attempt)) {
       continue;
@@ -620,6 +658,8 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
         return saved;
       }
 
+      // Failed reruns immediately, as today. A report-driven native-only failure
+      // was already saved and returned above via prepassDone.
       if (slot.native) {
         const created = createNativeOnly(slot);
         const blockedBefore = savedBlocked.get(slot.slot);
@@ -634,9 +674,11 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
             fs.appendFileSync(withBlocked.promptPath, "");
           } catch {
             void 0;
+            // The prompt already exists; this append only touches it.
           }
         }
 
+        // Native-only keeps its prompt: createNativeOnly already appended.
         atomic(fileOfLogical(slot.slot), withBlocked);
         emit(slot, { kind: "slot", state: "native" });
 
@@ -655,6 +697,9 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
           cls: outcome.cls,
         });
 
+        // No cliWave advertisement: a roster with no native-first target
+        // stays in the CLI-only path, which consumes this substitute on the
+        // next call via its physical route.
         if (canReserve) {
           const launched = await takeReserve(slot, outcome, promptPath);
 
@@ -695,6 +740,9 @@ export const fanOut = async (input: FanOutInput, deps: CliDeps) => {
   );
 };
 
+// Shared completeness for every caller: a launchable native returns at once
+// with matched orphan markers saved and every unconsumed ignore forwarded;
+// with no launchable the deferred wave runs once and retries ignores there.
 // oxlint-disable-next-line eslint/complexity -- completion fold branches per launchable set, orphan state, and report consumption.
 export const fanOutComplete = async (input: FanOutInput, deps: CliDeps) => {
   const firstIgnored: string[] = [];
@@ -728,6 +776,12 @@ export const fanOutComplete = async (input: FanOutInput, deps: CliDeps) => {
   );
 
   if (launchable.length) {
+    // Descriptors-first: a launchable native returns before any CLI work. A
+    // matched orphan report persists its fallback marker, reconciled next call;
+    // every ignore that no orphan consumed reaches the callback on this call.
+    // A fallback marker saved before this call runs its CLI cascade now, while
+    // other native replies stay unread: only pre-marked orphans run, through a
+    // call that lists just them, so no other reply is read or consumed.
     const consumed = new Set<string>();
     const marked: RosterSlot[] = [];
 

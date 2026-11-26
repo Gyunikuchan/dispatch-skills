@@ -20,13 +20,20 @@ import {
 export type CoverageDecision = "none" | "rerun" | "majority" | "user";
 
 export interface CoverageState {
+  // saved non-reserve logical slots across applicable rounds
   targets: string[];
+  // closed targets whose latest event in applicable rounds is a whole-target completion
   completed: string[];
+  // failed targets with no later whole-target completion and no override
   open: string[];
   overridden: { slot: string; quote: string; seq: number }[];
+  // round numbers that carry a `coverage` field
   coverageRounds: number[];
+  // a round before the current incomplete round has `coverageUse: 'free'`
   freeUsed: boolean;
+  // grant records outnumber such rounds with `coverageUse: 'grant'`
   unusedGrant: boolean;
+  // latest applicable round when it has no findings.json and not every slot failed
   incomplete: number | null;
   decision: CoverageDecision;
 }
@@ -98,6 +105,7 @@ export const coverageState = (
 
     if (!metadata) {
       return [];
+      // no round file: the round never started
     }
 
     if (

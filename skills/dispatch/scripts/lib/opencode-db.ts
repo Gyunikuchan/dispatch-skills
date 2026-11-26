@@ -119,6 +119,7 @@ const walkDepths = (
   while (frontier.length > 0) {
     const placeholders = frontier.map(() => "?").join(",");
 
+    // The extra row only signals that descendants exceed the cap; it never enters the visited set.
     const children = db
       .prepare(
         `SELECT id FROM session_v2 WHERE parent_id IN (${placeholders}) ORDER BY id LIMIT ?`
@@ -272,6 +273,7 @@ export const readOpencodeMessages: (
   rootSessionId: string,
   options: OpencodeReadOptions
 ) => OpencodeRead = (dbPath, rootSessionId, options) => {
+  // A read-only open of a missing file must not create it; stat keeps the native ENOENT code for callers.
   fs.statSync(dbPath);
   const maxSessions = cap(options.maxSessions, DEFAULT_MAX_SESSIONS);
   const maxRows = cap(options.maxRows, DEFAULT_MAX_ROWS);
@@ -319,6 +321,7 @@ export const readOpencodeMessages: (
       messages.push(message);
     }
 
+    // Session truncation wins: it limits which sessions the row cap is applied to.
     if (rows.length > maxRows && truncated === null) {
       truncated = "rows";
     }

@@ -35,8 +35,10 @@ const REPORT = JSON.stringify({
   ],
 });
 
+// Names a naive pathspec or grep would mishandle: a leading dash, a glob class, and a bare paren.
 const LISTED = ["-x", "foo(", "a.b[1].txt"];
 
+// The hit file names from `git grep -n` output, one per matching line.
 const hitFiles = (stdout: string) =>
   new Set(
     stdout
@@ -45,6 +47,7 @@ const hitFiles = (stdout: string) =>
       .map((line) => line.slice(0, line.indexOf(":")))
   );
 
+// A repository whose second session briefs the plan; the test writes its files before reviewAndAccept.
 const startRepo = async () => {
   const f = await toolkitRepo();
 
@@ -74,11 +77,13 @@ const startRepo = async () => {
       outcome: { status: "ok", text: REPORT, resume: null, sessionId: null },
       invocations: [],
     });
+  // The second session lives under the sessions root, which the brief excludes from search.
   const g: Second = await f.second("20261023T0001Z-brief");
 
   return { f, g };
 };
 
+// Reviews the plan from the second session and accepts its only finding; the caller then appends the fix.
 const reviewAndAccept = async (f: Repo, g: Second) => {
   const reviewed = await g.run([
     "review",
@@ -126,6 +131,7 @@ test("brief fix-review-lite on a real repository lists, diffs and searches liter
       "export const secret = '-x';\n"
     );
     fs.writeFileSync(path.join(f.root, ".env"), "TOKEN=-x\n");
+    // A sensitive listed path with a space: excluded from search as a glob, and withheld as unsafe.
     fs.mkdirSync(path.join(f.root, "ops"), { recursive: true });
     fs.writeFileSync(path.join(f.root, "ops/my secrets.env"), "TOKEN=-x\n");
     fs.appendFileSync(path.join(f.root, ".gitignore"), "skipped.txt\n");
@@ -133,6 +139,7 @@ test("brief fix-review-lite on a real repository lists, diffs and searches liter
     fs.writeFileSync(path.join(g.session, "notes.md"), "-x\n");
 
     await reviewAndAccept(f, g);
+    // Citations cover a listed untracked name, a listed tracked name with a glob class, and an ignored file.
     fs.appendFileSync(
       path.join(f.root, "work.plan.md"),
       "\n## Fix\nSee `-x:1`, `foo(:1`, `a.b[1].txt:1`, `skipped.txt:1` and `missing.ts:1`.\n"
@@ -155,6 +162,7 @@ test("brief fix-review-lite on a real repository lists, diffs and searches liter
 
     const briefText = fs.readFileSync(briefVal.briefPath, "utf-8");
 
+    // The brief's own listing keeps every listed name and withholds the ignored file.
     assert.equal(briefVal.citations, LISTED.length);
 
     for (const name of LISTED) {
@@ -164,16 +172,19 @@ test("brief fix-review-lite on a real repository lists, diffs and searches liter
     assert.ok(briefText.includes("`skipped.txt`: not listed"));
     assert.ok(briefText.includes("`missing.ts`: no match"));
     assert.equal(briefVal.unresolved, 1);
+    // Sensitive paths are search excludes; only the ignored file and the unsafe sensitive path are withheld.
     assert.equal(briefVal.withheld, 2);
     assert.match(
       brief.output.summary,
       /3 citations, 1 unresolved, 2 withheld/u
     );
 
+    // The diff is the real git diff of the round input against the governed plan.
     const diff = fs.readFileSync(briefVal.diffPath, "utf-8");
 
     assert.match(diff, /^\+See `-x:1`, `foo\(:1`, `a\.b\[1\]\.txt:1`/mu);
 
+    // Excludes come from the rendered command, so the check covers what the explorer runs.
     const excludes = [
       ...briefText.matchAll(
         /":\(exclude,(?:literal|glob)\)(?<excluded>[^"]+)"/gu

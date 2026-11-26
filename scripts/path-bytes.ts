@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 
 import { stripGeneratedMarkers } from "../skills/dispatch/scripts/toolkit/contracts.ts";
 
+// SECTION: Types
+
 export type LinkClass = "unconditional" | "conditional" | "owner";
 
 /** `when` states the condition of a conditional link; the test requires it near every prose occurrence. */
@@ -45,6 +47,8 @@ export type PathName =
   | "implement"
   | "review"
   | "verify";
+
+// SECTION: Manifest (fixed normal-path model; counts are representative, not observed averages)
 
 const unconditional: LinkEntry = { class: "unconditional" };
 const owner: LinkEntry = { class: "owner" };
@@ -123,6 +127,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       call("worktree deliver", 0),
     ],
   },
+  // Normal review assumes a code target; plan/design edit records are conditional.
   review: {
     guide: "references/verbs/review.md",
     links: {
@@ -145,6 +150,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
     },
     calls: [call("review run", 2), record("ruling", 8), record("edit", 0)],
   },
+  // Step reads make the Decision Frame unconditional, including escalation without risky approval.
   verify: {
     guide: "references/verbs/verify.md",
     links: {
@@ -522,6 +528,8 @@ export const BASELINE: Record<PathName, Figures> = {
   },
 };
 
+// SECTION: Sections and bytes
+
 export const slug = (heading: string) =>
   heading
     .toLowerCase()
@@ -691,6 +699,7 @@ export const validatePathLinks = (read: Read) => {
   return errors;
 };
 
+// NOTE: CRLF is normalized so Windows checkouts and Git blobs give the same figures.
 const bytes = (text: string) =>
   Buffer.byteLength(text.replaceAll("\r\n", "\n"), "utf-8");
 
@@ -715,11 +724,13 @@ const pathReads = (spec: PathManifest, name: string) => {
 
     const [file = "", anchor] = target.split("#");
 
+    // A toolkit anchor reaches the orchestrator through the call sequence, never as a separate read.
     if (file !== TOOLKIT) {
       items.push(anchor === undefined ? { file } : { file, anchor });
     }
   }
 
+  // A section that SKILL.md mandates has no call heading, so it is a direct read even in toolkit.md.
   for (const [target, paths] of Object.entries(SKILL_LINKS)) {
     if (!isPathName(name) || !paths[name]) {
       continue;
@@ -748,6 +759,8 @@ const pathReads = (spec: PathManifest, name: string) => {
   });
 };
 
+// SECTION: Measure
+
 export function measure(read: Read, model: Model): Record<PathName, Figures>;
 export function measure<K extends string>(
   read: Read,
@@ -768,6 +781,7 @@ export function measure(
     let text = sectionOf(help, slug(heading));
 
     if (text === null && archive && heading === "brief fix-review-lite") {
+      // The pinned baseline predates the rename.
       const candidates: string[] = [];
       let fence = false;
 
@@ -902,6 +916,8 @@ export function measure(
   return result;
 }
 
+// SECTION: Comparison and report
+
 const LABELS: [keyof Figures, string][] = [
   ["distinct", "distinct"],
   ["workload", "workload"],
@@ -909,6 +925,7 @@ const LABELS: [keyof Figures, string][] = [
   ["editableWorkload", "editable workload"],
 ];
 
+// NOTE: only workload figures gate growth; distinct bytes rise by the call table, which replaces repeated reads, so they are reported only.
 const GATED = new Set<keyof Figures>(["workload", "editableWorkload"]);
 
 export const checkGrowth = (

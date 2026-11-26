@@ -1,3 +1,6 @@
+// Codex (spec §6.1): `exec --json` with approvals disabled and a read-only
+// sandbox; sandbox rejection → `sandbox-unsupported`; only `sandbox: false` selects `danger-full-access`.
+
 import { isRecord } from "../lib/config.ts";
 import { parseJson } from "../lib/integrity.ts";
 import type { JsonValue } from "../lib/integrity.ts";
@@ -50,6 +53,7 @@ const codexDesktopCandidates = (env: PlatformEnv) => {
   ];
 };
 
+/** The final assistant message and thread id from the JSONL stream; tool events stay in the log. */
 const parseCodexEvents = (raw: string) => {
   let answer = "";
   let threadId: string | null = null;
@@ -157,6 +161,7 @@ export const codex: ProviderSpec = {
   attemptSession: (out: ProcessResult) =>
     validSessionId(parseCodexEvents(out.stdout).threadId),
   argv(req) {
+    // `exec resume` takes no --cd or --sandbox, so read-only sandbox and approval ride on -c keys with cwd from launch.
     if (req.resume !== undefined && req.resume !== null && req.resume !== "") {
       const argv = [
         req.binary,
@@ -192,6 +197,7 @@ export const codex: ProviderSpec = {
 
     const argv = [req.binary, "exec"];
 
+    // Codex refuses untrusted non-git folders; dispatch enforces read-only access itself, so skip that check.
     argv.push(
       "--json",
       "--skip-git-repo-check",
@@ -201,6 +207,7 @@ export const codex: ProviderSpec = {
       'approval_policy="never"'
     );
 
+    // NOTE: the unsandboxed path uses config because an older CLI may reject --sandbox itself.
     if (req.sandbox) {
       argv.push("--sandbox", "read-only");
     } else {
@@ -225,6 +232,7 @@ export const codex: ProviderSpec = {
   parse(out) {
     const events = parseCodexEvents(out.stdout);
 
+    // Classify only CLI diagnostics; the answer may legitimately quote an error.
     const diagnostics = `${out.stderrTail}\n${events.error ?? ""}`;
 
     if (REJECTED.some((pattern) => pattern.test(diagnostics))) {

@@ -15,6 +15,8 @@ import { memoryNodeFs } from "../../helpers/memory-node-fs.ts";
 import { narrow, withFields, text } from "./helpers/json.ts";
 import type { JsonObject } from "./helpers/json.ts";
 
+// SECTION: In-memory review tree
+
 const REVIEW = "code-integration";
 const SPEC = { path: "/spec.md", hash: `sha256:${"a".repeat(64)}` };
 
@@ -143,6 +145,7 @@ const tree = () => {
       });
     }
 
+    // Each failed slot of the current generation carries its own failure entry, as the review run records it.
     const entries = new Map<number, Attempt[]>([
       [
         generation,
@@ -215,6 +218,8 @@ const withTree = (run: (t: ReturnType<typeof tree>) => void) => {
   }
 };
 
+// SECTION: Slot state
+
 test("slot stays open until whole-target completion across later rounds", () => {
   withTree((t) => {
     t.put({ n: 1, roster: [A, B, C], done: [B, C], failed: [A] });
@@ -229,14 +234,17 @@ test("slot stays open until whole-target completion across later rounds", () => 
       ],
       [[A, B, C], [B, C], [A], "rerun", null]
     );
+    // A clean changed-path round does not forget the failure.
     t.put({ n: 2, roster: [B], done: [B] });
     assert.deepEqual(coverageState(t.session, fold(), REVIEW).open, [A]);
+    // A whole-target completion through a substitute closes the slot.
     t.put({ n: 3, roster: [A], done: [A], substitute: [A], coverage: "open" });
     const closed = coverageState(t.session, fold(), REVIEW);
     assert.deepEqual(
       [closed.open, closed.completed, closed.coverageRounds, closed.decision],
       [[], [A, B, C], [3], "none"]
     );
+    // A later failure reopens the closed slot.
     t.put({
       n: 4,
       roster: [A, B, C],
@@ -261,6 +269,7 @@ test("slot stays open until whole-target completion when a round fails every slo
       [[A, B], [], null]
     );
   });
+  // The old unfinalized all-failed round keeps its slots open and is not reported as a round in flight.
   withTree((t) => {
     t.put({ n: 1, roster: [A, B], failed: [A, B], unfinished: true });
     const state = coverageState(t.session, fold(), REVIEW);
@@ -285,6 +294,7 @@ test("slot stays open until whole-target completion after a failure in a superse
 });
 
 test("slot stays open until whole-target completion; reruns decide whether delivery continues", () => {
+  // The slot failed in the first whole-target round and again in the coverage round: a first failure and a rerun.
   withTree((t) => {
     t.put({ n: 1, roster: [A, B, C], done: [B, C], failed: [A] });
     assert.equal(coverageState(t.session, fold(), REVIEW).decision, "rerun");
@@ -292,11 +302,13 @@ test("slot stays open until whole-target completion; reruns decide whether deliv
     const state = coverageState(t.session, fold(), REVIEW);
     assert.deepEqual([state.open, state.decision], [[A], "majority"]);
   });
+  // Two of four completed is not more than half.
   withTree((t) => {
     t.put({ n: 1, roster: [A, B, C, D], done: [C, D], failed: [A, B] });
     t.put({ n: 2, roster: [A, B], failed: [A, B], coverage: "open" });
     assert.equal(coverageState(t.session, fold(), REVIEW).decision, "user");
   });
+  // A same-round retry is a rerun.
   withTree((t) => {
     t.put({
       n: 1,
@@ -307,6 +319,7 @@ test("slot stays open until whole-target completion; reruns decide whether deliv
     });
     assert.equal(coverageState(t.session, fold(), REVIEW).decision, "majority");
   });
+  // A changed-path failure is not a whole-target rerun.
   withTree((t) => {
     t.put({ n: 1, roster: [A, B, C], done: [B, C], failed: [A] });
     t.put({ n: 2, roster: [A], failed: [A] });
@@ -349,6 +362,7 @@ test("slot stays open until whole-target completion; a round in flight is incomp
       [next.incomplete, next.freeUsed, next.decision],
       [3, true, "rerun"]
     );
+    // Rounds that do not apply to the bound integration are ignored.
     fs.rmSync(path.join(t.session, ".state/reviews", REVIEW, "round-3"), {
       recursive: true,
     });
@@ -396,6 +410,7 @@ test("coverage state fails closed on unreadable round files", () => {
   unreadable((root) => {
     fs.writeFileSync(path.join(root, "round.json"), "{");
   });
+  // A round directory without a round file was never started.
   withTree((t) => {
     fs.mkdirSync(
       path.join(t.session, ".state/reviews", REVIEW, "round-1/gen-1"),
@@ -404,6 +419,8 @@ test("coverage state fails closed on unreadable round files", () => {
     assert.deepEqual(coverageState(t.session, fold(), REVIEW).targets, []);
   });
 });
+
+// SECTION: Overrides
 
 test("coverage override covers only named slots and failures recorded before it", () => {
   withTree((t) => {
@@ -419,6 +436,7 @@ test("coverage override covers only named slots and failures recorded before it"
       [covered.open, covered.overridden],
       [[B], [{ slot: A, quote: "user words 5", seq: 5 }]]
     );
+    // A slot that is not a target covers nothing; a later failure, including an equal seq, stays open.
     assert.deepEqual(
       coverageState(
         t.session,
@@ -504,6 +522,8 @@ test("coverage override ignores records that are not a quoted user decision", ()
   });
 });
 
+// SECTION: Admission
+
 const budgetOf = (t: ReturnType<typeof tree>, ...records: LedgerRecord[]) =>
   admission(t.session, fold(...records), REVIEW, 0).budget;
 
@@ -531,6 +551,7 @@ test("coverage admission resolves rounds across caps, reruns and user decisions"
     {
       name: "carries no coverage key when nothing is open",
       run: () => {
+        // No open slot and no round in flight: the budget carries no coverage key.
         withTree((t) => {
           t.put({ n: 1, roster: [A, B], done: [A, B], cap: 3 });
           assert.equal("coverage" in budgetOf(t), false);
@@ -581,6 +602,7 @@ test("coverage admission resolves rounds across caps, reruns and user decisions"
               { state: "readable", open: [A], decision: "rerun", use: "free" },
             ]
           );
+          // The free round ran and the slot failed again with a majority completed: the cap applies again.
           t.put({
             n: 2,
             roster: [A],
@@ -614,6 +636,7 @@ test("coverage admission resolves rounds across caps, reruns and user decisions"
             coverageUse: "free",
             cap: 1,
           });
+          // A different slot fails for the first time in a later full-roster round; a granted ceiling keeps the round in range.
           t.put({
             n: 3,
             roster: [A, B, C],
@@ -676,6 +699,7 @@ test("coverage admission grants, reuses grants and reports state problems", () =
     {
       name: "consumes one grant per granted round",
       run: () => {
+        // Cap 2, ceiling 4: each granted round consumes one grant record.
         withTree((t) => {
           t.put({
             n: 1,
@@ -749,6 +773,7 @@ test("coverage admission grants, reuses grants and reports state problems", () =
     {
       name: "keeps an early grant usable after the free round",
       run: () => {
+        // A grant recorded before the free round stays usable afterwards.
         withTree((t) => {
           const early = user(1, "grant: restored");
           t.put({

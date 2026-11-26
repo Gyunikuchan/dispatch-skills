@@ -5,6 +5,8 @@ import { test } from "node:test";
 import { OVERLAY_ROOT, scanOverlay } from "./scan.ts";
 import type { FileTable } from "./scan.ts";
 
+// Count the real Git/subprocess suites and their shared test helpers.
+// NOTE: 20 covers commit-phase refusals and hooks, toolkit-fix-review-lite, toolkit-input, plus shared helpers audit-modules.ts and json.ts.
 export const E2E_CAP = 20;
 
 const e2eFiles = () =>

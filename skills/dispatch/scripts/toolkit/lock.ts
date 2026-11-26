@@ -66,6 +66,8 @@ const create = (file: string, bytes: string) => {
   }
 };
 
+// Breaker slots are `lock.break`, `lock.break.1`, ... A breaker that died mid-break never removes its slot, so contenders
+// skip dead slots instead of deleting them; removing one could displace a live breaker that replaced it.
 const activeBreaker = (breaker: string, deps: LockDeps) => {
   for (let n = 0; ; n += 1) {
     const file = n === 0 ? breaker : `${breaker}.${n}`;

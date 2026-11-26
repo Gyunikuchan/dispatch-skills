@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { scanOverlay } from "./scan.ts";
 import type { FileTable } from "./scan.ts";
 
+// The root manifest is not shipped, so the script tree declares its own type; other subtrees must not introduce package boundaries.
 export const checkRuntimeVersion = (files: FileTable) => {
   const errors: string[] = [];
 

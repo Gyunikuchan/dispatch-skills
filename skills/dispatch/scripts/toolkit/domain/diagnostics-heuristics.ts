@@ -9,6 +9,7 @@ import type {
   RunFacts,
 } from "./diagnostics-types.ts";
 
+// Share heuristics need `minSamples`, so one or two data points never read as a pattern.
 const DIAGNOSTIC_THRESHOLDS = {
   reviewRounds: 3,
   minSamples: 3,
@@ -35,6 +36,8 @@ const cacheReadMetrics = (
 
   return { cacheRead, total, share: total > 0 ? cacheRead / total : undefined };
 };
+
+// SECTION: Heuristics
 
 const isMetered = (
   i: InvocationFacts
@@ -113,6 +116,7 @@ const PREFLIGHT = [
   "Detect this condition in the preflight check and skip the provider before launch.",
 ] as const;
 
+// Keyed by a recorded failure class or tool action, so any string may be looked up.
 interface FailureFixes {
   [cls: string]: readonly [string, string] | undefined;
 }
@@ -166,6 +170,7 @@ const DEFAULT_FIX = [
   "Inspect the slot log for the delegate's last output and consider replacing the model or provider.",
 ] as const;
 
+// The domain layer cannot import cli.ts, so this table mirrors its handler map.
 const TOOL_MODULES: ToolModules = {
   "ask run": "ask",
   "review run": "review",
@@ -195,6 +200,7 @@ const TOOL_MODULES: ToolModules = {
   "worktree abandon": "writers",
 };
 
+// A single failure absorbed by a retry or reserve is designed behavior; only repeated failures waste work.
 const isOk = (i: InvocationFacts) =>
   i.outcome === "ok" &&
   (i.validationOutcome === undefined || i.validationOutcome === "ok");
@@ -209,12 +215,14 @@ const attemptIdentity = (i: InvocationFacts) =>
 const failureClass = (i: InvocationFacts) =>
   i.outcome === "ok" ? defined(i.validationOutcome) : i.outcome;
 
+// One clear refusal is not a pattern.
 const rejection = (item: { tool: string; action: string; cls: string }) =>
   `${item.tool} ${item.action}: ${item.cls}`;
 
 const idList = (values: readonly string[]) =>
   values.length ? ` (${values.slice(0, 5).join(", ")})` : "";
 
+// A stall or missing report that a resume chain recovers is not waste: consecutive resume attempts of the same subject, slot, provider and model must end in a valid ok row for the whole chain to leave the failure set.
 const recoveredByResume = (
   row: InvocationFacts,
   cli: readonly InvocationFacts[],
@@ -370,6 +378,7 @@ const convergenceDetail = (
   escalation: Escalation | undefined,
   cap: number | undefined
 ) => {
+  // NOTE: a deadlock in the cap round without re-raised findings is the cap-ending refresh label; past the cap it marks designed continuation, so its fix must not raise the cap.
   const capReached =
     cap !== undefined &&
     escalation?.kind === "deadlock" &&
@@ -414,6 +423,7 @@ const h2Reviews = (run: RunFacts, add: AddFinding) => {
       (r) => r.escalation !== undefined
     )?.escalation;
 
+    // Known-cap continuation is designed; only a run without a recorded cap uses the fixed threshold.
     const cap = rows.findLast((r) => r.cap !== undefined)?.cap;
 
     const fallback = cap === undefined && rounds >= T.reviewRounds;
@@ -640,6 +650,7 @@ const h5DominantInvocation = (
 ) => {
   const T = DIAGNOSTIC_THRESHOLDS;
 
+  // Cache reads are cheap and dominate long sessions, so rank launches by uncached tokens; zero-usage failures are not samples.
   const sizes = metered.flatMap((i) => {
     const value = uncached(i.usage);
 
@@ -660,6 +671,7 @@ const h5DominantInvocation = (
     }
   }
 
+  // Above an even share (2/n) the largest invocation stands out; at small n, even shares already reach half.
   if (!all || n / all <= Math.max(T.invocationShare, 2 / sizes.length)) {
     return;
   }
@@ -696,6 +708,7 @@ const h8RejectedTools = (run: RunFacts, add: AddFinding) => {
 };
 
 const h9Relaunches = (run: RunFacts, add: AddFinding) => {
+  // One relaunch without a recorded cause is not a pattern.
   const relaunches = run.relaunches ?? 0;
 
   if (relaunches < 2) {
@@ -730,6 +743,7 @@ export const selectFindings = (
     out.push({ source, category, component, evidence, impact, proposedFix });
   };
 
+  // Quota-store skips never launch, so they cost no driver time and are not attempts.
   const cli = run.invocations.filter((i) => i.surface === "cli" && i.launched);
   const metered = run.invocations.filter(isMetered);
 

@@ -1,3 +1,5 @@
+// Test-local filesystem fallback and fixed runtime facts for repository tooling.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -65,6 +67,7 @@ const syncDirectory = (dir: string) => {
   }
 };
 
+// Effect folders appear lazily, so every create-style write makes its parent first.
 const ensureParent = (file: string) => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
 };

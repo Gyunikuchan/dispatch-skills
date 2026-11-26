@@ -161,8 +161,10 @@ const memFs = (
   };
 };
 
+/** Placeholder until the fake process registers its real callback. */
 const noop = () => {};
 
+/** Manual clock: timers fire only when the test advances time. */
 const manualClock = () => {
   let now = 0;
 
@@ -361,6 +363,8 @@ const makeCapacitySpec = (retryAfterMs?: number) => ({
           ...(!(retryAfterMs === undefined) && { retryAfterMs }),
         },
 });
+
+// T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
 test("silent delegate times out idle after the idle window, before the overall deadline", async () => {
   const h = harness(posix);

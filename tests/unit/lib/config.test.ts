@@ -22,6 +22,8 @@ const isObject = (value: JsonValue | undefined): value is JsonObject =>
 const contextLimit = (entry: JsonValue | undefined) =>
   isObject(entry) ? entry["context-limit"] : undefined;
 
+// SECTION: Configuration loading and validation
+
 test("config resolution is first-existing-wins with no merge", () => {
   const files = new Map([
     [
@@ -227,6 +229,8 @@ test("utility-subagents validates entries, requires context-limit, and reports o
   );
 });
 
+// SECTION: Write concurrency
+
 const minimal = {
   "read-delegates": { codex: { targets: [{ low: { model: "m" } }] } },
 };
@@ -243,6 +247,8 @@ test("write-concurrency validates positive integers and accepts omission", () =>
   }
 });
 
+// SECTION: Read delegates nativeSubagents opt-out
+
 test("config rejects removed nativeSubagents with delete instruction", () => {
   const targets = [{ low: { model: "m" } }];
 
@@ -255,6 +261,8 @@ test("config rejects removed nativeSubagents with delete instruction", () => {
     "read-delegates.codex.nativeSubagents was removed; delete the key (diff against config.sample.jsonc).",
   ]);
 });
+
+// SECTION: Read commands
 
 test("read-commands accepts plain command prefixes and rejects shell syntax", () => {
   assert.deepEqual(
@@ -307,6 +315,8 @@ test("loadReadCommands returns none without a config and rejects an invalid list
     /read-commands must be an array/u
   );
 });
+
+// SECTION: Pricing override
 
 test("pricing override is a known table that validation never inspects", () => {
   for (const pricing of [

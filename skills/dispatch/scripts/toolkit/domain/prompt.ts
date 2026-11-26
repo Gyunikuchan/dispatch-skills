@@ -1,3 +1,8 @@
+// Prompt template extraction, frame assembly, and fill. Pure: callers
+// pass Markdown they read. Declared variables are the backtick-quoted `<Name>` bullets between the section
+// heading and its first fence; substitution is single-pass over declared names, so undeclared grammar
+// placeholders (`<file>:L<line>`, `<tag>`) pass through and a value's own text is never re-scanned.
+
 import { defined } from "./defined.ts";
 
 export const extractDocumentLayers = (specStageMarkdown: string) => {
@@ -51,6 +56,7 @@ export interface Settled {
   rejectionConfirmed?: boolean;
 }
 
+// A user-resolved escalation: reviewers treat it as closed and it carries no locus or ruling.
 export interface UserDecision {
   id: string;
   summary: string;
@@ -84,6 +90,7 @@ export const settledSection = (
     return "";
   }
 
+  // Reviewers must re-read rejected and deferred text in full; accepted rows include the ruling rationale; duplicate rows need only identity.
   const row = (entry: SettledEntry) => {
     if (isDecision(entry)) {
       return `- ${entry.id} — user decision: ${clip(head(entry.summary), 120)} — quote: "${clip(head(entry.quote), 120)}"`;
@@ -173,6 +180,8 @@ const VARIABLE_BULLET = /^-\s+`<(?<cap1>[^>]+)>`/u;
 const escapeRegExp = (text: string) =>
   text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
+// SECTION: Extraction
+
 /** Declared variables and fenced body of one `#… <section>` block. */
 export const extractTemplate = (
   markdown: string,
@@ -211,6 +220,7 @@ export const extractTemplate = (
     throw new Error(`No fenced block found under section "${section}"`);
   }
 
+  // The closer must repeat the marker character at least as long, so shorter inner fences survive.
   const closer = new RegExp(
     `^${escapeRegExp(marker[0] ?? "`")}{${marker.length},}\\s*$`,
     "u"
@@ -227,6 +237,9 @@ export const extractTemplate = (
   return { variables, template: lines.slice(open + 1, close).join("\n") };
 };
 
+// SECTION: Frame assembly
+
+/** Leading `<Name>` bullets and `## NAME` sections of a kind block; fences never open a section. */
 const parseKindBlock = (markdown: string) => {
   const variables: string[] = [];
   const raw = new Map<string, string[]>();
@@ -598,6 +611,7 @@ export const assembleTemplate = (
   const frame = extractTemplate(frameMarkdown, section);
   const kind = parseKindBlock(kindMarkdown);
 
+  // Shared blocks parse separately so each file's title line stays out of the previous input's last section.
   for (const block of shared.map(parseKindBlock)) {
     kind.variables.push(...block.variables);
 
@@ -630,6 +644,7 @@ export const assembleTemplate = (
     );
   }
 
+  // An empty section removes its whole slot line so assembly adds no phantom blank line.
   const template = frame.template
     .replaceAll(
       /^[ \t]*<<slot:(?<cap1>[A-Za-z0-9_-]+)>>[ \t]*\n/gmu,
@@ -649,6 +664,8 @@ export const assembleTemplate = (
     template,
   };
 };
+
+// SECTION: Substitution
 
 /** Substitutes declared placeholders; a missing declared value or an undeclared value name throws. */
 export const fillTemplate = (

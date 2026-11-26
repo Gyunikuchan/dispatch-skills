@@ -46,6 +46,7 @@ const request = (sandbox: boolean, platform = env("linux", true)) => ({
   platform,
 });
 
+// Flags that grant writes or skip approval without a read-only counterweight.
 const WRITE_FLAGS = [
   /^--yolo$/u,
   /^--allow-all-tools$/u,

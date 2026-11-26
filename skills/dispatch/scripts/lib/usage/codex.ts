@@ -474,6 +474,7 @@ export const collectCodexUsage = (
 
   const sorted = candidates.toSorted((a, b) => b.file.localeCompare(a.file));
 
+  // Unknown mtimes count as live so incomplete history remains visible.
   const live = sorted.filter((f) => f.mtime >= query.startMs).slice(0, 256);
   const liveIds = new Set(live.map((f) => f.id));
   const eligible = sorted.filter((f) => liveIds.has(f.id));
@@ -491,6 +492,7 @@ export const collectCodexUsage = (
 
   const childSeen = new Map<string, Set<number>>();
 
+  // Failed history blocks later files of the same thread.
   for (const f of selected.toReversed()) {
     if (incomplete.has(f.id)) {
       continue;
@@ -624,6 +626,7 @@ export const codexUsage = (raw: string): DiagnosticUsage | undefined => {
       usage.input = Math.max(0, usage.input - usage.cacheRead);
     }
 
+    // The first completion counts; a later turn counts only when its own `turn.started` arrived after the prior one.
     if (!completed || started) {
       if (total) {
         addCounters(total, usage);

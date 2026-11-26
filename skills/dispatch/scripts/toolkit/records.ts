@@ -61,6 +61,7 @@ interface OptionalFields {
   readonly [kind: string]: readonly string[] | undefined;
 }
 
+// Naming the expected shape lets the caller correct the record in one turn.
 function invalid(field: string, expected: string): never {
   throw new ToolError(
     1,
@@ -391,6 +392,7 @@ const integrations: PhaseRules = {
   closed: { reason: text },
 };
 
+// SECTION: Coverage decisions
 const COVERAGE_SLOT = String.raw`[A-Za-z0-9_-]+\[\d+\]`;
 
 /** The only summaries a `coverage:` escalation may carry: `accept: <slot>[, <slot>]*` or `grant: <reason>`. */
@@ -496,6 +498,7 @@ export const recordSchemas = (): readonly RecordSchema[] =>
     };
   });
 
+// The envelope rules prove every field but `data`, which the per-kind rules check next.
 const assertEnvelope: (
   input: unknown,
   stored: boolean

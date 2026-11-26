@@ -361,6 +361,7 @@ export interface Finding {
   proposedFix: string;
 }
 
+// NOTE: 1640 leaves room for the grounding token-source rule in references/diagnostics.md.
 export const DIAGNOSTIC_LIMITS = {
   observations: 20,
   fieldBytes: 512,

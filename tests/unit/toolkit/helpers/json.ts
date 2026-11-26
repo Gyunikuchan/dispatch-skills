@@ -1,3 +1,4 @@
+// Runtime-checked readers for parsed JSON, so tests narrow values instead of casting them.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
@@ -73,6 +74,7 @@ export const withFields =
 
     const present = new Map<string, unknown>(Object.entries(value));
 
+    // NOTE: Error.message is a non-enumerable own property, so read it by name.
     if (value instanceof Error) {
       present.set("message", value.message);
     }

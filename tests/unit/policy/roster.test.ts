@@ -33,6 +33,8 @@ const base: RosterInput = {
 const slots = (roster: ReturnType<typeof resolveRoster>) =>
   roster.targets.map((slot) => `${slot.slot}:${String(slot.model)}`);
 
+// SECTION: Grammar and level resolution
+
 test("grammar-sparse-level-maps: nearest lower level, else the lowest higher one", () => {
   assert.equal(resolveLevel({ low: 1, xhigh: 4 }, "high"), 1);
   assert.equal(resolveLevel({ medium: 2, max: 5 }, "low"), 2);
@@ -67,6 +69,8 @@ test("grammar-pins: (a,b), (3), and (all) parse; count and all stand alone", () 
 
 const slotIds = (r: ReturnType<typeof resolveRoster>) =>
   r.targets.map((slot) => slot.slot);
+
+// SECTION: Ordering and identity
 
 test("config-order: unpinned rosters follow config order with host last regardless of model or effort", () => {
   // Wider host object, as the toolkit passes at runtime: the model must not affect ordering.
@@ -194,6 +198,8 @@ test("grammar-target-identity: positional provider[index] slots; reserves follow
   assert.deepEqual([single.rounds, single.targets.length], [1, 1]);
 });
 
+// SECTION: Filters and overrides
+
 test("grammar-only-filter: phase only keeps listed platforms", () => {
   const roster = resolveRoster({
     ...base,
@@ -270,6 +276,8 @@ test("grammar-native-subagents-only: such platforms serve only as the orchestrat
   );
 });
 
+// SECTION: Native-first route
+
 test("native-first route runs a host delegate unless it stays native-only", () => {
   const targets = [{ low: { model: "m" } }];
 
@@ -326,6 +334,8 @@ test("native-first route runs a host delegate unless it stays native-only", () =
     );
   }
 });
+
+// SECTION: Underfill
 
 test("underfill-native-exclusion: native-only providers of another host are listed once each in config order", () => {
   const readDelegates = {
@@ -386,6 +396,8 @@ const ids = (roster: ReturnType<typeof resolveRoster>) => [
   roster.targets.map((slot) => slot.slot),
   roster.reserves.map((slot) => slot.slot),
 ];
+
+// SECTION: Sandbox support
 
 test("sandbox-unsupported provider leaves targets and reserves unless opted out or pinned", () => {
   const policy = { rounds: { low: 1 }, targets: { low: 2 } };

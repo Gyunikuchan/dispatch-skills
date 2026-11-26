@@ -1,3 +1,6 @@
+// Claude Code (spec §6.1): plan permission mode, read-tool allowlist, write-tool
+// denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
+
 import { isRecord } from "../lib/config.ts";
 import { parseJson } from "../lib/integrity.ts";
 import type { JsonObject, JsonValue } from "../lib/integrity.ts";
@@ -19,6 +22,7 @@ import type {
   RunOutcome,
 } from "./types.ts";
 
+/** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 const READ_ONLY_ALLOWED_TOOLS = [
   "Read",
   "Glob",
@@ -59,6 +63,7 @@ const READ_ONLY_ALLOWED_TOOLS = [
 
 const DISALLOWED_WRITE_TOOLS = ["Write", "Edit", "NotebookEdit"] as const;
 
+/** Current CLI versions name the subagent control `Agent`; older versions know only `Task`. */
 const DISALLOWED_SUBAGENT_TOOLS = ["Agent", "Task"] as const;
 const SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: true } });
 
@@ -243,6 +248,7 @@ export const claude: ProviderSpec = {
     flags: ["--settings", SANDBOX_SETTINGS],
     inactive: /Sandbox disabled[^\n]*not active/iu,
 
+    // Seatbelt on macOS, Bubblewrap on Linux/WSL2; native Windows has none.
     supported: (env) => env.os !== "win32",
   },
   schema: true,
@@ -250,8 +256,10 @@ export const claude: ProviderSpec = {
   modeCascadeOn: [],
   resumeCommand: (id) => `claude --resume ${id}`,
 
+  // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
 
+  // NOTE: claude never idle-stops, so a stopped launch resumes the preset session id.
   presetsSession: true,
   attemptSession: (out: ProcessResult, req: LaunchRequest) =>
     validSessionId(parseEnvelope(out.stdout)?.sessionId ?? null) ??

@@ -56,6 +56,7 @@ const CHANGE_ACTIONS: readonly ChangeAction[] = [
   "GENERATED",
 ];
 
+/** Plan section order after the title and summary box; every section is optional to this lint. */
 const PLAN_SECTION_ORDER = [
   "## At a Glance",
   "## Background",
@@ -73,8 +74,11 @@ const PLAN_SECTION_ORDER = [
   RESOLUTION_HEADING,
 ] as const;
 
+// SECTION: Plan parse
+
 const BOX_LABELS = ["Parent", "Decide", "Risk", "Scope"];
 
+/** Parent forms: a governing spec pinned by checksum or a design increment. */
 const DESIGN_PIN_VALUE = /^`(?<cap1>[^`\s]+\.design\.md)` · (?<cap2>I\d{2})$/u;
 
 // NOTE: names are stripped because Node 22 (V8 12.4) rejects duplicate named groups, even across alternatives.
@@ -96,6 +100,7 @@ const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/u;
 const EVIDENCE: readonly EvidenceClass[] = ["red", "check", "review"];
 const RED_EXCEPTIONS = ["behavior-preserving", "already-satisfied"];
 
+/** Matches any plan-defined ID as a whole token, case-insensitively; null when the plan defines none. */
 const planIdPattern = (ids: readonly string[]) => {
   if (!ids.length) {
     return null;
@@ -307,6 +312,7 @@ export const parsePlan = (
   };
 };
 
+/** Index of the first line after the Task Map, or of the first later-ordered section when the plan has no Task Map. */
 const sharedContextEnd = (lines: readonly StructuralLine[]) => {
   const [map] = sectionRanges(lines, TASK_MAP_HEADING);
 
@@ -323,6 +329,7 @@ const sharedContextEnd = (lines: readonly StructuralLine[]) => {
   return next === -1 ? lines.length : next;
 };
 
+/** Shared writer context preserves the authored map bytes used by the governed hash. */
 const sharedPlanContext = (text: string) =>
   text
     .split(/\r?\n/u)
@@ -458,6 +465,8 @@ export const parentPin = (source: string) => {
     : null;
 };
 
+// SECTION: Proposed changes and authored tasks
+
 export type DraftTask = Omit<PlanTask, "constraints" | "behaviour"> & {
   constraints: string[];
   behaviour: string[];
@@ -532,6 +541,7 @@ const resolvedPaths = (
       continue;
     }
 
+    // NOTE: case-insensitive filesystems make case variants one file, so they count as duplicate ownership.
     const folded = normalized.path.toLowerCase();
     const owned = seen.get(current) ?? new Map<string, string>();
 
@@ -614,6 +624,7 @@ const recordChange = (
   out: LintDefect[],
   changes: PlanChange[]
 ) => {
+  // Only [DELETE] lists several paths, so GENERATED inputs stay single-path.
   if (current !== null) {
     current.paths = [...current.paths, ...paths];
 
@@ -707,8 +718,10 @@ const parseChanges = (lines: readonly StructuralLine[], out: LintDefect[]) => {
 
   const changes: PlanChange[] = [];
   const tasks: DraftTask[] = [];
+  // Same-owner repeats are malformed; lintOverlaps classifies cross-task repeats once the task graph is known.
   const seen = new Map<DraftTask | null, Map<string, string>>();
   const body = taskStructuralView(lines).slice(range.start + 1, range.end);
+  // `task` is null before the first H3 or under a malformed one; `inHeader` spans a task H3 up to its first H4.
   let task: DraftTask | null = null;
   let malformed = false;
   let inHeader = false;
@@ -1098,6 +1111,7 @@ const readConstraint = (
   return true;
 };
 
+/** Task headers accept visible behaviour and owned constraint/overlap fields; Task Map fields stay outside the header. */
 const readTaskHeader = (
   task: DraftTask,
   entry: StructuralLine,
@@ -1193,6 +1207,7 @@ const generatedInputs = (
   });
 };
 
+/** Keep primary change detail and explicitly labelled file invariants in the owned brief. */
 const changeNote = (block: readonly string[]) => {
   const labelled = block.findIndex((text) =>
     /^[-*+]\s+(?:Changes|Purpose):/u.test(text)
@@ -1249,6 +1264,8 @@ const excluded = (line: number, value: string) =>
     line,
     `Change path "${value}" is under .git/ or .scratch/; implementation never writes there.`
   );
+
+// SECTION: Verification and criteria
 
 const parseVerification = (
   lines: readonly StructuralLine[],
@@ -1356,6 +1373,7 @@ const parseVerification = (
     );
   }
 
+  // Fenced commands are not parsed into `automated`, so they cannot satisfy the section.
   if (!automated.length && !noneEntry) {
     out.push(
       lint(
@@ -1720,6 +1738,7 @@ const readMapping = (
   readSatisfies(current, field("Satisfies"), entry, out);
   readChangesMapping(current, field("Changes"), approved, entry, out);
   readTestsMapping(current, field("Tests"), entry, out);
+  // `RED exception:` cannot match: the field name must end at the colon.
   readRedMapping(current, field("RED"), entry, out);
   readCheckMapping(current, field("Check"), entry, out);
 
@@ -1793,6 +1812,7 @@ const readMapping = (
   }
 };
 
+/** A test-like Changes path outside every `Tests:` cannot feed RED capture, so the author declares it or confirms it is not a test. */
 const lintUndeclaredTestPaths = (
   criteria: readonly Criterion[],
   out: LintDefect[]
@@ -1823,6 +1843,7 @@ const lintUndeclaredTestPaths = (
   }
 };
 
+/** Criterion IDs plus finding IDs recorded under Review Findings, which governedText strips. */
 const collectPlanIds = (
   lines: readonly StructuralLine[],
   criteria: readonly Criterion[]
@@ -1840,6 +1861,7 @@ const collectPlanIds = (
   return [...ids].toSorted();
 };
 
+/** Tests outlive plans, so Check commands and test file names must not carry plan-scoped IDs. */
 const lintPlanIdNames = (
   criteria: readonly Criterion[],
   changes: readonly PlanChange[],
@@ -1897,6 +1919,7 @@ const lintPlanIdNames = (
   }
 };
 
+/** `- Seams: <entry>[, <entry>...]` bullets directly under Verification Plan, before its first subsection. */
 const parseSeamDeclarations = (lines: readonly StructuralLine[]) => {
   const [range] = sectionRanges(lines, "## Verification Plan");
 
@@ -1929,6 +1952,7 @@ const seamsFromDeclarations = (declarations: readonly { value: string }[]) => {
       continue;
     }
 
+    // A comma inside a code span belongs to its entry.
     for (const item of value.match(/(?:`[^`]*`|[^,])+/gu) ?? []) {
       const seam = item.replaceAll("`", "").trim();
 
@@ -1946,6 +1970,7 @@ const checkCoverageDefects = (
   name: string,
   out: LintDefect[]
 ) => {
+  // Only test-like Check paths count: an aggregate Check such as `npm test` names no file and stays exempt.
   const runnable = current.tests.filter((item) => !isTestSupportPath(item));
   const named = current.verify.flatMap((item) => checkPathTokens(item.command));
 
@@ -1984,6 +2009,7 @@ const reviewEvidenceDefects = (current: Criterion, out: LintDefect[]) => {
     return;
   }
 
+  // Each label needs a non-empty value up to the next `;`.
   if (!/(?:artifact|file|path)\s*:\s*[^;\s]/iu.test(current.review)) {
     out.push(
       lint(

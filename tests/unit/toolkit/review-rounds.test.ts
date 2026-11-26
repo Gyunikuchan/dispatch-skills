@@ -20,6 +20,8 @@ import {
   text,
 } from "./helpers/json.ts";
 
+// SECTION: Later-round roster policy
+
 type RoundFixture = Awaited<ReturnType<typeof fixture>>;
 
 const roundCheck = withFields({
@@ -63,6 +65,7 @@ const promptsOf = (f: RoundFixture) =>
   );
 
 test("roster: later rounds roster scoping and labeling reflect finding severity", async () => {
+  // CONSIDER narrows next round to first target and labels narrowed scope
   {
     const f = await fixture();
 
@@ -92,6 +95,7 @@ test("roster: later rounds roster scoping and labeling reflect finding severity"
     }
   }
 
+  // Accepted MUST or SHOULD preserves every target and labels full scope
   for (const severity of ["MUST", "SHOULD"] as const) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
     const f = await fixture();
@@ -265,6 +269,8 @@ test("roster: a narrowed round keeps the source slot of a pending rejection", as
   }
 });
 
+// Git stub for code-range tests
+
 const rangeGit = (
   f: Awaited<ReturnType<typeof fixture>>,
   state: { feature: string },
@@ -293,6 +299,8 @@ const rangeGit = (
     return Promise.resolve({ exit: 0, stdout: "", stderr: "" });
   };
 };
+
+// SECTION: Corrected severity governs rounds
 
 const CORRECTIONS = {
   consider: {
@@ -370,8 +378,10 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
     }
   }
 
+  // corrected severity governs continuation and roster past the round cap
   // oxlint-disable-next-line eslint/no-lone-blocks -- scoped block keeps fixture bindings isolated
   {
+    // MUST downgraded to SHOULD earns no continuation past cap
     {
       const f = await fixture();
 
@@ -398,6 +408,7 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
       }
     }
 
+    // SHOULD raised to MUST earns continuation and a full roster past the cap
     {
       const f = await fixture();
 
@@ -431,6 +442,7 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
     }
   }
 
+  // the ruling snapshot lists a raised severity and omits a lowered one
   // oxlint-disable-next-line eslint/no-lone-blocks -- scoped block keeps fixture bindings isolated
   {
     for (const [stored, to] of [
@@ -463,6 +475,7 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
     }
   }
 
+  // settled rows hide a rejected SHOULD raised to MUST until confirmed
   {
     const run = async (raise: boolean) => {
       const f = await fixture();
@@ -541,7 +554,10 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
     assert.equal(await run(true), false);
   }
 
+  // rejection confirmation follows the higher of the stored and corrected severities
   {
+    // SECTION: Rejection confirmation after corrections (helpers stay with this case)
+
     const rejectionStatesFor = (
       stored: "MUST" | "SHOULD",
       chain: readonly ("must" | "should" | "rejected")[]
@@ -617,6 +633,8 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
   }
 });
 
+// SECTION: Review budget boundaries
+
 test("review budget keeps the saved cap when the level cap changes", async () => {
   const f = await fixture();
 
@@ -654,6 +672,7 @@ test("review budget keeps the saved cap when the level cap changes", async () =>
     fs.writeFileSync(file, JSON.stringify(config));
     fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
     const second = await f.call();
+    // Round 3 would pass the saved cap, and the unruled MUST is not an accepted continuation.
     assert.deepEqual(
       narrow(second.value, withFields({ budget: jsonObject })).budget,
       {
@@ -668,6 +687,8 @@ test("review budget keeps the saved cap when the level cap changes", async () =>
     f.cleanup();
   }
 });
+
+// SECTION: Loose-locus findings
 
 const LOOSE = "A – T5 – Fix skill";
 
@@ -805,6 +826,7 @@ test("round keeps loose-locus findings listed, counted and unlinked", async () =
     }
   }
 
+  // all six past the summary bound
   {
     const f = await fixture();
 
@@ -837,6 +859,7 @@ test("round keeps loose-locus findings listed, counted and unlinked", async () =
     }
   }
 
+  // a repeat in a later round links to no earlier finding
   {
     const f = await fixture();
 
@@ -874,6 +897,8 @@ test("round keeps loose-locus findings listed, counted and unlinked", async () =
     }
   }
 });
+
+// SECTION: Inter-round information
 
 const SINCE = "### Since the previous round";
 const DIFF = "diff --git a/x b/x\n-Original body.\n+Changed body.\n";
@@ -1005,6 +1030,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     f.cleanup();
   }
 
+  // a code round names the head range and equal heads state no change
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1066,6 +1092,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     }
   }
 
+  // the confirmation-only prompt keeps the accepted list and the window moves on review
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1110,6 +1137,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
         rationale: "Renamed",
       });
       phase = "later";
+      // Round 2: unchanged target with a pending rejection.
       let before = f.launches.length;
       const callResult23 = await f.call();
 
@@ -1129,6 +1157,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
         );
       }
 
+      // Round 3: the confirmation-only round did not move the window.
       fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
       before = f.launches.length;
       const callResult24 = await f.call();
@@ -1146,6 +1175,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
             )
           )
       );
+      // Round 4: round 3 reviewed the target; only a findings-section refresh changed the plan.
       before = f.launches.length;
       const callResult25 = await f.call();
 
@@ -1165,6 +1195,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     }
   }
 
+  // a rerun round keeps its label and receives the block
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1219,6 +1250,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     }
   }
 
+  // a rerun after an all-failed round diffs against that round
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1283,6 +1315,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     }
   }
 
+  // a failed diff or missing input leaves the round unavailable
   {
     const cases: [string, (f: RoundFixture) => void][] = [
       ["spawn failure", () => {}],
@@ -1343,6 +1376,8 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     }
   }
 });
+
+// SECTION: User decisions
 
 let decisionKey = 0;
 
@@ -1516,6 +1551,7 @@ test("accepted findings and user decisions persist across rounds", async () => {
     f.cleanup();
   }
 
+  // a confirmation-only round lists the decisions with the closed sentence
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1585,6 +1621,7 @@ test("accepted findings and user decisions persist across rounds", async () => {
     }
   }
 
+  // a re-entered round keeps the decisions recorded before its start
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1661,6 +1698,8 @@ const withOrigin = () => {
 
   return JSON.stringify(body);
 };
+
+// SECTION: Finding origin
 
 test("origin: the round-2 prompt asks for it and findings.json and the summary carry the reply value", async () => {
   const f = await fixture();
@@ -1823,6 +1862,8 @@ test("review run stores finding units for every round", async () => {
   }
 });
 
+// SECTION: Hot units in the summary
+
 const acceptAll = async (f: RoundFixture, ids: readonly string[]) => {
   for (const id of ids) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
@@ -1893,6 +1934,7 @@ test("hot units are named with streak and byte delta within the bound", async ()
     f.cleanup();
   }
 
+  // a spec unit names its streak alone
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -1932,6 +1974,7 @@ test("hot units are named with streak and byte delta within the bound", async ()
     }
   }
 
+  // six long-named units are all named and items drop first
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -2039,6 +2082,7 @@ test("hot-unit summary truncation, pointers and absence stay within the bound", 
     f.cleanup();
   }
 
+  // a near-bound base head keeps the count and pointer before the repository suffix
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -2096,6 +2140,7 @@ test("hot-unit summary truncation, pointers and absence stay within the bound", 
     }
   }
 
+  // a round with no hot unit adds no hot-unit text
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = await fixture();
@@ -2129,6 +2174,8 @@ test("hot-unit summary truncation, pointers and absence stay within the bound", 
     }
   }
 });
+
+// SECTION: Reviewed spec snapshot
 
 test("spec snapshot: round directory holds the captured spec text for a plan round and no temporary file", async () => {
   const f = await fixture();

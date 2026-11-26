@@ -91,26 +91,31 @@ export const stepHint = ({
   session,
   manifest,
 }: StepHintInput) => {
+  // Row 1: failed calls and native-pending pauses omit hints.
   if (!result.ok || result.reason === "native-pending") {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 2: standalone, terminal, and review-adjudication actions omit hints.
   if (isHintExcludedAction(action)) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 3: open escalations block downstream guidance until resolved.
   if (hasOpenEscalation(fold)) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 4: unapproved extreme run level requires user selection.
   if (!levelGate(fold).allowed) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 5: bind precedes review and implementation hints.
   const bind = latest(fold, "bind");
 
   if (!bind) {
@@ -118,11 +123,13 @@ export const stepHint = ({
     return undefined;
   }
 
+  // Row 6: intent confirmation gate precedes review and implementation hints.
   if (!confirmGate(fold, current.spec).allowed) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 7: freshly appended non-deduped plan/design bind after level selection, with no subsequent approval or ruling.
   const last = fold.records.at(-1);
   const deduped = isRecord(result.value) && result.value["deduped"] === true;
 
@@ -155,11 +162,13 @@ export const stepHint = ({
       : formatHint(renderReview("<artifact>"));
   }
 
+  // Row 8: full gate (approval + non-intent edit chain).
   if (!gate(fold, current).allowed) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 9: bound plan and opened integration worktree precede implementation hints.
   const integration = integrationRecord(fold);
 
   if (
@@ -171,6 +180,7 @@ export const stepHint = ({
     return undefined;
   }
 
+  // Row 10: closed integration emits no hint.
   const integratePhase: unknown = latest(fold, "integrate")?.data?.["phase"];
 
   if (integratePhase === "closed") {
@@ -178,17 +188,20 @@ export const stepHint = ({
     return undefined;
   }
 
+  // Row 11: pending integration conflict or in-progress pick requires orchestrator decision.
   if (pendingIntegration(fold)) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
     return undefined;
   }
 
+  // Row 12: uncommitted delivery points to walkthrough completion (committed does not repeat it).
   if (action === "worktree deliver" && integratePhase === "delivered") {
     return formatHint(
       "Complete walkthrough report — help report complete — report complete --session <session>"
     );
   }
 
+  // Row 13: report complete after delivery or commit points to worktree cleanup.
   if (
     action === "report complete" &&
     (integratePhase === "delivered" || integratePhase === "committed")
@@ -198,6 +211,7 @@ export const stepHint = ({
     );
   }
 
+  // Row 14: non-stale finished candidate ready after the last integrated task's automated criteria have passing clean check evidence on the verified check run tree after its done record and any fix or test-cleanup.
   const tasks = [
     ...new Set(
       fold.records
@@ -320,6 +334,7 @@ export const stepHint = ({
     }
   }
 
+  // Row 15: default omit for all remaining states.
   // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the hint and skipped branches.
   return undefined;
 };

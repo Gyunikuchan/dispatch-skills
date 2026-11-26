@@ -324,6 +324,8 @@ export const reviewIdentity = async (
 
   const latestRound = rounds.at(-1);
 
+  // A confirmation-only round re-uses its predecessor's target, so identity and
+  // settled findings anchor to the latest round that reviewed the target itself.
   const reviewed = rounds.findLast(
     (value) => !/\(confirmation-only\)/iu.test(value.scope)
   );
@@ -360,6 +362,7 @@ export const reviewIdentity = async (
     hashes
   );
 
+  // Coverage replaces the last-round failure check: majority or overridden slots pass; rerun, user and unreadable state refuse.
   let coverage;
 
   try {
@@ -490,6 +493,7 @@ export const reviewIdentity = async (
     refuse("review-required");
   }
 
+  // The corrected severity of a code-integration finding, from every ruling recorded for it.
   const effective = (finding: ReturnType<typeof storedFinding>) =>
     effectiveSeverity(
       finding,
@@ -660,6 +664,7 @@ export const reviewIdentity = async (
             candidate.data["subject"] === rulingPrefix + id
         );
 
+        // NOTE: a finding corrected down to CONSIDER keeps its required fix; a reviewer-rated CONSIDER does not qualify.
         const qualifies =
           finding &&
           (effective(finding) === "SHOULD" ||

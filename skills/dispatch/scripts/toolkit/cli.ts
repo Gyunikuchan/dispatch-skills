@@ -281,6 +281,7 @@ export const nodeDeps = (): CliDeps => {
       ])
     ),
     async delegate(provider, request, mode) {
+      // Preflight steps belong to this call's first invocation only, never to a later retry or reserve call.
       const steps: LifecycleStep[] = [];
       let attached = false;
 
@@ -305,6 +306,7 @@ export const nodeDeps = (): CliDeps => {
           request.onInvocation?.(row);
         } catch {
           void 0;
+          // An observer failure must not change the delegate outcome.
         }
       };
 
@@ -335,6 +337,7 @@ export const nodeDeps = (): CliDeps => {
       const deadline = Date.now() + request.timeoutMs;
       let resolved = request;
 
+      // A blocked sandbox skips introspection so the runner gate refuses before any process starts.
       if (
         provider === "opencode" &&
         !sandboxBlocked(SPECS[provider], request.sandbox, platform)
@@ -411,6 +414,7 @@ export const nodeDeps = (): CliDeps => {
     run: async (argv, options) =>
       // oxlint-disable-next-line promise/avoid-new -- the executor bridges child-process events to promise settlement; no promise API covers it.
       await new Promise((resolve, reject) => {
+        // cmd.exe must receive the plan command without Node's argument quoting.
         const command = present(argv[0], "command");
 
         const child = spawn(command, argv.slice(1), {
@@ -516,6 +520,7 @@ const readLintEditFields = (ctx: HandlerContext) => {
     );
   }
 
+  // The ledger supplies these fields under the lock. Use valid placeholders to check caller fields now.
   const placeholder = `sha256:${"0".repeat(64)}`;
 
   try {
@@ -538,6 +543,7 @@ const readLintEditFields = (ctx: HandlerContext) => {
     throw error;
   }
 
+  // validateRecord already refused a wrong shape; this carries that proof into the type.
   if (!isLintEditFields(fields)) {
     throw new ToolError(1, "invalid-input", "--edit fields are invalid");
   }
@@ -663,6 +669,7 @@ const handlers: HandlerTable = {
             continue;
           }
 
+          // A bind that follows a review renders the rounds its refreshes skipped; a bind before any review leaves the artifact alone.
           if (record["kind"] === "bind") {
             for (const kind of ["plan", "design"] as const) {
               const relative = data[kind];
@@ -887,6 +894,7 @@ export const main = async (argv: string[], deps: CliDeps = nodeDeps()) => {
   const print = (result: ToolResult) => {
     const { exit, ...output } = result;
 
+    // Refusals name the toolkit.md section to read; argv (not parsed positionals) keeps a parse failure on a valid action pointed at its section.
     let help: string | undefined;
 
     if (!output.ok && output.reason !== "native-pending") {
@@ -1017,6 +1025,7 @@ export const main = async (argv: string[], deps: CliDeps = nodeDeps()) => {
     kind = undefined;
   }
 
+  // A recorded host builds the orchestrator; a copy keeps the caller's deps unmodified.
   const resolvedDeps = {
     ...deps,
     orchestrator:

@@ -133,6 +133,7 @@ export const askRun = async (ctx: HandlerContext) => {
                   outcome.responder?.provider ??
                   slots.targets.find((slot) => slot.slot === outcome.slot)
                     ?.provider ??
+                  // Saved outcomes may carry a provider the done shape does not declare.
                   ("provider" in outcome && typeof outcome.provider === "string"
                     ? outcome.provider
                     : undefined) ??

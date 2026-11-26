@@ -1,8 +1,13 @@
+// Delegate text sanitization before relay or render,
+// plus comment-marker neutralisation so delegate text can never open hidden Markdown/HTML regions.
+
 const TOOL_CALL_LINE =
   /^\s*(?:<\/?(?:invoke|parameter|function_calls|tool_use)\b|(?:invoke|parameter|function_calls|tool_use)\s*\(|[A-Z][A-Za-z]*\(.*\)\s*$|\$\s|>\s*\$)/u;
 
 const TOOL_MARKUP = /<\/?(?:invoke|parameter|function_calls|tool_use)\b.*$/u;
 
+// ANSI CSI/OSC sequences and C0/C1 controls other than tab and newline.
+// Matching control characters is the purpose, so the pattern is assembled from their escape spellings.
 const ESC = String.raw`\u001b`;
 const BEL = String.raw`\u0007`;
 const CSI = String.raw`${ESC}\[[0-?]*[ -/]*[@-~]`;
@@ -29,6 +34,7 @@ export const sanitizeText = (text: string) => {
     const marker = /^\s*(?<cap1>`{3,}|~{3,})/u.exec(line)?.[1];
 
     if (marker !== undefined) {
+      // A fence closes only on a bare line of the same character with at least the opener's length (CommonMark).
       if (fence === null) {
         fence = marker;
       } else if (

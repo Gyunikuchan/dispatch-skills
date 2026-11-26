@@ -8,6 +8,7 @@ import type {
   FileEntry,
   Inventory,
 } from "../../.agents/skills/optimise-tests/scripts/inventory.ts";
+// NOTE: literal dynamic imports keep each leaf test independently failing before implementation updates.
 import {
   COVERAGE_INCLUDE,
   EXCLUDE_FROM_WRITERS,
@@ -51,6 +52,8 @@ const inventory = (files: FileEntry[], extra: Partial<Inventory> = {}) => ({
   failures: [],
   ...extra,
 });
+
+// SECTION: Dynamic discovery and before/after deltas
 
 test("discovers tests dynamically and formats before/after deltas without config or ledger", async (t) => {
   await Promise.resolve();

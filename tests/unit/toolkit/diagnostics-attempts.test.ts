@@ -496,6 +496,7 @@ test("nudge marker persists only for boolean resume launches", async () => {
 });
 
 test("nudge and resume chains account recovered-stall waste exactly", () => {
+  // nudge: recovered stalls yield no waste finding
   {
     const f = sessionFixture({ memory: true });
 
@@ -608,6 +609,7 @@ test("nudge and resume chains account recovered-stall waste exactly", () => {
     }
   }
 
+  // nudge: waste counts a recovered stall exactly
   {
     const f = sessionFixture({ memory: true });
 
@@ -723,6 +725,7 @@ test("nudge and resume chains account recovered-stall waste exactly", () => {
     }
   }
 
+  // diagnostics resume chain leaves waste only without a successful end
   {
     const f = sessionFixture({ memory: true });
 
@@ -1307,6 +1310,7 @@ test("response evidence retains verified aliases across captures and distinguish
       [first, 21, 30, true, "resume"],
       [second, 0, 20, false, "other"],
     ] as const) {
+      // Read the first capture before its streaming update is available.
       const usageFs =
         model === "first"
           ? memoryFs({
@@ -1599,6 +1603,7 @@ test("agy delegate invocations render resolved model and effort in diagnostics r
     const reportPath = writeDiagnostics(f.session, facts);
     const report = fs.readFileSync(reportPath, "utf-8");
 
+    // Tokens by stage should render resolved models without (configured)
     assert.match(report, /### Tokens by stage/u);
     assert.match(
       report,
@@ -1611,6 +1616,7 @@ test("agy delegate invocations render resolved model and effort in diagnostics r
     assert.doesNotMatch(report, /gemini-4-argon \(configured\)/u);
     assert.doesNotMatch(report, /gemini-3.8-flash \(configured\)/u);
 
+    // Appendix should suppress redundant (reported: X) when equal to configured model
     assert.doesNotMatch(report, /gemini-4-argon \(reported: gemini-4-argon\)/u);
   } finally {
     f.cleanup();

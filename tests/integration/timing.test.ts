@@ -13,6 +13,7 @@ export const ALLOW_TIMING: readonly string[] = [
   "tests/unit/toolkit/hints.test.ts: measures and reports 500-record fold+hash latency.",
 ];
 
+// NOTE: tokens are assembled so this guard's own source never matches them.
 /* eslint-disable no-useless-concat -- tokens are split deliberately so literal scans cannot find timer API names. */
 const TOKENS = [
   "set" + "Timeout",

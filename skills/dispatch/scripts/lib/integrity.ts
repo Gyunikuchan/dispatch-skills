@@ -1,3 +1,6 @@
+// Skill-hash integrity check before dispatch. A drifted, missing, or extra
+// hashed file is a violation; a missing manifest disables the check with a warning.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +13,8 @@ const REFERENCE_EXTENSION = /\.(?:md|json)$/u;
 
 const sha256 = (text: string) =>
   crypto.createHash("sha256").update(text).digest("hex");
+
+// SECTION: JSON shapes
 
 export type JsonValue =
   | string
@@ -27,9 +32,12 @@ export interface JsonObject {
 /** `JSON.parse` without a reviver produces exactly a JsonValue. */
 export const parseJson: (text: string) => JsonValue = JSON.parse;
 
+// SECTION: skill file hashing
+
 const isObjectValue = (value: unknown): value is JsonObject =>
   value !== null && typeof value === "object";
 
+// Key-sorted re-serialization so JSON key order and whitespace do not change the hash.
 export const sortedJson: (value: unknown) => string = (value) => {
   if (Array.isArray(value)) {
     return `[${value.map(sortedJson).join(",")}]`;
@@ -45,6 +53,7 @@ export const sortedJson: (value: unknown) => string = (value) => {
   return JSON.stringify(value);
 };
 
+// NOTE: unparseable JSON hashes as CRLF-normalized text so it still drifts deterministically.
 const jsonForm = (text: string) => {
   try {
     return sortedJson(JSON.parse(text));
@@ -53,6 +62,9 @@ const jsonForm = (text: string) => {
   }
 };
 
+// Markdown and JSON formatter rewrites are not meaning changes, so they hash canonically. `.ts` stays exact
+// (CRLF-normalized only) because whitespace there can be meaningful and must not be hidden by a formatter.
+// `.gitattributes` checks out LF while `core.autocrlf` checkouts hold CRLF, so CRLF always normalizes to LF.
 export const hashSkillFile = (file: string) => {
   const text = fs.readFileSync(file, "utf-8");
 
@@ -148,6 +160,7 @@ export const checkIntegrity = (skillDir: string) => {
     return { status: "drift", violations: [MANIFEST_NAME] };
   }
 
+  // `$`-prefixed keys carry build metadata (`$version`), not file hashes.
   const recorded = Object.fromEntries(
     Object.entries(manifest).filter(([key]) => !key.startsWith("$"))
   );

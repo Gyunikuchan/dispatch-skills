@@ -1,3 +1,5 @@
+// Provider registry: one declarative spec per provider over the shared runner.
+
 import { agy } from "./agy.ts";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";

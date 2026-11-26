@@ -386,6 +386,7 @@ test("approval survives formatting-only artifact rewrites and refuses meaning ch
     for (const kind of kinds) {
       const [from, to] = wordChanges[kind];
       f.artifact(names[kind], formatted[kind].replace(from, to));
+      // A spec change fails the confirm check before approval, which reports no artifact.
       assert.deepEqual(
         verdict(),
         kind === "spec"

@@ -162,8 +162,10 @@ const memFs = (
   };
 };
 
+/** Placeholder until the fake process registers its real callback. */
 const noop = () => {};
 
+/** Manual clock: timers fire only when the test advances time. */
 const manualClock = () => {
   let now = 0;
 
@@ -277,6 +279,8 @@ const flush = async () => {
     setImmediate(resolve);
   });
 };
+
+// T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
 test("delegates-credential-stripping: the delegate env keeps the whitelist and drops every credential", async () => {
   assert.deepEqual(

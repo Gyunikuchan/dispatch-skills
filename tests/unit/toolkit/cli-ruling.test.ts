@@ -248,6 +248,7 @@ describe("toolkit CLI rulings contract", () => {
   });
 
   test("bind renders findings only after a completed review", async () => {
+    // bind after a completed review renders its findings section
     {
       const f = sessionFixture({ memory: true });
       const restoreAtomicWrite = useMemoryAtomicWrite();
@@ -314,6 +315,7 @@ describe("toolkit CLI rulings contract", () => {
       }
     }
 
+    // bind before any review leaves the artifact unchanged
     {
       const f = sessionFixture({ memory: true });
 

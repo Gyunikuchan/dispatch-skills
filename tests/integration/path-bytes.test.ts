@@ -32,6 +32,8 @@ const readFile = (rel: string) =>
 
 const toolkit = readFile("references/toolkit.md");
 
+// SECTION: Guide link placement (the production measure takes classes from the manifest)
+
 interface Occurrence {
   target: string;
   stepText: string | null;
@@ -149,6 +151,8 @@ const GUIDES = [
   "review",
   "verify",
 ] as const;
+
+// SECTION: Manifest completeness and classes
 
 test("path link validation reports missing, stale and bad-anchor destinations for both declaration sources", () => {
   assert.deepEqual(validatePathLinks(readFile), []);
@@ -380,6 +384,8 @@ test("path ledger calls name a record kind and other calls name a tool action", 
   }
 });
 
+// SECTION: Measure formulas
+
 const file = (...sections: [string, number][]) =>
   `${sections.map(([title, size]) => `### ${title}\n${"x".repeat(size)}`).join("\n")}\n`;
 
@@ -494,6 +500,8 @@ test("measure counts a section once when its whole file is already read", () => 
     1 + 1 + Buffer.byteLength(file(["one", 5], ["two", 7]))
   );
 });
+
+// SECTION: Growth against the baseline
 
 test("growth above the baseline fails and a smaller figure passes", () => {
   const same = {

@@ -29,6 +29,7 @@ import type { cliVoice } from "./voice.ts";
 
 const isOnly = (slot: RosterSlot) => slot.native;
 
+// Drops slots that have no outcome yet.
 const settled = (outcomes: readonly (SlotOutcome | undefined)[]) =>
   outcomes.flatMap((outcome) => (outcome ? [outcome] : []));
 
@@ -80,6 +81,7 @@ export const runNativeWave = async (
     finishCliWave,
   } = ports;
 
+  // Native wave: launch, CLI wave, consume.
   const isFirst = (slot: RosterSlot) =>
     isNativeFirstSlot(slot, nativeFirstProviders);
 
@@ -110,10 +112,14 @@ export const runNativeWave = async (
     }
   };
 
+  // Launch: no state yet, native-first unsaved.
   if (!stateOf().nativeFirst) {
     const outcomes: SlotOutcome[] = [];
     const matchedReportAttempts = new Set<string>();
 
+    // A matching failure report ends a saved native-only attempt with the
+    // native-only classification (no cli cascade), mirroring the cli-only
+    // prepass. Anything else replays below.
     const failNativeOnlyLaunch = async (
       slot: RosterSlot,
       native: Extract<SlotOutcome, { state: "native" }>,
@@ -125,6 +131,9 @@ export const runNativeWave = async (
       outcomes.push(saved);
     };
 
+    // A saved native-first attempt off its route defers to the CLI wave. A
+    // matching report persists its evidence; otherwise the marker records the
+    // host change. Only the marker persists here, so new descriptors return first.
     const deferUnroutable = (
       slot: RosterSlot,
       existing: Extract<SlotOutcome, { state: "native" }>
@@ -174,6 +183,7 @@ export const runNativeWave = async (
             !input.validate(existing.text, slot.slot).ok
           ) {
             void 0;
+            // Drop stale done below.
           } else {
             emit(slot, { kind: "slot", state: existing.state, replay: true });
             outcomes.push(existing);
@@ -181,6 +191,7 @@ export const runNativeWave = async (
           }
         }
 
+        // A saved failed native-only reruns below as a fresh native attempt.
         outcomes.push(publishNative(slot, createNativeOnly(slot)));
         continue;
       }
@@ -193,6 +204,9 @@ export const runNativeWave = async (
           // SAFETY: the state guard narrows existing to a native outcome; the assertion only reads its optional cliFallback flag.
           !(existing as { cliFallback?: true }).cliFallback
         ) {
+          // A host change can make the logical slot native-first while the
+          // saved attempt belongs to another provider: check the physical
+          // route before replaying, or the old-host attempt stays pending.
           if (!routeForNative(existing).routeOk) {
             deferUnroutable(slot, existing);
             continue;
@@ -212,6 +226,9 @@ export const runNativeWave = async (
           continue;
         }
 
+        // Failed or missing: mint fresh. A saved fallback marker resumes in
+        // the CLI wave, never as pending, so it stays out of this return.
+        // On launch retry after crash before state write, reuse existing native if present.
         if (existing?.state === "native") {
           continue;
         }
@@ -221,6 +238,11 @@ export const runNativeWave = async (
       }
     }
 
+    // Targets that are neither native-only nor native-first are normally
+    // unsaved on launch. A host change can still leave them with a saved
+    // outcome: replay done and failed saves, and route a pending reserve by
+    // its physical provider like the first-slot branch above, so no saved
+    // voice is omitted while a matching failure report is retained.
     for (const slot of targets) {
       if (isOnly(slot) || isFirst(slot)) {
         continue;
@@ -262,11 +284,16 @@ export const runNativeWave = async (
         continue;
       }
 
+      // A fallback marker resumes in the CLI wave with its recorded reason,
+      // never as pending. Unsaved targets stay absent here: the deferred wave
+      // processes them, and the caller keeps the round open until it does.
       continue;
     }
 
     patchState({ nativeFirst: true });
 
+    // Reports that matched a saved host-changed attempt were consumed above;
+    // only a truly stale report is ignored.
     for (const report of nativeFailures) {
       if (!matchedReportAttempts.has(report.attempt)) {
         input.onIgnoredReport?.(report.attempt);
@@ -276,6 +303,7 @@ export const runNativeWave = async (
     return outcomes;
   }
 
+  // CLI wave: descriptors saved, cliWaveDone absent. Runs unsaved CLI and reported failures, reads no other reply.
   if (!stateOf().cliWaveDone) {
     const outcomes = new Map<string, SlotOutcome>();
     const waveTasks: Promise<unknown>[] = [];
@@ -299,6 +327,10 @@ export const runNativeWave = async (
     const matchedReportAttempts = new Set<string>();
     const deferredFallbacks = new Set<string>();
 
+    // New descriptors come first and return before any CLI work starts, so a
+    // new host's voices launch while old fallbacks still run. cliWaveDone
+    // stays absent, so the next call resumes the deferred fallbacks and CLI
+    // targets with recoverable wave state.
     for (const canLaunch of [isFirst, isOnly]) {
       for (const slot of targets) {
         if (
@@ -318,6 +350,15 @@ export const runNativeWave = async (
     }
 
     if (outcomes.size) {
+      // A host change can leave a saved native attempt with a matching failure
+      // report while other targets become newly eligible. A native-only
+      // attempt has no CLI cascade and fails at once with its reason and
+      // BLOCKED evidence. A native-first slot or reserve substitute persists
+      // only the fallback marker (step 1 of fallbackToCli): the deferred next
+      // call resumes the CLI cascade with the recorded reason, so the slot is
+      // neither returned as pending nor marked failed here. CLI work stays
+      // deferred; unmatched reports are ignored only when no saved attempt
+      // still holds them.
       for (const slot of targets) {
         if (outcomes.has(slot.slot)) {
           continue;
@@ -325,6 +366,8 @@ export const runNativeWave = async (
 
         const saved = readSaved(slot.slot);
 
+        // A fallback already in flight stays with the deferred next call, which
+        // resumes it with its recorded reason.
         if (
           !saved ||
           saved.state !== "native" ||
@@ -354,6 +397,9 @@ export const runNativeWave = async (
           continue;
         }
 
+        // The marker persists before the reply is quarantined: an
+        // interruption between the two still resumes with the reported
+        // reason and evidence instead of a generic host change.
         persistDeferredMarker(
           fileOfLogical(slot.slot),
           saved,
@@ -364,6 +410,10 @@ export const runNativeWave = async (
         deferredFallbacks.add(slot.slot);
       }
 
+      // Reports that matched a saved attempt were consumed above; only a report
+      // no saved attempt still holds is ignored. A deferred fallback slot is
+      // absent from this return by design: the next call resumes its CLI
+      // cascade, so neither caller can list it as pending or failed meanwhile.
       notifyUnmatchedReports(matchedReportAttempts);
 
       for (const slot of targets) {
@@ -373,6 +423,8 @@ export const runNativeWave = async (
 
         const saved = readSaved(slot.slot);
 
+        // Every saved fallback marker resumes in the CLI wave, including one
+        // saved before this call: it never returns as a pending voice.
         if (
           !saved ||
           deferredFallbacks.has(slot.slot) ||
@@ -398,6 +450,9 @@ export const runNativeWave = async (
         const saved = readSaved(slot.slot);
 
         if (isOnly(slot) && saved?.state === "native") {
+          // Saved native-only attempts match reports here too: a host change
+          // must not replay the old attempt as pending when its BLOCKED
+          // report arrived with the resume.
           const report = nativeFailures.find(
             // SAFETY: the state guard narrows saved to a native outcome; the assertion only reads its persisted attempt field.
             (entry) => entry.attempt === (saved as { attempt: string }).attempt
@@ -425,11 +480,15 @@ export const runNativeWave = async (
           continue;
         }
 
+        // Same physical-route gate as the consume path: a host change can
+        // make the logical slot native-first under a stale attempt.
         if (
           isFirst(slot) &&
           saved.state === "native" &&
           !routeForNative(saved).routeOk
         ) {
+          // A matching report wins: the report loop below runs the same
+          // fallback with the reported reason and evidence.
           if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) {
             continue;
           }
@@ -442,10 +501,15 @@ export const runNativeWave = async (
       }
     }
 
+    // Snapshot before any concurrent fallback tasks launch: each pushed task
+    // runs its sync prefix (marker persist and failed save) immediately, so a
+    // later live read would see a marker that already settled to failed in this
+    // same batch and trigger a plain retry for the same slot.
     const waveInitial = new Map(
       targets.map((slot) => [slot.slot, readSaved(slot.slot)])
     );
 
+    // Process reports for natives in this wave (fallback now, no reply read).
     for (const slot of targets) {
       if (isOnly(slot)) {
         continue;
@@ -470,6 +534,7 @@ export const runNativeWave = async (
       );
     }
 
+    // Route false takes the fallback even with a reply present, before any report handling.
     for (const slot of targets) {
       if (isOnly(slot) || isFirst(slot)) {
         continue;
@@ -490,6 +555,8 @@ export const runNativeWave = async (
         continue;
       }
 
+      // A matching report wins: the report loop below runs the same fallback
+      // with the reported reason and evidence.
       if (nativeFailures.some((entry) => entry.attempt === saved.attempt)) {
         continue;
       }
@@ -497,6 +564,10 @@ export const runNativeWave = async (
       queueFallback(slot, saved, "host changed");
     }
 
+    // Reports match any saved physical native attempt, not only first slots:
+    // a reserve substitute saved under a non-first target falls back with its
+    // physical reserve provider under the logical slot and no second reserve,
+    // and a reported attempt is never returned as pending.
     for (const slot of targets) {
       if (isOnly(slot)) {
         continue;
@@ -525,6 +596,11 @@ export const runNativeWave = async (
       queueFallback(slot, saved, report.reason, reportEvidence(saved, report));
     }
 
+    // Run unsaved CLI targets alongside fallback cascades in one concurrent batch.
+    // A slot with a saved native (including a fallback marker) is resumed by
+    // its own fallback task above; it never runs a second CLI here. The check
+    // runs before any task launches so a marker that settles to failed in this
+    // same batch does not trigger a plain retry for the same slot.
     const cliTargets = targets.filter(
       (slot) => !isOnly(slot) && !isFirst(slot)
     );
@@ -556,6 +632,7 @@ export const runNativeWave = async (
             return saved;
           }
 
+          // If saved failed from previous interrupted wave, rerun below.
           const promptPath = basePathOf(slot.slot);
 
           if (!fs.existsSync(promptPath)) {
@@ -603,7 +680,9 @@ export const runNativeWave = async (
     }
 
     throwRejected(await Promise.allSettled(waveTasks));
+    // Reads no other reply file. Sets cliWaveDone after all settle.
     finishCliWave();
+    // Reports that matched nothing are ignored; others were consumed above.
     notifyUnmatchedReports(matchedReportAttempts);
 
     return settled(
@@ -611,6 +690,7 @@ export const runNativeWave = async (
     );
   }
 
+  // Consume: cliWaveDone present. Consumes replies, moves failed natives to CLI.
   {
     const startAttempts = new Set<string>();
 
@@ -632,6 +712,10 @@ export const runNativeWave = async (
     const preExistingFailed: RosterSlot[] = [];
     const consumeTasks: Promise<void>[] = [];
 
+    // Independent fallback cascades run concurrently in one batch (as the wave
+    // does); the walk below decides and marks, tasks launch. Check and claim
+    // stay adjacent with no await between, so concurrent cascades cannot
+    // double-claim the reserve.
     const runFallback = (
       slot: RosterSlot,
       nativeSaved: Extract<SlotOutcome, { state: "native" }>,
@@ -797,11 +881,14 @@ export const runNativeWave = async (
       }
 
       if (isFirst(slot) || saved?.state === "native") {
+        // Native-first consume, including route-false fallback.
         const nativeSaved = saved?.state === "native" ? saved : undefined;
 
         if (!nativeSaved) {
+          // No saved native: could be done/failed already, or unsaved (new). If done/failed, handle below as CLI.
           if (saved) {
             if (saved.state === "failed") {
+              // Defer retry until pending settles.
               outcomes.set(slot.slot, saved);
               preExistingFailed.push(slot);
               continue;
@@ -811,6 +898,7 @@ export const runNativeWave = async (
             continue;
           }
 
+          // Unsaved native-first in consume: create fresh (should not happen for same gen, but handle).
           if (isFirst(slot)) {
             const created = createNativeFirst(slot, slot);
             atomic(fileOfLogical(slot.slot), created);
@@ -824,6 +912,8 @@ export const runNativeWave = async (
 
         // SAFETY: nativeSaved is a native outcome parameter; the assertion only reads its optional cliFallback flag.
         if ((nativeSaved as { cliFallback?: true }).cliFallback) {
+          // Rerun steps 2-3, never read reply. A substitute never takes a
+          // second reserve here either.
           runFallback(
             slot,
             nativeSaved,
@@ -847,6 +937,11 @@ export const runNativeWave = async (
           continue;
         }
 
+        // Route false takes fallback even with reply present. Resolve the
+        // physical provider with the same gate as the CLI-only and wave
+        // paths: a host-platform reserve saved under any logical slot stays
+        // route-ok while native-first or native-only from the current host,
+        // so its reply consumes.
         const route = routeForNative(nativeSaved);
 
         if (!route.routeOk) {
@@ -854,6 +949,9 @@ export const runNativeWave = async (
           continue;
         }
 
+        // Classify by the physical provider: a wave-minted native-only
+        // reserve answers the native-only way, so a BLOCKED or invalid reply
+        // file stays pending-native and never falls back to a refusal.
         const nativeOnlyPhysical =
           !route.first && (route.physical?.native ?? false);
 
@@ -957,6 +1055,7 @@ export const runNativeWave = async (
           continue;
         }
 
+        // Route true, no report: consume reply if present.
         if (fs.existsSync(nativeSaved.replyPath)) {
           const text = fs.readFileSync(nativeSaved.replyPath, "utf-8");
           const { isBlocked, raw } = parseBlockedReply(text);
@@ -997,6 +1096,9 @@ export const runNativeWave = async (
               kind: "native",
               state: "completed",
             });
+            // The responder records the launched voice, not the current
+            // roster: a config change between launch and consumption must not
+            // attribute the answer to a model or effort that never launched.
             outcomes.set(
               slot.slot,
               saveDoneFromNative(slot, nativeSaved, checked.text ?? text)
@@ -1004,6 +1106,7 @@ export const runNativeWave = async (
             continue;
           }
 
+          // Invalid reply falls back.
           emit(attemptOf(slot, nativeSaved), {
             kind: "native",
             state: "failed",
@@ -1043,6 +1146,7 @@ export const runNativeWave = async (
         continue;
       }
 
+      // CLI targets in consume.
       if (saved?.state === "done" && input.validate(saved.text, slot.slot).ok) {
         emit(slot, { kind: "slot", state: "done", replay: true });
         outcomes.set(slot.slot, saved);
@@ -1060,6 +1164,7 @@ export const runNativeWave = async (
         continue;
       }
 
+      // Unsaved CLI in consume (should not happen after wave, but run now).
       const promptPath = basePathOf(slot.slot);
 
       if (!fs.existsSync(promptPath)) {
@@ -1071,14 +1176,20 @@ export const runNativeWave = async (
 
     throwRejected(await Promise.allSettled(consumeTasks));
 
+    // A saved failed slot retries once in the call where the last native reply settles.
     if (!pendingRemains && preExistingFailed.length) {
       const retryTasks: Promise<void>[] = [];
 
       for (const slot of preExistingFailed) {
         retryTasks.push(
           (async () => {
+            // Carry forward the saved blocked evidence: a retry that settles
+            // the last pending voice must not drop it.
             const savedFailed = readSaved(slot.slot);
             const priorBlocked = savedFailed?.blocked;
+            // A native-only reserve mint appends its reply section to this same
+            // file: rewrite the base prompt unconditionally, as the CLI-only
+            // path does, so the retry never reads a native reply section.
             const baseFile = basePathOf(slot.slot);
             fs.writeFileSync(baseFile, baseTextOf(slot), { mode: 0o600 });
             let retryOutcome: SlotOutcome;
@@ -1126,6 +1237,7 @@ export const runNativeWave = async (
       throwRejected(await Promise.allSettled(retryTasks));
     }
 
+    // Stale or replayed reports never matched a pending native at call start.
     for (const report of nativeFailures) {
       if (!startAttempts.has(report.attempt)) {
         input.onIgnoredReport?.(report.attempt);

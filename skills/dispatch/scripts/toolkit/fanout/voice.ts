@@ -89,6 +89,8 @@ const savedUsage = (value: unknown) =>
 
 const MAX_REPORT_RESUMES = 3;
 
+// A report resume asks the same session for only the final report. Its prompt
+// sits beside the voice prompt because the runner reads the body from promptPath.
 const reportResumePromptPath = (promptPath: string) =>
   path.join(
     path.dirname(promptPath),
@@ -123,6 +125,7 @@ export const cliVoice = (
     beginAttempt,
   } = ports;
 
+  // Reused outcomes need no quota reads; each launched key keeps one frozen decision.
   const decisions = new Map<
     string,
     ReturnType<typeof quotaSnapshot>["decisions"][number]
@@ -211,6 +214,7 @@ export const cliVoice = (
     let position = { model: 0, mode: 0 };
     const targetForEmit: RosterSlot = { ...physical, slot: logicalSlot };
 
+    // A reserve runs on its own 30-minute budget from its start; targets share the wave deadline.
     const voiceDeadline = physical.reserve
       ? deps.clock() + VOICE_DEADLINE_MS
       : deadline;
@@ -382,6 +386,7 @@ export const cliVoice = (
             );
           } catch {
             void 0;
+            // No attempt session is recoverable; the state is stale below.
           }
         }
 
@@ -402,6 +407,7 @@ export const cliVoice = (
             SPECS[provider].resumeUsage === "cumulative"
               ? savedUsage(saved.sessionUsage)
               : undefined;
+          // A cumulative provider without a valid baseline restarted above.
           usageBaseline = validBaseline ?? "none";
           usageWindowEndMs = validWindowEnd;
           crossRun = true;
@@ -439,6 +445,7 @@ export const cliVoice = (
           fs.rmSync(statePath, { force: true });
         } catch {
           void 0;
+          // State writes stay disabled; a leftover file is rejected as stale.
         }
       }
     };
@@ -489,6 +496,7 @@ export const cliVoice = (
             usageBaseline = "cumulative";
             usageWindowEndMs = undefined;
 
+            // Clear the previous attempt before publishing a fresh session checkpoint.
             try {
               if (fs.existsSync(logPath) && logPreserved) {
                 const old = fs.readFileSync(logPath);
@@ -506,6 +514,7 @@ export const cliVoice = (
                 fs.rmSync(statePath, { force: true });
               } catch {
                 void 0;
+                // State writes stay disabled; a leftover file is rejected as stale.
               }
             }
           }
@@ -633,6 +642,7 @@ export const cliVoice = (
             }
           }
 
+          // Fakes may return rows without invoking the callback. Wrap-up resumes ride outside the stall count.
           if (!resumeCallback) {
             resumesUsed += result.invocations
               .slice(1)
@@ -714,6 +724,7 @@ export const cliVoice = (
                 fs.copyFileSync(logPath, `${logPath}.no-report`);
               } catch {
                 void 0;
+                // The log copy is evidence only; the resume proceeds without it.
               }
 
               fs.writeFileSync(

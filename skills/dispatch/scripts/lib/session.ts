@@ -1,3 +1,6 @@
+// Session paths and lifecycle. Sessions live under
+// `<repo>/.scratch/dispatch-skills/<folder>/`. The repo root is found by upward `.git` traversal, never git.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -58,6 +61,7 @@ type Location =
 export const FOLDER_NAME = /^\d{8}T\d{4}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,11}$/u;
 
+/** Shell-safe session ids only: ids ride on argv and the win32 batch launcher. */
 const VALID_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 export const validSessionId = (id: string | null | undefined) =>
@@ -75,8 +79,11 @@ export interface Manifest {
   createdAt: string;
   lastUsedAt: string;
   location: Location;
+  // canonical ProviderKey; absent before host declaration
   host?: string;
 }
+
+// SECTION: Repository root
 
 /** Nearest ancestor of `start` holding a `.git` directory or file (worktrees), or null. */
 export const findRepoRoot = (
@@ -105,6 +112,8 @@ export const canonicalRepositoryRoot = (root: string) => {
 
   return WIN ? real.toLowerCase() : real;
 };
+
+// SECTION: Naming grammar
 
 const safePathId = (value: string) =>
   SAFE_ID.test(value)
@@ -141,6 +150,8 @@ export const platformSessionId = (
   return null;
 };
 
+// SECTION: Roots and manifest
+
 const samePath = (a: string, b: string) =>
   WIN
     ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
@@ -175,6 +186,7 @@ const workspaceSessionRoot = (repositoryRoot: string) =>
     path.join(fs.realpathSync(repositoryRoot), ".scratch", "dispatch-skills")
   );
 
+// Validates the identity fields only; the writer owns the rest of the shape.
 const isOwnManifest = (value: unknown, name: string): value is Manifest =>
   isRecord(value) &&
   value["schemaVersion"] === 1 &&
@@ -263,6 +275,8 @@ const matchingSession = (
   return found[0];
 };
 
+// SECTION: Lifecycle
+
 /** Replaces the recorded orchestrator host; callers pass a validated canonical ProviderKey. */
 export const recordHost = (sessionDir: string, host: string) => {
   writeManifest(sessionDir, { ...readManifest(sessionDir), host });
@@ -306,6 +320,7 @@ export const initSession: (options: InitOptions) => SessionLocation = (
       throw error;
     }
 
+    // Another creator holds the claim: reuse its folder once published, or retry after it releases.
     const appeared = waitForClaim(
       root,
       options.sessionId,
@@ -358,6 +373,7 @@ export const initSession: (options: InitOptions) => SessionLocation = (
           location: "workspace",
         });
       } catch (error) {
+        // A folder without a manifest would break later identity matching.
         fs.rmSync(dir, { recursive: true, force: true });
         throw error;
       }

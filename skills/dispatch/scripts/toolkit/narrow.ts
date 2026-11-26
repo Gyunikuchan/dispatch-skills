@@ -1,3 +1,4 @@
+// Narrowing for values the toolkit reads from the open ledger, saved state and config shapes.
 import { isRecord } from "../lib/config.ts";
 import type {
   PhasePolicy,
@@ -30,6 +31,9 @@ export const present = <T>(value: T | null | undefined, what: string) => {
   return value;
 };
 
+// SECTION: Config sections
+// `validateConfig` owns the entry shapes; these guards only prove the section is a table.
+
 export const isPhaseTable = (
   value: unknown
 ): value is Readonly<Record<string, PhasePolicy>> => isRecord(value);
@@ -46,6 +50,9 @@ export const isWriterTable = (
 export const isUtilityTable = (
   value: unknown
 ): value is Record<string, UtilityEntry> => isRecord(value);
+
+// SECTION: Ledger collections
+// `validateRecord` owns element checks; a violation here is a fault.
 
 const isStringList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");

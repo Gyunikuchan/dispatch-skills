@@ -188,6 +188,8 @@ test("numeric criterion grammar stays shared across headings and task mappings",
   }
 });
 
+// SECTION: Readable plan syntax
+
 test("readable plan syntax: nested and mixed entries preserve executable contracts and source lines", () => {
   const plain = parsed(PLAN);
   const nested = parsed(readable());
@@ -384,6 +386,8 @@ test("readable plan syntax: invariant-only notes stay single and unlabeled detai
   );
 });
 
+// SECTION: Plan parsing and validation
+
 test("implement-plan-lint: parsePlan extracts box, criteria, changes, verification, traceability", () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));
@@ -520,6 +524,8 @@ test("implement-plan-lint: rejects fenced automated commands, invalid Pre-existi
 
   assert.ok(defects(review).includes("criterion-review"));
 });
+
+// SECTION: Task graph and ownership
 
 const TASKS = `# Shared contract with consumers
 
@@ -1043,6 +1049,8 @@ test("task-plan: derives summary and brief from the graph", () => {
   assert.equal(selectTaskBrief(result.plan, "T9"), null);
 });
 
+// SECTION: Grouped DELETE headings and comma rejection
+
 const DELETE_NOTE = "- Changes: remove the obsolete retry shims.";
 
 const withDelete = (heading: string) =>
@@ -1060,6 +1068,7 @@ const defectsOf = (source: string, code: string) => {
 };
 
 test("grouped delete headings share one comma and note grammar", () => {
+  // Grouped delete registers every path and flags duplicates.
   const source = withDelete("src/old-a.ts, src/old-b.ts");
   const plan = parsed(source);
   const deletes = plan.changes.filter((change) => change.action === "DELETE");
@@ -1109,6 +1118,7 @@ test("grouped delete headings share one comma and note grammar", () => {
     ['Change path "src/fetch.ts" appears more than once.']
   );
 
+  // Non-grouped headings reject comma-separated paths.
   const modifySource = PLAN.replace(
     "#### [MODIFY] src/fetch.ts",
     "#### [MODIFY] src/fetch.ts, src/other.ts"
@@ -1150,6 +1160,7 @@ test("grouped delete headings share one comma and note grammar", () => {
     [splitMessage("GENERATED", "src/fetch.ts, docs/api.md")]
   );
 
+  // Repeated sibling notes hint grouping for deletes and name the file otherwise.
   const dupDelete = PLAN.replace(
     "- Inputs: src/fetch.ts\n",
     `- Inputs: src/fetch.ts\n#### [DELETE] src/old-a.ts\n${DELETE_NOTE}\n#### [DELETE] src/old-b.ts\n${DELETE_NOTE}\n`
@@ -1185,12 +1196,15 @@ test("grouped delete headings share one comma and note grammar", () => {
   );
 });
 
+// SECTION: Cross-task overlap
+
 const READER_ENTRY =
   "#### [MODIFY] src/reader.ts\n- Changes: decode with the contract.\n";
 
 const WRITER_ENTRY =
   "#### [MODIFY] src/writer.ts\n- Changes: encode with the contract.\n";
 
+/** T2 and T3 both require only T1, so a path they share has no Requires path between them. */
 const overlapPlan = (writerPath = "src/shared.ts", writerHeader = "") =>
   TASKS.replace(
     READER_ENTRY,
@@ -1216,6 +1230,7 @@ const overlapCodes = (source: string) =>
   okPlan(source).warnings.filter((item) => item.code === "overlap");
 
 test("cross-task overlap warns only for unjustified shared writes", () => {
+  // Unjustified overlap warns once and keeps both notes.
   const result = okPlan(overlapPlan());
   assert.deepEqual(result.plan.warnings, [
     { kind: "overlap", tasks: ["T2", "T3"], path: "src/shared.ts" },
@@ -1244,6 +1259,7 @@ test("cross-task overlap warns only for unjustified shared writes", () => {
     /\(as "src\/Shared\.ts" in T3\)/u
   );
 
+  // A declared Overlap line justifies the shared path; missing reasons and unowned paths fail.
   const justified = okPlan(
     overlapPlan(
       "src/shared.ts",
@@ -1284,6 +1300,7 @@ test("cross-task overlap warns only for unjustified shared writes", () => {
     "unowned path"
   );
 
+  // The duplicate-path defect stays within one task and Overlap never excuses a same-task repeat.
   const repeated = TASKS.replace(
     WRITER_ENTRY,
     `${WRITER_ENTRY}#### [MODIFY] src/writer.ts\n- Changes: also log each encode.\n`
@@ -1316,6 +1333,7 @@ test("cross-task overlap warns only for unjustified shared writes", () => {
     "Overlap does not excuse a same-task repeat"
   );
 
+  // Reference-only paths (prose, comments, criteria lists) never count for overlap.
   const source = TASKS.replace(
     "| T2 | Read through the contract | The reader decodes records with the shared withFields. | T1 | SC2 |",
     "| T2 | Read through the contract | The reader decodes records that `src/writer.ts` encodes. | T1 | SC2 |"
@@ -1355,6 +1373,8 @@ test("cross-task overlap warns only for unjustified shared writes", () => {
   assert.deepEqual(okPlan(transitiveSource).plan.warnings, []);
   assert.deepEqual(overlapCodes(transitiveSource), []);
 });
+
+// SECTION: Seams
 
 const seamWarnings = (source: string) =>
   okPlan(source).warnings.filter((item) => item.code === "missing-seams");
@@ -1463,6 +1483,8 @@ test("seam advisory accounts for review-only and verify-backed criteria", () => 
   assert.equal(seamWarnings(laterVerify).length, 1);
 });
 
+// SECTION: Declared tests and RED command
+
 const RED_LINE = "  - RED: `node --test {files}`\n";
 
 const NEW_FETCH_TEST =
@@ -1510,6 +1532,7 @@ test("declared test paths, RED commands and check cross-references share one gra
     assert.ok(!isTestPath(path), path);
   }
 
+  // Tests parses normalized paths into the criterion and rejects unowned entries.
   assert.deepEqual(
     parsed(PLAN).criteria.map((criterion) => criterion.tests),
     [["tests/fetch.test.ts"], []]
@@ -1574,6 +1597,7 @@ test("declared test paths, RED commands and check cross-references share one gra
     )
   );
 
+  // RED parses one inline-code command per criterion; a missing RED downgrades.
   assert.deepEqual(
     parsed(PLAN).criteria.map((criterion) => criterion.red),
     ["node --test {files}", null]
@@ -1630,6 +1654,7 @@ test("declared test paths, RED commands and check cross-references share one gra
     []
   );
 
+  // A test-like Changes path outside every Tests warns; support files stay exempt.
   assert.deepEqual(warningsOf(PLAN, "undeclared-test-path"), []);
   const undeclaredSource = PLAN.replace(TESTS_LINE, "");
   const undeclared = warningsOf(undeclaredSource, "undeclared-test-path");
@@ -1653,6 +1678,7 @@ test("declared test paths, RED commands and check cross-references share one gra
 
   assert.deepEqual(warningsOf(exemptSource, "undeclared-test-path"), []);
 
+  // Check warns only when it names a test file that no Tests path lists.
   const checkSource = PLAN.replace(
     CHECK_LINE,
     "  - Check: `node --test tests/other.test.ts`\n"
@@ -1784,6 +1810,8 @@ test("plan IDs stay out of test selectors and files while criteria and findings 
 
 const orderDefects = (source: string) =>
   parsePlan(source).warnings.filter((item) => item.code === "section-order");
+
+// SECTION: Section order and Task Map
 
 test("plan-section-order: old order fails and new order with absent optional sections passes", () => {
   const criteria = PLAN.slice(
@@ -2198,6 +2226,7 @@ const stripLines = (value: unknown) =>
   );
 
 test("plan human layout keeps At a Glance, glance fields and wrappers parse-stable", () => {
+  // At a Glance is required and shared sections precede the Task Map.
   assert.ok(
     parsePlan(PLAN).warnings.some((row) => row.code === "missing-section")
   );
@@ -2232,6 +2261,7 @@ test("plan human layout keeps At a Glance, glance fields and wrappers parse-stab
     ).warnings.some((row) => row.code === "section-order")
   );
 
+  // Glance parses What and How it works with indented continuation lines.
   const glanceSource = PLAN.replace(
     "## Key Decisions & Context",
     [
@@ -2293,6 +2323,7 @@ test("plan human layout keeps At a Glance, glance fields and wrappers parse-stab
   assert.deepEqual(empty.plan.glance, { what: "", how: "", visuals: "" });
   assert.equal(parsed(PLAN).glance, null);
 
+  // Details wrappers and callouts leave parse results unchanged.
   const wrappedSource = collapsed(readable()).replace(
     "## Task Map",
     "> [!NOTE]\n> User context.\n\n## Task Map"

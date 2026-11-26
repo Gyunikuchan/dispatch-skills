@@ -17,6 +17,7 @@ import type { CliDeps } from "../../../../skills/dispatch/scripts/toolkit/cli.ts
 import { memoryNodeFs } from "../../../helpers/memory-node-fs.ts";
 
 export const useMemoryAtomicWrite = () => {
+  // Route artifact updates through the active in-memory filesystem.
   const write = mock.method(
     nodeLinkFs,
     "writeAtomic",

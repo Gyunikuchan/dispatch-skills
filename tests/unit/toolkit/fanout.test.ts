@@ -708,6 +708,7 @@ test("no-report resume retries the session report, defers other verdicts, resets
           resume: null,
           sessionId: index === 0 ? "session-one" : null,
         },
+        // A report resume launch is itself a nudge; only later stall resumes count against the runner limit.
         invocations: [
           {
             provider,
@@ -838,6 +839,7 @@ test("no-report resume retries the session report, defers other verdicts, resets
     f.cleanup();
   }
 
+  // refusal and blocked answers stay with the cascade instead of a report resume
   for (const item of [
     {
       cls: "refusal" as const,
@@ -893,6 +895,7 @@ test("no-report resume retries the session report, defers other verdicts, resets
     }
   }
 
+  // the resume limit resets for the next model
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -985,6 +988,7 @@ test("no-report resume retries the session report, defers other verdicts, resets
     }
   }
 
+  // no launch starts after the voice deadline
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -1419,6 +1423,7 @@ test("blocked attempt metadata is preserved across alias, reserve, and retry fal
           }
         : validate(text);
 
+    // Alias fallback
     f.script("claude", "bad", "BLOCKED");
     f.script("claude", "good", "answer");
 
@@ -1443,6 +1448,7 @@ test("blocked attempt metadata is preserved across alias, reserve, and retry fal
       },
     ]);
 
+    // Reserve fallback
     f.script("claude", "good", "BLOCKED");
     f.script("copilot", "good", "reserve answer");
 
@@ -1472,6 +1478,7 @@ test("blocked attempt metadata is preserved across alias, reserve, and retry fal
       },
     ]);
 
+    // Failed slot retry
     f.deps.orchestrator = null;
     f.script("claude", "good", "BLOCKED");
 
@@ -2350,6 +2357,7 @@ for (const [title, nativeFirstProviders] of [
         if (provider === "copilot") {
           ownerReserveStarted.resolve();
 
+          // Keep the owner's substitute pending until the contender has tried the reserve.
           if (request.targetSlot === "agy[0]") {
             await contenderFinished.promise;
           } else {
@@ -2433,6 +2441,8 @@ test("interrupted reservation resumes for its recorded owner only", async () => 
     });
     const dir = path.join(f.session, "interrupted-reserve");
     const reserve = { ...slot("copilot"), reserve: true };
+    // No copilot script: the reserve launch throws, simulating a crash
+    // between persisting reserveUsedBy and launching the substitute.
     await assert.rejects(
       fanOut(
         {
@@ -2454,6 +2464,7 @@ test("interrupted reservation resumes for its recorded owner only", async () => 
       "agy[0]"
     );
     assert.equal(fs.existsSync(path.join(dir, "slots", "agy[0].json")), false);
+    // On retry a second failing target joins: only the recorded owner resumes the reserve.
     f.script("copilot", "good", "reserve answer");
     f.script("codex", "good", {
       status: "fail",
@@ -2494,6 +2505,7 @@ test("interrupted reservation resumes for its recorded owner only", async () => 
   }
 });
 
+// Crash state after the native prompt and owner record, before the descriptor save.
 const interruptedNativeReserve = async (
   f: ReturnType<typeof sessionFixture>,
   dir: string
@@ -2570,6 +2582,7 @@ test("interrupted native reservation resumes for its recorded owner", async () =
       detail: "denied",
     });
 
+    // The other target checks the reserve before the owner's retry saves its outcome.
     const second = await run([
       slot("codex"),
       slot("agy"),
@@ -2628,6 +2641,8 @@ test("late write from an earlier attempt is not read as the reserve reply", asyn
     assert.ok(pending?.state === "native");
     assert.ok(pending !== undefined && pending !== null);
 
+    // Reporting the launch attempt failed falls back to the CLI, which fails,
+    // so the host reserve takes a native descriptor with its own reply path.
     const waved = await fanOut(
       {
         dir,
@@ -2648,6 +2663,7 @@ test("late write from an earlier attempt is not read as the reserve reply", asyn
     assert.ok(reserve?.state === "native");
     assert.notEqual(reserve.attempt, pending.attempt);
     assert.notEqual(reserve.replyPath, pending.replyPath);
+    // A late write lands at the earlier attempt's path after the reserve wrote.
     fs.writeFileSync(pending.replyPath, "late answer");
 
     const consumed = await fanOut(
@@ -2672,6 +2688,7 @@ test("late write from an earlier attempt is not read as the reserve reply", asyn
       fs.existsSync(pending.replyPath),
       "late file is left alone, never consumed or invalidated"
     );
+    // The reserve reply still completes the slot.
     fs.writeFileSync(reserve.replyPath, "reserve answer");
 
     const done = await fanOut(
@@ -2974,6 +2991,8 @@ test("wave consumes a report for a reserve substitute under a non-first target",
     assert.ok(
       first.find((outcome) => outcome.slot === "claude[0]")?.state === "native"
     );
+    // Interrupt the wave between the substitute save and cliWaveDone: the
+    // unscripted codex delegate rejects the batch after agy minted.
     await assert.rejects(
       fanOut(
         {
@@ -3387,6 +3406,7 @@ test("consume runs independent fallback cascades concurrently", async () => {
       return [outcome.attempt];
     });
 
+    // The gate fails a cascade that runs alone: only concurrent cascades both pass.
     const arrivals: string[] = [];
     f.deps.delegate = async (provider) => {
       arrivals.push(provider);
@@ -3594,6 +3614,7 @@ test("a failed-slot retry rewrites a base prompt modified by a native-only reser
       "native"
     );
 
+    // A plain report ends the pending substitute; the next call retries it.
     const reported = await fanOut(
       {
         ...waveInput,
@@ -4093,6 +4114,8 @@ test("host change to a native-first logical slot runs the physical cli", async (
     f.deps.orchestrator = { platform: "agy", model: null };
     f.script("claude", "good", "reserve cli answer");
 
+    // The launch defers the host-changed fallback instead of running it
+    // before the new descriptors return; the wave resumes it next.
     const second = await fanOut(
       {
         dir,
@@ -4271,6 +4294,10 @@ test("wave launches a newly native-first target that has no saved slot", async (
     );
 
     assert.equal(first.length, 1);
+    // The host changes before the CLI wave: the previously CLI target is now
+    // native-first with no saved slot, while the old native target falls back.
+    // The new descriptor returns before the slow fallback settles; the next
+    // call resumes the deferred fallback.
     f.deps.orchestrator = { platform: "agy", model: null };
 
     const waved = await fanOut(
@@ -4361,6 +4388,8 @@ test("launch replays every saved outcome when the host changes past a pending re
     // eslint-disable-next-line typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
     const attempt: unknown = savedCodex.attempt;
     assert.ok(typeof attempt === "string" && attempt.startsWith("claude[0]#"));
+    // The session moves to the agy host: agy turns native-first while codex
+    // keeps its pending claude reserve attempt with a matching BLOCKED report.
     f.deps.orchestrator = { platform: "agy", model: null };
     const ignored: string[] = [];
 
@@ -4402,6 +4431,8 @@ test("launch replays every saved outcome when the host changes past a pending re
         second.map((outcome) => `${outcome.slot}:${outcome.state}`)
       )}`
     );
+    // The launch defers the reported reserve instead of running its cli: the
+    // marker persists with the reported reason and the wave resumes it next.
     assert.ok(
       !second.some((outcome) => outcome.slot === "codex[0]"),
       `the reported reserve defers, never pending: ${JSON.stringify(
@@ -4498,6 +4529,7 @@ test("native responder keeps the launched model and effort when the roster chang
     assert.ok(pending?.state === "native");
     assert.ok(pending !== undefined && pending !== null);
 
+    // The configured model and effort change while the native answer is pending.
     const changed = [
       {
         slot: "claude[0]",
@@ -4634,6 +4666,8 @@ test("launch applies a matching failure report to a saved native-only attempt", 
 
   try {
     f.deps.orchestrator = { platform: "agy", model: null };
+    // A native-only voice saved under the old host; the new host resumes with
+    // a matching BLOCKED report for that attempt.
     const dir = path.join(f.session, "launch-native-only-report");
     fs.mkdirSync(path.join(dir, "slots"), { recursive: true });
     fs.mkdirSync(path.join(dir, "prompts"), { recursive: true });
@@ -4722,6 +4756,8 @@ test("wave creates a newly eligible native-only target after a host and roster c
       first.find((outcome) => outcome.slot === "claude[0]")?.state,
       "native"
     );
+    // The session moves to a host whose native-only provider joins the roster
+    // with no saved slot while the old native target is still pending.
     f.deps.orchestrator = { platform: "codex", model: null };
     const only = { ...slot("codex"), native: true };
 
@@ -4749,6 +4785,7 @@ test("wave creates a newly eligible native-only target after a host and roster c
     );
     assert.equal(fresh.provider, "codex");
 
+    // A later wave call settles the old target through its cli cascade.
     const settled = await fanOut(
       {
         dir,
@@ -4790,6 +4827,8 @@ test("consume keeps a wave-created native-only reserve pending on blocked and in
     );
     fs.writeFileSync(path.join(dir, "prompts", "agy[0].md"), "question");
     const replyPath = path.join(dir, "replies", "agy[0].m1.md");
+    // A native-only reserve substitute saved under a non-native logical slot,
+    // as the wave mints it after a host change.
     fs.writeFileSync(
       path.join(dir, "slots", "agy[0].json"),
       JSON.stringify({
@@ -4830,6 +4869,8 @@ test("consume keeps a wave-created native-only reserve pending on blocked and in
       "failed",
       `a blocked reply saves failed: ${JSON.stringify(blocked.map((outcome) => `${outcome.slot}:${outcome.state}`))}`
     );
+    // Reset to the pending substitute so the invalid reply is consumed from a
+    // native attempt, not from the failed save above.
     fs.writeFileSync(
       path.join(dir, "slots", "agy[0].json"),
       JSON.stringify({
@@ -4885,6 +4926,8 @@ test("a reported native-first attempt defers to the cli fallback instead of fail
 
     const pending = first.find((outcome) => outcome.slot === "claude[0]");
     assert.ok(pending?.state === "native");
+    // The host changes: agy becomes native-first with no saved slot while the
+    // old claude attempt carries a matching BLOCKED report.
     f.deps.orchestrator = { platform: "agy", model: null };
     const ignored: string[] = [];
     const failed: string[] = [];
@@ -4968,6 +5011,7 @@ test("a reported native-first attempt defers to the cli fallback instead of fail
       "the matching report is consumed, not ignored"
     );
 
+    // The next call runs the deferred fallback through the cli.
     const resumed = await fanOut(
       {
         dir,
@@ -5035,6 +5079,8 @@ test("early-wave blocked reports defer substitutes and fail native-only attempts
       native: false,
     };
 
+    // codex turns native-first with no saved slot while the agy substitute
+    // carries a matching BLOCKED report.
     const failed: string[] = [];
 
     const waved = await fanOut(
@@ -5210,6 +5256,8 @@ test("off-host retries keep the failed outcome without launching the wrong reser
     f.script("agy", "good", { status: "fail", cls: "auth", detail: "denied" });
     const dir = path.join(f.session, "cli-only-offhost-reserve");
 
+    // The first attempt fails with no reserve in the roster, so the failure
+    // is a plain cli-only save with no native history.
     const first = await fanOut(
       {
         dir,
@@ -5227,6 +5275,9 @@ test("off-host retries keep the failed outcome without launching the wrong reser
       first.find((outcome) => outcome.slot === "agy[0]")?.state,
       "failed"
     );
+    // The round is interrupted and resumes on another host whose roster adds a
+    // native-only reserve for the old host. The retry fails again: the saved
+    // old-host reserve must not launch off its host.
     f.deps.orchestrator = { platform: "claude", model: null };
 
     const reserve = {
@@ -5346,6 +5397,8 @@ test("wave early return omits a saved fallback marker and resumes it next call",
     );
     fs.writeFileSync(path.join(dir, "prompts", "agy[0].md"), "question");
     const replyPath = path.join(dir, "replies", "claude[0].m1.md");
+    // An interrupted fallback marker saved before this call; the host change
+    // makes agy newly native-first with no saved slot.
     fs.writeFileSync(
       path.join(dir, "slots", "claude[0].json"),
       JSON.stringify({
@@ -5456,6 +5509,8 @@ test("deferred fallback persists its marker before quarantining the reply", asyn
     const pending = first.find((outcome) => outcome.slot === "claude[0]");
     assert.ok(pending?.state === "native");
     fs.writeFileSync(pending.replyPath, "partial answer");
+    // Crash between the two durable operations: the marker write must already
+    // persist when quarantining the reply fails.
     f.deps.orchestrator = { platform: "agy", model: null };
     const realRename = fs.renameSync;
     let renames = 0;
@@ -5733,6 +5788,7 @@ test("a launchable native returns before the cli wave when a saved orphan waits"
     fs.mkdirSync(path.join(dir, "prompts"), { recursive: true });
     fs.mkdirSync(path.join(dir, "replies"), { recursive: true });
     fs.writeFileSync(path.join(dir, "prompts", "codex[0].md"), "question");
+    // A saved done orphan whose provider left the recomputed roster.
     fs.writeFileSync(
       path.join(dir, "slots", "codex[0].json"),
       JSON.stringify({
@@ -5846,6 +5902,8 @@ test("a last-pending retry carries saved blocked evidence into the reserve descr
         ],
       })
     );
+    // Capture the slot file at every atomic write: the first agy write is
+    // the reserve descriptor itself, before any later merge could persist.
     const realRename = fs.renameSync;
     const writes: string[] = [];
 
@@ -5857,6 +5915,7 @@ test("a last-pending retry carries saved blocked evidence into the reserve descr
           try {
             writes.push(fs.readFileSync(source, "utf-8"));
           } catch {
+            // No persisted bytes to capture when the temp file is already gone.
             // rename probe target absent on this branch; ignore and continue
           }
         }
@@ -6111,6 +6170,7 @@ test("deferred ignores wait for reconciled orphans before reaching the callback"
       // eslint-disable-next-line typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
       `the marker keeps the reported evidence: ${JSON.stringify(marked.blocked)}`
     );
+    // A partial native reply present during the deferred wave call stays unread.
     const pending = first.find((outcome) => outcome.slot === "claude[0]");
     assert.ok(pending?.state === "native");
     fs.writeFileSync(pending.replyPath, "partial answer");
@@ -6164,6 +6224,8 @@ test("deferred ignores wait for reconciled orphans before reaching the callback"
       [],
       "the consumed report never reaches the callback"
     );
+    // Once the native answer lands, the next call consumes it and reconciles
+    // the marked orphan through the deferred cascade with its evidence.
     fs.writeFileSync(pending.replyPath, "native answer");
 
     const third = await fanOutComplete(
@@ -6455,6 +6517,7 @@ test("host native failure routes by reserve presence without host CLI", async ()
     f.cleanup();
   }
 
+  // a native-only report or reply routes by reserve presence
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -6627,6 +6690,7 @@ test("host native failure routes by reserve presence without host CLI", async ()
     }
   }
 
+  // a saved failure retakes without host CLI
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -6706,6 +6770,7 @@ test("host native failure routes by reserve presence without host CLI", async ()
     }
   }
 
+  // a saved CLI failure mints a fresh native attempt after the host change
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -6832,6 +6897,7 @@ test("off-host saved native attempt keeps CLI cascade", async () => {
 });
 
 test("native descriptors carry host-specific launchAs lines and normalize legacy saved outcomes", async () => {
+  // Native-only descriptor with effort carries opencode launchAs and no subagentModels.
   {
     const f = sessionFixture({ memory: true });
 
@@ -6873,6 +6939,7 @@ test("native descriptors carry host-specific launchAs lines and normalize legacy
     }
   }
 
+  // Native-only descriptor without effort carries plain fallback models, and agy carries its Model instruction.
   {
     const f = sessionFixture({ memory: true });
 
@@ -6944,6 +7011,7 @@ test("native descriptors carry host-specific launchAs lines and normalize legacy
     }
   }
 
+  // Native-first descriptor shares the same launch fields.
   {
     const f = sessionFixture({ memory: true });
 
@@ -6991,6 +7059,7 @@ test("native descriptors carry host-specific launchAs lines and normalize legacy
     }
   }
 
+  // Native-only reserve descriptor shares the same launch fields.
   {
     const f = sessionFixture({ memory: true });
 
@@ -7043,6 +7112,7 @@ test("native descriptors carry host-specific launchAs lines and normalize legacy
     }
   }
 
+  // Replaying a saved legacy native outcome drops subagentModels and populates launchAs.
   {
     const f = sessionFixture({ memory: true });
 
@@ -7236,6 +7306,7 @@ test("rerun starts fresh without resuming stale, retaken, interrupted or failed 
     f.cleanup();
   }
 
+  // a saved outcome that needs a retake
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -7313,6 +7384,7 @@ test("rerun starts fresh without resuming stale, retaken, interrupted or failed 
     }
   }
 
+  // stale slot state or a missing session envelope
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -7451,6 +7523,7 @@ test("rerun starts fresh without resuming stale, retaken, interrupted or failed 
     }
   }
 
+  // an interrupted fresh launch checkpoint
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -7507,6 +7580,7 @@ test("rerun starts fresh without resuming stale, retaken, interrupted or failed 
     }
   }
 
+  // a failed checkpoint
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const f = sessionFixture({ memory: true });
@@ -7603,6 +7677,7 @@ test("rerun starts fresh without resuming stale, retaken, interrupted or failed 
 });
 
 test("rerun resumes from its saved session, report prompt, stall and replaced checkpoint", async (t) => {
+  // an unfinished slot in its saved session
   {
     const f = sessionFixture({ memory: true });
 
@@ -7706,6 +7781,7 @@ test("rerun resumes from its saved session, report prompt, stall and replaced ch
     }
   }
 
+  // a pending report with the report prompt
   {
     const f = sessionFixture({ memory: true });
 
@@ -7759,6 +7835,7 @@ test("rerun resumes from its saved session, report prompt, stall and replaced ch
     }
   }
 
+  // the continue prompt after a stall inside a report resume
   {
     const f = sessionFixture({ memory: true });
 
@@ -7827,6 +7904,7 @@ test("rerun resumes from its saved session, report prompt, stall and replaced ch
     }
   }
 
+  // a later call replacing a failed checkpoint
   {
     const f = sessionFixture({ memory: true });
 

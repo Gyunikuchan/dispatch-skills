@@ -101,6 +101,7 @@ const prepared = async (files: Record<string, string> = base) => {
   return { r, writer };
 };
 
+// Integration fix touching add, edit, delete, mode, binary bytes and both directory/file swaps.
 const change = async (r: Repo) => {
   const w = r.integration;
 
@@ -190,6 +191,7 @@ const assertMatchesSource = (r: Repo, from: string, source: string) => {
   }
 };
 
+// Cases use independent repositories, so run them concurrently and name the failing case.
 const each = async (modes: string[], fn: (mode: string) => Promise<void>) =>
   await Promise.all(
     modes.map(async (mode) => {
@@ -432,6 +434,7 @@ const refuses = async (r: Repo, mode: string) => {
     return;
   }
 
+  // Undo the caller state so the next shared case starts from the same caller.
   restoreAfterRefusal(r, mode, {
     from,
     initialBranch: initial.branch,
@@ -1165,6 +1168,7 @@ describe("toolkit delivery and cleanup", () => {
 
         r.git(["worktree", "add", "--detach", unrelated, "HEAD"]);
         r.git(["update-ref", unrelatedRef, "HEAD"]);
+        // Model Git deregistering the integrated path before a held directory handle blocks cleanup.
         r.git(["worktree", "remove", "--force", writer]);
         fs.mkdirSync(writer);
         fs.writeFileSync(
@@ -2169,6 +2173,7 @@ describe("toolkit delivery and cleanup", () => {
 
       fs.mkdirSync(target);
       fs.writeFileSync(path.join(target, "keep"), "keep");
+      // Simulate a cleanup interrupted after Git deregistered the worktree but before the directory was removed.
       r.git(["worktree", "remove", "--force", writer]);
       fs.mkdirSync(writer);
       fs.writeFileSync(path.join(writer, "unlinked.tmp"), "held");
@@ -2323,6 +2328,7 @@ describe("toolkit delivery and cleanup", () => {
   });
 });
 
+// SECTION: coverage gate over saved code-integration rounds
 const [slotA, slotB, slotC, slotD] = [
   "codex[0]",
   "opencode[1]",
@@ -2338,6 +2344,7 @@ interface RoundInput {
   coverage?: "open" | "full";
   generation?: number;
   unfinished?: boolean;
+  // Failure entries per generation; the current generation defaults to one entry per failed slot.
   attempts?: Record<number, { slot: string; seq: number }[]>;
 }
 
@@ -2346,6 +2353,7 @@ const writeJsonFile = (file: string, value: JsonValue) => {
   fs.writeFileSync(file, JSON.stringify(value));
 };
 
+// Writes a round as `review run` leaves it, replacing any earlier copy of the same number.
 const coverageRound = (r: Repo, input: RoundInput) => {
   const dir = path.join(
     r.session,
@@ -2473,6 +2481,7 @@ const userCoverage = async (r: Repo, summary: string, quote: string) => {
   );
 };
 
+// A refusal must leave the caller and the ledger untouched.
 const refused = async (r: Repo, expected: RegExp) => {
   const before = caller(r);
 
@@ -2494,6 +2503,7 @@ describe("deliver coverage gate", () => {
     const { r } = await prepared();
 
     try {
+      // A slot with no whole-target rerun after its failure.
       coverageRound(r, {
         n: 1,
         roster: [slotA, slotB, slotC, slotD],
@@ -2502,6 +2512,7 @@ describe("deliver coverage gate", () => {
       });
       await refused(r, /codex\[0\].*opencode\[1\]/u);
 
+      // Rerun failed again with half of the targets completed: only the user can proceed.
       coverageRound(r, {
         n: 2,
         roster: [slotA, slotB],
@@ -2513,6 +2524,7 @@ describe("deliver coverage gate", () => {
         /codex\[0\].*opencode\[1\].*accept reduced coverage.*one more coverage round/u
       );
 
+      // A failed slot file without a failure entry cannot be trusted.
       coverageRound(r, {
         n: 2,
         roster: [slotA, slotB],
@@ -2533,6 +2545,7 @@ describe("deliver coverage gate", () => {
         }
       );
 
+      // A round still in flight can still publish a failure.
       coverageRound(r, {
         n: 1,
         roster: [slotA, slotB],
@@ -2584,6 +2597,7 @@ describe("deliver coverage gate", () => {
       });
       await userCoverage(r, `accept: ${slotA}`, "ship without codex");
 
+      // The rerun fails after the override while the other slot is still in flight.
       coverageRound(r, {
         n: 2,
         roster: [slotA, slotB],
@@ -2593,6 +2607,7 @@ describe("deliver coverage gate", () => {
       });
       await refused(r, /codex\[0\]/u);
 
+      // A target-moved retry keeps the superseded generation's failure while its slots are pending.
       coverageRound(r, {
         n: 2,
         roster: [slotA, slotB],
@@ -2603,6 +2618,7 @@ describe("deliver coverage gate", () => {
       });
       await refused(r, /codex\[0\]/u);
 
+      // Without the later failure the override covers the slot.
       fs.rmSync(
         path.join(r.session, ".state/reviews/code-integration/round-2"),
         {

@@ -357,6 +357,7 @@ export const reprobeQuota = (options: QuotaStoreOptions, key: QuotaKey) => {
   try {
     nodeLinkFs.writeAtomic(file, JSON.stringify(generation));
   } catch (error) {
+    // NOTE: Windows can refuse an overlapping rename; a completed concurrent reset satisfies this reprobe.
     if (
       process.platform === "win32" &&
       ["EPERM", "EACCES"].includes(String(nodeErrorCode(error)))

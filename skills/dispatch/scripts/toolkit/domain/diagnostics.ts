@@ -1,3 +1,5 @@
+// Pure diagnostics retrospective: toolkit facts in, a severity-ordered, shareable Markdown report out.
+// The caller supplies captured facts; diagnostics does not read session state.
 export {
   normalizeUsage,
   retroObservations,

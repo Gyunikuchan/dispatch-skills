@@ -1,3 +1,6 @@
+// Antigravity (spec §6.1): headless plan mode; token, subscription, and execution
+// failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
+
 import path from "node:path";
 
 import { isRecord } from "../lib/config.ts";
@@ -146,9 +149,11 @@ export const agy: ProviderSpec = {
   readOnlyFlags: ["--mode", "plan"],
   native: "agy",
 
+  // token/subscription → quota or auth; execution → not-found (mode unreachable or crashed).
   modeCascadeOn: ["quota", "auth", "not-found"],
   resumeCommand: (id) => `conversation://${id}`,
 
+  // `--output-format json` prints one envelope at exit.
   silentUntilExit: true,
   usage(raw, context) {
     const appDataDir = usageAppDataDir(context);
@@ -221,6 +226,7 @@ export const agy: ProviderSpec = {
   parse(out) {
     const envelope = parseEnvelope(out.stdout);
 
+    // A parsed envelope with no answer text is an empty exit, not a raw-JSON answer; plain-text stdout stays valid.
     const text = envelope ? (envelope.text ?? "").trim() : out.stdout.trim();
 
     if (out.exit === 0 && text) {

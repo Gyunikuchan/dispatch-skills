@@ -219,6 +219,7 @@ const setup = () => {
         retryDelay: 100,
       });
     } catch {
+      /* Windows locked handle */
       // WARNING: Windows holds quota fixtures briefly; a leftover temp dir must not fail the suite.
     }
   };

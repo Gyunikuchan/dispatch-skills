@@ -25,6 +25,8 @@ import {
   text,
 } from "./helpers/json.ts";
 
+// SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
+
 test("review rounds capture dedupe clusters scope caps and design prompts", async () => {
   const f = await fixture();
 
@@ -722,6 +724,7 @@ test("review native-pending and resumed final results report and retain underfil
       /; underfill 2\/2 targets, host codex, excluded native-only: copilot; first 1: launch: model native, no effort set$/u
     );
 
+    // Modify configuration before resuming to ensure resumed run retains roster underfill
     fs.writeFileSync(
       path.join(f.deps.skillRoot, "config.jsonc"),
       JSON.stringify({
@@ -1097,6 +1100,7 @@ test("findings file: long review IDs and trailing notices retain both paths in t
     assert.equal(callResult11.exit, 2);
     delete f.deps.hook;
 
+    // Resume from saved evidence sized to stress each summary count and suffix.
     // eslint-disable-next-line typescript/no-unsafe-assignment -- test binds the untyped JSON/fixture surface for assertions; narrowing would not change assertions
     const pending = JSON.parse(fs.readFileSync(pendingFile, "utf-8"));
     // eslint-disable-next-line typescript/no-unsafe-assignment, typescript/no-unsafe-member-access -- test binds the untyped JSON/fixture surface for assertions; narrowing would not change assertions; test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions

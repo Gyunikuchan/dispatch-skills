@@ -11,6 +11,8 @@ import type {
   PlanWarning,
 } from "./types.ts";
 
+// SECTION: Task graph
+
 export const joinTaskMap = (
   sections: readonly DraftTask[],
   rows: readonly AuthoredTaskRow[],
@@ -185,6 +187,7 @@ export const lintTasks = (
           continue;
         }
 
+        // An input no task owns is a pre-existing file; a self-owned input needs no ordering.
         const producer = tasks.find((other) =>
           other.paths.some(
             (owned) => owned.toLowerCase() === input.toLowerCase()
@@ -211,6 +214,7 @@ export const lintTasks = (
   return lintOverlaps(tasks, ancestors, out);
 };
 
+/** Write paths shared by tasks with no transitive Task Map prerequisite path warn unless either task justifies them with Overlap:. */
 const lintUnjustifiedOverlaps = (
   tasks: readonly DraftTask[],
   owned: readonly ReadonlyMap<string, string>[],
@@ -283,6 +287,7 @@ const lintOverlaps = (
   ancestors: ReadonlyMap<string, ReadonlySet<string>>,
   out: LintDefect[]
 ) => {
+  // NOTE: case-insensitive filesystems make case variants one file.
   const owned = tasks.map(
     (task) =>
       new Map(task.paths.map((path) => [path.toLowerCase(), path] as const))
@@ -297,6 +302,7 @@ const lintOverlaps = (
   return lintSharedPaths(tasks, ancestors, owned, justified, out);
 };
 
+/** Transitive prerequisites per task; reports each cycle entry point once. */
 const taskAncestors = (
   byId: ReadonlyMap<string, DraftTask>,
   out: LintDefect[]
@@ -424,7 +430,9 @@ const lintTaskCriteria = (
             `Criterion ${id} is mapped to ${task.id} and marked Integration; choose one.`
           )
         );
-      } else if (!criterion.changes.length) {
+      }
+      // Admission requires each evidence row path in Changes, so a task-owned criterion without Changes can never pass.
+      else if (!criterion.changes.length) {
         out.push(
           lint(
             "criterion-task-changes",
@@ -479,6 +487,8 @@ const lintTaskCriteria = (
   }
 };
 
+// SECTION: Derived task views
+
 /** One row per task in Task Map order; Overlap names each written path that other tasks also write. */
 export const taskMapRows = (plan: Pick<ParsedPlan, "tasks">) =>
   plan.tasks.map((task) => ({
@@ -487,6 +497,7 @@ export const taskMapRows = (plan: Pick<ParsedPlan, "tasks">) =>
     prerequisites: task.prerequisites,
     criteria: task.criteria,
     paths: task.paths,
+    // NOTE: case-insensitive filesystems make case variants one file, as in the overlap lint.
     overlap: task.paths.flatMap((path) => {
       const tasks = plan.tasks
         .filter(
@@ -519,6 +530,7 @@ export const selectTaskBrief = (plan: ParsedPlan, id: string) => {
     return null;
   }
 
+  // An overlapped path has one change entry per owning task; prefer the entry under this task's own heading.
   const next = Math.min(
     ...plan.tasks.map((item) => item.line).filter((line) => line > task.line)
   );
@@ -551,6 +563,8 @@ export const selectTaskBrief = (plan: ParsedPlan, id: string) => {
 
 const normalizeScopePath = (value: string) =>
   value.replaceAll("\\", "/").replace(/^\.\//u, "");
+
+// SECTION: Increment and spec traceability
 
 const incrementPathMatches: (file: string, scope: string) => boolean = (
   file,

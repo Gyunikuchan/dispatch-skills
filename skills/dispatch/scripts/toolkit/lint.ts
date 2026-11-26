@@ -91,6 +91,7 @@ export const repositoryReader = (repositoryRoot: string) => {
   };
 };
 
+// NOTE: an unreadable pin warns once; a silent skip would look like a pass.
 const pinnedIncrementWarnings = (
   source: string,
   changes: Parameters<typeof outsideIncrementWarnings>[0],

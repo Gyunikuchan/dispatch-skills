@@ -28,6 +28,8 @@ import { defined } from "../../../helpers/guards.ts";
 import { jsonObject, narrow } from "../helpers/json.ts";
 import type { JsonObject } from "../helpers/json.ts";
 
+// SECTION: Diagnostics reports
+
 const SKILL_ROOT = fileURLToPath(
   new URL("../../../../skills/dispatch/", import.meta.url)
 );
@@ -116,11 +118,17 @@ const assertStructure = (
   return finding;
 };
 
+// SECTION: Layout, durations, and token columns
+
+// SECTION: Heuristics, severity, and model attribution
+
 const rejections = (tool: string, action: string, cls: string, count = 2) =>
   Array.from({ length: count }, () => ({ tool, action, cls }));
 
 const h8 = (rejectedTools: NonNullable<RunFacts["rejectedTools"]>) =>
   only(heuristics(facts({ rejectedTools })), "H8");
+
+// SECTION: Scope gate and redaction
 
 const LEAKS = [
   "see /home/alice/repo/src/app.ts",
@@ -138,6 +146,8 @@ const LEAKS = [
 
 const CLEAN =
   "The `/dispatch review` frame in scripts/toolkit/records.ts mixes input/output fields in config.local.jsonc.";
+
+// SECTION: Finding origin
 
 test("diagnostics config renders utility-subagents and redacts read-command locators", () => {
   const config = {
@@ -1452,6 +1462,7 @@ const cli = (startMs: number, endMs?: number) => ({
 const slot = (slot: string, ...attempts: unknown[]) => ({ slot, attempts });
 
 test("review timing renders attempts, gaps and compaction without leaking names", () => {
+  // review timing preserves unknown slots and limits CLI spans to launched attempts
   {
     const timing = [
       {
@@ -1522,6 +1533,7 @@ test("review timing renders attempts, gaps and compaction without leaking names"
     assert.match(cliText, /\| 1 \| codex\[0\] \| — \| — \|/u);
   }
 
+  // review timing includes retry gaps, ties and invalid endpoints
   {
     const rounds = [
       {
@@ -1576,6 +1588,7 @@ test("review timing renders attempts, gaps and compaction without leaking names"
     assert.doesNotMatch(text, /slot removal|remove.*slot/iu);
   }
 
+  // review timing compaction omits complete rounds and retains the omission count
   {
     const rounds = Array.from({ length: 3000 }, (_, i) => ({
       review: "review-1234567890abcdef",
@@ -1613,6 +1626,7 @@ test("review timing renders attempts, gaps and compaction without leaking names"
     );
   }
 
+  // review timing rejects nonopaque identities and invalid endpoints
   {
     const text = render([
       facts({
@@ -1638,6 +1652,7 @@ test("review timing renders attempts, gaps and compaction without leaking names"
     );
   }
 
+  // malformed timing slots and attempts stay unknown without leaking names
   {
     const text = render([
       sanitizeFacts({
@@ -2090,6 +2105,8 @@ test("report compaction retains response coverage and totals ahead of bounded ag
   assert.match(text, /workload rows omitted/u);
   assert.doesNotMatch(text, /Truncated at the report size limit/u);
 });
+
+// SECTION: 3-tier executive layout, unified turns, Unicode bars, and compaction
 
 const testPricer = () =>
   resolvePricing(
@@ -2687,6 +2704,7 @@ test("mixed undefined-turn units render dash via all-defined guard across Summar
 test("delegate-and-child turns reconcile Summary, Role, and Stage without cost duplication across shared, split, and Codex limited fixtures", () => {
   const pricer = testPricer();
 
+  // Shared model: root delegate + child subagent on gpt-6-sol
   const shared = renderDiagnostics(
     [
       facts({
@@ -2754,6 +2772,7 @@ test("delegate-and-child turns reconcile Summary, Role, and Stage without cost d
     /\| code review \| codex \| delegate \| gpt-6-sol \|[^|]+\|[^|]+\|[^|]+\|[^|]+\|[^|]+\| 3 \|/u
   );
 
+  // Root-A / Child-B different models: root gpt-6-sol, child-only claude-haiku-5 with known-zero root turns
   const split = renderDiagnostics(
     [
       facts({
@@ -2820,6 +2839,7 @@ test("delegate-and-child turns reconcile Summary, Role, and Stage without cost d
     /\| CLI delegates \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 3 \| 2 \(2\) \|/u
   );
 
+  // Codex session delegate+child with limited codex-token-count coverage
   const codexLimited = renderDiagnostics(
     [
       facts({
@@ -3082,6 +3102,7 @@ test("Context efficiency tables keep exact header-to-cell alignment with distinc
 test("Summary qualifies missing host turns without degrading CLI delegates and preserves sparse zero User turns", () => {
   const pricer = testPricer();
 
+  // Missing host usage + session delegate -> Summary partial, CLI delegates and Stage unqualified
   const delegateOnly = renderDiagnostics(
     [
       facts({
@@ -3135,6 +3156,7 @@ test("Summary qualifies missing host turns without degrading CLI delegates and p
     /\| code review \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| — \| 4 \| 2 \(1\) \|/u
   );
 
+  // Incomplete host notes.host degrades Summary and Host role User turns to —, and marks Host/plan stage Cache hit & turns (partial)
   const incompleteHost = renderDiagnostics(
     [
       facts({
@@ -3176,6 +3198,7 @@ test("Summary qualifies missing host turns without degrading CLI delegates and p
     /\| plan \|[^|]+\|[^|]+\|[^|]+\| 33% \(partial\) \| — \| 2 \(partial\) \|/u
   );
 
+  // Sparse userTurnsByStage on complete host -> zero-turn stage renders 0; multi-run sums 2 + 0 = 2
   const runA = facts({
     hostUsage: {
       platform: "claude",
@@ -3234,6 +3257,7 @@ test("Summary qualifies missing host turns without degrading CLI delegates and p
 test("Cache hit marks missing host scope (partial) in Summary only and distinguishes zero-token from unmeasured units", () => {
   const pricer = testPricer();
 
+  // Delegate cache counters with missing host -> Summary Cache hit (partial), Stage code review unqualified
   const delegateCacheOnly = renderDiagnostics(
     [
       facts({
@@ -3267,6 +3291,7 @@ test("Cache hit marks missing host scope (partial) in Summary only and distingui
     /\| code review \|[^|]+\|[^|]+\|[^|]+\| 33% \|/u
   );
 
+  // Measured zero-token unit does not mark Cache hit (partial); wholly unmeasured unit does
   const completeHost: NonNullable<RunFacts["hostUsage"]> = {
     platform: "claude",
     userTurns: 1,
@@ -3489,6 +3514,8 @@ test("Review health shows per-round rows, CLI-only native span qualifier, partia
   assert.match(text, /\| plan \| ok \| <1s \|/u);
   assert.match(text, /\| ask \| ok \| <1s \|/u);
 
+  // Legacy partial-only collection without completed/incomplete does not emit Toolkit calls 0,
+  // and multi-run identical review/round IDs retain separate round rows.
   const reviewRun = (n: number) =>
     facts({
       collection: { storageFailed: 1 },

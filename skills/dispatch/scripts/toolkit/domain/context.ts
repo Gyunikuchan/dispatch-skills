@@ -82,6 +82,7 @@ const metadata = (
 const isValidCommit = (commit: string | null): commit is string =>
   commit !== null && /^[0-9a-f]{7,64}$/iu.test(commit);
 
+/** Parses the metadata and each section's entry texts. */
 const parseContextMap = (source: string) => {
   const lines = structuralLines(source);
 
@@ -234,6 +235,7 @@ const cachedReader = (
     try {
       content = readRepoFile(ref);
     } catch {
+      /* A failed repository read is a missing ref. */
       void 0;
     }
 

@@ -1,4 +1,6 @@
 import nodeFs from "node:fs";
+// Executable discovery (spec §6.3): expand each mode's candidates (`*` segments via
+// the fs table, bare names via PATH/PATHEXT), probe executability, cache provider × mode per invocation.
 
 import type { ModeId, PlatformEnv, ProviderId, ProviderSpec } from "./types.ts";
 
@@ -56,6 +58,7 @@ export const expandCandidate = (candidate: string, fs: DiscoveryFs) => {
   return prefixes;
 };
 
+/** A bare name resolves through PATH (and PATHEXT on Windows when it has no extension). */
 const onPath = (name: string, env: PlatformEnv) => {
   const exts =
     env.os === "win32" && !/\.[a-z0-9]+$/iu.test(name)

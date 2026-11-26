@@ -1,3 +1,5 @@
+// The one impact x trigger table that derives finding severity, shared by reply parsing and rulings.
+
 import { isRecord } from "../../lib/config.ts";
 import type { Impact, Severity, Trigger } from "./types.ts";
 
@@ -30,6 +32,7 @@ const isImpact = (value: unknown): value is Impact =>
 const isTrigger = (value: unknown): value is Trigger =>
   TRIGGERS.some((trigger) => trigger === value);
 
+/** The latest ruling that carries a valid corrected pair. */
 const latestCorrection = (rulings: readonly Ruling[]) =>
   rulings
     .flatMap(({ data }) =>
@@ -58,6 +61,7 @@ export const effectiveSeverity = (
       (data["ruling"] === "accepted" || data["ruling"] === "rejected")
   )?.data;
 
+  // NOTE: a rejection uses the higher rating so a correction cannot avoid MUST rejection confirmation in either direction.
   if (isRecord(decision) && decision["ruling"] === "rejected") {
     return RANK[corrected] > RANK[finding.severity]
       ? corrected

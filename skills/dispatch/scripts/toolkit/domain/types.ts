@@ -1,4 +1,8 @@
+// Concrete payload shapes produced by toolkit domain modules and policy.
+
 import type { FindingId, SlotId } from "../types.ts";
+
+// SECTION: Findings
 
 export type Severity = "MUST" | "SHOULD" | "CONSIDER";
 
@@ -35,7 +39,11 @@ export interface Finding {
 /** A parsed finding before the round assigns its id. */
 export type DraftFinding = Omit<Finding, "id" | "dupOf">;
 
+// SECTION: Lint
+
 export type { LintDefect, LintDefectCode } from "./document-lint.ts";
+
+// SECTION: Plan
 
 export type EvidenceClass = "red" | "check" | "review";
 
@@ -127,6 +135,8 @@ export interface ParsedPlan {
   sharedContext: string;
 }
 
+// SECTION: Design
+
 export interface DesignIncrement {
   id: string;
   priority: number;
@@ -162,6 +172,8 @@ export interface ParsedDesign {
   /** Source without `## Execution Status` and `## Review Findings & Resolutions`; the caller hashes it. */
   governedText: string;
 }
+
+// SECTION: Roster
 
 export interface RosterSlot {
   slot: SlotId;

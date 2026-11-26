@@ -22,6 +22,7 @@ import { OVERLAY_ROOT } from "./scan.ts";
 
 const root = "skills/dispatch/";
 
+/** The ordering of a comparator-less `sort()`: UTF-16 code units of each value's string form. */
 const byDefaultOrder = (a: unknown, b: unknown) => {
   const left = String(a);
   const right = String(b);

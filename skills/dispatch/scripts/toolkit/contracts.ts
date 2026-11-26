@@ -105,6 +105,7 @@ export const ACTION_CONTRACTS: ActionContracts = {
   "diagnostics render": { arguments: "diagnostics render --session <session>" },
 };
 
+// The action grammar governs both generated help and CLI flag registration.
 const actionFlags = (contracts: Readonly<Record<string, ActionContract>>) => {
   const result = new Map<string, string[]>();
 

@@ -7,6 +7,7 @@ export interface StructuralLine {
 
 export const FENCE = /^ {0,3}(?<cap1>`{3,}|~{3,})/u;
 
+// NOTE: `<!--` inside a closed inline code span is literal (CommonMark); unmatched backticks stay literal too.
 export const commentOpenOutsideCode = (original: string, from: number) => {
   const run = /`+/gu;
   let cursor = from;
@@ -33,6 +34,7 @@ export const commentOpenOutsideCode = (original: string, from: number) => {
       closer[0].length !== opener[0].length
     ) {
       void 0;
+      // Skip backtick runs of other lengths.
     }
 
     if (closer) {
@@ -48,12 +50,15 @@ export const structuralLines = (source: string) => {
 
   return source.split(/\r?\n/u).map((original, index) => {
     const line = index + 1;
+    // Fence state freezes inside an open HTML comment, so a commented-out example cannot swallow later sections.
     const marker = inComment ? undefined : FENCE.exec(original)?.[1];
 
     if (marker !== undefined) {
       if (fence === null) {
         fence = marker;
-      } else if (
+      }
+      // A closer is bare (no info string), same character, at least the opener's length (CommonMark).
+      else if (
         marker.startsWith(fence.charAt(0)) &&
         marker.length >= fence.length &&
         /^ {0,3}(?<cap1>`+|~+)\s*$/u.test(original)

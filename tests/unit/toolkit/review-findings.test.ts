@@ -451,6 +451,8 @@ test("rulingReview accepts only plan and design review finding subjects", () => 
   assert.equal(rulingReview("review:plan-work.plan:not-a-finding"), null);
 });
 
+// SECTION: Corrected severity in rendered rows
+
 const ledgerWith = (
   f: ReturnType<typeof fixture>,
   rulings: readonly object[]
@@ -560,6 +562,8 @@ test("corrected severity: rows reflect latest corrected severity rules across ac
     f.cleanup();
   }
 });
+
+// SECTION: Budget summary
 
 test("review summary refreshes budget from current ledger", () => {
   const f = fixture();

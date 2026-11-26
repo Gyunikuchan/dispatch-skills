@@ -79,6 +79,7 @@ export const reviewRun = async (ctx: HandlerContext) => {
     ctx.values["spec"] ?? latest(fold, "bind")?.data["spec"];
 
   if (kind !== "code") {
+    // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
     if (typeof confirmInput !== "string") {
       throw new ToolError(
         4,
@@ -125,6 +126,7 @@ export const reviewRun = async (ctx: HandlerContext) => {
         (task) => task.id === requested
       );
     } catch (error) {
+      // An unusable plan cannot classify tasks, but standalone revision review still works.
       if (
         !(error instanceof ToolError && error.reason === "lint-errors") &&
         !["ENOENT", "EACCES", "EPERM", "EISDIR"].includes(
@@ -139,6 +141,7 @@ export const reviewRun = async (ctx: HandlerContext) => {
   const gitTarget =
     kind === "code" && requested !== "integration" && !taskTarget;
 
+  // Worktree rounds count per HEAD, so a commit starts a new series instead of inheriting an older change's cap.
   let series = "";
 
   if (requested === "worktree") {
@@ -178,6 +181,7 @@ export const reviewRun = async (ctx: HandlerContext) => {
   const directory = reviewDirectory(session, review);
   fs.mkdirSync(directory, { recursive: true });
 
+  // Coverage applies to the integration review alone; every admission caller passes the same predicate.
   const applies =
     review === INTEGRATION_REVIEW
       ? applicableReviewIds(manifest, fold).get(review)

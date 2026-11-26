@@ -238,6 +238,7 @@ describe("unified payload input reader and handlers", () => {
         undefined
       );
 
+      // Conflicts and partial direct flags fail closed with invalid-input.
       assertInvalidInput(() =>
         readJsonPayload(makeContext(f, [file], { json: "{}" }), directSpec)
       );
@@ -363,6 +364,7 @@ describe("unified payload input reader and handlers", () => {
       );
       f.deps.orchestrator = { platform: "codex", model: null };
 
+      // explorer via stdin - (BOM) and --json
       f.deps.readStdin = () =>
         '\uFEFF{"objective":"Explore","questions":["- How?"]}';
       const expStdin = await renderExplorerBrief(makeContext(f, ["-"]));
@@ -402,6 +404,7 @@ describe("unified payload input reader and handlers", () => {
           )
       );
 
+      // verifier via stdin - and --json
       f.deps.readStdin = () =>
         '\uFEFF{"checkoutPath":"chk","base":"abc","specPath":"mission.spec.md","focus":"Check SC1"}';
       const verStdin = await renderVerifierBrief(makeContext(f, ["-"]));
@@ -425,6 +428,7 @@ describe("unified payload input reader and handlers", () => {
         )
       );
 
+      // test-cleanup via --json, stdin -, and co-required --base + --integration-path
       const base = "a".repeat(40);
       const integrationPath = ".state/worktrees/integration";
 
@@ -694,6 +698,7 @@ describe("unified payload input reader and handlers", () => {
           )
       );
 
+      // Preserves test-cleanup-empty refusal (exit 4) and invalid-record from validateReviewFix.
       await assert.rejects(
         async () =>
           await commit(
@@ -817,6 +822,7 @@ describe("unified payload input reader and handlers", () => {
       );
       assert.equal(recordedMessages[0], "feat: deliver via inline message");
 
+      // Reset to a fresh delivered record to test --commit - with BOM stripping.
       await appendRecord(
         f.session,
         {
@@ -851,6 +857,7 @@ describe("unified payload input reader and handlers", () => {
       await assertInvalidInputAsync(
         async () => await deliver(makeContext(f, [], { commit: "-" }))
       );
+      // Neither --commit nor --message stays on uncommitted delivery path (no-integration without opened record).
       await assert.rejects(
         async () => await deliver(makeContext(f, [])),
         (error: unknown) =>

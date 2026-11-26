@@ -27,6 +27,7 @@ const tableText = fs.readFileSync(TABLE_FILE, "utf-8");
 // eslint-disable-next-line typescript/no-unsafe-assignment -- fixture JSON is validated by the pricing helper.
 const table: { models: JsonObject } = JSON.parse(tableText);
 
+// Serves only the shipped table so a maintainer's local config never leaks into a test.
 const readShipped = (config?: string) => (file: string) =>
   // eslint-disable-next-line eslint/no-nested-ternary -- compact fixture expectation table.
   file.endsWith("pricing.json")
@@ -74,6 +75,8 @@ const custom = (models: unknown) => {
 };
 
 const reasonsOf = (cost: Cost) => [...cost.reasons].toSorted();
+
+// SECTION: Model id matching
 
 test("model id matching strips provider prefixes and version suffixes and takes the longest boundary match", () => {
   const pricer = shipped();
@@ -224,6 +227,8 @@ test("Qualified pricing identifies the applied basis for exact routes and fallba
     [true, 1, 1, ["unpriced model"]]
   );
 });
+
+// SECTION: Cost pricing
 
 const haiku = "claude-haiku-5-5";
 
@@ -512,6 +517,7 @@ test("cost pricing adds reasoning at the output rate only when the unit counts i
 });
 
 test("cost pricing never throws and keeps finite non-negative ordered costs for hostile counters", () => {
+  // Method-parameter bivariance lets malformed counters reach the pricer without a cast.
   // eslint-disable-next-line typescript/method-signature-style -- method shorthand keeps bivariance so hostile counters reach the pricer without a cast.
   const untrusted: { price(model: string, usage: unknown): Cost } = shipped();
 

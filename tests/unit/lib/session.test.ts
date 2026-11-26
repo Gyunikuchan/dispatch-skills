@@ -25,6 +25,8 @@ const repo = () => {
   return { root, temp };
 };
 
+// SECTION: Session directory and lifecycle
+
 test("timestamp-slug format without session ID", () => {
   assert.equal(
     folderName(now, "Rewrite Dispatch As!"),

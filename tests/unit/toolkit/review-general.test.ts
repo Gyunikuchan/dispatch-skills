@@ -22,6 +22,7 @@ import {
 } from "./helpers/json.ts";
 import type { JsonObject } from "./helpers/json.ts";
 
+// SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
 type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
 
 const PLAN_REVIEW = "plan-work.plan";
@@ -335,6 +336,7 @@ test("rejected MUST disagreement escalates and explicit resolution re-arms retai
   const f = await fixture();
 
   try {
+    // One recorded grant keeps the rejection retry below its ceiling.
     await openCeiling(f, PLAN_REVIEW, 4);
     await resolveCeiling(
       f,
@@ -450,6 +452,7 @@ test("unanswered source in past-cap rejection rounds escalate across edits and r
   const f = await fixture();
 
   try {
+    // Three recorded grants keep the no-response retry below its ceiling.
     for (const ceiling of [4, 6, 8]) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
       await openCeiling(f, PLAN_REVIEW, ceiling);

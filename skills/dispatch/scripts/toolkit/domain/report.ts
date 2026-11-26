@@ -1,3 +1,6 @@
+// The single delegate-report parse path for every source (spec §6.5 step 5).
+// Parse failures are named so the wave can fall back; findings dedup with `dupOf`.
+
 import { isRecord } from "../../lib/config.ts";
 import type { JsonObject, JsonValue } from "../../lib/integrity.ts";
 import type { SlotId } from "../types.ts";
@@ -9,6 +12,8 @@ import type {
   FindingOrigin,
   ReviewKind,
 } from "./types.ts";
+
+// SECTION: Kind contracts
 
 const SECTION_LOCUS = /^§\s+\S.*$/u;
 
@@ -80,6 +85,7 @@ const originRank = (origin: FindingOrigin | undefined) => {
   return 0;
 };
 
+/** `fix-induced` wins and a known value replaces `unknown`. */
 const mergeOrigin = (
   a: FindingOrigin | undefined,
   b: FindingOrigin | undefined
@@ -90,6 +96,7 @@ const categoryOf = (tag: string, known: boolean) => {
     return "uncategorized";
   }
 
+  // `spec` shares the intent gate.
   return tag === "spec" ? "intent" : tag;
 };
 
@@ -108,6 +115,7 @@ const originOf = (round: number, candidate: FindingOrigin | undefined) => {
 const REFUSAL =
   /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|review)|I (?:can(?:no|')t|won't|will not) (?:help|assist|comply|do that|review)|I must decline|against my (?:guidelines|policies))\b/iu;
 
+/** Rewrites only the line prefix; ranges and columns keep their extent and fail the locus check. */
 const normalizeLocus = (kind: ReviewKind, locus: string) => {
   const trimmed = locus.trim();
 
@@ -126,6 +134,7 @@ const UNRESOLVED_LOCUS_BYTES = 120;
 export const isUnresolvedLocus = (locus: string) =>
   locus.startsWith(UNRESOLVED_LOCUS);
 
+/** Its 120-byte bound keeps the marked text visible inside a 200-byte summary item. */
 const unresolvedLocus = (reported: unknown) => {
   const text =
     (typeof reported === "string" && sanitizeText(reported)) || "(none)";
@@ -134,11 +143,14 @@ const unresolvedLocus = (reported: unknown) => {
     return `${UNRESOLVED_LOCUS}${text}`;
   }
 
+  // NOTE: a byte cut can end inside a character, which decodes to one trailing U+FFFD.
   return `${UNRESOLVED_LOCUS}${Buffer.from(text, "utf-8")
     .subarray(0, UNRESOLVED_LOCUS_BYTES - 3)
     .toString("utf-8")
     .replace(/\uFFFD$/u, "")}…`;
 };
+
+// SECTION: JSON extraction
 
 const parses = (text: string) => {
   try {
@@ -153,6 +165,7 @@ const parses = (text: string) => {
 const MAX_CANDIDATES = 1024;
 const FENCE = "```";
 
+/** Index just past the last character before i that is not whitespace. */
 const endOfPrior = (text: string, i: number) => {
   let index = i;
 
@@ -163,6 +176,7 @@ const endOfPrior = (text: string, i: number) => {
   return index;
 };
 
+/** A line-start or json-tagged opener; a raw newline cannot occur in a JSON string, so embedded fences never qualify. */
 const fencedBody = (text: string) => {
   const close = text.length - FENCE.length;
 
@@ -191,6 +205,7 @@ const fencedBody = (text: string) => {
   return null;
 };
 
+/** A prior line that opens an object key, is a bare key with a JSON value, is a value and comma, or is only container punctuation means this object is nested in a cut-off report. */
 const continuesContainer = (text: string, lineStart: number) => {
   const end = endOfPrior(text, lineStart);
   const line = text.slice(text.lastIndexOf("\n", end - 1) + 1, end).trim();
@@ -212,6 +227,10 @@ const continuesContainer = (text: string, lineStart: number) => {
   );
 };
 
+/**
+ * The report must end the reply: the whole text, a closing fenced block, or a line-start object running to the end.
+ * Position decides, not content, so quoted examples and earlier JSON never compete; anything else fails closed.
+ */
 const extractJsonText = (raw: string) => {
   const text = raw.trim();
 
@@ -261,6 +280,8 @@ const extractJsonText = (raw: string) => {
 
   return text;
 };
+
+// SECTION: Parse
 
 type ReportFailureKind =
   | "empty-output"
@@ -399,6 +420,7 @@ const findingFieldsFailure = (item: JsonObject, index: number) => {
     (field) => !FINDING_FIELDS.includes(field) && !OPTIONAL_FIELDS.has(field)
   );
 
+  // NOTE: key names are delegate text, so only the retired field is named and other keys are counted.
   const others = unexpected.filter((field) => field !== "severity").length;
 
   const unsupported = [
@@ -503,8 +525,10 @@ const parseFinding = (
   const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : "";
   const resolved = pattern.test(normalizedLocus);
 
+  // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.
   const category = categoryOf(normalizedTag, known);
 
+  // Markup-inert by construction; the raw spelling stays only in the provider log.
   const originalTag = known
     ? undefined
     : normalizedTag.replaceAll(/[^A-Za-z0-9_.-]/gu, "_").slice(0, 80);
@@ -525,6 +549,7 @@ const parseFinding = (
     ...(origin !== undefined && { origin }),
   };
 
+  // Raw tag and unresolved locus, not their lossy sanitized forms, so distinct values never collide.
   const dedupKey = JSON.stringify([
     draft.severity,
     resolved ? normalizedLocus : locus,
@@ -631,6 +656,7 @@ export const parseReport = (input: ReportInput): ReportResult => {
     return fail("uncovered-scope", "report must be a JSON object");
   }
 
+  // A capability blocker is a report, not a malformed review: keep the reviewer's own reason.
   const blocked = blockedDetail(value);
 
   if (blocked !== null) {
@@ -706,6 +732,8 @@ export const parseReport = (input: ReportInput): ReportResult => {
   };
 };
 
+// SECTION: Matching
+
 const MATCH_LINE_WINDOW = 5;
 const MATCH_JACCARD = 0.3;
 
@@ -776,6 +804,7 @@ const tokens = (text: string) =>
       .filter((token) => token.length >= 3 && !STOPWORDS.has(token))
   );
 
+/** Token Jaccard; two empty sets score 0 so location and category alone never match. */
 const similarity = (a: string, b: string) => {
   const left = tokens(a);
   const right = tokens(b);
@@ -804,6 +833,7 @@ interface MatchKey {
 const codeLocation = (locus: string) =>
   /^(?<cap1>.+?):L(?<cap2>\d+)/u.exec(locus.trim());
 
+/** Code loci: same path (case-folded when `caseInsensitive`) within ±MATCH_LINE_WINDOW lines; section loci: same heading; unresolved loci: never. */
 const sameLocation = (a: string, b: string, caseInsensitive: boolean) => {
   if (isUnresolvedLocus(a) || isUnresolvedLocus(b)) {
     return false;
@@ -841,6 +871,8 @@ export const matchFinding = (
   sameLocation(a.locus, b.locus, caseInsensitive) &&
   similarity(a.text, b.text) >= MATCH_JACCARD;
 
+// SECTION: Collect and dedup
+
 const findingId = (round: number, ordinal: number) =>
   `R${round}-F${String(ordinal).padStart(3, "0")}`;
 
@@ -864,6 +896,7 @@ export const collectFindings = (
       text: `${draft.defect} ${draft.requiredChange}`,
     };
 
+    // Round 1 has no earlier fix; later rounds keep a reviewer's known value and mark every other reply `unknown`.
     const origin: FindingOrigin = originOf(round, draft.origin);
 
     const first = out.find(

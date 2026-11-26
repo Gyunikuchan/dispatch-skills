@@ -1,3 +1,6 @@
+// Design parse + lint + governed text. Increment selection by
+// graph priority belongs to the design machine, not here.
+
 import { isRecord } from "../../lib/config.ts";
 import {
   SPEC_PIN_VALUE,
@@ -49,6 +52,7 @@ const REQUIRED_SECTIONS = [
   "Final Integration",
 ];
 
+/** Design section order after the title and summary box: status and intent before architecture and increment detail. */
 const DESIGN_SECTION_ORDER = [
   "## At a Glance",
   EXECUTION_STATUS_HEADING,
@@ -69,6 +73,7 @@ const INCREMENT_FIELDS = [
   "Parallel safety",
 ];
 
+// Keyed by the author's status word, so any string may be looked up.
 interface StateAliases {
   readonly [word: string]: IncrementState | undefined;
 }
@@ -95,6 +100,8 @@ const sectionBody = (lines: readonly StructuralLine[], heading: string) => {
 
   return range ? lines.slice(range.start + 1, range.end) : null;
 };
+
+// SECTION: Graph
 
 /** `| I<nn> | <priority> | <summary> | <prerequisites> | <paths> |` rows of the graph section only. */
 export const parseIncrementGraph = (lines: readonly StructuralLine[]) => {
@@ -247,6 +254,8 @@ export const parseIncrementGraph = (lines: readonly StructuralLine[]) => {
   return { increments, defects };
 };
 
+// SECTION: Details and status
+
 interface IncrementBlock {
   line: number;
   behaviour: string[];
@@ -375,6 +384,7 @@ const parseExecutionStatus = (
     rows.push({ id, state, nextAction: next });
   }
 
+  // NOTE: full graph coverage is not required: the status section lists only active and ready increments.
   if (nextAction === null || nextAction === "") {
     out.push(
       lint(
@@ -388,6 +398,9 @@ const parseExecutionStatus = (
   return { rows, nextAction };
 };
 
+// SECTION: Public API
+
+/** Field shapes of a stored design; `asParsedDesign` checks graph consistency. */
 const isParsedDesign = (value: unknown): value is ParsedDesign => {
   if (
     !isRecord(value) ||

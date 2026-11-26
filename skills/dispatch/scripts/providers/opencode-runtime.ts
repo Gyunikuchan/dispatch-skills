@@ -1,3 +1,4 @@
+// Native introspection owns configuration precedence and effective permissions; raw settings never enter logs.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -150,6 +151,7 @@ export const resolveEffectiveOpencodeLaunch = async (
     : (candidates.find((a) => a["id"] === "explore") ??
       candidates.find((a) => a["id"] === "plan"));
 
+  // NOTE: newer opencode builds grant `shell` to the built-in explore agent; the user accepted it as best-effort read-only.
   const bestEffort =
     verified !== undefined || (hasAgent(req.agent) && req.agent !== "explore")
       ? undefined
@@ -404,6 +406,7 @@ export const nativeOpencodeIntrospection = (
     } finally {
       clearTimeout(timer);
 
+      // Covers the command and its own process-tree settlement; the response teardown is measured by the runner.
       steps?.push({
         step: `debug-${command}`,
         elapsedMs: Date.now() - started,
@@ -477,6 +480,7 @@ export const fetchModels = async (endpoint: string, timeoutMs = 5000) => {
         typeof row["id"] !== "string" ||
         !row["id"].trim() ||
         row["id"].length > 1024 ||
+        // A code unit below U+0020 is a control character.
         // oxlint-disable-next-line eslint/require-unicode-regexp -- code-unit check; `u` would reject astral ids.
         /[^ -￿]/.test(row["id"])
       ) {

@@ -158,8 +158,10 @@ const memFs = (
   };
 };
 
+/** Placeholder until the fake process registers its real callback. */
 const noop = () => {};
 
+/** Manual clock: timers fire only when the test advances time. */
 const manualClock = () => {
   let now = 0;
 
@@ -323,6 +325,8 @@ const claudeEntry = (
       usage: { input_tokens: input, output_tokens: output },
     },
   });
+
+// T2 wrap-up RED: deadline notice, stop/resume, budget, fallback.
 
 test("resumed launch usage follows proven per-launch semantics", async () => {
   {

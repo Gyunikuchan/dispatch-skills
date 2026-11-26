@@ -321,6 +321,7 @@ test("stdin ledger appends validate records and preserve atomic batches", async 
     { kind: "invalid" },
   ]);
 
+  // Valid single, batch and BOM-prefixed batch append atomically.
   for (const text of [single, batch, `\uFEFF${batch}`]) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
     const r = await run(text);
@@ -328,6 +329,7 @@ test("stdin ledger appends validate records and preserve atomic batches", async 
     assert.equal(r.records.length, text === single ? 1 : 2, text);
   }
 
+  // Malformed stdin (including empty input) is invalid-input with no records.
   for (const text of ["bad", ""]) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
     const r = await run(text);
@@ -338,6 +340,7 @@ test("stdin ledger appends validate records and preserve atomic batches", async 
     assert.deepEqual(r.records, []);
   }
 
+  // Invalid records (including an empty batch) fail atomically with no records.
   for (const text of [invalidBatch, "[]"]) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
     const r = await run(text);
@@ -345,6 +348,7 @@ test("stdin ledger appends validate records and preserve atomic batches", async 
     assert.deepEqual(r.records, [], text);
   }
 
+  // Unreadable stdin fails before validation.
   for (const readStdin of [
     undefined,
     () => {

@@ -871,6 +871,7 @@ test("report complete low session accepts bound evidence and a user contract wai
 });
 
 test("report complete enforces review focus rules based on plan risk level", async () => {
+  // Med/high risk requires review focus
   const fMed = await fixture(1, "med");
 
   try {
@@ -922,6 +923,7 @@ test("report complete enforces review focus rules based on plan risk level", asy
     fMed.cleanup();
   }
 
+  // Low/unspecified risk completes without review focus
   const fLow = await fixture(1, "low");
 
   try {

@@ -156,6 +156,7 @@ export const collectAgyUsage: (
           }
         }
       } catch {
+        // The descriptor name supplies the ID if the descriptor cannot be read.
         // Conversation metadata is optional; skip unreadable entries.
       }
 
@@ -955,6 +956,7 @@ const deriveBaseSlug = (text: string) => {
   return tokens.map((t) => t.toLowerCase()).join("-");
 };
 
+/** The two captures of a `name (effort)` label; undefined when the text has another shape. */
 const displayEffort = (text: string) => {
   const [, base, level] = DISPLAY_EFFORT.exec(text) ?? [];
 
@@ -1078,6 +1080,7 @@ export const readAgySqliteGenMetadata = (
       db = new DatabaseSync(dbPath, { readOnly: true });
       const stmt = db.prepare("SELECT data FROM gen_metadata ORDER BY idx");
 
+      // A non-blob cell keeps the typed-array constructor's length coercion.
       return stmt
         .all()
         .map(({ data }) =>
@@ -1127,6 +1130,7 @@ export const agyUsage = (
 
   const envelope = row(parsed);
 
+  // agy reports cache reads beside input_tokens, so input is uncached; agy has no cache-write counter.
   const out = counters(
     envelope?.["usage"],
     {

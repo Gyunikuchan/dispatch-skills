@@ -371,6 +371,7 @@ export const checkRun = async (ctx: HandlerContext) => {
         !forceFresh && cacheHex !== null ? withinRun.get(cacheHex) : undefined;
 
       if (withinHit) {
+        // Dedup skips testedTree because no subprocess ran and the tree matches withinHit.tree.
         cmdAfter = cmdBefore;
         combinedLog += withinHit.logText;
         commandEntries.push({

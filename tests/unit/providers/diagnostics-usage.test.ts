@@ -632,6 +632,7 @@ test("agy model and effort normalization and gen_metadata attribution", () => {
           reasoning: 39,
         },
       },
+      // turn 1 had Tag 1.21 without effort!
       actualEffort: null,
     });
 

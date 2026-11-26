@@ -98,6 +98,7 @@ const tempIndexFile = (session: string, name: string) => {
   return file;
 };
 
+// Paths of `subset` whose working-tree state equals `tree`, judged by Git through a session-owned temporary index.
 const pathsEqualTo = async (
   deps: CliDeps,
   session: string,
@@ -201,6 +202,7 @@ export const deliver = async (ctx: HandlerContext) => {
       ) => await gitPaths(ctx.deps, root, args, locks(env));
 
       const from = textValue(opened.data["base"]);
+      // Cleanup may have removed the integration worktree after a completed delivery; the retry then relies on recorded identities.
       const integrationPresent = fs.existsSync(cwd);
 
       const source = integrationPresent
@@ -216,6 +218,7 @@ export const deliver = async (ctx: HandlerContext) => {
           matchesDestination(r.data["dest"], dest)
       );
 
+      // Recursive raw diff: every delivered path is a leaf entry (blob, symlink or gitlink) or absent.
       const entriesOf = async (root: string, target: string) => {
         const tokens = splitPaths(
           await rawOut(root, [
@@ -346,6 +349,7 @@ export const deliver = async (ctx: HandlerContext) => {
         );
       }
 
+      // A started delivery recovers under existing rules; a new one needs settled coverage before any caller write.
       if (!started) {
         if (!currentRuntimeVerification(tx.fold, opened.seq)) {
           refuse("verification-required");
@@ -362,6 +366,7 @@ export const deliver = async (ctx: HandlerContext) => {
           applies
         );
 
+        // The message follows launch admission, which can stop a rerun for a user decision once the coverage round is used.
         const budget = c.open.length
           ? admission(ctx.session, tx.fold, INTEGRATION_REVIEW, 0, applies)
               .budget
@@ -402,11 +407,13 @@ export const deliver = async (ctx: HandlerContext) => {
 
       const zero = "0".repeat(source.length);
 
+      // SECTION: path state against a tree, judged by Git through a session-owned temporary index
       const tempIndex = (name: string) => tempIndexFile(ctx.session, name);
 
       const equalTo = async (tree: string, subset: string[]) =>
         await pathsEqualTo(ctx.deps, ctx.session, dest.path, tree, subset);
 
+      // SECTION: caller guard
       const named = (blocked: string[]): never =>
         refuse(
           "caller-dirty",
@@ -494,6 +501,7 @@ export const deliver = async (ctx: HandlerContext) => {
           named(dirty);
         }
 
+        // Resuming: an earlier attempt may have written some delivered paths; only exact delivered paths still at `from` or `source` are ours.
         const known = new Set(paths);
 
         if (dirty.some((p) => !known.has(p))) {
@@ -510,6 +518,7 @@ export const deliver = async (ctx: HandlerContext) => {
         }
       };
 
+      // SECTION: apply through Git's two-tree merge so bytes, modes, symlinks, deletions and dir/file swaps are Git's own
       const apply = async () => {
         if (!paths.length) {
           return;
@@ -521,6 +530,7 @@ export const deliver = async (ctx: HandlerContext) => {
         try {
           await rawOut(dest.path, ["read-tree", from], env);
           let mergeBase = from;
+          // Paths a crashed attempt already wrote must enter the merge as `source`, or Git sees them as locally modified.
           const atSource = await equalTo(source, paths);
 
           if (atSource.size) {
@@ -543,6 +553,7 @@ export const deliver = async (ctx: HandlerContext) => {
               env,
               [...removed, ...added].join("")
             );
+            // Git checks directory/file conflicts against the merge base as well as the index.
             const writtenTree = await rawOut(dest.path, ["write-tree"], env);
             mergeBase = writtenTree.trim();
           }
@@ -614,6 +625,7 @@ export const deliver = async (ctx: HandlerContext) => {
         }
       };
 
+      // SECTION: delivery sequence
       await checkCaller(!!started);
 
       if (retained.exit !== 0) {
@@ -657,6 +669,7 @@ export const deliver = async (ctx: HandlerContext) => {
   );
 };
 
+// SECTION: commit phase; one caller commit for a delivered increment, or a record of the user's own commit
 const commitDelivered = async (ctx: HandlerContext) => {
   const message = readTextPayload(ctx, {
     fileFlag: "commit",
@@ -790,6 +803,7 @@ const commitDelivered = async (ctx: HandlerContext) => {
       const warnings: string[] = [];
 
       if (caller.head === from) {
+        // SECTION: commit; preconditions block, checks after the commit warn
         const flags = [
           "--cached",
           "--ita-visible-in-index",
@@ -838,6 +852,7 @@ const commitDelivered = async (ctx: HandlerContext) => {
 
         const before = await indexTree();
         await ctx.deps.hook?.("deliver:before-commit");
+        // NOTE: Git has no lock spanning read-tree and commit; the checks after the commit cover the remaining window.
         const now = await state();
 
         if (now.branch !== caller.branch || now.head !== caller.head) {
@@ -933,6 +948,7 @@ const commitDelivered = async (ctx: HandlerContext) => {
           ]),
         ];
       } else {
+        // SECTION: record-only; the user committed the delivered paths
         if (!(await isAncestor(from, caller.head))) {
           refuse(
             "head-not-descendant",
@@ -975,6 +991,7 @@ const commitDelivered = async (ctx: HandlerContext) => {
           );
         }
 
+        // Later user commits may change other paths; only paths that overlap the delivered paths count.
         const nameOutput = await names([
           "diff",
           "--name-only",
@@ -1241,6 +1258,7 @@ const probeWorktreeMove = (cwd: string) => {
     );
   }
 
+  // Keep a failed rename round trip at one deterministic sibling for retry discovery.
   fs.renameSync(cwd, probe);
 
   try {
@@ -1520,6 +1538,7 @@ export const cleanup = async (ctx: HandlerContext) => {
             }
           }
 
+          // Prune is global, so it would also delete admin metadata for a stranded recovery worktree.
           if (
             !kept.some(
               (row) => row.recoveryPath !== undefined && row.recoveryPath !== ""
@@ -1749,6 +1768,7 @@ export const cleanup = async (ctx: HandlerContext) => {
 
       const terminal = new Set(terminalWorktrees(tx.fold, observed));
 
+      // Git cannot report a deregistered directory's state (e.g. after an interrupted removal), so only ledger-merged remnants are removed.
       const remnants = deregistered.filter((relative) => {
         const writer = writers.findLast(
           (w) => w.record.data["path"] === relative
@@ -1823,6 +1843,7 @@ export const cleanup = async (ctx: HandlerContext) => {
           (w) => w.record.data["path"] === relative
         );
 
+        // Merged work already lives in the integration branch or the caller, so its worktree needs no restoration.
         if (
           writer
             ? integrated(writer)
@@ -1925,6 +1946,7 @@ export const cleanup = async (ctx: HandlerContext) => {
         }
       }
 
+      // Preserve all snapshots until every worktree has passed its preservation check.
       for (const relative of remnants) {
         const cwd = path.resolve(ctx.session, relative);
 
@@ -1966,6 +1988,7 @@ export const cleanup = async (ctx: HandlerContext) => {
         const preservedWriter = !!writer && !integrated(writer);
 
         if (preservedWriter) {
+          // Keep Git's recovery metadata registered until the preserved directory is gone.
           try {
             if (process.platform === "win32") {
               probeWorktreeMove(cwd);

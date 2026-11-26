@@ -2278,6 +2278,7 @@ test("diagnostics preserve exception attempts and durable capture boundaries", a
 });
 
 test("host phase milestones order reviews and attribute host usage and slot yield", () => {
+  // design-led milestones enter plan after the last design review and implementation at the earlier launch
   {
     const basic: Fold = {
       records: [
@@ -2358,6 +2359,7 @@ test("host phase milestones order reviews and attribute host usage and slot yiel
     );
   }
 
+  // host phase: sessionFacts builds phase milestones including interleaved A, B, A review subjects
   {
     const f = sessionFixture({ memory: true });
 
@@ -2521,6 +2523,7 @@ test("host phase milestones order reviews and attribute host usage and slot yiel
     }
   }
 
+  // sessionFacts records startedAt, hosts and slot yield billed tokens and attempts across rounds
   {
     const f = sessionFixture({ memory: true });
 
@@ -2658,6 +2661,7 @@ test("host phase milestones order reviews and attribute host usage and slot yiel
         ]
       );
 
+      // Capture without positive start falls back to manifest createdAt
       const f2 = sessionFixture({ memory: true });
 
       try {
@@ -2686,6 +2690,7 @@ test("host phase milestones order reviews and attribute host usage and slot yiel
           "2026-11-20"
         );
 
+        // Out-of-range capture start does not throw RangeError and falls back to manifest createdAt
         writeJson(
           path.join(f2.session, ".state", "diagnostics", "run-0.json"),
           {
@@ -2712,6 +2717,7 @@ test("host phase milestones order reviews and attribute host usage and slot yiel
   }
 });
 
+// SECTION: round workload fixtures
 const reviewKey = (session: string, review: string) =>
   `review-${crypto
     .createHash("sha256")
@@ -2790,6 +2796,7 @@ const usageLine = (id: string, at: number, input: number, output: number) =>
     },
   });
 
+// Claude host thread plus one subagent transcript, read through the injected filesystem port.
 const claudeHostDeps = (
   f: ReturnType<typeof sessionFixture>,
   input: { clock: number; main: string[]; subagent?: string[] }
@@ -2963,6 +2970,7 @@ test("round workload attributes interleaved rounds of two reviews without double
 
 // oxlint-disable-next-line eslint/complexity -- workload matrix covers turns, threads and sanitization; splitting would scatter the assertions
 test("round workload attributes turns, threads and reviewer turns while sanitizing facts", async () => {
+  // round turns: counts host responses through the fix-review-lite note
   {
     const f = sessionFixture({ memory: true });
 
@@ -3032,6 +3040,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // round turns: in-window rulings and notes set the close without counting gaps
   {
     const f = sessionFixture({ memory: true });
 
@@ -3152,6 +3161,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // observeTool and sanitizeFacts preserve wrapUp, hostThread, and turn/tool counters while rejecting malformed values
   {
     const f = sessionFixture({ memory: true });
 
@@ -3386,6 +3396,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // hostUsageOf retains userTurnsByStage, subagentCount, maxSubagentDepth, and row turn counters while rejecting invalid values
   {
     const clean = sanitizeFacts({
       phases: [],
@@ -3521,6 +3532,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     );
   }
 
+  // multi-host roundWorkload omits hostTokens and hostTurns on cross-host switches and ambiguous multi-host captures
   {
     const f = sessionFixture({ memory: true });
 
@@ -3660,6 +3672,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // mid-round thread switch leaves hostTokens and hostTurns undefined even when measured thread has rows in window
   {
     const f = sessionFixture({ memory: true });
 
@@ -3726,6 +3739,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
         [22, 1]
       );
 
+      // Mixed thread-tracked session: a round missing hostThread when another capture has hostThread omits hostTokens/hostTurns.
       const fMixed = sessionFixture({ memory: true });
 
       try {
@@ -3786,6 +3800,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // multi-generation reviewerTurns excludes superseded generations and omits native-only or zero-launch rounds
   {
     const f = sessionFixture({ memory: true });
 
@@ -3895,6 +3910,7 @@ test("round workload attributes turns, threads and reviewer turns while sanitizi
     }
   }
 
+  // mixed native and CLI round marks reviewerTurnsPartial true and uses complete non-stdout DelegateResponse fallback
   {
     const f = sessionFixture({ memory: true });
 

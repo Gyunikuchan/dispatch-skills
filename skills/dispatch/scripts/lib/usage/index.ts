@@ -32,6 +32,7 @@ import type {
   UsageRow,
 } from "./rows.ts";
 
+// Host collection never yields delegate rows; they count with the host, as the Copilot notes do.
 const hostRoleOf = (role: UsageRow["role"]) =>
   role === "subagent" ? "subagent" : "host";
 

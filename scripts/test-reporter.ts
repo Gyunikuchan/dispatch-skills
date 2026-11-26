@@ -1,8 +1,13 @@
+// Quiet reporter for `node --test`.
+// Silences passing output, expands the first failure, and lists the slowest files.
+// A per-file budget overrun outside tests/e2e/ warns but never fails a passing run (spec §15.2): it fails only alongside a test failure.
+
 import path from "node:path";
 
 export const FILE_BUDGET_MS = 1000;
 const SLOW_FILE_LIMIT = 5;
 
+// Every `node --test` payload field read here; each stays unvalidated until narrowed at its use.
 interface Data {
   name?: unknown;
   file?: unknown;
@@ -38,6 +43,8 @@ export interface ReporterOptions {
   exit?: (code: number) => void;
   projectRoot?: string;
 }
+
+// SECTION: Formatting
 
 export const formatDuration = (ms = 0) =>
   ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
@@ -128,6 +135,8 @@ export const slowFiles = (fileDurations: ReadonlyMap<string, number>) => {
   return { slowest, overBudget };
 };
 
+// SECTION: Reporter flow
+
 interface ReportState {
   total: number;
   passed: number;
@@ -161,6 +170,7 @@ const observeDurations = (
   data: Data,
   details: Data
 ) => {
+  // NOTE: a file's top-level tests run serially, so their summed durations approximate its wall time.
   if (
     (type === "test:pass" || type === "test:fail") &&
     file !== undefined &&
@@ -312,6 +322,7 @@ const quietReporter = async function* quietReporter(
 
   yield* reportPerformance(state, root, failedRun);
 
+  // NOTE: the per-file budget is a hint. It fails only with a test failure; a passing run warns.
   if (failedRun) {
     exit(1);
   }

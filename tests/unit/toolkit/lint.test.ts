@@ -140,6 +140,7 @@ test("lint run unknown edit field names allowed fields", async () => {
 
 describe("lint severity", () => {
   test("lint results carry severity, refuse critical defects and preserve structure as warnings", async () => {
+    // lint results carry only kind hash errors and warnings
     {
       const a = await lint(
         "a.plan.md",
@@ -191,6 +192,7 @@ describe("lint severity", () => {
       assert.deepEqual(context.result.warnings, []);
     }
 
+    // parse critical plan defects refuse lint
     {
       const refused = await lint(
         "bad.plan.md",
@@ -202,6 +204,7 @@ describe("lint severity", () => {
       assert.ok(refused.result.errors.length);
     }
 
+    // requirements block while decision heading defects warn
     {
       const lintResult = await lint(
         "a.spec.md",
@@ -220,6 +223,7 @@ describe("lint severity", () => {
       );
     }
 
+    // design graph defects preserve partial structure as warnings
     {
       const graph = "# Design\n## Increment Dependency Graph\n";
       scoped.artifact("a.design.context.md", CONTEXT_MAP);

@@ -125,6 +125,7 @@ const killGroup = (pid: number) => {
 
     return true;
   } catch (error) {
+    // ESRCH means the process group has already exited.
     return nodeErrorCode(error) === "ESRCH";
   }
 };
@@ -190,6 +191,7 @@ export const nodeProbeSpawn: ProbeSpawnPort = async (
 
       if (!exited && child.pid !== undefined) {
         if (windows) {
+          // taskkill owns the tree teardown. Do not kill the parent first or lose its descendants.
           const killer = spawn(
             "taskkill",
             ["/PID", String(child.pid), "/T", "/F"],

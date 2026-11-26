@@ -529,6 +529,8 @@ test("review identity accepts a narrowed re-review round", async () => {
   }
 });
 
+// SECTION: Delivery gates read the corrected severity
+
 const correctedGate = async (
   stored: { severity: string; impact: string; trigger: string },
   correction: { impact: string; trigger: string } | null
@@ -747,6 +749,8 @@ test("corrected finding: corrected severity transitions govern final-round fix q
 
   assert.deepEqual(raised, { ok: false, reason: "review-required" });
 });
+
+// SECTION: Coverage decision gates the review identity
 
 const [A, B, C] = ["codex[0]", "opencode[1]", "claude[2]"];
 
@@ -1008,6 +1012,8 @@ test("review identity reads coverage decision: failures outside the applicable r
   assert.equal(coverageIdentityResult.ok, true);
 });
 
+// SECTION: Confirmation-only rounds
+
 const identityRoster = [
   {
     slot: "reviewer",
@@ -1127,6 +1133,7 @@ const reviewClaim = (id: string, defect: string): Finding => ({
 });
 
 test("confirmation-only round preserves substantive review identity and rejects unverified accepted MUST", async () => {
+  // A verified fix settles an accepted MUST across a confirmation-only round.
   {
     const f = sessionFixture({ memory: true });
 
@@ -1294,6 +1301,7 @@ test("confirmation-only round preserves substantive review identity and rejects 
     }
   }
 
+  // An accepted MUST with no later substantive verification still refuses, even when a confirmation-only round has no findings.
   {
     const f = sessionFixture({ memory: true });
 
@@ -1425,6 +1433,7 @@ test("confirmation-only round preserves substantive review identity and rejects 
     }
   }
 
+  // A recurrence in the substantive round blocks settlement even when the confirmation-only round reports no findings.
   {
     const f = sessionFixture({ memory: true });
 

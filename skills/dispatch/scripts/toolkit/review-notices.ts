@@ -28,8 +28,10 @@ export interface BlockedState {
   blockers: BlockerEntry[];
 }
 
+// Leaves the summary room for counts and at least one finding.
 const BLOCKED_NOTICE_BYTES = 400;
 
+/** Blocked attempts of one round, read from its current generation so a resumed pending run keeps them. */
 const blockedEntries = (directory: string, number: number) => {
   const root = reviewRoundDirectory(directory, number);
 
@@ -55,6 +57,7 @@ const blockedEntries = (directory: string, number: number) => {
   );
 };
 
+/** Same slot and reason identity in the nearest earlier round that has findings; a narrowed slot has no partner. */
 const blockersFor = (
   directory: string,
   number: number,
@@ -134,6 +137,7 @@ export const blockedNotice = (
   return shown.join("; ") + (omitted ? `; +${omitted} more blocked` : "");
 };
 
+// NOTE: names take only the bytes the rest of the head leaves; the count and pointer stay even when the suffixes overflow, so the CLI cap cuts the suffixes first.
 export const hotUnitsNotice = (
   units: readonly {
     unit: string;
@@ -179,6 +183,7 @@ export const hotUnitsNotice = (
   return text(shown);
 };
 
+// Ids are `<kind>:<review>:<tail>`; only a later open record of the same id reopens a decision, so tool resolutions neither list nor remove one.
 export const userDecisions = (
   records: readonly LedgerRecord[],
   review: string,

@@ -250,6 +250,7 @@ test("report render writes every missing criterion without Git and rewrites the 
 });
 
 test("report deferral renders only the latest ceiling deferrals as follow-ups", async () => {
+  // report deferral: renders only the latest deferred escalations as follow-ups
   {
     const f = await fixture();
 
@@ -298,6 +299,7 @@ test("report deferral renders only the latest ceiling deferrals as follow-ups", 
     }
   }
 
+  // report deferral: excludes non-ceiling defer escalations
   {
     const f = await fixture();
 
@@ -598,6 +600,7 @@ test("report render rejects early complete, unbound and positional input cases",
 });
 
 test("report render diagnostics toggle honors config setting for render and complete", async () => {
+  // Diagnostics enabled
   const fEnabled = await fixture(1);
 
   try {
@@ -624,6 +627,7 @@ test("report render diagnostics toggle honors config setting for render and comp
     fEnabled.cleanup();
   }
 
+  // Diagnostics disabled or absent
   const fDisabled = await fixture();
 
   try {
@@ -658,6 +662,7 @@ test("report render maps invalid or unreadable config to config-invalid", async 
   const f = await fixture();
 
   try {
+    // Malformed JSON and type errors
     for (const config of ['{"diagnostics":"yes"}\n', "{broken"]) {
       fs.writeFileSync(path.join(f.skillRoot, "config.local.jsonc"), config);
       // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
@@ -670,6 +675,7 @@ test("report render maps invalid or unreadable config to config-invalid", async 
       );
     }
 
+    // Higher-precedence config read error does not fall through
     fs.rmSync(path.join(f.skillRoot, "config.local.jsonc"));
     fs.mkdirSync(path.join(f.skillRoot, "config.local.jsonc"));
     fs.writeFileSync(
@@ -1590,6 +1596,7 @@ test("walkthrough reports coverage unreadable state and open slots beside review
       );
     };
 
+    // A failed slot file with no failure entry cannot be trusted, yet the report still renders.
     const unreadable = await render();
     assert.match(unreadable, /^- Coverage state unreadable$/mu);
     assert.match(unreadable, /R1-F001/u);

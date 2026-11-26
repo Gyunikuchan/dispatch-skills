@@ -328,6 +328,7 @@ export const collectClaudeUsage = (
         if (result.response) {
           hostRow.responseActor = file;
 
+          // A streaming update can cross the boundary of the launch that owns the message.
           const start = options?.responseStartMs;
 
           if (
@@ -531,6 +532,7 @@ export const claudeUsage = (raw: string): DiagnosticUsage | undefined => {
       addCounters(out, part);
     }
 
+    // Per-model counters let the report split a cascade's cost by the model that actually ran.
     const rawModels: Record<string, DiagnosticModelUsage> = Object.fromEntries(
       parts.map(({ name, part }) => [
         name,

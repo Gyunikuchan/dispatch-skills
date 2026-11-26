@@ -1,3 +1,6 @@
+// Matched measurement: reads finished session folders and host transcripts, then writes a per-pair comparison.
+// Reads only; the sole writes are comparison.json and comparison.md in --out.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -40,6 +43,7 @@ import {
 } from "../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
 import { foldLedger } from "../skills/dispatch/scripts/toolkit/ledger.ts";
 
+// SECTION: Types
 export interface PairSide {
   label: string;
   session: string;
@@ -145,6 +149,7 @@ const DEFAULT_PRICING = "skills/dispatch/references/pricing.json";
 const OUTCOME = "measured";
 const USAGE = "Usage: node scripts/measure-runs.ts <pairs.json> --out <dir>\n";
 
+// NOTE: each adapter's env names receive the side's host id, so the adapter's first match is that id.
 const HOST_SESSION_ENV: ReadonlyMap<string, readonly string[]> = new Map([
   ["claude", claudeCode.sessionEnv],
   ["agy", agy.sessionEnv],
@@ -166,8 +171,11 @@ const readErrorReason = (error: unknown) =>
 
 const roundKey = (review: string, round: number) => `${review}\u0000${round}`;
 
+// NOTE: these prefixes are the contract between measureSide and the markdown flags; renderComparison matches on them.
 const CALLS_PARTIAL = "perRound calls partial:";
 const HOST_TOKENS_PARTIAL = "hostTokens partial:";
+
+// SECTION: Input
 
 const sideOf = (value: unknown, where: string) => {
   if (!isRecord(value)) {
@@ -256,6 +264,8 @@ export const parsePairs = (input: unknown) => {
     confounds,
   };
 };
+
+// SECTION: Session facts
 
 const REPORT_PATH =
   /^\.state\/results\/report-complete-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.json$/iu;
@@ -463,6 +473,7 @@ const statOrNull = (file: string) => {
   }
 };
 
+/** Latest `capture.end` across the session's diagnostics; an empty window when none exists. */
 const latestCaptureEnd = (folder: string) => {
   let latest: number | undefined;
 
@@ -495,6 +506,7 @@ const latestCaptureEnd = (folder: string) => {
       }
     }
   } catch {
+    // NOTE: an unreadable diagnostics folder is reported by sessionFacts as a partial collection.
     latest = undefined;
   }
 
@@ -504,6 +516,7 @@ const latestCaptureEnd = (folder: string) => {
 const hasCalls = (run: { roundWorkload?: { calls?: unknown }[] }) =>
   (run.roundWorkload ?? []).some((row) => row.calls !== undefined);
 
+/** Round folders `<session>/.state/reviews/<review>/round-<n>`, keyed as sessionFacts keys them; the number comes from the folder name because round.json may be unreadable. */
 const roundFolders = (session: string, unavailable: string[]) => {
   const root = path.join(session, ".state", "reviews");
 
@@ -534,6 +547,8 @@ const roundFolders = (session: string, unavailable: string[]) => {
   }
 };
 
+// SECTION: Host usage
+
 const hostEnvOf = (options: MeasureOptions, host: string, hostId: string) => {
   const env: NodeJS.ProcessEnv = {
     ...options.env,
@@ -557,8 +572,11 @@ const hostTokensOf = (host: HostUsageFacts) =>
       0
     );
 
+// SECTION: Denials
+
 const zeroCounts = () => ({ config: 0, hook: 0, other: 0 });
 
+/** Same location rule as the Claude usage reader: the newest `<projects>/<dir>/<id>.jsonl`. */
 const claudeTranscript = (
   hostId: string,
   env: NodeJS.ProcessEnv,
@@ -603,6 +621,7 @@ const parseLine = (line: string) => {
   }
 };
 
+/** Counts lines with a `toolDenialKind` field in the host transcript and its subagent transcripts. */
 const denialsOf = (
   host: string,
   hostId: string,
@@ -664,6 +683,9 @@ const denialsOf = (
   }
 };
 
+// SECTION: Measurement
+
+// NOTE: sessionFacts reads only orchestrator, env, clock and hostUsageFs here; any other runtime use fails loudly.
 const unused = (): never => {
   throw new Error("measure-runs has no CLI runtime");
 };
@@ -690,6 +712,7 @@ const loadPricer = (pricing: { path: string; text: string }) => {
     throw new Error(`pricing file is not valid JSON: ${pricing.path}`);
   }
 
+  // NOTE: no config override: every run is priced with the same table, so per-controller overrides stay out of the comparison.
   const pricer = resolvePricing(table, undefined);
 
   if (!pricer) {
@@ -732,6 +755,7 @@ const measureSide = (
   let measured = folder;
 
   const resolveRun = () => {
+    // NOTE: round subjects hash the session string, so captures recorded from another path form need the path as given.
     if (
       given !== folder &&
       (run.roundWorkload ?? []).length > 0 &&
@@ -780,6 +804,7 @@ const measureSide = (
     pricer
   );
 
+  // Host-role notes only: a subagent note marks cost partial but leaves the host-token cell unflagged.
   const hostRoleNotes = Object.keys(host.notes?.host ?? {}).toSorted();
 
   if (hostRoleNotes.length) {
@@ -794,6 +819,8 @@ const measureSide = (
     run.reviews.map((review) => roundKey(review.phase ?? "", review.round))
   );
 
+  // Rounds without a readable result stay out of the totals and are named once: unfinished or corrupt-findings rows first,
+  // then round folders whose round.json never reached roundWorkload.
   const named = new Set<string>();
 
   const excluded = (review: string, round: number) => {
@@ -935,6 +962,7 @@ const measureSide = (
   return output;
 };
 
+// The default `sort` order (by string form), spelled out: the workload signature only needs a stable order.
 const byStringForm = (a: number | null, b: number | null) => {
   const left = String(a);
   const right = String(b);
@@ -1107,6 +1135,8 @@ export const measureRuns = (input: PairsFile, options: MeasureOptions) => {
     confounds: input.confounds,
   };
 };
+
+// SECTION: Rendering
 
 const withPartial = (text: string, partial: boolean) =>
   partial ? `${text} (partial)` : text;
@@ -1346,6 +1376,9 @@ const pushAttemptSpans = (lines: string[], sides: SideResult[]) => {
   }
 };
 
+// SECTION: Output guard
+
+/** Realpath of the nearest existing ancestor, with the folders that do not exist yet re-attached. */
 const canonicalPath = (target: string) => {
   const missing: string[] = [];
   let existing = target;
@@ -1373,6 +1406,7 @@ const envOr = (env: NodeJS.ProcessEnv, name: string, fallback: string) => {
   return value === undefined || value === "" ? fallback : value;
 };
 
+// NOTE: each root repeats its usage adapter's rule (claude.ts, codex.ts, agy.ts, opencode-db.ts); a new store needs a row here.
 const hostStoreRoots = (home: string, env: NodeJS.ProcessEnv) => [
   envOr(env, "CLAUDE_CONFIG_DIR", path.join(home, ".claude")),
   envOr(env, "CODEX_HOME", path.join(home, ".codex")),
@@ -1387,6 +1421,7 @@ const hostStoreRoots = (home: string, env: NodeJS.ProcessEnv) => [
   ),
 ];
 
+/** Refuses an --out folder inside, or equal to, a measured session folder or a host store; runs before any write. */
 const assertOutside = (
   dir: string,
   comparison: Comparison,
@@ -1412,6 +1447,7 @@ const assertOutside = (
   }
 };
 
+/** Refuses an --out whose comparison files are symbolic links, so no write can follow a link outside --out. */
 const assertNoLinkedOutputs = (dir: string) => {
   for (const name of ["comparison.json", "comparison.md"]) {
     const file = path.join(dir, name);
@@ -1434,6 +1470,8 @@ const assertNoLinkedOutputs = (dir: string) => {
     }
   }
 };
+
+// SECTION: CLI
 
 export interface RunIo {
   cwd: string;

@@ -18,6 +18,8 @@ import {
 } from "./helpers/json.ts";
 import { useMemoryAtomicWrite } from "./helpers/session.ts";
 
+// SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
+
 test("plan and design review rounds update the bound findings section", async () => {
   const f = await fixture();
   const restoreWrite = useMemoryAtomicWrite();

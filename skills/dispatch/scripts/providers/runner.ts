@@ -1,3 +1,7 @@
+// The one delegate runner (spec §6.2):
+// credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
+// then `spec.parse`.
+
 import path from "node:path";
 
 import { nodeErrorCode } from "../lib/fs-ext.ts";
@@ -85,6 +89,7 @@ const recordInvocation = (
   try {
     req.onInvocation?.(row);
   } catch {
+    // An observer failure must not change the run.
     // Caller hooks must not affect runner outcome.
   }
 };
@@ -197,6 +202,7 @@ const runAttempts = async (
   };
 
   const preparePrompt = (launch: LaunchRequest, prompt: string) => {
+    // The batch ceiling covers the whole command line, so fixed arguments spend budget too.
     const reserved = bytes(
       spec.argv({ ...launch, prompt: "" }, mode).argv.join(" ")
     );
@@ -287,6 +293,7 @@ const runAttempts = async (
     };
   };
 
+  // The capacity wait reuses the runner clock so every test harness keeps its existing ports.
   const sleep = async (ms: number) => {
     // oxlint-disable-next-line promise/avoid-new -- clock.every is callback-only; a deferred promise bridges it to async/await.
     await new Promise<void>((resolve) => {
@@ -431,6 +438,7 @@ const runAttempts = async (
 
       const waitStart = elapsed();
 
+      // Wait past previousEndMs (capped at 5 ms) so resumed requests never share a boundary millisecond.
       while (
         ports.clock.now() <= previousEndMs &&
         elapsed() - waitStart < 5 &&
@@ -477,6 +485,7 @@ const runAttempts = async (
     let launchStartMs = 0;
     let launchEndMs = 0;
 
+    // Wrap-up nameability: read the attempt log at deadline - lead, name the session, fall back to the resume id.
     let wrapUpSessionForResume: string | null = null;
 
     const wrapUpEnabled =
@@ -524,6 +533,7 @@ const runAttempts = async (
 
       attempts += 1;
 
+      // A resumed launch starts after previousEndMs so a shared boundary millisecond stays with the earlier launch.
       launchStartMs =
         previousEndMs === null
           ? ports.clock.now()
@@ -744,6 +754,7 @@ const runAttempts = async (
             stdoutCounters &&
             hasUsageTokens(stdoutCounters)
           ) {
+            // A zero delta from a nonzero cumulative report preserves the baseline without proving a response.
             coverage.push("unverified zero");
             usage = undefined;
           }
@@ -753,6 +764,7 @@ const runAttempts = async (
       }
     } catch {
       usage = undefined;
+      /* A usage parse failure cannot change provider results. */
       baseline = "none";
     }
 
@@ -971,6 +983,7 @@ const runAttempts = async (
 };
 /* oxlint-enable eslint/complexity */
 
+/** Parse, then the runner-owned classes: sandbox inactive, timeout, output cap. Partial output stays at `stdoutPath`. */
 const settle = (
   spec: ProviderSpec,
   req: LaunchRequest,
@@ -1032,14 +1045,17 @@ const IN_STEP_MS = 180_000;
 export const CONTINUE_PROMPT =
   "Your previous turn stopped before a final answer. Continue the task from where you stopped and return your final answer in the format the original prompt requires.";
 
+/** Lead time before the run deadline when a nameable launch is stopped for wrap-up. */
 const WRAP_UP_LEAD_MS = 5 * 60_000;
 
+/** Runs shorter than this never stop for wrap-up. */
 const WRAP_UP_FLOOR_MS = 10 * 60_000;
 
 /** Prompt for the one-time wrap-up resume; the run deadline line is prepended by the runner. */
 export const WRAP_UP_PROMPT =
   "The delegate run is about to reach its deadline. Make no further tool calls. Wrap up now and return your final answer in the format the original prompt requires, based on the work done so far.";
 
+/** One-line deadline notice inside every guarded prompt. */
 const deadlineNotice = (
   deadlineMs: number,
   remainingMs: number,
@@ -1048,6 +1064,8 @@ const deadlineNotice = (
   `[DEADLINE]: ${new Date(deadlineMs).toISOString()} (${Math.max(0, Math.round(remainingMs / 60_000))}m remaining${wrapUpAtMs === undefined ? "" : `; wrap-up at ${new Date(wrapUpAtMs).toISOString()}`})`;
 
 const bytes = (text: string) => Buffer.byteLength(text, "utf-8");
+
+// SECTION: Sensitive-file guardrail
 
 const DENIED_EXTENSIONS = [
   "pem",
@@ -1087,6 +1105,8 @@ const SENSITIVE_FILE_PATTERNS: readonly RegExp[] = [
   /service[-_]?account.*\.json$/iu,
 ];
 
+// Basename only: a full-path test would flag any ancestor such as `my-token-service/`.
+// NOTE: `_` counts as a separator (`\b` treats it as a word char, so `api_token.txt` would slip through).
 // NOTE: no `u` flag; `iu` folds U+212A/U+017F into [a-z], so those separators would hide a match.
 const SENSITIVE_BASENAME_PATTERNS: readonly RegExp[] = [
   // oxlint-disable-next-line eslint/require-unicode-regexp -- see NOTE above.
@@ -1115,6 +1135,7 @@ const SENSITIVE_DIR_PATTERNS: readonly RegExp[] = [
   /[/\\]Microsoft[/\\]Credentials(?<rg1>[/\\]|$)/iu,
 ];
 
+// Keep the handwritten patterns in sync with the regexes above.
 const DENYLIST_BLOCK =
   `[DENIED FILE PATTERNS]: .env*, ${DENIED_EXTENSIONS.map((extension) => `*.${extension}`).join(", ")}, id_rsa*, .npmrc, .pypirc, .netrc, .htpasswd, .pgpass, .my.cnf, .s3cfg, .boto, ` +
   ".terraformrc, terraform.rc, wp-config.php, .git-credentials, .docker/config.json, .vault-token, credentials.json, service-account*.json, " +
@@ -1124,6 +1145,7 @@ const DENYLIST_BLOCK =
 
 export const GUARDRAIL_HEADER = "[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]";
 
+/** Where the word-pattern exemption applies; worktree roots stay excluded because they hold host source. */
 interface SessionScope {
   sessionRoot?: string;
   sessionRealRoot?: string;
@@ -1148,6 +1170,7 @@ export const formatSafetyPrompt = (
     lines.push(`[ATTACHED FILES]: ${scope.attachedFiles.join(", ")}`);
   }
 
+  // NOTE: only the word patterns yield inside one directory; the other denied patterns still apply there, and worktrees hold host source.
   const real =
     hasText(scope.sessionRealRoot) &&
     scope.sessionRealRoot !== scope.sessionRoot
@@ -1193,12 +1216,14 @@ export const formatSafetyPrompt = (
 
 const basename = (file: string) => file.split(/[/\\]/u).pop() ?? file;
 
+// Windows compares paths case-insensitively, as `samePath` in lib/session.ts does.
 const pathKey = (value: string) => {
   const resolved = path.resolve(value);
 
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 };
 
+/** Whether `file` sits at or under `root`. */
 const insidePath = (file: string, root: string) => {
   const relative = path.relative(pathKey(root), pathKey(file));
 
@@ -1229,6 +1254,7 @@ export const findSensitiveMatch = (
   const real = realpath(file);
   const candidates = real === null || real === file ? [file] : [file, real];
 
+  // NOTE: an unresolvable path gets no exemption: a symlink may point at a real secret outside the session.
   const lexicalWorktree =
     sessionRoot === undefined ? "" : worktreeRoot(sessionRoot);
 
@@ -1291,6 +1317,8 @@ export const findSensitiveMatch = (
     ? "dir"
     : null;
 };
+
+// SECTION: Attachments
 
 export interface RunnerFs {
   readText: (file: string) => string;
@@ -1390,6 +1418,7 @@ export const buildAttachmentBlock = (
       ? fs.readPrefix(file, remaining)
       : fs.readText(file);
 
+    // Drop a trailing partial line so the delegate never sees a half-decoded fragment.
     if (truncated && content.lastIndexOf("\n") > 0) {
       content = content.slice(0, content.lastIndexOf("\n"));
     }
@@ -1414,6 +1443,7 @@ export const buildAttachmentBlock = (
   return { text: snippets.join("\n\n"), notes, attachedFiles, usedBytes };
 };
 
+/** Single line with no `%`: the pointer itself must survive a batch launcher. */
 const spillPointer = (briefFile: string) =>
   "Your full task brief was written to a file to keep it off the command line. " +
   `FIRST ACTION: read this file in full, then carry out the instructions it contains. Brief file: ${briefFile.replaceAll("\\", "/")}`;
@@ -1591,6 +1621,8 @@ const usageDelta = (
   return result;
 };
 
+// SECTION: runDelegate
+
 interface RunnerClock {
   now: () => number;
   every: (ms: number, fn: () => void) => () => void;
@@ -1621,6 +1653,7 @@ const noop = () => {
   /* no timer scheduled */
 };
 
+/** Deadline/idleness kills the tree; owned group settlement is bounded after normal completion, timeout, or failure. */
 // oxlint-disable-next-line eslint/complexity -- process launch enumerates every stream, timeout, and cleanup branch; refactor deferred.
 const launchOnce = async (
   launch: Launch,
@@ -1700,6 +1733,8 @@ const launchOnce = async (
       return;
     }
 
+    // NOTE: a negative pid signals the whole group so launcher grandchildren die too.
+    // NOTE: the stop attempt runs before the timers cancel so a failed stop keeps the deadline kill.
     ports.process.signal(-pid, "SIGTERM");
     stopTimeout();
     stopIdle();
@@ -1712,6 +1747,7 @@ const launchOnce = async (
     });
   };
 
+  // Settlement is measured apart from the response; budgets are the existing bounds.
   const teardown = (since: number, budgetMs: number, settled: boolean) =>
     steps?.push({
       step: "teardown",
@@ -1742,6 +1778,7 @@ const launchOnce = async (
       })
     : noop;
 
+  // Run-level wrap-up: at run deadline - lead, stop a nameable launch once so it can resume with WRAP_UP_PROMPT.
   let stopWrapUp: () => void = noop;
 
   if (wrapUp?.enabled === true) {
@@ -1777,6 +1814,7 @@ const launchOnce = async (
         try {
           kill();
         } catch {
+          /* a failed stop leaves today's deadline kill */
           return;
         }
 
@@ -1911,6 +1949,7 @@ const launchOnce = async (
     stopIdle();
     stopWrapUp();
 
+    // Stop on exit: a process that died from SIGTERM needs no SIGKILL.
     // SAFETY: `kill` may assign the timer handle from its callback; control-flow analysis cannot observe that mutation.
     (escalate as (() => void) | null)?.();
   }
@@ -1935,6 +1974,7 @@ export const runDelegate = async (
   try {
     return await runAttempts(spec, req, mode, ports, track);
   } catch (error) {
+    // NOTE: the original error object is rethrown unchanged; it only gains the attempts so far for the slot row.
     const attribution = invocationAttribution(
       spec,
       track.model,
@@ -1962,6 +2002,7 @@ export const runDelegate = async (
 };
 
 interface Attempts {
+  /** `invocations` holds one record per launch attempt, including the effort retry and attempts that never launched. */
   invocations: Invocation[];
   model: string | null;
   effort: string | null;
@@ -1974,6 +2015,7 @@ export const sandboxBlocked = (
   platform: PlatformEnv
 ) => sandbox && spec.sandbox !== undefined && !spec.sandbox.supported(platform);
 
+/** A copy of the launch request with the given fields replaced. */
 const patchLaunch = (
   launch: LaunchRequest,
   fields: Partial<LaunchRequest>

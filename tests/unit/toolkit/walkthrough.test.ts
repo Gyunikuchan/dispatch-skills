@@ -785,6 +785,8 @@ test("downgraded finding: a downgraded row appears in attention and in the findi
   }
 });
 
+// SECTION: Coverage
+
 const coverage = (overrides: Partial<CoverageState> = {}): CoverageState => ({
   targets: ["codex[0]", "opencode[1]", "claude[2]", "agy[3]"],
   completed: ["claude[2]", "agy[3]"],
@@ -802,6 +804,7 @@ const findings = (rendered: string) =>
   section(rendered, "## Review Findings & Resolutions", "## Appendix");
 
 test("walkthrough reports coverage open slots, overrides, rounds, unreadable and clean states", () => {
+  // walkthrough reports coverage open slots, majority reduction, overrides with quotes and coverage rounds
   {
     const majority = findings(
       renderWalkthrough(
@@ -859,6 +862,7 @@ test("walkthrough reports coverage open slots, overrides, rounds, unreadable and
     );
   }
 
+  // walkthrough reports coverage unreadable state and nothing when no slot failed
   {
     assert.match(
       findings(renderWalkthrough(view({ coverage: "unreadable" }))),
@@ -950,5 +954,6 @@ test("walkthrough fixture render stays below its pre-link byte size", () => {
     renderWalkthrough(linkFixture(), "/sessions/run")
   );
 
+  // 1,707 B before adding the visible summaries and collapsed counts. The pre-link cap still holds.
   assert.ok(bytes < 2910, `render bytes: ${bytes}`);
 });

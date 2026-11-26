@@ -164,6 +164,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "tool"
     );
 
+    // Row 1: !result.ok and native-pending
     assert.equal(
       stepHint({
         fold: makeFold(validBind, confirmed, approved, opened, delivered),
@@ -183,6 +184,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 2: excluded actions
     for (const action of [
       "ask run",
       "diagnostics render",
@@ -201,6 +203,7 @@ describe("stepHint state machine and router hint envelope", () => {
       );
     }
 
+    // Row 3: open escalation blocks; resolved escalation allows downstream hint
     const openEsc = rec(6, "escalation", {
       id: "E1",
       state: "open",
@@ -248,6 +251,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "Complete walkthrough report — help report complete — report complete --session <session>"
     );
 
+    // Row 4: !levelGate
     const xhighOrch = rec(5, "level", { level: "xhigh" }, "orchestrator");
     assert.equal(
       stepHint({
@@ -259,6 +263,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 5: !bind
     assert.equal(
       stepHint({
         fold: makeFold(confirmed),
@@ -269,6 +274,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 6: !confirmGate (newly confirmed spec missing or mismatched)
     assert.equal(
       stepHint({
         fold: makeFold(validBind),
@@ -298,6 +304,7 @@ describe("stepHint state machine and router hint envelope", () => {
       design: "d.design.md",
     });
 
+    // Missing level record yields undefined
     assert.equal(
       stepHint({
         fold: makeFold(confirm, designBind),
@@ -308,6 +315,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Design bind after level fires review run with --session, --host, and [--pins <pins>]
     assert.equal(
       stepHint({
         fold: makeFold(level, confirm, designBind),
@@ -318,6 +326,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "Run review — help review run — review run d.design.md --session <session> --host <platform> [--pins <pins>]"
     );
 
+    // Unsafe characters or >240-byte path substitute <artifact> keeping required flags intact
     const longTarget = `plans/${"x".repeat(240)}.plan.md`;
 
     for (const unsafeTarget of [
@@ -351,6 +360,7 @@ describe("stepHint state machine and router hint envelope", () => {
       );
     }
 
+    // Deduplicated bind yields undefined
     assert.equal(
       stepHint({
         fold: makeFold(level, confirm, designBind),
@@ -361,6 +371,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Spec-only bind yields undefined
     const specBind = rec(2, "bind", { spec: "s.spec.md" });
     assert.equal(
       stepHint({
@@ -372,6 +383,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Non-ledger-append action on bind yields undefined
     assert.equal(
       stepHint({
         fold: makeFold(level, confirm, designBind),
@@ -382,6 +394,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Design approved, then plan bound -> Row 7 fires for the plan!
     const designApproval = rec(
       3,
       "approval",
@@ -406,6 +419,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "Run review — help review run — review run p.plan.md --session <session> --host <platform> [--pins <pins>]"
     );
 
+    // Re-bind after ruling -> Row 7 fires for the newly bound artifact!
     const ruling = rec(3, "ruling", {
       subject: "review:plan-p.plan:R1-F001",
       ruling: "accepted",
@@ -423,6 +437,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "Run review — help review run — review run p.plan.md --session <session> --host <platform> [--pins <pins>]"
     );
 
+    // Approval or ruling with seq > at(-1).seq blocks Row 7
     const laterRuling = rec(5, "ruling", {
       subject: "review:plan-p.plan:R1-F001",
       ruling: "accepted",
@@ -439,6 +454,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Seeded increment session: bind + level + confirm (or status show) yields undefined
     const seededBind = rec(1, "bind", {
       spec: "s.spec.md",
       design: "d.design.md",
@@ -500,6 +516,7 @@ describe("stepHint state machine and router hint envelope", () => {
       "Approved"
     );
 
+    // Row 8: unapproved or unrecorded change
     assert.equal(
       stepHint({
         fold: makeFold(planBind, confirm),
@@ -519,6 +536,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 9: design-only approved -> undefined; approved plan before baseline check -> undefined
     assert.equal(
       stepHint({
         fold: makeFold(designBind, confirm, designApproval),
@@ -540,6 +558,7 @@ describe("stepHint state machine and router hint envelope", () => {
 
     const opened = openedIntegrate(4);
 
+    // Row 10: closed integration -> undefined
     const closed = rec(
       5,
       "integrate",
@@ -557,6 +576,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 11: pending conflict beats finished candidate
     const launched = rec(
       5,
       "writer",
@@ -609,6 +629,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Row 12 -> Row 13 -> cleanup -> committed -> status show sequence
     const delivered = rec(
       5,
       "integrate",
@@ -650,6 +671,7 @@ describe("stepHint state machine and router hint envelope", () => {
       undefined
     );
 
+    // Committed delivery: Row 12 MUST NOT fire; Row 13 still fires on report complete
     const committed = rec(
       6,
       "integrate",
@@ -763,6 +785,7 @@ describe("stepHint state machine and router hint envelope", () => {
         f.deps
       );
 
+      // Failed baseline check and opened integration without candidates omit hints (Row 15 default)
       assert.equal(
         stepHint({
           fold: foldLedger(f.session),
@@ -792,6 +815,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Active launch -> undefined
       const loadedPlan = loadPlan(f.session, manifest);
       const planChecks = checks(loadedPlan);
 
@@ -835,6 +859,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Superseded launch followed by active launch -> undefined
       await appendRecord(
         f.session,
         {
@@ -869,6 +894,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Two non-stale candidates -> picks lowest finished.seq (T2 finished before T1)
       await appendRecord(
         f.session,
         {
@@ -933,6 +959,7 @@ describe("stepHint state machine and router hint envelope", () => {
         "Integrate T2 — help worktree integrate — worktree integrate T2 --session <session>"
       );
 
+      // Integrate T2 without later passing clean evidence for T2's SC2 omits T1 integrate hint
       await appendRecord(
         f.session,
         {
@@ -958,6 +985,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Once passing clean non-mutating evidence for SC2 is recorded after T2 integration, check run on COMMIT_C emits T1 candidate hint
       await appendRecord(
         f.session,
         {
@@ -992,6 +1020,7 @@ describe("stepHint state machine and router hint envelope", () => {
         "Integrate T1 — help worktree integrate — worktree integrate T1 --session <session>"
       );
 
+      // Verify done T1 requires action === 'check run' and passing clean non-mutating evidence on the live check tree before suggesting Integrate T2
       const fDone = sessionFixture({ memory: true });
 
       try {
@@ -1193,6 +1222,7 @@ describe("stepHint state machine and router hint envelope", () => {
           }),
           undefined
         );
+        // Non-check-run action omits even when evidence is on COMMIT_B
         assert.equal(
           stepHint({
             fold: withEvidence("SC1", {}),
@@ -1204,6 +1234,7 @@ describe("stepHint state machine and router hint envelope", () => {
           }),
           undefined
         );
+        // Newer live check tree COMMIT_C omits when SC1 evidence is still on COMMIT_B
         assert.equal(
           stepHint({
             fold: withEvidence("SC1", {}),
@@ -1215,6 +1246,7 @@ describe("stepHint state machine and router hint envelope", () => {
           }),
           undefined
         );
+        // Unclean live check result omits
         assert.equal(
           stepHint({
             fold: withEvidence("SC1", {}),
@@ -1226,6 +1258,7 @@ describe("stepHint state machine and router hint envelope", () => {
           }),
           undefined
         );
+        // Matching live check run on COMMIT_B emits Integrate T2
         assert.equal(
           stepHint({
             fold: withEvidence("SC1", {}),
@@ -1241,6 +1274,7 @@ describe("stepHint state machine and router hint envelope", () => {
         fDone.cleanup();
       }
 
+      // Changed task section on disk with no later edit record -> stale -> undefined
       f.artifact(
         "p.plan.md",
         PLAN_SOURCE.replace(
@@ -1263,6 +1297,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Shared-context plan edit not naming the candidate task still suppresses Row 14
       f.artifact("p.plan.md", PLAN_SOURCE);
       await appendRecord(
         f.session,
@@ -1297,6 +1332,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Restore plan, then record plan edit affecting T1 -> stale -> undefined!
       await appendRecord(
         f.session,
         {
@@ -1330,6 +1366,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Unreadable plan when checking staleness -> fail-open omits (undefined)
       fs.rmSync(path.join(f.root, "p.plan.md"));
       assert.equal(
         stepHint({
@@ -1343,6 +1380,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Passing checks after all tasks integrated -> undefined
       f.artifact("p.plan.md", PLAN_SOURCE);
       await appendRecord(
         f.session,
@@ -1369,6 +1407,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Abandoned writer -> undefined
       const f2 = sessionFixture({ memory: true });
 
       try {
@@ -1666,6 +1705,7 @@ describe("stepHint state machine and router hint envelope", () => {
         f.deps
       );
 
+      // Multi-criterion done task with one criterion passing and the other missing -> undefined
       await appendRecord(
         f.session,
         {
@@ -1697,6 +1737,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Partial failure followed by repair fix record and subset rerun -> undefined (stale pre-fix SC1 and mismatched live tree)
       await appendRecord(
         f.session,
         {
@@ -1761,6 +1802,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Rerun SC1 on a different tree than SC2 -> undefined
       const treeD = "d".repeat(40);
       await appendRecord(
         f.session,
@@ -1793,6 +1835,7 @@ describe("stepHint state machine and router hint envelope", () => {
         undefined
       );
 
+      // Rerun SC1 on the same post-fix tree as SC2 -> emits Integrate T2
       await appendRecord(
         f.session,
         {
@@ -1824,6 +1867,7 @@ describe("stepHint state machine and router hint envelope", () => {
         "Integrate T2 — help worktree integrate — worktree integrate T2 --session <session>"
       );
 
+      // Discriminating post-fix seq test: both pass on COMMIT_B before fix, then check run on COMMIT_B without post-fix evidence yields undefined until both rerun after fix
       const fPostFix = sessionFixture({ memory: true });
 
       try {
@@ -2003,6 +2047,7 @@ describe("stepHint state machine and router hint envelope", () => {
           fPostFix.deps
         );
 
+        // Pre-fix evidence on COMMIT_B is rejected purely by ev.seq > minSeq
         assert.equal(
           stepHint({
             fold: foldLedger(fPostFix.session),
@@ -2068,6 +2113,7 @@ describe("stepHint state machine and router hint envelope", () => {
         fPostFix.cleanup();
       }
 
+      // Stale commandDigest after Check command edit on disk (plan re-approved so Row 8 gate passes and only commandDigest causes omission) -> undefined
       f.artifact(
         "p.plan.md",
         multiPlan.replace(
@@ -2107,6 +2153,7 @@ describe("stepHint state machine and router hint envelope", () => {
       f.cleanup();
     }
 
+    // Review-only done task (zero automated criteria) vacuously passes verification check and emits Integrate T2
     const reviewOnlyPlan = [
       "# Plan",
       "",
@@ -2415,6 +2462,7 @@ describe("stepHint state machine and router hint envelope", () => {
       fCap.cleanup();
     }
 
+    // Router envelope: ok:true excluded actions skip folding and omit hint; explicit --level doctor run succeeds on corrupt ledger; post-bind ledger append includes hint
     const f = sessionFixture({ memory: true });
 
     try {
@@ -2438,6 +2486,7 @@ describe("stepHint state machine and router hint envelope", () => {
         })
       );
 
+      // Successful review run via router (no handler-supplied reason -> router sets complete) omits hint
       assert.equal(isHintExcludedAction("review run"), true);
       assert.equal(isHintExcludedAction("status show"), false);
       f.lines.length = 0;
@@ -2469,6 +2518,7 @@ describe("stepHint state machine and router hint envelope", () => {
       assert.equal(f.output().reason, "complete");
       assert.equal("hint" in f.output(), false);
 
+      // Post-bind ledger append after level selection emits hint
       f.artifact("s.spec.md", SPEC_SOURCE);
       f.artifact("p.plan.md", PLAN_SOURCE);
 
@@ -2522,6 +2572,7 @@ describe("stepHint state machine and router hint envelope", () => {
         "Run review — help review run — review run p.plan.md --session <session> --host <platform> [--pins <pins>]"
       );
 
+      // Corrupt ledger + explicit --level on doctor run still succeeds (fail-open hint omission); excluded actions also omit without folding
       fs.writeFileSync(
         path.join(f.session, "ledger.jsonl"),
         '{"broken": true\n{"more":"broken"\n'
@@ -2549,6 +2600,7 @@ describe("stepHint state machine and router hint envelope", () => {
       assert.equal(f.output().ok, true);
       assert.equal("hint" in f.output(), false);
 
+      // Measure and report 500-record fold + currentHashes + stepHint latency
       const f500 = sessionFixture({ memory: true });
 
       try {

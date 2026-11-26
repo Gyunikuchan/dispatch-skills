@@ -344,6 +344,7 @@ const markdownSections = (text: string | undefined) => {
       return [];
     }
 
+    // Both groups are mandatory in the pattern.
     const [, marks = "", title = ""] = m;
 
     const id =
@@ -532,8 +533,13 @@ export const findingUnits = (input: {
   );
 };
 
+// SECTION: Review budget
 const CEILING_GRANT = /^(?:re-author|model-effort|relax-split):/u;
 
+/**
+ * cap₁ + 2 + 2 × R, where R counts ceiling ids that a tool opened and a later quoted user grant resolved.
+ * Close and defer grant nothing and apply only to the current ceiling id.
+ */
 const ceilingState = (
   records: readonly LedgerRecord[],
   review: string,
@@ -615,6 +621,11 @@ export interface ReviewBudget {
   coverage?: BudgetCoverage;
 }
 
+/** The single admission policy: launch refuses by `state`; status and summaries only report it, opening and granting nothing. */
+// Every content report for a round with its durable identity: findings.json
+// first, then each generation in numeric order and each attempt file in
+// numeric order. A clean generation contributes no identity. A report without
+// a numeric asOfSeq keeps identity 0.
 interface ReportContent {
   seq: number;
   repositoryChanges?: RepositoryChange[];
@@ -641,6 +652,10 @@ export const contentReports = (
       findings.repositoryChanges.length > 0) ||
     !!findings?.repositoryCheck;
 
+  // The finalized findings copy carries the same durable identity as its
+  // per-generation checkout report: finalize persists asOfSeq into
+  // findings.json, so one per-report decision closes both copies. The budget
+  // fallback covers older and hand-written files.
   let findingsSeq = 0;
 
   if (typeof findings?.asOfSeq === "number") {
@@ -766,6 +781,8 @@ export const rerunNotesFor = (fold: Fold, review: string, round: number) => {
   return out;
 };
 
+// A suffixed note covers only its named report and needs a strictly later
+// note sequence, so an equal-seq report under a reused number stays open.
 export const coversReport = (
   note: { seq: number; reportSeq: number },
   seq: number
@@ -787,6 +804,8 @@ export const isReportsClosed = (
   return seqs.every((seq) => notes.some((note) => coversReport(note, seq)));
 };
 
+// The report a rerun decision acknowledges is its explicit suffix. A later
+// report under the same number matches no stale decision.
 export const rerunCoverSeq = (
   session: string,
   review: string,
@@ -826,6 +845,11 @@ export const rerunGranted = (
   );
 };
 
+// Rerun admission counts per-report suffixed decisions: the shared
+// repository-note parser recognizes the suffixed key form, so a documented
+// suffixed decision grants its round. The pre-gate stays because admission
+// and isRerunRound scope the grant to one named round before binding it to
+// the current report via rerunGranted.
 export const repositoryRerunRounds = (fold: Fold, review: string) => {
   const rounds: number[] = [];
 
@@ -854,6 +878,10 @@ export const repositoryRerunRounds = (fold: Fold, review: string) => {
   return rounds;
 };
 
+// Every unacknowledged report file of one generation: the first write lands in
+// checkout-report.json and each retry in checkout-report-<k>.json, so a later
+// clean comparison never erases an earlier report. Numeric attempt order.
+// The tool writes these files, so the stored read trusts their field shapes as it does findings.json.
 interface CheckoutReportRead {
   repositoryChanges?: RepositoryChange[];
   repositoryCheck?: RepositoryCheckState;
@@ -903,6 +931,9 @@ export const admission = (
   );
 
   const last = numbers.at(-1) ?? 0;
+  // An all-failed round has no findings.json but keeps its failed report: a
+  // quoted rerun note naming it completes its number, so the next call starts
+  // the authorized fresh whole-target rerun instead of retrying failed fan-out.
   let completed = last > 0 && fs.existsSync(reviewFindingsFile(roundDir(last)));
 
   if (
@@ -958,6 +989,7 @@ export const admission = (
 
   const past = completed && n > ceiling.ceiling;
 
+  // Close and defer grant no rounds; a pending MUST rejection keeps its confirmation round.
   let state: ReviewBudget["state"] = "allowed";
 
   if (
@@ -974,6 +1006,8 @@ export const admission = (
     state = "requires-ceiling-resolution";
   }
 
+  // A user rerun note admits its named round + 1 once above the cap and below the
+  // ceiling. Escalation and ceiling checks above stay first; other rounds keep no grant.
   if (state === "requires-continuation" && n > cap1 && n <= ceiling.ceiling) {
     const reruns = repositoryRerunRounds(fold, review);
     const seqs = reportSeqs(session, review, n - 1);
@@ -988,6 +1022,7 @@ export const admission = (
     }
   }
 
+  // SECTION: Coverage rows (code-integration only); escalation, ceiling and accepted-MUST rules stay first.
   let coverage: BudgetCoverage | undefined;
   let folded: CoverageState | undefined;
   let use: "free" | "grant" | undefined;
@@ -1035,7 +1070,9 @@ export const admission = (
           state = "requires-coverage-decision";
         }
       }
-    } else if (
+    }
+    // NOTE: past the ceiling no round can run, so only the user's accept can settle a slot that delivery refuses.
+    else if (
       state === "requires-continuation" &&
       past &&
       folded.open.length &&

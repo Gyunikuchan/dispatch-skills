@@ -168,6 +168,7 @@ export const recoveryTargetHash = ({
 export const label = (target: ReviewTarget) =>
   typeof target === "string" ? target : target.head;
 
+// An artifact target is a bare hash, so it has no base or head.
 export const baseOf = (target: ReviewTarget) =>
   typeof target === "string" ? undefined : target.base;
 

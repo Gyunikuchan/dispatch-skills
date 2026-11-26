@@ -75,6 +75,7 @@ export const planSource = [
   "",
 ].join("\n");
 
+// Plan and design lint require a sibling context map; Coverage stays empty so plan lint adds no coverage warnings.
 export const contextMapSource = [
   "# Context map: work",
   "",
@@ -98,6 +99,7 @@ const getBaseTemplate = () => {
       try {
         fs.rmSync(dir, { recursive: true, force: true });
       } catch {
+        // Ignore cleanup errors on exit.
         // WARNING: template cleanup is best-effort; failures must not fail process exit.
       }
     });
@@ -189,8 +191,10 @@ export const toolkitRepo = async (
     })
   );
   const deps: CliDeps = nodeDeps();
+  // These tests stub `delegate`, so rosters must not depend on the host sandbox.
   delete deps.sandboxSupported;
 
+  // Each session folder binds the same spec and plan and gets its own run helpers.
   const attach = async (target: string) => {
     await appendRecord(
       target,
@@ -478,6 +482,7 @@ export const toolkitRepo = async (
 
   const first = await attach(session);
 
+  // Opens another session folder in this repository, as `session init --session-id` does.
   const second = async (sessionId: string) => {
     const located: unknown = initSession({
       repositoryRoot: root,

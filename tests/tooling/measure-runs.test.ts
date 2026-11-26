@@ -62,6 +62,7 @@ const unusedPort = (): never => {
   throw new Error("unused CliDeps port");
 };
 
+// Unused ports reject loudly, so a measurement that starts to need one fails its test.
 const cliDeps = (ports: Partial<CliDeps>) => ({
   delegate: unusedPort,
   modes: unusedPort,
@@ -193,8 +194,10 @@ const writeCapture = (
   });
 };
 
+// A reviewer run without usage is an unpriced unit.
 const REVIEWER_USAGE = { input: 10, output: 5 };
 
+// Standard fixture cost: two host rows (999/1 and 100/50) plus three reviewer runs, priced at PRICING rates.
 const FIXTURE_COST =
   (999 * 2 +
     1 * 10 +
@@ -216,6 +219,7 @@ const reviewRun = (subject: string) => ({
   usage: REVIEWER_USAGE,
 });
 
+// Two completed plan rounds and one unfinished round; `base` is the path string the recorded subjects hash.
 const writeRoundFixture = (session: string, base: string = session) => {
   for (const round of [1, 2, 3]) {
     writeRound(session, round, round !== 3);
@@ -348,6 +352,7 @@ const snapshot = (dir: string) => {
   return files;
 };
 
+// Another path string for the same folder: a lowercase drive letter on Windows, otherwise a directory symlink.
 const aliasOf = (fx: Fixture, session: string) => {
   if (process.platform === "win32") {
     const alias = session.replace(
@@ -986,6 +991,7 @@ test("a missing pricing file fails the run naming the file", () => {
   }
 });
 
+// Runs the CLI for one side; pricing.json and pairs.json sit in the fixture root, which is the working directory.
 const runSingleSide = (fx: Fixture, session: string, out: string) => {
   writeJson(path.join(fx.root, "pricing.json"), PRICING);
   writeJson(path.join(fx.root, "pairs.json"), {
@@ -1147,6 +1153,7 @@ test("a round with an unreadable round.json or findings.json is excluded and nam
   }
 });
 
+// Symlink creation can be refused on Windows hosts without developer mode; the test is then skipped, as the alias test is.
 const linkOrSkip = (
   t: { skip: (message?: string) => void },
   target: string,

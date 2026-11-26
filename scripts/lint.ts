@@ -129,6 +129,7 @@ if (process.argv.includes("--all")) {
 
   process.exitCode = result.status ?? 1;
 } else {
+  // The annotation format supplies both ends of the primary diagnostic span.
   const changed = changedLines();
 
   const result = spawnSync(
@@ -159,6 +160,7 @@ if (process.argv.includes("--all")) {
       ) ?? [];
 
     if (file === undefined || message === undefined) {
+      // Keep configuration and tool failures visible even when no source lines changed.
       process.stderr.write(`${line}\n`);
       errors += 1;
     } else if (

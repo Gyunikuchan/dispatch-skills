@@ -342,6 +342,7 @@ test("status retains recovery status with broken and missing plan", async () => 
       fs.readFileSync(defined(f.output().path), "utf-8")
     );
 
+    // Check broken plan behavior
     f.lines.length = 0;
     fs.writeFileSync(plan, "# Broken plan\n");
     assert.equal(
@@ -371,6 +372,7 @@ test("status retains recovery status with broken and missing plan", async () => 
       /defect|missing|required|task|section/iu
     );
 
+    // Check missing plan behavior
     f.lines.length = 0;
     fs.rmSync(plan);
     assert.equal(
@@ -492,6 +494,7 @@ const write = (file: string, value: unknown) => {
 };
 
 test("status budget and coverage admission reflect rulings and open slots", async () => {
+  // status budget reflects rulings after completion
   {
     const f = sessionFixture({ memory: true });
 
@@ -567,6 +570,7 @@ test("status budget and coverage admission reflect rulings and open slots", asyn
     }
   }
 
+  // status reports coverage admission for open and unreadable slots
   {
     const f = sessionFixture({ memory: true });
 
@@ -628,6 +632,7 @@ test("status budget and coverage admission reflect rulings and open slots", asyn
         ).reviews[review];
       };
 
+      // An entry-less failure cannot be ordered, so coverage is unreadable but status still answers.
       assert.deepEqual(await budget(), {
         cap: 1,
         ceiling: 3,

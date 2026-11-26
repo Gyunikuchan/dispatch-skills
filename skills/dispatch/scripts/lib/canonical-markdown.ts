@@ -1,3 +1,9 @@
+// Canonical Markdown form used as the hash input. Formatter-only differences collapse;
+// differences that change CommonMark/GFM structure or literal text stay distinct.
+
+// NOTE: code spans may span lines. `open` carries an unclosed backtick run length from the previous
+// paragraph line; `later` holds the paragraph's later lines. A run closed only in `later` keeps the rest
+// of the line verbatim so whitespace inside stays distinct; a run never closed is literal prose.
 // oxlint-disable-next-line eslint/complexity -- inline emphasis/code scanner state machine; refactor deferred to avoid behavior drift.
 const inlineSpan = (s: string, open: number, later: string) => {
   const n = s.length;
@@ -180,6 +186,7 @@ const inlineSpan = (s: string, open: number, later: string) => {
   return { out, open: pending };
 };
 
+// True when the next non-blank line at `level` is indented by 4 or more (indented code continues).
 const nextIndentedAt = (
   full: { level: number; rest: string }[],
   from: number,
@@ -202,6 +209,7 @@ const nextIndentedAt = (
 
 // oxlint-disable-next-line eslint/complexity -- block finalizer mirrors the canonical Markdown block table; refactor deferred.
 const finish = (blocks: Block[]) => {
+  // A prose line followed by a paragraph line of the same level keeps a trailing hard break.
   for (const [index, b] of blocks.entries()) {
     const after = blocks[index + 1];
 
@@ -210,6 +218,7 @@ const finish = (blocks: Block[]) => {
     }
   }
 
+  // A code span left open continues only into later lines of the same paragraph.
   let open = 0;
 
   for (const [index, b] of blocks.entries()) {
@@ -246,6 +255,7 @@ const finish = (blocks: Block[]) => {
     }
   }
 
+  // Collapse runs of blank lines at the same blockquote level into one.
   const items: Block[] = [];
 
   for (const b of blocks) {
@@ -290,13 +300,19 @@ type BlockKind =
 
 interface Block {
   kind: BlockKind;
+  // blockquote depth
   level: number;
+  // leading whitespace width of the opening line (tab = 4)
   width: number;
   lines: string[];
+  // prose: leading whitespace plus list marker
   head: string;
+  // prose: source after the head
   text: string;
+  // trailing hard-break marker candidate
   brk: "spaces" | "backslash" | null;
   hard: boolean;
+  // list item that can interrupt a paragraph
   interrupts: boolean;
   closed: boolean;
   closeWidth: number;
@@ -313,6 +329,7 @@ const THEMATIC = /^(?<rg1>[-*_])(?<rg2>[ \t]*\1){2,}[ \t]*$/u;
 const ATX = /^(?<rg1>#{1,6})(?:[ \t]+(?<rg2>.*?))?(?:[ \t]+#+)?[ \t]*$/u;
 const LIST = /^(?<rg1>[-*+]|\d{1,9}[.)])(?=[ \t]|$)(?<rg2>[ \t]*)(?<rg3>.*)$/u;
 
+// CommonMark HTML block starts: types 1-6 may interrupt a paragraph; type 7 (a lone complete tag) may not.
 // NOTE: tag regexes omit `u`; CommonMark tag names are ASCII and `iu` folds U+017F to `s`.
 // oxlint-disable-next-line eslint/require-unicode-regexp -- see NOTE above.
 const HTML_RAW = /^<(?<rg1>pre|script|style|textarea)(?=[\s>]|$)/i;
@@ -327,6 +344,8 @@ const HTML_LONE_TAG =
 
 const FENCE = /^(?<rg1>`{3,}|~{3,})(?<rg2>.*)$/u;
 const DELIM_CELL = /^:?-+:?$/u;
+
+// SECTION: helpers
 
 const make = (
   kind: BlockKind,
@@ -353,6 +372,7 @@ const make = (
   ...extra,
 });
 
+// NOTE: a blockquote line with no text renders as bare `>` so it stays a distinct empty quote line.
 const wrap = (level: number, body: string) => {
   if (level === 0) {
     return body;
@@ -385,6 +405,7 @@ const stripAllQuotes = (line: string) => {
   return { level, rest };
 };
 
+// Strips exactly `count` blockquote markers; null when the line has fewer, so the quote ended.
 const stripQuotes = (line: string, count: number) => {
   let rest = line;
 
@@ -411,6 +432,7 @@ const runLength = (s: string, at: number, ch: string) => {
   return end - at;
 };
 
+// Index of the next run of exactly `len` `ch` at or after `from`, or -1.
 const findRun = (s: string, from: number, ch: string, len: number) => {
   for (let p = from; p < s.length;) {
     if (s[p] !== ch) {
@@ -479,8 +501,15 @@ const startsBlock = (content: string, width: number) => {
   );
 };
 
+// SECTION: inline
+
+// Keeps code spans, escapes, autolinks, inline HTML and link destinations verbatim;
+// rewrites flanking `_`/`__` emphasis to `*`/`**`, collapses whitespace and trims the end.
 const inline = (s: string) => inlineSpan(s, 0, "").out;
 
+// SECTION: tables
+
+// Splits on unescaped pipes outside code spans; cells are trimmed.
 const splitCells = (body: string) => {
   const cells: string[] = [];
   let cur = "";
@@ -534,6 +563,7 @@ const tableCells = (content: string) => {
 
   const cells = splitCells(body);
 
+  // NOTE: a row with no pipe at all keeps its bare form; it is distinct from a piped row.
   return { cells, piped: piped || cells.length > 1 };
 };
 
@@ -557,6 +587,8 @@ const tableLine = (lead: string, content: string, delimiter: boolean) => {
 
   return `${lead}|${body}|`;
 };
+
+// SECTION: fences
 
 const renderFence = (b: Block) => {
   const char = b.info.includes("`") ? "~" : "`";
@@ -584,9 +616,12 @@ const renderFence = (b: Block) => {
   return out;
 };
 
+// SECTION: prose and block-run rules
+
 const renderProse = (b: Block, open: number, later: string) => {
   const whole = inlineSpan(b.text, open, later);
 
+  // NOTE: a line ending inside a code span has no hard break; its trailing spaces or backslash are code.
   const hard = b.hard && b.brk !== null && whole.open === 0;
 
   if (!hard) {
@@ -602,6 +637,7 @@ const renderProse = (b: Block, open: number, later: string) => {
   };
 };
 
+// Index of the first block of the paragraph run containing blocks[index] (same blockquote level).
 const paragraphRunStart = (blocks: Block[], index: number) => {
   const level = blocks[index]?.level;
   let j = index;
@@ -631,6 +667,7 @@ const isSpecial = (b: Block, side: "start" | "end") => {
   return (b.kind === "heading" || b.kind === "thematic") && isPlain(b, side);
 };
 
+// True when a top-level blank line between blocks p and n has no structural effect.
 // oxlint-disable-next-line eslint/complexity -- blank-line cleanup walks adjacent block kinds; refactor deferred.
 const dropBlank = (items: Block[], k: number) => {
   let p = k - 1;
@@ -678,6 +715,8 @@ const dropBlank = (items: Block[], k: number) => {
 
   return ruleB;
 };
+
+// SECTION: canonicalization
 
 // oxlint-disable-next-line eslint/complexity -- canonicalizer dispatch has one branch per Markdown construct; refactor deferred.
 export const canonicalMarkdown = (text: string) => {
@@ -832,6 +871,7 @@ export const canonicalMarkdown = (text: string) => {
       }
     }
 
+    // NOTE: HTML block bodies pass verbatim, so whitespace inside `<pre>` and similar stays distinct.
     const lone =
       HTML_LONE_TAG.test(content) &&
       !(prev?.kind === "para" && prev.level === level);
@@ -900,6 +940,7 @@ export const canonicalMarkdown = (text: string) => {
       const numeric = /^\d/u.test(marker);
       blocks.push(
         make("list", level, width, {
+          // NOTE: the gap after the marker passes verbatim; its width sets content indent and indented code.
           head: lead + marker + (item[2] ?? ""),
           text: body,
           brk: trailingBreak(body),

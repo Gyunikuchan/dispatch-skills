@@ -69,6 +69,7 @@ export const capSummary = (text: string) => {
   return `${clipped}…`;
 };
 
+// Counts stay in `head` so a truncated list never hides totals; the omission notice is budgeted before any item.
 const SUMMARY_ITEM_LIMIT = 5;
 const SUMMARY_ITEM_BYTES = 200;
 

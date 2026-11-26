@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+// NOTE: literal dynamic import keeps each leaf test independently failing while the module is absent; tsc still types it.
 import {
   main,
   parseLink,
@@ -79,6 +80,8 @@ const requestUrl = (input: Parameters<typeof globalThis.fetch>[0]) => {
 
   return "href" in input ? input.href : input.url;
 };
+
+// SECTION: X posts
 
 test("X post renders author, text, counts, media URLs, quoted post, and same-author thread in order", async () => {
   const requests: { url: string; userAgent: string | null }[] = [];
@@ -195,6 +198,8 @@ test("X post omits Thread section when thread contains only the requested post",
   assert.equal(code, 0);
   assert.doesNotMatch(out.join(""), /## Thread/u);
 });
+
+// SECTION: YouTube URLs and metadata
 
 test("YouTube URL parsing normalizes all accepted forms and rejects unsupported URLs", async () => {
   await Promise.resolve();
@@ -344,6 +349,8 @@ const runWithTracks = async (
   return { fetchedCaptionUrl, markdown: out.join("") };
 };
 
+// SECTION: Transcript track selection and formatting
+
 test("transcript track selection prefers English manual, then English asr, then first manual, then first track", async () => {
   // Prefers English manual over English asr and other manual
   const enManual = await runWithTracks([
@@ -396,6 +403,8 @@ test("transcript track selection prefers English manual, then English asr, then 
   );
   assert.match(otherManual.markdown, /## Transcript \(ja\)/u);
 });
+
+// SECTION: Long transcript bounding
 
 test("long transcript over 60,000 bytes writes full Markdown via writeTemp and bounds stdout under 64 KB", async () => {
   const events = Array.from({ length: 800 }, (_, i) => ({
@@ -451,6 +460,8 @@ test("long transcript over 60,000 bytes writes full Markdown via writeTemp and b
   assert.match(stdoutText, /\/tmp\/link-reader-jP9yjEDlc4k\.md/u);
   assert.match(stdoutText, /Segment 0/u);
 });
+
+// SECTION: Failures and fallbacks
 
 test("failure: empty caption body with unavailable yt-dlp prints metadata and unavailable note with exit 0", async () => {
   let ytDlpCalled = false;

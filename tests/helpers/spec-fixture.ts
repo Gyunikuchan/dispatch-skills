@@ -1,3 +1,5 @@
+// Shared governing-spec fixture for end-to-end sessions.
+
 /** A spec that lints clean at every level. */
 export const SPEC_SOURCE = [
   "# Fixture spec",

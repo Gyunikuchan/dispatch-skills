@@ -7,6 +7,7 @@ export const classifyFailure = (text: string): FailureClass | null => {
     return null;
   }
 
+  // A missing or lapsed plan needs user action, so it is auth and takes precedence over quota wording.
   if (
     /(?<rg1>no (?<rg2>active )?subscription|subscription (?<rg3>is )?(?<rg4>required|expired|inactive|not found)|payment required|\b402\b)/iu.test(
       text

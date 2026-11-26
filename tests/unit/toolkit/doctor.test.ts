@@ -217,6 +217,7 @@ test("doctor utility entry resolves contextLimit, reports missing host entry, an
       return readDoctorOutput(f.output().path);
     };
 
+    // Resolves contextLimit and removes explorers field
     const report = await run();
     assert.equal(report.ok, true);
     assert.equal(report.explorers, undefined);
@@ -227,6 +228,7 @@ test("doctor utility entry resolves contextLimit, reports missing host entry, an
       launchAs: "launch: model fast-explorer, effort low",
     });
 
+    // Missing host entry: config has utility-subagents for claude only, but host is codex
     fs.writeFileSync(
       config,
       JSON.stringify({
@@ -251,6 +253,7 @@ test("doctor utility entry resolves contextLimit, reports missing host entry, an
       )
     );
 
+    // No utility-subagents table at all
     fs.writeFileSync(
       config,
       JSON.stringify({
@@ -268,6 +271,7 @@ test("doctor utility entry resolves contextLimit, reports missing host entry, an
       )
     );
 
+    // No writer fallback: write-subagents present for codex, but no utility-subagents
     fs.writeFileSync(
       config,
       JSON.stringify({
@@ -768,6 +772,7 @@ test("doctor requires an alias-normalized write-subagents entry for the host", a
       return readDoctorOutput(f.output().path);
     };
 
+    // Missing host writer entry (other host present)
     fs.writeFileSync(
       config,
       JSON.stringify({
@@ -791,6 +796,7 @@ test("doctor requires an alias-normalized write-subagents entry for the host", a
       )
     );
 
+    // Alias key satisfies canonical host and normalizes writers key
     fs.writeFileSync(
       config,
       JSON.stringify({
