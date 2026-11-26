@@ -56,6 +56,7 @@ const cell = (value: unknown) =>
       .trim()
   );
 
+// Only captured responder metadata identifies the model; roster effort needs a matching CLI slot.
 // oxlint-disable-next-line eslint/complexity -- label branches per responder nativeness, physical-slot match, and effort presence.
 const slotLabel = (round: ReviewRound, id: string) => {
   const sourceSlot = round.roster.find((slot) => slot.slot === id);
@@ -450,6 +451,7 @@ export const refreshFindingsSection = (
       path: path.resolve(session, round.path),
     }));
 
+    // Recomputed from the current ledger with the launch admission policy; showing it grants nothing.
     const budget = current.rounds.length
       ? `Budget (${line(review)}): ${renderBudget(admission(session, fold, review, 0).budget)}`
       : undefined;

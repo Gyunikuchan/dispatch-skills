@@ -1,7 +1,11 @@
 import type { OsId, PlatformEnv } from "../lib/platform.ts";
 
+// cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 
+// SECTION: Credential stripping
+
+/** Non-secret variables delegates may inherit; every credential is stripped by omission. */
 const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   "PATH",
   "Path",
@@ -39,6 +43,7 @@ const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   "ComSpec",
   "GIT_EXEC_PATH",
 
+  // Reachability and identity: endpoints and paths, never tokens.
   "HTTP_PROXY",
   "http_proxy",
   "HTTPS_PROXY",
@@ -65,6 +70,7 @@ const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   "TZ",
 ]);
 
+// NOTE: redundant with the whitelist by construction; catches a credential-shaped name added to it by mistake.
 const SENSITIVE_ENV_KEY =
   /(?<rg1>KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/iu;
 
@@ -107,6 +113,8 @@ export const resolveComSpec = (
   return "cmd.exe";
 };
 
+// SECTION: Argv spill
+
 export const isBatchLauncher = (os: string, binary: string) =>
   os === "win32" && /\.(?:bat|cmd)$/iu.test(binary);
 
@@ -128,6 +136,8 @@ export const mustSpill = (
 };
 
 export const KILL_ESCALATION_MS = 1000;
+
+// SECTION: Tree kill
 
 /** The Windows tree-kill launch; POSIX signals the negative pid (process group) instead. */
 export const killArgv = (os: OsId, pid: number) =>
@@ -161,14 +171,16 @@ export const waitWithin = async <T>(promise: Promise<T>, ms: number) =>
     );
   });
 
+// SECTION: Windows batch launchers
+
 const CMD_META_CHARS = /(?<rg1>[()\]!^"`<>&|;, *?])/gu;
 
 const escapeCmdArgument = (argument: string) => {
-  // A .bat re-parses its own arguments, so escapes must survive twice (qntm.org/cmd).
   const quoted = `"${argument
     .replaceAll(/(?<rg1>\\*)"/gu, String.raw`$1$1\"`)
     .replace(/(?<rg1>\\*)$/u, "$1$1")}"`.replaceAll(CMD_META_CHARS, "^$1");
 
+  // A .bat re-parses its own arguments, so escapes must survive twice (qntm.org/cmd).
   return quoted.replaceAll(CMD_META_CHARS, "^$1");
 };
 
@@ -192,7 +204,7 @@ export const batchInvocation = (
     );
   }
 
-  // NOTE: cmd expands %VAR% even inside caret escapes; spilling is the only safe route for args.
+  // NOTE: cmd.exe expands %VAR% before caret escapes apply, so no escape makes % literal.
   if (binary.includes("%")) {
     throw new Error("batch launcher path contains %; cmd.exe would expand it");
   }

@@ -25,6 +25,7 @@ import { capSummary } from "./toolkit/output.ts";
 const GROUNDING_INSTRUCTIONS =
   "When a verb needs a new spec, run `doctor run --host <platform>` and ground under references/grounding.md before authoring the spec; after confirming it, ground again before design or plan authoring. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery.";
 
+// SECTION: help — prints call table from contracts or one toolkit.md section as raw text; reads no session, config or ledger.
 const printHelp = (heading: string, deps: EntryDeps) => {
   const fail = (summary: string, reason: string, exit: number) => {
     deps.stdout(
@@ -127,6 +128,7 @@ export const main = async (
   deps: EntryDeps = nodeDeps()
 ) => {
   if (argv[0] === "help") {
+    // NOTE: a `--flag` token and the token after it are options, not heading text.
     const words = argv
       .slice(1)
       .filter(
@@ -335,6 +337,7 @@ export const isEntry = (
   argvPath !== "" &&
   pathToFileURL(realpath(path.resolve(argvPath))).href === moduleUrl;
 
+// NOTE: Node resolves symlinks for import.meta.url but not argv[1]; compare real paths so symlinked skill installs run.
 if (isEntry(process.argv[1])) {
   process.exitCode = await main();
 }

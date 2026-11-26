@@ -90,6 +90,7 @@ export interface SessionRead {
 
 const actors = new WeakMap<DelegateResponse, string>();
 
+// Keep lineage out of serializable invocation rows.
 export const delegateResponseActor = (response: DelegateResponse) =>
   actors.get(response);
 
@@ -302,6 +303,7 @@ export const readDelegateSession = (query: DelegateQuery): SessionRead => {
 
   const { rows } = result;
 
+  // Descendant-only rows can still supply usage when the root has no accepted records.
   const incomplete =
     hasNotes ||
     (hasText(result.unavailable) &&

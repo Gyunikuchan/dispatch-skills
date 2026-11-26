@@ -24,6 +24,7 @@ const buildRow = (
     stage: stageAt(query.stages, message.createdMs),
     role: message.depth === 0 ? rootRole : "subagent",
 
+    // Empty parts fail the report gates and render as `—` without another label.
     model: message.model ?? "",
     effort: message.effort,
     depth: message.depth,
@@ -126,6 +127,7 @@ export const collectOpencodeUsage: (
     return { ...result, unavailable: readErrorReason(error) };
   }
 
+  // Skipped or row-capped messages can come from any session in the query.
   if (result.response && (read.skipped > 0 || read.truncated === "rows")) {
     result.response.limited = true;
   }
@@ -134,6 +136,7 @@ export const collectOpencodeUsage: (
     result.rows.push(buildRow(message, query, result, rootRole));
   }
 
+  // The reader sums skipped messages across the root and its descendants without a role split.
   if (read.skipped > 0) {
     note(notes, "host", "unparsed lines", read.skipped);
   }

@@ -141,6 +141,7 @@ const code = (value: string) => {
   return `${delimiter}${text}${delimiter}`;
 };
 
+// Escaped comment openers are inert, so keep Mermaid arrows and similar `-->` text intact.
 const visualLine = (value: string) =>
   neutralizeComments(value).replaceAll("--&gt;", "-->");
 

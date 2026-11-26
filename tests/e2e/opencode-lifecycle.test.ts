@@ -58,6 +58,7 @@ const ownedProcessAlive = (pid: number) => {
   }
 };
 
+// A detached descendant is not our child, so no exit event exists: only its PID shows the exit.
 const assertOwnedProcessExited = async (
   pid: number,
   deadline = Date.now() + 2000
@@ -87,6 +88,7 @@ const makeFixture = (scenario: Scenario) => {
 
   const childPidPath = path.join(root, "child.pid");
 
+  // Windows releases a killed descendant's cwd handle after reporting its exit, so an escaped one starts outside the fixture.
   const escapedCwd = JSON.stringify(path.dirname(process.execPath));
 
   const source = `
@@ -529,6 +531,7 @@ test("OpenCode private runs settle success, failure, timeout, and output cap", a
             } else {
               await assertOwnedProcessExited(childPid);
             }
+            // Fixture teardown happens only after lifecycle evidence has been checked.
           }
 
           if (scenario === "timeout" || scenario === "cap") {
@@ -625,6 +628,7 @@ test("OpenCode closed-stdio descendants expose the accepted Windows limit and se
           const alive = ownedProcessAlive(pid);
 
           if (process.platform === "win32") {
+            // Immediate CLI exit cannot confirm a detached child's exit without native containment.
             assert.equal(
               alive,
               true,
@@ -699,6 +703,7 @@ test("OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty", a
       await hanging.cleanup();
     }
 
+    // Preflight steps ride on the unlaunched row of the same delegate call, and only when requested.
     const unsupported = makeFixture("unsupported");
 
     const originalPath = process.env["PATH"];
@@ -782,6 +787,7 @@ test("OpenCode lifecycle diagnostics preserve deadlines and exit uncertainty", a
               );
             }
 
+            // The accepted Windows limit reports an unconfirmed tree; POSIX group settlement confirms it.
             assert.equal(
               defined(by.get("teardown"), "teardown").outcome,
               run.result?.lifecycleError === undefined ? "ok" : "unconfirmed"

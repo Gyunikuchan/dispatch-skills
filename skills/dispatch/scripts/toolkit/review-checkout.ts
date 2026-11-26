@@ -75,6 +75,10 @@ const UNAVAILABLE = (reason: string): RepositoryCheckState => ({
   reason,
 });
 
+// Fingerprints stream file contents in bounded chunks: the plan requires an
+// uncapped content hash, but the read itself stays proportional to the chunk,
+// not the file. Error mapping is unchanged (ENOENT becomes deleted, any other
+// error throws).
 const hashFileContents = (full: string) => {
   const hash = crypto.createHash("sha256");
   const fd = fs.openSync(full, "r");
@@ -96,12 +100,16 @@ const hashFileContents = (full: string) => {
       fs.closeSync(fd);
     } catch {
       void 0;
+      /* the content hash already settled; a close failure carries no fingerprint */
     }
   }
 
   return hash.digest("hex");
 };
 
+// One entry per path keeps the raw porcelain record (modes, index hash, XY state),
+// the lstat executable bit (covers untracked and index-flagged files) and a content
+// fingerprint (covers a second edit of a dirty path). No size cap applies.
 const fingerprintFor = (cwd: string, rel: string): Fingerprint => {
   const full = path.join(cwd, ...rel.split("/"));
   let stat: fs.Stats;
@@ -195,6 +203,7 @@ const parseStatus = (raw: string) => {
     if (entry.startsWith("1 ")) {
       const parts = entry.split(" ");
 
+      // 1 <XY> <subm> <mH> <mI> <mW> <hH> <hI> <path>
       if (parts.length >= 9) {
         out.set(parts.slice(8).join(" "), entry);
       }
@@ -258,6 +267,10 @@ const isGitlinkDirty = (statusRaw: string, fingerprint: string) => {
   }
 
   const parts = statusRaw.split(" ");
+  // Empirical porcelain v2 shape: clean has no entry; dirty worktree shows
+  // subm S.M. (modified), S..U (untracked) or SCM. (commit plus dirty).
+  // S prefix alone marks a gitlink; S... (staged, clean worktree) and
+  // SC.. (commit changed, clean worktree) are not dirty worktree state.
   const subm = parts[2] ?? "";
 
   return subm.includes("M") || subm.includes("U");
@@ -315,6 +328,8 @@ export const captureCheckouts = async (
     const flagged = parseFlagged(flaggedResult.stdout);
     const prefix = sessionPrefix(path.resolve(cwd), path.resolve(sessionDir));
     const names = new Set([...statusMap.keys(), ...flagged]);
+    // A null-prototype map: a repository-root path named __proto__ must create
+    // an entry instead of invoking Object.prototype's setter.
     const entries: CheckoutEntryMap = {};
     Object.setPrototypeOf(entries, null);
 
@@ -341,6 +356,8 @@ const diffEntries = (baseline: CheckoutEntryMap, current: CheckoutEntryMap) => {
     ...Object.keys(baseline),
     ...Object.keys(current),
   ])) {
+    // Own-property reads: a "__proto__" entry must compare its stored value,
+    // never Object.prototype on a side that lacks the path.
     const left = Object.hasOwn(baseline, name) ? baseline[name] : undefined;
     const right = Object.hasOwn(current, name) ? current[name] : undefined;
 
@@ -352,6 +369,8 @@ const diffEntries = (baseline: CheckoutEntryMap, current: CheckoutEntryMap) => {
   return changed.toSorted();
 };
 
+// Stored entries keep trailing ` <exec> <fingerprint>` tokens without spaces, so the
+// raw porcelain record is everything before those two tokens.
 const splitStored = (stored: string | undefined): StoredEntry => {
   if (stored === undefined) {
     return { raw: "", fingerprint: "" };
@@ -408,6 +427,8 @@ export const compareCheckouts = async (
 
     const paths = new Set<string>();
 
+    // A moved HEAD that leaves the target unchanged still lists its diff, so both
+    // sides of a committed rename appear in the report.
     if (prev.head !== next.head) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- iterations share mutable orchestration state and control flow; sequential execution is by design.
       const diff = await git(deps, key, [
@@ -429,7 +450,14 @@ export const compareCheckouts = async (
       }
     }
 
+    // A dirty gitlink in both snapshots keeps the same porcelain record and
+    // directory fingerprint, so diffEntries omits it. Check every entry present
+    // in both snapshots for dirty worktree in both, including ignore=dirty
+    // (captured with --ignore-submodules=none), and report unavailable.
     for (const name of Object.keys(prev.entries)) {
+      // Own-property gate: "__proto__" is an inherited member of every plain
+      // parsed object, so `in` alone would compare a missing path against
+      // Object.prototype instead of skipping it.
       if (!Object.hasOwn(next.entries, name)) {
         continue;
       }
@@ -473,6 +501,8 @@ export const compareCheckouts = async (
   return { repositoryChanges };
 };
 
+// Compared directories are the round cwd, the repository root and, for a task
+// review, the launch worktree path resolved against the session, without duplicates.
 const comparedDirs = (
   session: string,
   repositoryRoot: string,
@@ -497,6 +527,10 @@ const baselineFileFor = (dir: string, generation: number) =>
 const checkoutReportFileFor = (dir: string, generation: number) =>
   path.join(reviewGenerationDirectory(dir, generation), "checkout-report.json");
 
+// Retries never overwrite an unacknowledged report: the first write of a
+// generation lands in checkout-report.json and every later write in the next
+// free checkout-report-<k>.json, so a restored path or a clean comparison
+// cannot erase an earlier report before a closing note exists.
 const checkoutReportAttemptFor = (dir: string, generation: number) => {
   const canonical = checkoutReportFileFor(dir, generation);
 
@@ -532,6 +566,9 @@ export const writeCheckoutReport = (
   atomic(checkoutReportAttemptFor(dir, generation), checkout);
 };
 
+// Durable per-generation evidence that a native voice launched, covering
+// every native descriptor (native-first, native-only, reserve substitutes).
+// fanout.json carries it; only nativeFirst selects the wave path.
 export const generationLaunchedNative = (dir: string, generation: number) => {
   try {
     const fanout: unknown = JSON.parse(
@@ -541,6 +578,7 @@ export const generationLaunchedNative = (dir: string, generation: number) => {
       )
     );
 
+    // A null document is unreadable evidence, which counts as launched.
     return (
       fanout === null ||
       (isRecord(fanout) &&
@@ -615,6 +653,11 @@ export const compareForRound = async (
   absentWorktree: boolean,
   deps: CliDeps
 ): Promise<CheckoutReport> => {
+  // A round with no native voice runs no check: no baseline file means no Git
+  // commands without a launch flag. A missing baseline after a native launch
+  // means the capture was lost; an unreadable or malformed one cannot be
+  // trusted. Both report unavailable instead of silently skipping or failing
+  // recovery, so the round keeps its replies.
   const file = baselineFileFor(dir, generation);
   let raw: string;
 
@@ -659,6 +702,9 @@ export const compareForRound = async (
     };
   }
 
+  // A corrupted baseline (JSON null or another non-object, or an object
+  // without checkouts) cannot be compared; report unavailable instead of
+  // throwing past the recovery contract.
   if (!isRecord(baseline)) {
     return {
       repositoryCheck: {
@@ -710,6 +756,15 @@ export const carryCheckoutBaseline = (
   dir: string,
   previousGeneration: number
 ) => {
+  // Carry the baseline before publishing the new generation, so a crash
+  // cannot lose a change made before target movement. The copy publishes
+  // atomically (temp + rename, never the final path directly), and an
+  // existing destination is only kept when it parses. A predecessor that
+  // wrote no baseline and launched no native voice leaves the next
+  // generation without one, so a CLI-only superseded round runs no check;
+  // only a source that exists but cannot be read or copied becomes a
+  // durable unavailable marker. A launched predecessor with a missing
+  // baseline lost its required capture and carries unavailable instead.
   const previousBaseline = baselineFileFor(dir, previousGeneration);
   const nextBaseline = baselineFileFor(dir, previousGeneration + 1);
 
@@ -735,6 +790,10 @@ export const carryCheckoutBaseline = (
         previousRaw = fs.readFileSync(previousBaseline, "utf-8");
       } catch (error) {
         if (nodeErrorCode(error) === "ENOENT") {
+          // Absent predecessor baseline with no launched native voice:
+          // no native voice ran there. A launched predecessor lost its
+          // required capture, so the next generation carries an
+          // unavailable marker instead of a fresh capture.
           if (generationLaunchedNative(dir, previousGeneration)) {
             atomic(nextBaseline, {
               state: "unavailable",
@@ -783,6 +842,7 @@ export const carryCheckoutBaseline = (
       }
     } catch {
       void 0;
+      // mkdir failed; start still publishes, compare reports unavailable via missing baseline handling.
     }
   }
 };

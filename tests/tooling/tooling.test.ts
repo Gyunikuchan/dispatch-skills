@@ -9,6 +9,8 @@ import { validateConfigs } from "../../scripts/validate-configs.ts";
 import { tempDir } from "../helpers/fake-ports.ts";
 import { defined } from "../helpers/guards.ts";
 
+// SECTION: Hashes
+
 test("root-aware hash fixture recognizes contract and catches drift", () => {
   const root = tempDir();
   const skill = path.join(root, "skills/dispatch");
@@ -32,6 +34,8 @@ test("root-aware hash fixture recognizes contract and catches drift", () => {
   );
 });
 
+// SECTION: Root resolution
+
 test("toolingRoot defaults and requires a directory value", () => {
   assert.equal(toolingRoot([]), ".");
   assert.equal(toolingRoot(["--check"]), ".");
@@ -48,6 +52,8 @@ test("toolingRoot defaults and requires a directory value", () => {
     );
   }
 });
+
+// SECTION: Terminology
 
 test("root-aware terminology fixture reports actionable paths while skipping code and glossary", () => {
   const root = tempDir();
@@ -66,6 +72,8 @@ test("root-aware terminology fixture reports actionable paths while skipping cod
   assert.equal(errors.length, 1);
   assert.match(defined(errors[0]), /SKILL\.md:1.*subagent/u);
 });
+
+// SECTION: Config validation
 
 test("root-aware strict config fixture validates sample without reading ignored local config", () => {
   const root = tempDir();

@@ -41,6 +41,10 @@ const isArtifactKind = (value: string): value is ArtifactKind =>
 
 const ledgerPath = (session: string) => path.join(session, "ledger.jsonl");
 
+// SECTION: repository report note keys
+// A closing or rerun decision names the report it acknowledges: the trailing
+// :<reportSeq> carries the covered report's asOfSeq, so two reports
+// under one reused round number close independently on distinct keys.
 export const parseRepositoryNoteKey = (key: string) => {
   const [, kind, review, round, reportSeq] =
     /^repository-(?<cap1>changes|rerun):(?<cap2>[^:\s]+):(?<cap3>\d+):(?<cap4>\d+)$/u.exec(
@@ -190,6 +194,7 @@ type ApprovalChainResult =
   | { allowed: true }
   | { allowed: false; reason: "unrecorded-change" | "intent-change" };
 
+/** Follows recorded non-intent edits from one hash to the hash they end at. */
 const walkEdits = (start: string, rows: readonly LedgerRecord[]) => {
   let hash = start;
 
@@ -226,6 +231,7 @@ const approvalChain = (
 
   const baselines = [approved];
 
+  // Earlier edit history is unrelated when a later recorded edit starts from the approved hash.
   const chainStart = before.findLastIndex(
     (edit) => edit.data["before"] === approved
   );
@@ -267,6 +273,7 @@ const approvalChain = (
   return baselineOneFailure ?? { allowed: false, reason: "unrecorded-change" };
 };
 
+// The subject grammar excludes path separators, and the resolved file must stay inside the reviews directory.
 const CORRECTED_SUBJECT =
   /^review:(?<cap1>[A-Za-z0-9][A-Za-z0-9._-]*):(?<cap2>R(?<cap3>\d+)-(?:F|RED)\d+)$/u;
 
@@ -278,6 +285,7 @@ const refuseCorrection = (why: string): never => {
   );
 };
 
+/** Refuses a severity correction the stored finding or earlier rulings cannot support; fails closed when the finding is unreadable. */
 // oxlint-disable-next-line eslint/complexity -- correction validation branches per record shape, path containment, and impact transition.
 const checkCorrection = (session: string, fold: Fold, data: unknown) => {
   if (!isRecord(data) || data["impact"] === undefined) {
@@ -330,6 +338,7 @@ const checkCorrection = (session: string, fold: Fold, data: unknown) => {
     finding = rows.find((row) => isRecord(row) && row["id"] === id);
   } catch {
     void 0;
+    /* Absent and unreadable findings refuse alike. */
   }
 
   if (!isRecord(finding)) {
@@ -455,6 +464,7 @@ const prepareRecord = (
           fs.statSync(target).isFile();
       } catch {
         void 0;
+        /* Missing or unreadable targets fail the same bind check. */
       }
 
       if (
@@ -528,6 +538,7 @@ const prepareRecord = (
   return { record, key };
 };
 
+// Reopen by path so a truncation made through a different descriptor is durable; directory sync is best effort.
 const syncPath = (file: string, directory = false) => {
   let handle: number;
 
@@ -583,6 +594,7 @@ interface AppendRecordsOptions {
   ) => number;
 }
 
+// Body first without the final newline keeps an un-fsynced batch hidden from unlocked readers; the marker records its extent.
 const writeRecords = (
   session: string,
   fold: Fold,
@@ -642,6 +654,7 @@ const writeRecords = (
         fs.closeSync(handle);
       } catch {
         void 0;
+        /* Preserve the write failure. */
       }
 
       handle = undefined;
@@ -656,6 +669,7 @@ const writeRecords = (
       }
     } catch {
       void 0;
+      /* Preserve the write failure; truncation is attempted by path first. */
     }
 
     throw error;
@@ -1185,6 +1199,7 @@ export const appendLintEdit = async (
         ) === "";
     } catch {
       void 0;
+      /* A missing or unreadable path cannot match the binding. */
     }
 
     if (!isBoundPath) {
@@ -1201,6 +1216,7 @@ export const appendLintEdit = async (
 
     for (const row of tx.fold.records) {
       if (row.kind === "bind") {
+        // Compare stored paths because an earlier target may have moved or been removed.
         const boundAtEdit: unknown = row.data[artifact];
         matchingBinding =
           Boolean(boundAtEdit) &&
@@ -1342,6 +1358,8 @@ export const levelGate = (fold: Fold, level?: string): GateResult => {
   return { allowed: true };
 };
 
+// SECTION: intent confirmation
+// Fail closed: a missing spec hash or confirm record cannot match, so the spec is never implicitly confirmed.
 export const confirmGate = (
   fold: Fold,
   specHash: string | null | undefined

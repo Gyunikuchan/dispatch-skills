@@ -794,9 +794,14 @@ test("host changes and deferred waves reconcile saved state", async () => {
               })
             );
             f.deps.orchestrator = { platform: "claude", model: null };
+            // Claude is not live, so the roster holds only the agy cli target while
+            // the seeded claude answer stays saved: the launch holds no launchable
+            // native, so the deferred wave reconciles both in the same call.
             f.deps.liveness = { claude: false, agy: true };
             f.script("agy", "answer", "Deferred cli answer");
 
+            // A saved done orphan plus an unsaved cli target: the launch holds no
+            // launchable native, so the deferred wave reconciles both at once.
             const digest = crypto
               .createHash("sha256")
               .update(fs.readFileSync(f.question, "utf-8"))
@@ -906,6 +911,9 @@ test("host changes and deferred waves reconcile saved state", async () => {
             defined(attempt).startsWith("codex[0]#"),
             JSON.stringify(launched.value.native)
           );
+          // The session moves to the claude host: codex becomes the target, claude
+          // the reserve, and the saved codex attempt under claude[0] reconciles
+          // through its physical cli instead of dropping with its report.
           f.deps.orchestrator = { platform: "claude", model: null };
           f.script("codex", "reserve", "Reserve answer");
           const done = await f.call("--native-failed", `${attempt}=voice gone`);

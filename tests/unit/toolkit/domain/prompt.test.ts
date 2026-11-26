@@ -192,6 +192,7 @@ test("settled rows render accepted, duplicate, rejected and unconfirmed rulings"
     /R1-F001/u
   );
 
+  // Accepted rows show the ruling rationale; rows accepted since the previous round are marked new.
   const accepted = {
     id: "R3-F001",
     locus: "§ Tasks",
@@ -309,6 +310,7 @@ test("settled rows render accepted, duplicate, rejected and unconfirmed rulings"
   );
   assert.doesNotMatch(prompt, /Check these accepted-finding loci/u);
 
+  // Duplicate rows resolve the original finding id or keep the reason.
   const duplicate = {
     id: "R4-F002",
     locus: "§ Tasks",
@@ -417,6 +419,7 @@ test("settled rows render accepted, duplicate, rejected and unconfirmed rulings"
     ["- R4-F010 § Tasks — duplicate: Duplicate of R4-F010."]
   );
 
+  // Rejected and deferred rows keep the full rationale text.
   const rejected = {
     id: "R1-F003",
     locus: "§ T2",
@@ -447,6 +450,7 @@ test("settled rows render accepted, duplicate, rejected and unconfirmed rulings"
   assert.ok(!section.includes("…"), "ruled rows keep the full text");
 });
 
+// Rendered size of this fixture under the pre-compaction row format, recorded before the format changed.
 const SETTLED_ROUND_7_BASELINE_BYTES = 25_570;
 
 test("settled section stays within its round-7 budget", () => {
@@ -490,6 +494,7 @@ test("settled section stays within its round-7 budget", () => {
 
   assert.equal(settled.length, 49, "fixture keeps the recorded settled set");
   const bytes = Buffer.byteLength(settledSection(settled), "utf-8");
+  // Accepted ruling rationales add bytes to the compact settled rows.
   assert.ok(
     bytes <= 16_500 && bytes < SETTLED_ROUND_7_BASELINE_BYTES,
     `${bytes} B exceeds the round-7 budget`
@@ -890,6 +895,8 @@ test("assembleTemplate binds slots and rejects mismatches", () => {
   assert.deepEqual(variables, ["A", "S"]);
 });
 
+// SECTION: Severity rubric
+
 const CALIBRATION =
   "In plan reviews, `blocks` means the plan as written cannot deliver its outcome or breaks a binding constraint. A gap that the plan's own Check gates would surface deterministically during implementation, such as a fixture update or a test assertion, is `degrades`, not `blocks`.";
 
@@ -936,6 +943,8 @@ test("all kinds share an identical severity rubric", () => {
     );
   }
 });
+
+// SECTION: Grounding, tooling, and reuse rules
 
 const flat = (kind: QualityConsumer) =>
   assembled(kind).replaceAll(/\s+/gu, " ");
@@ -1029,6 +1038,8 @@ test("quality selection covers every consumer and includes each selected rule on
     }
   }
 });
+
+// SECTION: Quality bar and host-rule precedence
 
 test("quality selection and audience filtering fail closed and hide tags", () => {
   const expected = {
@@ -1180,6 +1191,7 @@ test("quality selection and audience filtering fail closed and hide tags", () =>
     /Tagged bullet count/u
   );
 
+  // Audience tags select bullets per consumer and hide tags and author text.
   for (const consumer of [
     "code",
     "writer",
@@ -1354,6 +1366,8 @@ test("review prompts: host rules take precedence over dispatch defaults in every
   assert.doesNotMatch(inspection, /AGENTS\.md/u);
 });
 
+// SECTION: Durable test bar and plan-free naming
+
 test("quality selection keeps artifact finding loci in review kind blocks", () => {
   const bar = read(templates, "quality-bar.md");
 
@@ -1406,6 +1420,7 @@ test("plan authors and reviewers share the binding decision standard", () => {
     assert.ok(standard.includes(term), term);
   }
 
+  // Reviewers receive the standard once; other kinds do not.
   assert.equal(
     flat("plan").split(standard).length - 1,
     1,
@@ -1416,6 +1431,7 @@ test("plan authors and reviewers share the binding decision standard", () => {
     assert.ok(!flat(kind).includes(standard), kind);
   }
 
+  // Authors read it through pointers, without a second copy.
   for (const name of ["plan.md", "../verbs/plan.md"]) {
     const author = read(templates, name);
     assert.ok(
@@ -1428,6 +1444,7 @@ test("plan authors and reviewers share the binding decision standard", () => {
     );
   }
 
+  // Reviewers separate a decision that blocks safe implementation from a routine writer choice.
   const reviewer = flat("plan");
   assert.match(reviewer, /missing decision that prevents safe implementation/u);
   assert.match(
@@ -1435,6 +1452,8 @@ test("plan authors and reviewers share the binding decision standard", () => {
     /routine writer choice[^.]*only with a concrete consequence/u
   );
 });
+
+// SECTION: Computed turn target and context map
 
 test("writer quality criteria omit prune directive while code and plan keep it", () => {
   const bar = read(templates, "quality-bar.md");

@@ -79,6 +79,7 @@ export const renderContractRegions = (markdown: string) => {
   let text = "";
 
   for (const marker of markdown.matchAll(GENERATED_MARKER)) {
+    // The id group is mandatory in GENERATED_MARKER; the default only satisfies the indexed type.
     const [token, closing, id = ""] = marker;
     const { index } = marker;
     const end = index + token.length;
@@ -177,6 +178,7 @@ const resolvePlacement = (
 
   const sectionEnd = headings[headingIndex + 1]?.index ?? markdown.length;
   const table = id === "call-table";
+  // A session opener needs its own line so Markdown parses the command paragraph.
   const standalone = table || id.startsWith("session:");
 
   const delimiterNewline = standalone

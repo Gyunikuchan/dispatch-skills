@@ -1,3 +1,6 @@
+// GitHub Copilot (spec §6.1): plan mode with --assisted-approval --no-ask-user; sandbox adds
+// --sandbox --allow-all-tools; quota moves to the next mode, auth does not; resume `copilot --resume <id>`.
+
 import { validSessionId } from "../lib/session.ts";
 import {
   classifyFailure,
@@ -116,6 +119,7 @@ export const copilot: ProviderSpec = {
   modeCascadeOn: ["quota"],
   resumeCommand: (id) => `copilot --resume ${id}`,
 
+  // NOTE: a preset id alone proves nothing; only an idle kill after streamed output reports it.
   presetsSession: true,
   attemptSession(out: ProcessResult, req: LaunchRequest) {
     if (hasText(req.resume)) {
@@ -183,6 +187,7 @@ export const copilot: ProviderSpec = {
     return { argv, stdin: null, env: {}, cwd: req.cwd };
   },
   parse(out, req) {
+    // Only the line-anchored CLI startup warning can classify exit-0 output as sandbox failure.
     const sandboxUnsupported =
       UNSUPPORTED_HOST_WARNING.test(out.stdout.trimStart()) ||
       (out.exit === 0 &&

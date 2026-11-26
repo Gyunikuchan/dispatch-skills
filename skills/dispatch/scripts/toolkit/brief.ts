@@ -99,6 +99,7 @@ export const briefSummary = (
   return heading + launch + ending;
 };
 
+/** Writer launch values from `write-subagents` at the ledger level; null when the host or config does not resolve. */
 const writerLaunchValues = (
   skillRoot: string,
   host: string | undefined,
@@ -221,6 +222,7 @@ export const taskMarkdown = (
 
 type SelectedTaskBrief = NonNullable<ReturnType<typeof selectTaskBrief>>;
 
+// Base64url keeps the payload opaque to shell parsing.
 const CAPTURE_BOOTSTRAP = [
   "const fs=require('node:fs');",
   "const path=require('node:path');",
@@ -244,6 +246,7 @@ const CAPTURE_SHELL_META = new Set([
   String.fromCodePoint(96),
 ]);
 
+// ASCII controls only (U+0000-U+001F, U+007F): `\p{Cc}` minus the C1 block.
 const ASCII_CONTROL = /(?![\u0080-\u009F])\p{Cc}/u;
 
 const safeCapturePath = (value: string) => {
@@ -289,6 +292,7 @@ const renderRedCapture = (
   let written = false;
 
   for (const criterion of selected.criteria) {
+    // Keep this eligibility rule aligned with redGaps; verify-only and excepted criteria need no capture.
     if (
       !selected.task.criteria.includes(criterion.id) ||
       criterion.evidence !== "red" ||
@@ -381,6 +385,7 @@ const renderRedCapture = (
   return lines.join("\n");
 };
 
+/** The host's utility entry as brief text; an undetected host or unusable config never refuses the render. */
 const explorerText = (skillRoot: string, platform: string | undefined) => {
   const entry = resolveHostUtility(skillRoot, platform);
 
@@ -476,6 +481,7 @@ const publishUtilityBrief = (
   };
 };
 
+/** Validates a parsed brief values object; an unknown, missing or blank value refuses before anything is written. */
 const validateValues = <
   const Req extends string,
   const Opt extends string = never,
@@ -531,6 +537,7 @@ const validateValues = <
     }
   }
 
+  // The loop above refused every missing or malformed value; this only carries that proof into the type.
   const isComplete = (
     values: typeof out
   ): values is typeof out &
@@ -767,6 +774,7 @@ export const renderExplorerBrief = async (ctx: HandlerContext) => {
     ? `${entry.contextLimit.toLocaleString("en-US")} tokens`
     : "utility entry not configured; the orchestrator reports a blocker";
 
+  // 75% margin: an explorer cannot count the tokens its tool output and reasoning add.
   const splitAt = entry
     ? `${Math.floor(entry.contextLimit * 0.75).toLocaleString("en-US")} tokens`
     : limit;

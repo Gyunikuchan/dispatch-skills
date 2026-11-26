@@ -91,6 +91,7 @@ export const collectCopilotUsage: (
       continue;
     }
 
+    // Parse only telemetry/lifecycle lines; conversation fields never become retained facts.
     if (
       !/"(?:session\.usage_record|assistant\.usage|subagent\.started)"/u.test(
         line
@@ -191,6 +192,7 @@ export const collectCopilotUsage: (
       continue;
     }
 
+    // Whitelist the sampled persisted receipt and supported live counters.
     const usage = Object.fromEntries(
       [
         "model",
@@ -214,6 +216,7 @@ export const collectCopilotUsage: (
     const key = JSON.stringify([source, sequence, id]);
     const prior = receipts.get(key);
 
+    // Receipt identity precedes window filtering, including later-timestamp replays.
     if (prior) {
       if (prior.signature === signature) {
         prior.atMs = Math.min(prior.atMs, atMs);

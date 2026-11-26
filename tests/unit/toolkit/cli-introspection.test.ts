@@ -398,6 +398,7 @@ test("tool calls take the orchestrator from the recorded host and ignore env pla
     await call({ ...base, env: { CLAUDECODE: "1", COPILOT_MODEL: "gpt-5" } });
     assert.deepEqual(seen.pop(), { platform: "copilot", model: "gpt-5" });
 
+    // A recorded host replaces an injected orchestrator without mutating the caller's deps.
     const injected = {
       ...base,
       orchestrator: { platform: "claude" as const, model: null },
@@ -411,6 +412,7 @@ test("tool calls take the orchestrator from the recorded host and ignore env pla
       model: null,
     });
 
+    // Absent or invalid stored hosts mean no host; env platform markers never fill it in.
     for (const host of [undefined, "github-copilot", 3]) {
       setHost(host);
       // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
@@ -421,6 +423,7 @@ test("tool calls take the orchestrator from the recorded host and ignore env pla
     await call({ ...injected, env: { CLAUDECODE: "1" } });
     assert.deepEqual(seen.pop(), { platform: "claude", model: null });
 
+    // The real process wiring starts without a host.
     assert.equal(nodeDeps().orchestrator, null);
   } finally {
     f.cleanup();
@@ -436,6 +439,7 @@ test("blocked sandbox starts no introspection and returns the runner refusal", a
     Object.getOwnPropertyDescriptor(process, "platform")
   );
 
+  // Neither OpenCode nor Claude has a delegate sandbox on native Windows.
   Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
   t.after(() => Object.defineProperty(process, "platform", descriptor));
   const started: string[][] = [];

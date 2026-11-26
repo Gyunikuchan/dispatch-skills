@@ -65,6 +65,7 @@ test("fix-review-lite citation grammar resolves spans, continuations and added l
     );
   }
 
+  // A continuation reuses the last path cited on the same added line.
   assert.deepEqual(
     addedCitations(added("See `skills/a.ts:12` and `:541-544`.")),
     [
@@ -77,8 +78,10 @@ test("fix-review-lite citation grammar resolves spans, continuations and added l
     { path: "docs/b.md", start: 541, end: 541 },
   ]);
 
+  // A continuation with no earlier path on its line is dropped.
   assert.deepEqual(addedCitations(added("Only `:541-544` here.")), []);
 
+  // Removed, context and +++ lines are ignored.
   const text = [
     "--- a/work.plan.md",
     "+++ b/work.plan.md",
@@ -95,6 +98,7 @@ test("fix-review-lite citation grammar resolves spans, continuations and added l
 });
 
 test("fix-review-lite consumer search builds excludes, globs and display text", () => {
+  // A leading-dash name takes -e with no -w and no exclude.
   const dashArgs = consumerSearchArgs([], "-x");
   assert.deepEqual(dashArgs, [
     "grep",
@@ -109,6 +113,7 @@ test("fix-review-lite consumer search builds excludes, globs and display text", 
   ]);
   assert.ok(!dashArgs.some((arg) => arg.includes("exclude")));
 
+  // -w applies only when the name starts and ends with a word character.
   assert.deepEqual(consumerSearchArgs([], "a.b[1].txt"), [
     "grep",
     "-n",
@@ -133,6 +138,7 @@ test("fix-review-lite consumer search builds excludes, globs and display text", 
     ".",
   ]);
 
+  // A safe path renders as a literal exclude and an unsafe path as a glob.
   assert.deepEqual(
     consumerSearchArgs(
       [".scratch/dispatch-skills", ".env", "ops/my secrets.env"],
@@ -155,6 +161,7 @@ test("fix-review-lite consumer search builds excludes, globs and display text", 
     ]
   );
 
+  // Display text renders one ? per UTF-8 byte of an unsafe path, so no quote or metacharacter survives.
   assert.equal(
     consumerSearchText([
       ".scratch/dispatch-skills",

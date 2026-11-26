@@ -1,3 +1,6 @@
+// Delegate failure cascade (spec §6.4, ADR 0001): model array inside one voice, provider-declared mode cascade,
+// sandbox-unsupported skip, reserves once per fan-out directory.
+
 import type { FailureClass, SlotId } from "../toolkit/types.ts";
 
 export interface Voice {
@@ -82,6 +85,7 @@ export const next: (
   }
 
   if (disposition === "cascade") {
+    // Every failure, auth and quota included, tries the next alias of the voice (ADR 0001): models maintain independent quotas.
     if (position.model + 1 < voice.models.length) {
       return {
         kind: "next-model",
@@ -100,6 +104,7 @@ export const next: (
     }
   }
 
+  // The voice is exhausted, or the sandbox gap makes its other models and modes pointless (D28).
   if (wave?.reserveAvailable === true) {
     return { kind: "reserve" };
   }
@@ -110,6 +115,8 @@ export const next: (
     reason: `${voice.slot} failed: ${cls}`,
   };
 };
+
+// SECTION: Reserves
 
 interface ReservePool {
   order: readonly SlotId[];

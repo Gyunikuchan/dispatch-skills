@@ -22,6 +22,7 @@ import {
 } from "./helpers/json.ts";
 import { contextMapSource, planSource } from "./helpers/toolkit-repo.ts";
 
+// The fields this run reads from toolkit result files.
 const replyGuard = objectWith({
   path: maybe(isString),
   source: maybe(isString),

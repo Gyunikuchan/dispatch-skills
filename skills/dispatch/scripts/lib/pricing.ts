@@ -1,3 +1,6 @@
+// Pure cost estimation: the shipped rate table plus the config `pricing` override price banded usage counters.
+// Pricing never throws for facts or override input; only `loadPricing` reads files.
+
 import path from "node:path";
 
 import { isRecord, loadConfig, readReal } from "./config.ts";
@@ -6,6 +9,9 @@ import { BAND_EDGES, OTHER_KEY } from "./usage/bands.ts";
 import { BANDS, splitUsageKey } from "./usage/rows.ts";
 import type { Bands, Counters } from "./usage/rows.ts";
 
+// SECTION: Types
+
+/** USD per 1M tokens. */
 const priceUsage = (
   matched: MatchedRate | undefined,
   usage: Counters & { bands?: Bands },
@@ -21,6 +27,7 @@ const priceUsage = (
   const active = activeRateSet(entry, effectiveDay);
   const apart = reasoningInOutput === false;
 
+  // Each band prices at the tiers its prompt range spans; an aggregate spans every tier up to its own prompt size.
   const spans: { c: Counters; first: number; last: number }[] = [];
 
   for (const [i, band] of BANDS.entries()) {
@@ -147,6 +154,8 @@ export interface Pricer {
   ) => Cost;
 }
 
+// SECTION: Validation
+
 const RATE_KEYS = new Set([
   "input",
   "output",
@@ -208,6 +217,7 @@ const tiersProblem = (
     return `${where} not an array`;
   }
 
+  // Tiers share the base rate keys so a lookup never mixes tiers.
   let previous = 0;
 
   for (const [i, tier] of tiers.entries()) {
@@ -297,6 +307,7 @@ const periodsProblem = (periods: unknown): string | undefined => {
   return undefined;
 };
 
+/** The first reason an entry is invalid, or undefined when it is valid. */
 const entryProblem = (entry: unknown) => {
   if (!isRecord(entry)) {
     return "not an object";
@@ -336,6 +347,8 @@ export const pricingProblems = (override: unknown) => {
     return problem === undefined ? [] : [`pricing.${key}: ${problem}`];
   });
 };
+
+// SECTION: Matching
 
 const WILDCARD = "/*";
 const SUFFIXES = [/\[1m\]$/u, /@\d[\d-]*$/u, /-v\d+:\d+$/u, /-\d{8}$/u];
@@ -465,6 +478,7 @@ export const loadPricing = (
 
     let override: unknown;
 
+    // A missing or broken config leaves the shipped rates in force.
     try {
       override = loadConfig(skillRoot, read).config["pricing"];
     } catch {
@@ -476,6 +490,8 @@ export const loadPricing = (
     return undefined;
   }
 };
+
+// SECTION: Pricing
 
 const MTOK = 1_000_000;
 const NONE: Counters = { input: 0, output: 0 };
@@ -502,6 +518,7 @@ interface RateSet {
 const tierRates = (set: RateSet, tier: number) =>
   (tier ? set.tiers?.[tier - 1]?.rates : undefined) ?? set.rates;
 
+/** Tier index for a prompt size: 0 is the base rate; tier N applies above its threshold. */
 const tierAt = (set: RateSet, prompt: number) =>
   set.tiers?.filter((t) => t.abovePromptTokens < prompt).length ?? 0;
 
@@ -526,6 +543,7 @@ const activeRateSet = (entry: PriceEntry, onDate: string | null) => {
   return active;
 };
 
+/** Cost of one counter set at one rate object in USD per 1M tokens; undefined when a nonzero counter has no rate. */
 const rated = (
   c: Counters,
   r: Rates,
@@ -556,6 +574,7 @@ const rated = (
     return { low: base, high: base, ttl: false };
   }
 
+  // An unsplit write needs both TTL rates; they bound its cost.
   if (r.cacheWrite5m === undefined || r.cacheWrite1h === undefined) {
     return undefined;
   }
@@ -571,6 +590,8 @@ const rated = (
     ttl: low !== high,
   };
 };
+
+// SECTION: Rendering helpers
 
 export const sumCost = (costs: readonly Cost[]) => ({
   low: costs.reduce((total, c) => total + c.low, 0),

@@ -185,6 +185,7 @@ export type UsageRow = Counters & {
   turns?: number;
   toolCalls?: number;
   toolTurns?: number;
+  // Adapter-local identity, projected to an alias before returning facts.
   responseActor?: string;
   parentActor?: string;
   copilot?: CopilotEvidence;

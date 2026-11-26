@@ -18,6 +18,8 @@ import {
   text,
 } from "./helpers/json.ts";
 
+// SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
+
 test("review recurrence requires accepted earlier ruling and changed target", async () => {
   for (const variant of ["accepted", "unchanged", "rejected", "late"]) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state

@@ -114,6 +114,7 @@ export const normalizeNative = (outcome: SlotOutcome) => {
   };
 };
 
+// Only fan-out writes slot and state files; these guards prove the tag and the table, not every field.
 const isSavedOutcome = (value: unknown): value is SlotOutcome =>
   isRecord(value) && typeof value["state"] === "string";
 
@@ -241,6 +242,10 @@ export const mergeBlocked = (
   return out;
 };
 
+// Step 1 of the fallback transition only: persist the marker with the
+// native error and merged blocked evidence, without running the CLI
+// cascade. The deferred wave resumes the cascade, so the marker never
+// returns as a launchable pending voice.
 export const persistDeferredMarker = (
   file: string,
   nativeSaved: Extract<SlotOutcome, { state: "native" }>,
@@ -280,6 +285,8 @@ export const writeState = (dir: string, state: FanoutState) => {
   atomic(path.join(dir, "fanout.json"), state);
 };
 
+// Saved voices whose logical slot left the recomputed roster reconcile as
+// targets; settled failures stay dropped.
 export const savedOrphanTargets = (dir: string) => {
   let files: string[];
 
@@ -342,6 +349,7 @@ export const savedOrphanTargets = (dir: string) => {
   return out;
 };
 
+// Distributes over the event union so each kind keeps its own detail fields.
 type EventDetail<T> = T extends unknown
   ? Omit<T, "subject" | "slot" | "provider" | "model" | "attempt">
   : never;
@@ -431,6 +439,11 @@ export const slotFiles = (
   };
 
   const saveLogical = async (target: RosterSlot, outcome: SlotOutcome) => {
+    // CLI-only-ness is crash-consistent: the marker rides the atomic failed write.
+    // A lost write means no saved failed to retake; an old file without the marker
+    // fails closed to no-retake. Any native history bars the marker: the prompt
+    // file, a still-pending native attempt, or a prior failed save without the
+    // marker (which itself saw native history).
     let toSave = outcome;
 
     if (

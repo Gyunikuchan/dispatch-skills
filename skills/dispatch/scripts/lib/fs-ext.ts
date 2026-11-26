@@ -1,3 +1,6 @@
+// Link-capable filesystem port for exclusive publication (wave claims) and atomic replacement
+// (heartbeats, outcome files). Core `FsPort` has no hard link, so this lives beside it.
+
 export interface LinkFs {
   /** Writes complete content to a fresh temp file beside `near` and fsyncs it; returns the temp path. */
   writeTemp: (near: string, text: string) => string;

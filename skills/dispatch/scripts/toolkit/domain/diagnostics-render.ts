@@ -131,6 +131,7 @@ const configuredModelOf = (model: string, configured: boolean | undefined) => {
 export const heuristics = (run: RunFacts) =>
   selectFindings(run, formatDuration);
 
+// Only a `<` that could open a tag, comment, or declaration is escaped, so `<1s` stays readable.
 const md = (text: string) => text.replaceAll(/<(?=[A-Za-z/!?])/gu, "&lt;");
 const cell = (text: string) => md(text).replaceAll("|", String.raw`\|`);
 const row = (cells: readonly string[]) => `| ${cells.map(cell).join(" | ")} |`;
@@ -246,6 +247,7 @@ const usageSamples = (items: readonly InvocationFacts[]) =>
       : [];
   });
 
+// Cost units: one host row, one `model#effort` entry of a launched CLI invocation, or one invocation without usage. Rollups sum unit costs.
 interface Unit {
   platform: string;
   phase?: string;
@@ -498,6 +500,7 @@ export const unitsOf = (run: RunFacts, pricer: Pricer | undefined) => {
   return out;
 };
 
+/** Unified turn rows across host, subagents, delegates, and delegate-child responses without duplicating cost/tokens. */
 const turnRowsOf = (run: RunFacts, units: readonly Unit[]) => {
   const out: TurnRow[] = units.map((u) => ({
     platform: u.platform,
@@ -582,6 +585,7 @@ const stageRank = (stage: string) => {
   return rank === -1 ? 99 : rank;
 };
 
+/** Code-unit order with `null` compared as its text, as a bare `sort()` orders these values. */
 const byText = (a: string | null, b: string | null) => {
   const left = String(a);
   const right = String(b);
@@ -646,6 +650,7 @@ const sourceCountsText = (counts: ReturnType<typeof sourcesOf>) =>
 const basesOf = (units: readonly Unit[]) =>
   units.flatMap((u) => u.cost?.rateBasis ?? []);
 
+// Inputs are sanitized by the report or by sessionFacts before comparison.
 export const costCoverage = (
   runs: readonly RunFacts[],
   pricer: Pricer | undefined,
@@ -898,6 +903,7 @@ const knownSourceNotes = (units: readonly Unit[]) =>
   ].toSorted();
 
 const largestRemainder = (exact: readonly number[]) => {
+  // Largest remainder: floor each part, then give the residual points to the largest fractions.
   const parts = exact.map(Math.floor);
   const fraction = (k: number) => defined(exact[k]) - defined(parts[k]);
 
@@ -951,6 +957,7 @@ const computeShares = (
   return out;
 };
 
+/** Ranked `## Cost drivers` section (up to 5 stage/platform/role/model/effort groups plus remainder). */
 const costDrivers = (units: readonly Unit[]) => {
   interface DriverGroup {
     key: string;
@@ -1105,6 +1112,8 @@ const costDrivers = (units: readonly Unit[]) => {
     "",
   ];
 };
+
+// SECTION: Folding
 
 type ResponseEvidence = Omit<DelegateResponseFacts, "role"> & {
   role: "host" | "subagent" | "delegate";
@@ -1668,6 +1677,7 @@ type FoldTable = (typeof FOLD_ORDER)[number];
 
 type Fold = Partial<Record<FoldTable, number>>;
 
+/** Keeps the `keep` best-ranked rows (high cost, low cost, tokens, key; unpriced counts 0) in normal order and merges the rest into one trailing row. */
 const foldTable = <R extends Foldable>(
   rows: readonly R[],
   keep: number | undefined,
@@ -2099,6 +2109,7 @@ const buildSections = (
     };
   };
 
+  // Review health data
   const yields = new Map<string, SlotYieldFacts>();
   const yieldUnits = new Map<string, Unit[]>();
 
@@ -3264,6 +3275,7 @@ export const renderDiagnostics = (
     warnings.push(`- Retro warning: ${retroStates}`);
   }
 
+  // Role table (reconciles Summary & Stage via allTurnRows)
   const allHostComplete = runs.every(hasCompleteHost);
   const allSubagentsComplete = runs.every(hasCompleteSubagents);
 
@@ -3298,6 +3310,7 @@ export const renderDiagnostics = (
 
   const roleShares = computeShares(roleGroups);
 
+  // Stage table (reconciles Summary & Role via allTurnRows)
   const stageKeys = [
     ...new Set([
       ...STAGE_ORDER.filter(

@@ -162,6 +162,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     (error) => reasonOf(error) === "invalid-record"
   );
 
+  // SECTION: sequential in-memory fold
   const f = sessionFixture({ memory: true });
 
   try {
@@ -254,6 +255,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     f.cleanup();
   }
 
+  // SECTION: bind validation rejects every batch item before any write
   const g = sessionFixture({ memory: true });
 
   try {
@@ -304,6 +306,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     g.cleanup();
   }
 
+  // SECTION: an outside-repository symlink fails the batch bind check
   const h = sessionFixture();
   const outside = sessionFixture();
 
@@ -337,6 +340,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     outside.cleanup();
   }
 
+  // SECTION: onCommit and AppendResult shapes
   const r = sessionFixture({ memory: true });
 
   try {
@@ -424,6 +428,7 @@ test("ledger append processes record arrays atomically", async (t) => {
       { seq: 4, deduped: true }
     );
 
+    // SECTION: failed batches leave the ledger byte-identical
     const before = fs.readFileSync(ledgerFile(r.session), "utf-8");
     await assert.rejects(
       appendRecords(
@@ -453,6 +458,7 @@ test("ledger append processes record arrays atomically", async (t) => {
       false
     );
 
+    // SECTION: a short write closes the handle and truncates to baseSize
     const close = t.mock.method(fs, "closeSync");
     let failedHandle: number | undefined;
 
@@ -485,6 +491,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     );
     assert.equal(fs.readFileSync(ledgerFile(r.session), "utf-8"), before);
 
+    // SECTION: an fsync failure truncates to baseSize by path
     const fsync = t.mock.method(fs, "fsyncSync", () => {
       throw new Error("fsync failed");
     });
@@ -504,6 +511,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     r.cleanup();
   }
 
+  // SECTION: unlocked readers hide a batch until its final newline
   const w = sessionFixture({ memory: true });
 
   try {
@@ -552,6 +560,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     w.cleanup();
   }
 
+  // SECTION: a crash before the final newline quarantines the whole batch prefix
   const at = "1970-01-01T00:00:00.000Z";
 
   const baseLine = `${JSON.stringify({ kind: "note", key: "base", by: "orchestrator", data: { text: "base" }, seq: 1, at })}\n`;
@@ -645,6 +654,7 @@ test("ledger append processes record arrays atomically", async (t) => {
     b.cleanup();
   }
 
+  // SECTION: an empty or non-object batch is refused before any write
   const e = sessionFixture({ memory: true });
 
   try {

@@ -36,6 +36,7 @@ const binary = Buffer.from([0, 255, 254, 10, 32, 32, 13, 10, 32, 32]);
 
 const subject = "deliver increment";
 
+// Cases use independent repositories, so run them concurrently and name the failing case.
 const each = async (modes: string[], fn: (mode: string) => Promise<void>) => {
   await Promise.all(
     modes.map(async (mode) => {
@@ -78,6 +79,7 @@ const integrate = async (r: Repo, files: Record<string, string> = {}) => {
   assert.equal(didIntegrate.exit, 0);
 };
 
+// Integration fix touching add, edit, delete, mode, binary bytes and both directory/file swaps.
 const change = async (r: Repo) => {
   const w = r.integration;
 
@@ -767,6 +769,7 @@ describe("worktree deliver --commit", () => {
 
       assert.equal(r.git(["rev-parse", `${one}^`]), start);
 
+      // An increment built without the first one fails its verification.
       const staleCheck = await stale.run(["check", "run"]);
 
       assert.equal(staleCheck.output.reason, "checks-failed");

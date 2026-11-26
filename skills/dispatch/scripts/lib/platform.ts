@@ -1,7 +1,11 @@
+// Platform facts and the recorded-host orchestrator.
+// Pure over injected getters; `currentPlatform()` binds the real process.
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/** XDG base-dir overrides that are set; omitted entirely when none are. */
 const xdgOverrides = (env: EnvGet) => {
   const xdg = Object.fromEntries(
     (["data", "cache", "state"] as const).flatMap((key) => {
@@ -57,6 +61,7 @@ const toOs: (platform: string) => OsId = (platform) => {
   return "linux";
 };
 
+// NOTE: Windows caps a whole command line at 32767 chars; POSIX ARG_MAX is shared with the environment block.
 const argvLimitFor = (osId: OsId) => (osId === "win32" ? 24_000 : 100_000);
 
 export const platformFacts = (input: PlatformInput) => {
@@ -111,6 +116,9 @@ export const currentPlatform: () => PlatformEnv = () => {
   });
 };
 
+// SECTION: Orchestrator
+
+// The host platform comes only from the session record; env supplies the model.
 const MODEL_ENV: Readonly<Record<ProviderKey, readonly string[]>> = {
   agy: ["ANTIGRAVITY_MODEL", "GEMINI_MODEL"],
   claude: ["CLAUDE_MODEL", "ANTHROPIC_MODEL"],

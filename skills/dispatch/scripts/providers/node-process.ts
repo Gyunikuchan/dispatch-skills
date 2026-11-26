@@ -1,3 +1,7 @@
+// Real `ProcessPort` over node:child_process: detached (own group on POSIX), stdout streamed to the slot log up to
+// the cap, stderr tail kept in memory. Deadline/idleness tree kills stay in the runner; OpenCode run and inspection
+// request bounded POSIX group settlement after normal completion and timeout/failure.
+
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
@@ -121,10 +125,12 @@ export const nodeProcess: ProcessPort = {
       throw new Error("nodeProcess.start: empty argv");
     }
 
+    // ComSpec is the host's own cmd.exe location; shell stays off and batchInvocation escapes every argument.
     const batch = isBatchLauncher(process.platform, command)
       ? batchInvocation(command, args, resolveComSpec(process.env))
       : null;
 
+    // Open the log first so a failure cannot orphan a running child.
     const log = fs.openSync(io.logPath, "w", 0o600);
     let child: ReturnType<typeof spawn>;
 
@@ -228,6 +234,7 @@ export const nodeProcess: ProcessPort = {
     const done = new Promise<ProcessResult>((resolve) => {
       let settled = false;
 
+      // 'error' and 'close' can both fire; settle once.
       const finish = (
         exit: number | null,
         signal: string | null,

@@ -764,6 +764,7 @@ test("report failure class names a missing report and keeps refusal wording", as
   }
 });
 
+// SECTION: Review ceiling
 type ReviewFixture = Awaited<ReturnType<typeof fixture>>;
 
 const PLAN_REVIEW = "plan-work.plan";
@@ -993,6 +994,7 @@ const seedCompletedRound = (
     })
   );
 
+  // cap₁ comes from round 1, so a seeded later round needs its baseline metadata.
   if (round !== 1) {
     fs.mkdirSync(path.join(f.directory, "round-1"), { recursive: true });
     fs.writeFileSync(
@@ -1678,6 +1680,7 @@ test("review ceiling admission grants rounds by resolution and refuses otherwise
 });
 
 test("moved incomplete round is refused without replacing pending state", async () => {
+  // Zero round level with a moved target keeps the saved round, snapshot, and pending payload.
   {
     const f = await fixture();
 
@@ -1770,6 +1773,7 @@ test("moved incomplete round is refused without replacing pending state", async 
     }
   }
 
+  // Staffed level with no live reviewer keeps the pending payload and names the underfill.
   {
     const f = await fixture();
 
@@ -1851,6 +1855,7 @@ test("moved incomplete round is refused without replacing pending state", async 
 });
 
 test("zero-round ceiling resolutions run required review for pending rejections", async () => {
+  // Case 1: Rejection ruled before defer
   {
     const f = await fixture();
 
@@ -1885,6 +1890,7 @@ test("zero-round ceiling resolutions run required review for pending rejections"
     }
   }
 
+  // Case 2: Rejection ruled after defer
   {
     const f = await fixture();
 
@@ -1919,6 +1925,7 @@ test("zero-round ceiling resolutions run required review for pending rejections"
     }
   }
 
+  // Case 3: Mixed accepted and rejected findings with deferred ceiling
   {
     const f = await fixture();
 
@@ -1970,6 +1977,7 @@ test("zero-round ceiling resolutions run required review for pending rejections"
     }
   }
 
+  // Case 4: Close with a pending rejection uses the confirmation-only prompt
   {
     const f = await fixture();
 
@@ -2031,6 +2039,7 @@ test("first round saves current cap", async () => {
 });
 
 test("ceiling resolution grants once through the matching open key", async () => {
+  // Orphan resolution with a non-open key grants nothing.
   {
     const f = await fixture();
 
@@ -2052,6 +2061,7 @@ test("ceiling resolution grants once through the matching open key", async () =>
     }
   }
 
+  // A repeated resolution for the same open ceiling grants only once.
   {
     const f = await fixture();
 
@@ -2080,6 +2090,7 @@ test("ceiling resolution grants once through the matching open key", async () =>
 });
 
 test("saved ceiling and round cap ignore subsequent level cap raises", async () => {
+  // Saved ceiling ignores later level cap
   {
     const f = await fixture();
 
@@ -2102,6 +2113,7 @@ test("saved ceiling and round cap ignore subsequent level cap raises", async () 
     }
   }
 
+  // Saved round cap ignores later level cap
   {
     const f = await fixture();
 
@@ -2125,6 +2137,7 @@ test("saved ceiling and round cap ignore subsequent level cap raises", async () 
   }
 });
 
+// SECTION: Advisory review budget
 const statusBudget = async (f: ReviewFixture) => {
   f.lines.length = 0;
   assert.equal(
@@ -2167,6 +2180,7 @@ test("review budget matches admission after rulings and ceiling resolutions", as
         state: "requires-ceiling-resolution",
       }
     );
+    // Reporting the boundary opens no escalation and grants no round.
     assert.equal(foldLedger(f.session).records.length, records);
     const callResult7 = await f.call();
 
@@ -2197,6 +2211,7 @@ test("review budget matches admission after rulings and ceiling resolutions", as
     const fifth = await f.call();
     assert.equal(fifth.exit, 0, JSON.stringify(fifth));
 
+    // The completed result is historical at its asOfSeq; the unruled round-5 MUST needs a continuation for round 6.
     const fifthBudget = narrow(
       fifth.value,
       withFields({
@@ -2234,6 +2249,8 @@ test("review budget matches admission after rulings and ceiling resolutions", as
     f.cleanup();
   }
 });
+
+// SECTION: Confirmation-only fast path
 
 const VALID_TASK_PLAN = [
   "# Work",
@@ -2389,6 +2406,7 @@ const rewriteRound = (
 };
 
 test("unchanged target with pending MUST rejection runs confirmation-only prompt", async () => {
+  // Plan target: one source slot, reserves carried, focused prompt contents.
   {
     const f = await fixture();
 
@@ -2458,6 +2476,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // Code revision-range target renders a base..head revision and the task context.
   {
     const f = await fixture();
 
@@ -2529,6 +2548,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // Integration and bound-plan task targets render a base..head revision.
   for (const item of [
     {
       target: "integration",
@@ -2642,6 +2662,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // Accepted MUST or accepted SHOULD keeps the standard prompt and every target.
   {
     const f = await fixture();
 
@@ -2693,6 +2714,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // A later round after a confirmation-only round anchors decisive and targets to the substantive round.
   {
     const f = await fixture();
 
@@ -2736,6 +2758,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // A granted repository rerun after a confirmation-only round reruns every substantive slot.
   {
     const f = await fixture();
 
@@ -2822,6 +2845,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // Missing original source slot refuses the round.
   {
     const f = await fixture();
 
@@ -2847,6 +2871,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // Every confirmation slot failing keeps review-failed.
   {
     const f = await fixture();
 
@@ -2870,6 +2895,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
     }
   }
 
+  // A failed source slot falls back to a reserve and confirms the rejection.
   {
     const f = await fixture();
 
@@ -2955,6 +2981,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
 });
 
 test("non-code rerun scope names changed headings only with a prior snapshot", async () => {
+  // Prior snapshot present: the rerun scope names the changed headings.
   {
     const f = await fixture();
 
@@ -3022,6 +3049,7 @@ test("non-code rerun scope names changed headings only with a prior snapshot", a
     }
   }
 
+  // Prior snapshot removed: the rerun scope omits the changed segment.
   {
     const f = await fixture();
 
@@ -3391,6 +3419,7 @@ test("explicit pins override saved roster on an admitted repository rerun", asyn
 });
 
 test("review run refuses with host-sandboxed under sandboxed claude host", async () => {
+  // Sandboxed host refuses before creating review state and proceeds when unsandboxed.
   {
     const f = await fixture();
 
@@ -3429,6 +3458,7 @@ test("review run refuses with host-sandboxed under sandboxed claude host", async
     }
   }
 
+  // A native-first-only roster still refuses once --native-failed marks the slot failed.
   {
     const f = await fixture();
 
@@ -3842,6 +3872,7 @@ for (const item of reviewWarningCases) {
 }
 
 test("reviewRun refuses broken-citation on new and superseded rounds but not native-pending resume", async () => {
+  // 1. New round start refuses broken citation in plan and design without creating round.json or launching reviewers.
   const f1 = await fixture();
 
   try {
@@ -3870,6 +3901,7 @@ test("reviewRun refuses broken-citation on new and superseded rounds but not nat
     f1.cleanup();
   }
 
+  // 2. Target acquiring broken citation after pending.json (supersede) refuses before deleting pending.json or mutating round state.
   const f2 = await fixture();
 
   try {
@@ -3897,6 +3929,7 @@ test("reviewRun refuses broken-citation on new and superseded rounds but not nat
       1
     );
 
+    // Retry while pending.json exists and target still has broken citation also refuses before deleting pending.json.
     delete f2.deps.hook;
     const retry = await f2.call("plan", f2.plan);
     assert.equal(retry.exit, 4);
@@ -3911,6 +3944,7 @@ test("reviewRun refuses broken-citation on new and superseded rounds but not nat
     f2.cleanup();
   }
 
+  // 3. Target acquiring broken citation during fan-out (before pending.json) refuses in supersede() before incrementing generation.
   const f3 = await fixture();
 
   try {
@@ -3944,6 +3978,7 @@ test("reviewRun refuses broken-citation on new and superseded rounds but not nat
     f3.cleanup();
   }
 
+  // 4. Native-pending resume on an unchanged round is unaffected even if cited file disappears externally.
   const f4 = await fixture();
 
   try {

@@ -1,3 +1,5 @@
+// Pure repo-relative line-reference validation for plan and design documents.
+
 import { safeRelativePath } from "./context.ts";
 import { defined } from "./defined.ts";
 import {
@@ -280,6 +282,7 @@ export const lintCitations = (
       content = readRepoFile(relPath);
     } catch {
       void 0;
+      /* A failed repository read counts as a missing file. */
     }
 
     fileCache.set(relPath, content);

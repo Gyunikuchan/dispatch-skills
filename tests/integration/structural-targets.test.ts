@@ -46,7 +46,9 @@ test("toolkit stays within the structural size budgets", () => {
   // NOTE: Pre-wave HEAD (6c556ca1) measured 39583 against the 39600 budget (17 headroom; no pre-existing overage).
   // NOTE: The oxlint/oxfmt compliance wave (ac7c9cfc) adds 19649 net lines (formatter churn plus expanded guards and disables), reaching 59232.
   // NOTE: The review.ts -> review-round.ts split overhead sits inside that total. Budget 59248 keeps 16 lines of headroom.
-  const driverLocBudget = 59_248;
+  // NOTE: 59248 was measured after that wave's no-comments autofix stripped rationale comments; restoring them adds 1067 lines over the 59232 measure (60299). Budget 60315 keeps 16 lines of headroom.
+  // NOTE: db995365 adds case-insensitive ComSpec resolution and the batch-launcher % path guard (code-scanning #25/#35), reaching 60326. Budget 60342 keeps 16 lines of headroom.
+  const driverLocBudget = 60_342;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
@@ -169,6 +171,7 @@ const slug = (heading: string) =>
     .replaceAll(/[^a-z0-9]+/gu, "-")
     .replaceAll(/^-+|-+$/gu, "");
 
+// Byte size of a whole reference file, or of the section under an anchor heading.
 const sectionBytes = (file: string, anchor: string | null) => {
   const text = fs.readFileSync(
     path.join(root, "skills/dispatch", file),
@@ -328,6 +331,7 @@ test("rendered packs stay within the per-actor byte budgets", () => {
     promptBytes("plan") <= 17_256,
     `plan reviewer prompt exceeds 17256 budget`
   );
+  // NOTE: 12734 covers the design altitude, severity, and advisory grounding-lead rules after consolidation.
   // NOTE: 12745 covers the design altitude, severity, and advisory grounding-lead rules after consolidation,
   // plus the quality-bar "requiring" restoration (+10 B over the formatter baseline).
   assert.ok(
@@ -590,6 +594,7 @@ test("ledger authority is limited to approval, exceptions and user-selected leve
   }
 });
 
+// Split dense prose first; raise this cap only with the reason beside it.
 test("reference prose lines stay within the line byte cap", () => {
   const skill = path.join(root, "skills/dispatch");
 

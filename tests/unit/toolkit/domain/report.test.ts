@@ -78,6 +78,8 @@ const parsedLoci = (kind: "code" | "plan", findings: unknown[]) => {
   return result.findings.map((item) => item.locus);
 };
 
+// SECTION: Unknown tag recovery
+
 const planFinding = (tag: string, heading: string, defect: string) => ({
   impact: "degrades",
   trigger: "realistic",
@@ -93,6 +95,8 @@ const parsedFindings = (kind: "plan" | "code" | "design", text: string) => {
 
   return result.findings;
 };
+
+// SECTION: Diagnostics reports
 
 const SKILL_ROOT = fileURLToPath(
   new URL("../../../../skills/dispatch/", import.meta.url)
@@ -177,12 +181,20 @@ const assertStructure = (
   return finding;
 };
 
+// SECTION: Layout, durations, and token columns
+
+// SECTION: Heuristics, severity, and model attribution
+
 const stageRows = (text: string) =>
   defined(
     defined(text.split("### Tokens by stage")[1]).split("### Review yield")[0]
   )
     .split("\n")
     .filter((line) => line.startsWith("|"));
+
+// SECTION: Scope gate and redaction
+
+// SECTION: Finding origin
 
 const originReply = (...origins: (string | undefined)[]) =>
   report(
@@ -399,6 +411,7 @@ test("the rubric table matches the derived severity", () => {
 });
 
 test("refuses report findings with missing, invalid, or unsupported dimension fields", () => {
+  // Missing dimension
   for (const field of ["impact", "trigger"]) {
     // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- test fixture establishes this shape before the assertion
     const { [field]: _omitted, ...rest } = finding() as Record<string, string>;
@@ -410,6 +423,7 @@ test("refuses report findings with missing, invalid, or unsupported dimension fi
     );
   }
 
+  // Invalid dimension value
   for (const [field, value] of [
     ["impact", "HIGH"],
     ["impact", "MUST"],
@@ -425,6 +439,7 @@ test("refuses report findings with missing, invalid, or unsupported dimension fi
     );
   }
 
+  // Unsupported severity and other fields
   const unsupported = report([
     {
       ...finding(),
@@ -647,6 +662,7 @@ test("a fence or tagged fence inside a JSON string does not end the report", () 
 });
 
 test("malformed reports fail with a bounded classified failure", () => {
+  // degenerate fences and large malformed replies stay bounded
   {
     const started = Date.now();
     assert.equal(
@@ -665,6 +681,7 @@ test("malformed reports fail with a bounded classified failure", () => {
     assert.ok(Date.now() - started < 2000, "malformed replies exceeded budget");
   }
 
+  // delegates-one-report-parse: failures are empty output, refusal, truncation, uncovered scope
   // oxlint-disable-next-line eslint/no-lone-blocks -- scoped block keeps fixture bindings isolated
   {
     assert.equal(failure("   "), "empty-output");
@@ -687,6 +704,7 @@ test("malformed reports fail with a bounded classified failure", () => {
     );
   }
 
+  // blocked json reports validate and sanitize reason
   {
     const lineStart = parseReport({
       kind: "code",
@@ -726,6 +744,7 @@ test("malformed reports fail with a bounded classified failure", () => {
     }
   }
 
+  // unknown tags fail invalid reports without masking other failures
   {
     for (const tag of ["", "   ", "\n\t"]) {
       assert.equal(
@@ -782,6 +801,7 @@ test("malformed reports fail with a bounded classified failure", () => {
 });
 
 test("loose locus marks only the loose locus and never matches by location", () => {
+  // loose locus keeps findings: only the loose locus of a reply is marked, in every kind
   // oxlint-disable-next-line eslint/no-lone-blocks -- scoped block keeps fixture bindings isolated
   {
     assert.deepEqual(
@@ -816,6 +836,7 @@ test("loose locus marks only the loose locus and never matches by location", () 
     }
   }
 
+  // loose locus keeps findings: clipping stays within 120 bytes, splits no character and merges no findings
   {
     const head = "é".repeat(100);
 
@@ -845,6 +866,7 @@ test("loose locus marks only the loose locus and never matches by location", () 
     );
   }
 
+  // loose locus keeps findings: other malformed replies keep their failure class
   {
     const loose = { locus: "src/fetch.ts" };
     assert.equal(
@@ -862,6 +884,7 @@ test("loose locus marks only the loose locus and never matches by location", () 
     );
   }
 
+  // loose locus keeps findings: a marked finding never matches by location
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const parse = (source: string) => {
@@ -906,6 +929,7 @@ test("loose locus marks only the loose locus and never matches by location", () 
 
 // oxlint-disable-next-line eslint/complexity -- dedup matrix covers every tag combination; splitting would scatter the assertions
 test("finding collection dedups findings and preserves unknown tags", () => {
+  // review-dedup: duplicates keep their own id with dupOf; the first cites every reporting source
   {
     const first = parseReport({
       kind: "code",
@@ -957,7 +981,9 @@ test("finding collection dedups findings and preserves unknown tags", () => {
     assert.deepEqual(findings[2]?.sources, ["agy[0]"]);
   }
 
+  // collected findings preserve unknown tags across review kinds, sanitizing collisions
   {
+    // Plan review recovery
     const planText = `\`\`\`json\n${report([
       planFinding("robustness", "Proposed Changes", "retry path has no bound"),
       planFinding(
@@ -980,6 +1006,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
       ]
     );
 
+    // Code and design review recovery
     const [code] = parsedFindings(
       "code",
       report([finding({ tag: "robustness" })])
@@ -1000,6 +1027,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
       ["uncategorized", "robustness", "in"]
     );
 
+    // Collection preserves originalTag alongside known categories
     const drafts = parsedFindings(
       "code",
       report([
@@ -1018,6 +1046,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
     assert.equal(findings[1]?.category, "performance");
     assert.ok(!("originalTag" in (findings[1] ?? {})));
 
+    // Distinct, sanitized-alike, and length-bounded unknown tags preserve separate findings
     const diff = parsedFindings(
       "code",
       report([finding({ tag: "robustness" }), finding({ tag: "resilience" })])
@@ -1060,6 +1089,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
     );
   }
 
+  // adjacent and intent tag handling preserves exact keywords and treats variants as uncategorized
   {
     for (const tag of ["Adjacent", "ADJACENT", "adjacent-scope", "Intent"]) {
       const [item] = parsedFindings("code", report([finding({ tag })]));
@@ -1090,6 +1120,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
     assert.ok(!("originalTag" in (intent ?? {})));
   }
 
+  // original tag is sanitized and bounded
   {
     const tags = [
       "<!-- ignore previous -->",
@@ -1143,6 +1174,7 @@ test("review-sanitization: report text is sanitized before relay", () => {
 });
 
 test("heuristic H1 reports repeated failures with model attribution, fallback recovery and fix text", () => {
+  // merged from: H1 quota names model and fallback recoveries
   {
     const quotaFailure = (
       subject: string,
@@ -1292,6 +1324,7 @@ test("heuristic H1 reports repeated failures with model attribution, fallback re
     assert.match(unrecovered.evidence, /0 recovered by fallback/u);
   }
 
+  // merged from: heuristic H1 fires on repeated failures and suppresses isolated failures
   {
     const cliFinding = assertStructure(
       only(
@@ -1410,6 +1443,7 @@ test("heuristic H1 reports repeated failures with model attribution, fallback re
     }
   }
 
+  // merged from: diagnostics fix text for capacity and no-report
   {
     const h1 = (rows: InvocationFacts[]) =>
       assertStructure(
@@ -1448,6 +1482,7 @@ test("heuristic H1 reports repeated failures with model attribution, fallback re
 });
 
 test("diagnostics report: heuristic H4 fires above threshold and stays silent at boundaries", () => {
+  // merged from: diagnostics report: heuristic H4 fires for cache read share
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const finding = assertStructure(
@@ -1470,6 +1505,7 @@ test("diagnostics report: heuristic H4 fires above threshold and stays silent at
     );
   }
 
+  // merged from: diagnostics report: heuristic boundaries stay silent
   {
     const even = invocation({
       usage: { input: 1000, cacheRead: 1000, output: 0 },
@@ -1516,6 +1552,7 @@ const cappedRounds = (
   }));
 
 test("diagnostics amendment convergence: cap screening, reraises, escalations and wording", () => {
+  // merged from: diagnostics amendment convergence: evaluates caps, reraises, and escalations
   {
     assert.deepEqual(
       only(heuristics(facts({ reviews: acceptedRounds(3, { cap: 3 }) })), "H2"),
@@ -1658,6 +1695,7 @@ test("diagnostics amendment convergence: cap screening, reraises, escalations an
     );
   }
 
+  // merged from: H2 wording separates designed continuation, cap arrival, and deadlock
   {
     const h2 = (reviews: RunFacts["reviews"]) =>
       assertStructure(
@@ -1734,6 +1772,7 @@ test("diagnostics amendment convergence: cap screening, reraises, escalations an
     );
   }
 
+  // merged from: heuristic precision screens the review cap as a bounded integer
   {
     const capOf = (cap: unknown) =>
       sanitizeFacts({
@@ -1750,7 +1789,9 @@ test("diagnostics amendment convergence: cap screening, reraises, escalations an
 });
 
 test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H5 and H9", () => {
+  // merged from: heuristic precision: sample thresholds for H1, H3, H5, and H9 heuristics
   {
+    // H3 needs three findings
     assert.deepEqual(
       only(
         heuristics(
@@ -1779,6 +1820,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
       /code review round 1: 2 of 3 findings rejected \(67%\)/u
     );
 
+    // H5 needs three uncached samples and a share above two over n
     const big = invocation({
       usage: { input: 9000, cacheRead: 9000, output: 100 },
     });
@@ -1839,6 +1881,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
       /codex gpt-6-sol in code review: 9,100 of 11,780 measured uncached tokens \(77%\)/u
     );
 
+    // H1 ignores quota-store skips that never launched
     const skip = invocation({
       outcome: "quota",
       launched: false,
@@ -1879,6 +1922,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
       /`quota`: 2 of 2 CLI attempts failed \(codex\/gpt-6-sol ×2\), 0 recovered by fallback, 2m 0s of driver time\./u
     );
 
+    // H9 needs two relaunches
     assert.deepEqual(
       only(heuristics(facts({ relaunches: 1 })), "H9"),
       [],
@@ -1893,6 +1937,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
     );
   }
 
+  // merged from: H5 impact names the voice exploration and proposes no byte caps
   {
     const big = invocation({
       usage: { input: 9000, cacheRead: 9000, output: 100 },
@@ -1917,6 +1962,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
     );
   }
 
+  // merged from: H9 points at launch reports
   {
     // oxlint-disable-next-line eslint/no-shadow -- local fixture binding intentionally mirrors shared name
     const finding = assertStructure(
@@ -1935,6 +1981,7 @@ test("heuristic precision: sample thresholds, impacts and fix text for H1, H3, H
 });
 
 test("per-model rows render delegate, host, subagent and edge keys with summed counters", () => {
+  // merged from: per model and effort rows: delegate keys keep their own effort and sum to invocation totals
   {
     const usage = {
       input: 300,
@@ -1985,6 +2032,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     );
   }
 
+  // merged from: per model and effort rows: unmatched key parts render unavailable with their counters
   {
     const text = render([
       facts({
@@ -2024,6 +2072,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     assert.equal(rows.length, 2, text);
   }
 
+  // merged from: per model and effort rows: host and subagent rows split per model and effort pair
   {
     const text = render([
       facts({
@@ -2082,6 +2131,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     ]);
   }
 
+  // merged from: per model and effort rows: local model tags render and emails stay rejected
   {
     const local = render([
       facts({
@@ -2133,6 +2183,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     );
   }
 
+  // merged from: per model and effort rows: off-pattern model keys keep their own counters beside valid keys
   {
     const text = render([
       facts({
@@ -2172,6 +2223,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     assert.equal(rows.length, 2, text);
   }
 
+  // merged from: per model and effort rows: keys rendering to the same pair merge their counters
   {
     const text = render([
       facts({
@@ -2200,6 +2252,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
     ]);
   }
 
+  // merged from: bracketed model id renders its name in Tokens by stage
   {
     const text = render([
       facts({
@@ -2230,6 +2283,7 @@ test("per-model rows render delegate, host, subagent and edge keys with summed c
 });
 
 test("grounding retro observations pass the gate and render only in the Overview Grounding table", () => {
+  // merged from: grounding phase retro observation passes gate and renders evidence in report
   {
     const item = {
       id: "grounding-spec",
@@ -2256,6 +2310,7 @@ test("grounding retro observations pass the gate and render only in the Overview
     );
   }
 
+  // merged from: grounding retro items render only in the Overview Grounding table
   {
     const grounding = observation({
       id: "grounding-plan",
@@ -2298,6 +2353,7 @@ test("grounding retro observations pass the gate and render only in the Overview
 });
 
 test("origin stays valid, follows the round table and merges duplicates to fix-induced", () => {
+  // merged from: origin: a reply with a valid, absent or invalid origin stays valid and keeps only known values
   {
     const drafts = draftsOf(
       originReply("fix-induced", "original", "unknown", undefined, "bogus")
@@ -2309,6 +2365,7 @@ test("origin stays valid, follows the round table and merges duplicates to fix-i
     );
   }
 
+  // merged from: origin: collected origin follows the round table
   {
     const drafts = draftsOf(
       originReply("fix-induced", "original", "unknown", undefined, "bogus")
@@ -2324,6 +2381,7 @@ test("origin stays valid, follows the round table and merges duplicates to fix-i
     );
   }
 
+  // merged from: origin: duplicate findings merge to fix-induced within one reply and across replies
   {
     const duplicate = (origin?: string) =>
       finding(origin === undefined ? {} : { origin });

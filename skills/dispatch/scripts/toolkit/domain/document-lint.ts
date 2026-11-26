@@ -9,6 +9,8 @@ export const EXECUTION_STATUS_HEADING = `## ${EXECUTION_STATUS_TITLE}`;
 export const SPEC_PIN_VALUE =
   /^`(?<cap1>[^`\s]+\.spec\.md)` · sha256:(?<cap2>[0-9a-f]{64})$/u;
 
+// SECTION: Lint severity
+
 const LINT_SEVERITIES = {
   "missing-success-criteria": "defect",
   "proposed-changes": "defect",
@@ -174,6 +176,8 @@ export const lintSectionOrder = (
   return out;
 };
 
+// SECTION: Summary box
+
 interface BoxEntry {
   label: string | null;
   value: string;
@@ -185,6 +189,7 @@ type ValueRule = RegExp | ((value: string) => string | null);
 
 const BOX_LINE = /^> \*\*(?<cap1>[^*]+?):\*\*(?: (?<cap2>.*))?$/u;
 
+// Keyed by whatever label the author wrote, so any string may be looked up.
 interface ValueRules {
   readonly [label: string]: ValueRule | undefined;
 }
@@ -199,6 +204,7 @@ const BOX_VALUE_RULES: ValueRules = {
   Status: /^(?:\d+\/\d+ SC passing|n\/a)$/u,
 };
 
+/** Lines after optional `---` frontmatter and their 1-based line offset. */
 const bodyLines = (source: string) => {
   const lines = source.split(/\r?\n/u);
 
@@ -398,11 +404,14 @@ export const lintSummaryBox = (
   return out;
 };
 
+// SECTION: Template placeholders
+
 export interface PlaceholderVocabulary {
   all: ReadonlySet<string>;
   code: ReadonlySet<string>;
 }
 
+// CommonMark spans close on a backtick run of the opener's exact length.
 const CODE_SPAN = /(?<!`)(?<cap1>`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/gu;
 const TOKEN = /<[A-Za-z][^<>\n]*>/gu;
 
@@ -455,6 +464,8 @@ export const findPlaceholders = (
     return [...prose, ...code].map((token) => ({ token, line: line + offset }));
   });
 };
+
+// SECTION: Filler notes
 
 const FILLER = new Set([
   "same",

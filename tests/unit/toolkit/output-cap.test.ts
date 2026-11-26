@@ -33,6 +33,7 @@ import {
 import type { JsonObject } from "./helpers/json.ts";
 
 const sessionFixture = () => {
+  // Quota ancestor checks stay inside this shallow virtual root.
   const root = path.join(
     path.parse(os.tmpdir()).root,
     `output-cap-${crypto.randomUUID()}`

@@ -52,6 +52,8 @@ import type {
 
 const MAX_REVIEW_ROUND_CAP = 1000;
 
+// SECTION: Field gates
+
 const VERBS = ["ask", "design", "plan", "review", "implement"];
 const LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -68,11 +70,17 @@ const CONFIG_KEYS = [
 
 const ID = /^[A-Za-z0-9_-]{1,48}$/u;
 
+// Host text may name dispatch files and slash commands, never machine, network, or identity locators.
 const PROHIBITED: readonly RegExp[] = [
+  // POSIX absolute or home path
   /(?:^|[\s"'`(<[=,;])(?:~|\/[^\s/"'`]+)\/[^\s/"'`]/u,
+  // drive letter or UNC share
   /\b[A-Za-z]:[\\/]|\\\\[^\s\\]+\\/u,
+  // URL host
   /\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|dev|ai|app|cloud|internal|corp)\b/iu,
+  // email
   /[\w.%+-]+@[\w-]+(?:\.[\w-]+)+/u,
+  // UUID-like or long hex id
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b[0-9a-f]{32,}\b/iu,
 ];
 
@@ -92,6 +100,7 @@ const list = (v: unknown) => {
 
 const locatorFree = (v: string) => !PROHIBITED.some((re) => re.test(v));
 
+// Read-command prefixes are space-separated words; slashes are excluded so no path survives.
 const commandText = (v: unknown) =>
   typeof v === "string" &&
   v.length <= 80 &&
@@ -100,6 +109,7 @@ const commandText = (v: unknown) =>
     ? v
     : DASH;
 
+// Every rendered identifier and alias passes the locator gate too: a well-formed id can still be a UUID or a host name.
 const match = (re: RegExp) => (v: unknown) =>
   typeof v === "string" && re.test(v) && locatorFree(v) ? v : undefined;
 
@@ -108,6 +118,7 @@ const token = match(/^[a-z][a-z0-9-]{0,39}$/u);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/u);
 
 const modelNameOf = (v: string) => {
+  // A qualified model's UUID namespace is configuration, while its suffix still passes every locator gate.
   const name = v.replace(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//iu,
     ""
@@ -216,6 +227,8 @@ export const opt = <K extends string, V>(key: K, value: V | undefined) => {
   return entry;
 };
 
+/** One-line host or validator text, or undefined when empty, oversized, or carrying a prohibited locator. */
+
 const safeText = (v: unknown) =>
   typeof v === "string" &&
   v.trim() !== "" &&
@@ -236,6 +249,8 @@ const categoryOf = (v: unknown) =>
   Object.keys(CATEGORIES)
     .filter(isCategory)
     .find((key) => v === key || v === CATEGORIES[key]);
+
+// SECTION: Usage
 
 const isBand = (key: string): key is keyof Bands =>
   BANDS.some((band) => band === key);
@@ -466,6 +481,7 @@ const usageDetails = (
 
   const models = record(v["models"]) ? Object.entries(v["models"]) : [];
 
+  // A `<model>#<effort>` key keeps its own effort; an empty or gate-failing part renders `—` but keeps its counters.
   const parts = models.map(([key, part]) => {
     const split = splitUsageKey(key);
     const name = modelName(split.model);
@@ -523,6 +539,8 @@ export const uncached = (u: ModelUsage) =>
 export const measured = (i: InvocationFacts) =>
   i.surface !== "cli" || !i.launched ? undefined : i.usage;
 
+// SECTION: Gates
+
 /** Gates host retro items: at most `DIAGNOSTIC_LIMITS.observations`, valid id, dispatch-owned component, known category, bounded locator-free text. */
 
 export const retroObservations = (value: unknown) => {
@@ -566,6 +584,7 @@ const pricingKeyOk = (key: string) =>
   modelName(key) !== undefined ||
   (key.endsWith("/*") && token(key.slice(0, -2)) !== undefined);
 
+/** Dotted ids and `provider/*` keys fail `configValue`'s key gate, so pricing keeps its own: model-like keys with valid entries, whose rates are numbers. */
 const pricingValue = (v: unknown) => {
   if (!record(v)) {
     return {};
@@ -616,6 +635,7 @@ const configValue = (v: unknown, depth: number): JsonValue => {
 const isLifecycleMs = (x: unknown): x is number =>
   Number.isSafeInteger(x) && Number(x) >= 0 && Number(x) <= 2_147_483_647;
 
+/** Exact-shape rows only; invalid rows are dropped rather than clamped into success, and each step appears once. */
 const lifecycleOf = (v: unknown) => {
   const rows: LifecycleStep[] = [];
 
@@ -1083,6 +1103,7 @@ const hostUsageDetails = (value: JsonObject) => {
 const hostUsageOf = (value: unknown) =>
   record(value) ? hostUsageDetails(value) : undefined;
 
+// Only the UUID v4 minted for a capture is eligible for correlation.
 export const recoveryRef = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
@@ -1281,6 +1302,7 @@ const sanitizeRelaunchesOf = (value: unknown) => {
 export const sanitizeFacts = (run: unknown): RunFacts => {
   const r = record(run) ? run : {};
 
+  // A dispatch content hash, exempt from the long-hex locator rule; only its 12-character prefix renders.
   const build =
     typeof r["build"] === "string" && /^[a-f0-9]{12,64}$/u.test(r["build"])
       ? r["build"]

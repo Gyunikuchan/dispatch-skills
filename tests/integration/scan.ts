@@ -1,3 +1,6 @@
+// Shared overlay file table and import extractor for the static guards. Guards take in-memory tables
+// so their failure paths are tested without writing violating files.
+
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,6 +25,7 @@ const TEXT_EXTENSIONS = new Set([
   ".jsonc",
 ]);
 
+// Path-only callers pass `withText: false` to skip reads that dominate the per-file budget under load.
 export const scanOverlay = (root = OVERLAY_ROOT, withText = true) => {
   const out: FileEntry[] = [];
 

@@ -1,3 +1,5 @@
+// Real `LinkFs` over node:fs.
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,6 +8,7 @@ import { nodeErrorCode } from "./fs-ext.ts";
 import type { LinkFs } from "./fs-ext.ts";
 
 const writeSynced = (file: string, text: string) => {
+  // Effect folders appear lazily, so the first write into one creates it.
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const fd = fs.openSync(file, "wx", 0o600);
 
@@ -23,6 +26,7 @@ const tempBeside = (file: string) =>
     `.${path.basename(file)}.${crypto.randomUUID()}.tmp`
   );
 
+// NOTE: Windows refuses a rename onto a file another process briefly holds open (EPERM/EACCES/EBUSY); cap each wait at 640 ms within a ~5 s total retry budget.
 const TRANSIENT_RENAME = new Set(["EPERM", "EACCES", "EBUSY"]);
 
 export const renameRetrying = (

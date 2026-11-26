@@ -1,3 +1,4 @@
+// Runtime guards for the JSON that e2e tests read back, so each test names and verifies the fields it uses.
 import assert from "node:assert/strict";
 
 import { isRecord } from "../../../skills/dispatch/scripts/lib/config.ts";

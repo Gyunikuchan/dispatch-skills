@@ -6,6 +6,7 @@ import type {
 
 export const H = 3_600_000;
 
+/** A stored row before validation. Policy imports no runtime module, so it owns this guard. */
 interface StoredRow {
   [field: string]: StoredValue | undefined;
 }

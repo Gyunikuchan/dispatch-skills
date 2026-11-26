@@ -799,6 +799,7 @@ describe("toolkit check", () => {
         statusVal.criterionStatuses.every((row) => row.state === "verified")
       );
 
+      // A later fresh execution updates index/<cacheHex>.json without mutating earlier reused provenance.
       const fourthFresh = await f.run(["check", "run"]);
 
       assert.equal(fourthFresh.exit, 0, JSON.stringify(fourthFresh));
@@ -885,6 +886,7 @@ describe("toolkit check", () => {
 
       assert.equal(contractRun.exit, 0);
 
+      // pass -> fail -> pass on the exact same clean Git tree
       setMode(f.integration, "pass");
 
       const pass1 = await f.run(["check", "run", "--criteria", "SC1"]);
@@ -924,6 +926,7 @@ describe("toolkit check", () => {
       assert.equal(fail1.output.ok, false);
       assert.equal(fail1.output.reason, "checks-failed");
       assert.equal(await sc1State(), "missing");
+      // Failing on the same clean tree invalidates index/<cacheHex>.json while keeping immutable <execId>.{json,log}.
       assert.equal(
         fs.existsSync(
           path.join(
@@ -937,6 +940,7 @@ describe("toolkit check", () => {
       assert.equal(fs.readFileSync(pass1ExecJson, "utf-8"), pass1Snapshot);
       assert.ok(fs.existsSync(pass1ExecLog));
 
+      // Subsequent --reuse executes freshly and does NOT resurrect the older pass.
       const reuseAfterFail = await f.run([
         "check",
         "run",
@@ -961,6 +965,7 @@ describe("toolkit check", () => {
       assert.equal(passAgain.output.ok, true);
       assert.equal(await sc1State(), "verified");
 
+      // fail -> pass -> fail on a fresh session on the same clean Git tree
       const s2 = await f.second("20261023T0001Z-second");
 
       const s2Contract = await s2.run([
@@ -1065,6 +1070,7 @@ describe("toolkit check", () => {
         );
       };
 
+      // 1. Misdirected index -> non-existent UUID
       let seeded = await seed();
 
       const indexFile = path.join(
@@ -1079,10 +1085,12 @@ describe("toolkit check", () => {
       );
       await verifyFallback("misdirected missing UUID");
 
+      // 2. Invalid UUID shape (path traversal attempt)
       seeded = await seed();
       fs.writeFileSync(indexFile, JSON.stringify({ execId: "../escape" }));
       await verifyFallback("invalid UUID shape");
 
+      // 3. Torn JSON in index and in exec record
       seeded = await seed();
       fs.writeFileSync(indexFile, "{torn");
       await verifyFallback("torn index JSON");
@@ -1098,6 +1106,7 @@ describe("toolkit check", () => {
       fs.writeFileSync(execFile, "{torn");
       await verifyFallback("torn exec JSON");
 
+      // 4. Malformed cache fields (wrong type / tampered logPath / mismatched command)
       seeded = await seed();
 
       const execPath4 = path.join(
@@ -1158,6 +1167,7 @@ describe("toolkit check", () => {
       );
       await verifyFallback("mismatched command");
 
+      // 5. Stale / modified log file (logSha256 mismatch) and missing log
       seeded = await seed();
       fs.writeFileSync(
         path.join(
@@ -1180,6 +1190,7 @@ describe("toolkit check", () => {
   });
 
   test("never caches or reuses dirty, mutating, restore-pair, or non-zero commands", async () => {
+    // Dirty checkout
     const fDirty = await toolkitRepo();
 
     try {
@@ -1221,6 +1232,7 @@ describe("toolkit check", () => {
       fDirty.cleanup();
     }
 
+    // Mutating command
     const mutatingPlan = planSource.replace(
       '`node -e "process.exit(0)"`',
       "`node -e \"require('fs').writeFileSync('src/file.ts','mutated')\"`"
@@ -1247,6 +1259,7 @@ describe("toolkit check", () => {
       fMut.cleanup();
     }
 
+    // Restore-pair (cmd1 mutates src/file.ts, cmd2 restores it)
     const restorePlan = planSource.replace(
       '  - Check: `node -e "process.exit(0)"`',
       [
@@ -1291,6 +1304,7 @@ describe("toolkit check", () => {
       fRestore.cleanup();
     }
 
+    // Non-zero command
     const failPlan = planSource.replace(
       '`node -e "process.exit(0)"`',
       '`node -e "process.exit(7)"`'

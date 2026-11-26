@@ -365,6 +365,8 @@ const isIdList = (
   selected: readonly string[] | Selection
 ): selected is readonly string[] => Array.isArray(selected);
 
+// SECTION: Saved round validation
+// Stored rounds are trusted past these checks: they prove what rejection confirmation reads.
 const isRoundMetadata = (
   value: unknown
 ): value is ConfirmationRound["metadata"] =>
@@ -387,6 +389,7 @@ const isSavedFindings = (value: unknown): value is FindingsValue =>
   Array.isArray(value["findings"]) &&
   value["findings"].every(isConfirmableFinding);
 
+/** A reply counts only when the saved slot report it came from still says the same. */
 const isReplyBacked = (
   dir: string,
   review: string,

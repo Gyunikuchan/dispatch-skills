@@ -8,6 +8,8 @@ import { defined } from "../../helpers/guards.ts";
 import { CONTEXT_MAP, fixture } from "../../helpers/review-fixture.ts";
 import { narrow, numeric, withFields, text } from "./helpers/json.ts";
 
+// SECTION: Ceiling helpers shared with review.test.ts (duplicated for split)
+
 test("plan and design review launch without a sibling context map", async () => {
   const f = await fixture();
 
@@ -49,6 +51,7 @@ test("plan and design review launch without a sibling context map", async () => 
 });
 
 test("plan and design review refuse without a user confirm of the current spec at every level", async () => {
+  // Unbound plan review without a spec refuses with lint-errors before zero-round skip
   {
     const f = await fixture(false, false);
 

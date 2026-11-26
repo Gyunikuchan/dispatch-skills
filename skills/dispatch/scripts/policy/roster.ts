@@ -1,3 +1,6 @@
+// Review roster (spec §6.5 step 1, §14): level → phase policy (`targets`, `only`) → pins → orchestrator
+// demotion in config order → `-m`/`-e` collapse → native marking → reserves.
+
 import type { RosterSlot } from "../toolkit/domain/types.ts";
 import type { Level, SlotId } from "../toolkit/types.ts";
 
@@ -36,8 +39,11 @@ const SANDBOX_PROVIDERS: ReadonlySet<string> = new Set([
 export const normalizeProvider = (key: string) =>
   PROVIDER_ALIASES[key.toLowerCase()] ?? key;
 
+// SECTION: Sparse level maps
+
 export type LevelMap<T> = Partial<Record<Level, T>>;
 
+/** Exact level, else the nearest defined below, else the lowest defined above. */
 const selectLevel = (defined: readonly Level[], level: Level) => {
   const requested = LEVELS.indexOf(level);
 
@@ -66,6 +72,8 @@ export const resolveLevel = <T>(
 
   return chosen === undefined ? undefined : map[chosen];
 };
+
+// SECTION: Utility subagent
 
 export interface SubagentEntry {
   model: string | string[];
@@ -103,6 +111,8 @@ export const resolveUtility = (utility: Record<string, UtilityEntry>) =>
         : []
     )
   );
+
+// SECTION: Pins
 
 export type Pins =
   | { kind: "providers"; keys: readonly string[] }
@@ -153,6 +163,8 @@ export const parsePins: (text: string) => Pins = (text) => {
     keys: [...new Set(items.map(normalizeProvider))],
   };
 };
+
+// SECTION: Roster
 
 interface TargetEntry {
   model?: string | readonly string[];
@@ -253,6 +265,7 @@ const candidates = (input: RosterInput) => {
   });
 };
 
+/** Alternatives first, then the orchestrator platform; config order preserved. */
 const demote = (
   list: readonly Candidate[],
   orchestrator: Orchestrator | null
@@ -266,6 +279,7 @@ const demote = (
   return [...list.filter((item) => !own(item)), ...list.filter(own)];
 };
 
+/** `-m`/`-e` collapse each platform to its first candidate carrying the override. */
 const collapse = (
   list: readonly Candidate[],
   overrides: Overrides | undefined
@@ -296,6 +310,7 @@ const collapse = (
   });
 };
 
+/** Positional identity `${provider}[${index}]`, counted per provider across targets then reserves. */
 const identify = (
   targets: readonly Candidate[],
   reserves: readonly Candidate[]
@@ -406,6 +421,7 @@ export const resolveRoster = (input: RosterInput) => {
   const pins = input.pins ?? null;
   const wanted = resolveWanted(input, pins);
 
+  // `targets: 0` disables the phase like `rounds: 0`, unless a pin overrides breadth.
   if (rounds <= 0 || (!pins && wanted === 0)) {
     return { rounds: 0, targets: [], reserves: [] };
   }
@@ -417,6 +433,7 @@ export const resolveRoster = (input: RosterInput) => {
       }
     : null;
 
+  // A native-subagents-only platform serves only as the orchestrator's own native subagents.
   const all = candidates(input);
 
   const usable = all.filter(

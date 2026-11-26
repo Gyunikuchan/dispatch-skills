@@ -12,6 +12,8 @@ import type {
 } from "../../../skills/dispatch/scripts/toolkit/types.ts";
 import { defined } from "../../helpers/guards.ts";
 
+// SECTION: Quota cooldown eligibility
+
 describe("quota eligibility preserves exact keys and bounded expiry", () => {
   const key: QuotaKey = { provider: "codex", model: null, mode: "cli" };
 

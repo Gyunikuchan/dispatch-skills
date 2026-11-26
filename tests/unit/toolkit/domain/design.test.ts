@@ -148,6 +148,7 @@ test("design increments parse behaviour bullets and warn on missing or file-coun
 });
 
 test("design presentation findings warn without blocking", () => {
+  // Optional grounding leads parse; filler leads warn.
   assert.deepEqual(designResult.warnings, []);
   assert.equal(design.details["I01"]?.["Grounding leads"], undefined);
   const lead = "Can the importer reuse the existing CSV reader?";
@@ -163,6 +164,7 @@ test("design presentation findings warn without blocking", () => {
   assert.equal(result.design.details["I01"]?.["Grounding leads"], lead);
   assert.deepEqual(codes(withLead.replace(lead, "n/a")), ["filler-note"]);
 
+  // Presentation findings are warnings.
   const presented = parseDesign(
     DESIGN.replace("> **Increments:** 2", "> **Increments:** 3").replace(
       "REQ-1 strategy",
@@ -176,6 +178,7 @@ test("design presentation findings warn without blocking", () => {
     "summary-label",
   ]);
 
+  // At a Glance is required first and long paragraphs warn.
   const glance = "## At a Glance\n- Stage the importer.\n\n";
   const missing = parseDesign(DESIGN.replace(glance, ""));
   assert.ok(missing.ok);

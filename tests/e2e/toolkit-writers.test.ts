@@ -184,6 +184,8 @@ describe("toolkit writer worktrees", () => {
     );
     assert.equal(fs.existsSync(cwd), true);
 
+    // A fresh launch under a new prerequisite is refused without a trace;
+    // satisfying the prerequisite admits it.
     const abandoned = await r.run([
       "worktree",
       "abandon",

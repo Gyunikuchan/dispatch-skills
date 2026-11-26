@@ -107,6 +107,7 @@ export const statusReport = async (
     }
   }
 
+  // Advisory and recomputed from the latest ledger by the launch admission policy; it opens and grants nothing.
   const root = reviewRoot(session);
   const reviews: Record<string, ReviewBudget> = {};
 
@@ -195,6 +196,9 @@ export const statusReport = async (
         continue;
       }
 
+      // Every content report carries its own identity; covered reports drop
+      // out before the merge, so one map accumulates every unacknowledged
+      // attempt and generation together with the finalized findings report.
       const contents = contentReports(session, review, round);
 
       if (!contents.length) {
@@ -295,6 +299,9 @@ export const statusReport = async (
 
       const reportSeq = Math.max(...uncovered.map((report) => report.seq));
 
+      // A rerun decision binds only its covered report, and only while round
+      // r+1 is unfinalized: past that window the report stays open for a
+      // repository-changes note, with no lingering rerunPending.
       const nextOpen = !fs.existsSync(
         reviewFindingsFile(reviewRoundDirectory(reviewDir, round + 1))
       );
@@ -579,6 +586,7 @@ const existingRecoveryPath = (
   return file;
 };
 
+// A saved file that fails its guard is unreadable state, which the caller's catch reports.
 const readOptional = <T>(
   session: string,
   relative: string,
@@ -600,6 +608,7 @@ const readOptional = <T>(
   return value;
 };
 
+// SECTION: Recovery state guards
 const isRoundRecord = (value: unknown): value is Round =>
   isRecord(value) && isRecord(value["spec"]);
 
@@ -675,6 +684,7 @@ export const resumeStatus = async (ctx: HandlerContext) => {
   });
 
   try {
+    // A missing ledger cannot support recovery, even though an empty fold is useful to other callers.
     containedSessionPath(session, "ledger.jsonl");
     const fold = foldLedger(session);
 

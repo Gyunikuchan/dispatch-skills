@@ -633,6 +633,7 @@ test("agy degrades without db and enforces budget size candidate caps and allowl
   });
 
   const blobBMismatched = buildGenMetadataBlob({
+    // mismatch!
     input: 999,
     output: 4,
     modelSlug: "gemini-4-argon",
@@ -860,6 +861,7 @@ test("agy degrades without db and enforces budget size candidate caps and allowl
   });
 
   const resInvalid = agy.read({ ...query, sessionId: hostId }, fsInvalid);
+  // only host row
   assert.equal(resInvalid.rows.length, 1);
 });
 

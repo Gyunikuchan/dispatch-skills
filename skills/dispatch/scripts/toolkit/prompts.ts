@@ -154,6 +154,7 @@ export const reviewPrompt = (
     );
   }
 
+  // NOTE: the map is a pre-change locator, so code reviews never receive it; a leading newline keeps an absent map from leaving a blank line.
   const contextMap =
     context.contextMapPath !== undefined && context.contextMapPath !== ""
       ? `\n- Context Map: ${context.contextMapPath} — pre-change locator, not a completeness claim: verify claims at source, and run your own consumer and caller search for each contract the artifact changes.`
@@ -267,6 +268,7 @@ export const confirmationPrompt = (
     `- Scope: ${context.scope}`,
     "",
     ...(context.interRound ? [interRoundSection(context.interRound), ""] : []),
+    // NOTE: the compact prompt has no template, so it repeats the re-review template's closing sentence.
     ...(context.settled !== undefined && context.settled.length > 0
       ? [
           settledSection(context.settled).trim(),

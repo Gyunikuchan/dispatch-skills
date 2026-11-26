@@ -29,6 +29,7 @@ test("lintCitations validates governed line references", () => {
     "docs/Project - Guide.md": "p\nq\n",
   };
 
+  // Valid governed refs, bare to-be-built paths, ignored tokens, and skipped fences/comments/sections
   const validPlan = [
     "# Plan",
     "",
@@ -75,6 +76,7 @@ test("lintCitations validates governed line references", () => {
 
   assert.deepEqual(lintCitations(validPlan, "plan", repoReader(baseFiles)), []);
 
+  // List-marker fence opener, quote nested inside list, and unquoted list-nested fence containing a '>' line
   const listFenceDoc = [
     "- ```ts",
     "  // `src/missing.ts:1`",
@@ -100,6 +102,7 @@ test("lintCitations validates governed line references", () => {
     [{ line: 14, code: "broken-citation" }]
   );
 
+  // EOF lineCount boundaries
   const boundaryPlan = [
     "Empty file fail: `src/empty.ts:1`.",
     "Single-nl fail: `src/single-nl.ts:2`.",
@@ -125,6 +128,7 @@ test("lintCitations validates governed line references", () => {
     ]
   );
 
+  // Missing, escape, inverted, ambiguous, out-of-range & removed extensionless root files
   const invalidRefsPlan = [
     "Missing: `src/missing.ts:1`.",
     "Escape: `../secret.ts:1` and `/etc/passwd:1`.",
@@ -166,6 +170,7 @@ test("lintCitations validates governed line references", () => {
     )
   );
 
+  // Exact original 1-based line numbers after skipped ## Execution Status (with fenced ## headings) and ## Review Findings & Resolutions
   const designWithSkipped = [
     "# Design",
     "## At a Glance",
@@ -207,6 +212,7 @@ test("lintCitations validates governed line references", () => {
     ]
   );
 
+  // Plan keeps ## Execution Status governed (not excluded) and skips ## Review Findings & Resolutions
   const planWithSkipped = [
     "# Plan",
     "## Execution Status",

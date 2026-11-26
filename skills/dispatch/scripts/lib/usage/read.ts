@@ -83,6 +83,7 @@ export const counters = (
   return out;
 };
 
+// 64 MiB
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
@@ -302,6 +303,7 @@ export const baseCounters = (value: unknown): Counters | undefined => {
   const short = r["cacheWrite5m"];
   const long = r["cacheWrite1h"];
 
+  // An invalid split does not invalidate the observed total cache writes.
   if (
     (short === undefined || count(short)) &&
     (long === undefined || count(long)) &&

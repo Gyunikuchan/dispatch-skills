@@ -1,9 +1,14 @@
+// Dispatch config load and strict validation (ADR 0001, ADR 0006,
+// spec §14). The first existing candidate loads wholly (no merge); `config.sample.jsonc` is the validation
+// reference only. Every problem names the sample so users can diff against it.
+
 import fs from "node:fs";
 import path from "node:path";
 
 import { parseJson, sortedJson } from "./integrity.ts";
 import type { JsonObject } from "./integrity.ts";
 
+/** Whether the next significant character (skipping whitespace and comments) closes a container. */
 const closesNext = (text: string, from: number) => {
   let index = from;
 
@@ -90,6 +95,8 @@ const ALIASES: PlatformAliases = {
 
 type DispatchConfig = JsonObject;
 
+// SECTION: JSONC
+
 /** Strips `//` and block comments and trailing commas outside strings. */
 export const stripJsonc = (text: string) => {
   let out = "";
@@ -150,6 +157,8 @@ export const stripJsonc = (text: string) => {
 
 export const parseJsonc = (text: string) => parseJson(stripJsonc(text));
 
+// SECTION: Load
+
 export const hasErrorCode = (error: unknown, code: string) =>
   typeof error === "object" &&
   error !== null &&
@@ -158,6 +167,7 @@ export const hasErrorCode = (error: unknown, code: string) =>
 
 export type ReadFile = (file: string) => string | null;
 
+// Only ENOENT means absent: an unreadable higher-precedence file must not silently fall through.
 export const readReal: ReadFile = (file) => {
   try {
     return fs.readFileSync(file, "utf-8");
@@ -233,6 +243,8 @@ export const loadReadCommands = (
   return isStringArray(value) ? value : [];
 };
 
+// SECTION: Validation
+
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((entry) => typeof entry === "string");
 
@@ -250,6 +262,7 @@ const goodName = (value: unknown): value is string =>
   value.trim() !== "" &&
   !value.trim().endsWith(":");
 
+// Plain words only: an allowlist prefix must not smuggle shell operators, globs or quoting.
 const READ_COMMAND = /^[A-Za-z0-9._/:=@+-]+(?: [A-Za-z0-9._/:=@+-]+)*$/u;
 
 const checkLevelConfig = (
@@ -427,6 +440,7 @@ const checkReadProvider = (
       );
     }
 
+    // A native subagent launch has no CLI default effort to fall back on.
     if (value["nativeSubagentsOnly"] !== true) {
       continue;
     }

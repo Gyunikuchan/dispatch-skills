@@ -1,3 +1,8 @@
+// OpenCode (spec §6.1): v2-only argv `run --auto --format json [--agent] [-m model[#effort]] -- <prompt>`;
+// `Variant unavailable` asks the runner to rerun once without effort. A loopback
+// endpoint gets a `/models` preflight, the GPU lock, and a WAN proxy trap; a remote endpoint skips all three.
+// Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
+
 import { isRecord } from "../lib/config.ts";
 import type { JsonObject } from "../lib/integrity.ts";
 import { opencodeModelValue } from "../lib/platform.ts";
@@ -59,6 +64,7 @@ const opencodeDesktopCandidates = (env: PlatformEnv) => {
   return ["/usr/lib/opencode/opencode-cli-*"];
 };
 
+/** JSON mode: text replies and failure messages come only from their own events; tool and reasoning payloads never classify. */
 // oxlint-disable-next-line eslint/complexity -- JSONL event classifier has one branch per OpenCode event type; refactor deferred.
 const parseEvents = (raw: string) => {
   const texts: string[] = [];
@@ -138,6 +144,7 @@ export const unsupportedStandaloneDiagnostic = (text: string) =>
 const join = (env: PlatformEnv, ...parts: string[]) =>
   parts.join(env.os === "win32" ? "\\" : "/");
 
+/** Loopback hosts only: a LAN or remote host is not "local" for the WAN trap. */
 const isLocalHost = (host: string) => {
   const bare = host.replaceAll(/^\[|\]$/gu, "").toLowerCase();
 
@@ -165,6 +172,7 @@ export const bwrapArgv = (
   const { home } = req.platform;
   const xdg = req.platform.xdg ?? {};
 
+  // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf.
   const state = [
     join(
       req.platform,
@@ -271,6 +279,7 @@ export const prepareOpencode: (
     return { kind: "fail", outcome: failOutcome("timeout", String(error)) };
   }
 
+  // Local dispatch has no legitimate WAN use: every proxy points at a dead port, with only the backend exempt.
   const exempt = [...new Set([host, "localhost", "127.0.0.1", "::1"])].join(
     ","
   );
@@ -358,6 +367,8 @@ export const opencode: ProviderSpec = {
   resumeCommand: (id) => id,
   attemptSession: (out) => validSessionId(parseEvents(out.stdout).sessionId),
   argv(req) {
+    // Headless `--auto` requires the read-only agent from preparation: verified deny-by-default, or best-effort explore.
+    // Standalone owns the server lifecycle; `--pure` and `--variant` are v1-only and never emitted.
     const inner = [
       req.binary,
       "--standalone",
@@ -410,6 +421,7 @@ export const opencode: ProviderSpec = {
       );
     }
 
+    // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
     if (VARIANT_UNAVAILABLE.test(diagnostics) && hasText(req.effort)) {
       return {
         status: "fail",

@@ -206,6 +206,7 @@ const toolkitRepo = async (...args: Parameters<typeof createToolkitRepo>) => {
 
   const { deps } = fixture;
 
+  // Mock review providers expose one CLI mode when the test marks them live.
   deps.liveness = {};
 
   deps.modes = (provider) => (deps.liveness[provider] === true ? ["cli"] : []);
@@ -2454,6 +2455,8 @@ test("cli-only rounds run no repository check and carry no baseline", async () =
 
       assert.equal(submitted.exit, 0);
 
+      // A spec edit during fan-out supersedes the in-flight round to gen-2;
+      // with no native voice no baseline exists to carry, so gen-2 runs no check.
       let moved = false;
 
       const run = async (hook?: (point: string) => Promise<void> | void) =>
@@ -4492,6 +4495,8 @@ test("repository changes report unavailable when checkout reads fail", async (t)
           }
         );
 
+        // Content fingerprints stream through openSync: fail the open too, so a
+        // read failure still surfaces as an unavailable check.
         const open = t.mock.method(
           fs,
           "openSync",
@@ -5049,6 +5054,8 @@ test("reused round number keeps a later report open and admits a whole-target re
       `the acknowledged report stays closed: ${JSON.stringify(statusChanges(status))}`
     );
 
+    // A later report under the reused round number stays open. The rerun note
+    // names the later report, so its suffix matches the later identity.
     const laterSeq = closeSeq + 1;
 
     assert.ok(laterSeq > closeSeq);
@@ -5221,6 +5228,8 @@ test("reused round number keeps a later report open and admits a whole-target re
       "note"
     ).seq;
 
+    // No ledger record lands between the closing note and the later report:
+    // the report carries the note's own sequence and still stays open.
     fs.mkdirSync(path.join(roundDir, "gen-9"), { recursive: true });
     fs.writeFileSync(
       path.join(roundDir, "gen-9", "checkout-report.json"),
@@ -5350,6 +5359,8 @@ test("retry after all-failed uses no host CLI and keeps the first report until a
     const failed = await run();
 
     assert.equal(failed.output.reason, "review-failed");
+    // Restore the changed path, then retry: the new compare is clean,
+    // but the first unacknowledged report must stay open.
     fs.writeFileSync(path.join(f.root, "src/file.ts"), "initial\n");
 
     const retry = await run();
@@ -5387,6 +5398,10 @@ test("retry after all-failed uses no host CLI and keeps the first report until a
       `the first report survives a clean retry: ${JSON.stringify(statusChanges(retryStatus))}`
     );
 
+    // Recover the CLI: the failed native slot still must not use it
+    // (REQ-3: the host CLI never runs for the host provider), so the
+    // retry stays failed and the first report stays open until the
+    // orchestrator closes it with a note.
     f.deps.delegate = async () => {
       await Promise.resolve();
 
@@ -5561,6 +5576,7 @@ test("quoted rerun for an all-failed report starts a fresh whole-target round", 
       ["claude[0]"]
     );
 
+    // The failed report stays open with rerunPending until the rerun completes.
     let status = await f.run(["status", "show"]);
 
     const open = openChanges(defined(statusChanges(status), "changes")).find(
@@ -6115,6 +6131,8 @@ test("repository changes hash a multi-chunk file without a full-file read", asyn
 
     assert.equal(submitted.exit, 0);
 
+    // A file larger than one hash chunk exists before launch; only one byte
+    // beyond the first chunk changes during the round.
     const big = path.join(f.root, "src", "big.bin");
 
     fs.writeFileSync(big, "x".repeat(200 * 1024));
@@ -6225,6 +6243,7 @@ test("checkout reports gate sequences on content and order generations numerical
       [],
       "the acknowledged report stays closed"
     );
+    // A clean later generation must not inflate the sequence past the note.
     fs.writeFileSync(
       path.join(roundDir, "gen-10/checkout-report.json"),
       JSON.stringify({ asOfSeq: 999 })
@@ -6234,6 +6253,8 @@ test("checkout reports gate sequences on content and order generations numerical
       [],
       "a clean generation keeps the report closed"
     );
+    // A newer content report under a reused number reopens; attempts merge and
+    // the numerically latest generation wins the display.
     fs.writeFileSync(
       path.join(roundDir, "gen-10/checkout-report-2.json"),
       JSON.stringify({
@@ -6425,6 +6446,7 @@ test("later unavailable checks merge with earlier changed paths", async () => {
         (entry) => entry.review === name
       );
 
+    // A finalized unavailable check keeps the earlier attempt paths.
     const first = "demo-merge-check";
 
     const firstDir = path.join(f.session, ".state/reviews", first, "round-1");
@@ -6465,6 +6487,7 @@ test("later unavailable checks merge with earlier changed paths", async () => {
     );
     assert.equal(firstOpen.repositoryCheck?.state, "unavailable");
 
+    // An earlier unavailable attempt survives a later finalized path report.
     const second = "demo-merge-check2";
 
     const secondDir = path.join(f.session, ".state/reviews", second, "round-1");
@@ -6647,6 +6670,7 @@ test("quoted and stale rerun notes bind only the open report", async () => {
 
       const seqA = defined(checkout.asOfSeq, "checkout.asOfSeq");
 
+      // A later generation reports again under the reused round number.
       await f.level("low");
 
       const seqB = foldLedger(f.session).lastSeq;
@@ -6984,6 +7008,8 @@ test("a host change past a pending reserve finalizes with a reply a fallback and
       reservePending.attempt.startsWith("claude[0]#"),
       `the pending voice runs on the host reserve: ${reservePending.attempt}`
     );
+    // The session moves to the agy host before the reserve completes. agy
+    // turns native-first while codex keeps its pending claude reserve attempt.
     f.deps.orchestrator = { platform: "agy", model: null };
 
     const resumed = await f.run([
@@ -7114,6 +7140,8 @@ test("an interrupted cli voice resumes with its saved reserve after a host chang
       `codex holds the host reserve: ${JSON.stringify(pendingRun(launched).pending)}`
     );
 
+    // The wave is interrupted before the copilot voice settles: its save is
+    // lost while agy stays done and codex keeps its pending host reserve.
     const reviewsRoot = path.join(f.session, ".state/reviews");
 
     const reviewDir = path.join(
@@ -7124,6 +7152,7 @@ test("an interrupted cli voice resumes with its saved reserve after a host chang
     fs.unlinkSync(
       path.join(reviewDir, "round-1/gen-1/slots", "copilot[0].json")
     );
+    // The session resumes on the agy host with no failure report.
     f.deps.orchestrator = { platform: "agy", model: null };
 
     const resumed = await run();
@@ -7165,6 +7194,8 @@ test("a partial cli-only round resumed on a new host keeps every voice", async (
       },
       phases: { "code-review": { targets: { low: 3 }, rounds: { low: 1 } } },
     });
+    // The first host is not among the roster targets, so the round runs its
+    // plain cli wave with no native voice.
     f.deps.orchestrator = { platform: "opencode", model: null };
     f.deps.liveness = { agy: true, codex: true, copilot: true };
 
@@ -7230,6 +7261,9 @@ test("a partial cli-only round resumed on a new host keeps every voice", async (
     assert.deepEqual(launches.toSorted(), ["agy", "codex", "copilot"]);
     launches.splice(0);
 
+    // The round is interrupted after only agy settles; codex and copilot never
+    // saved an outcome. The session resumes on the agy host, which is one of
+    // the completed targets.
     const reviewsRoot = path.join(f.session, ".state/reviews");
 
     const reviewDir = path.join(
@@ -7326,6 +7360,8 @@ test("sibling reports stay open with correct rerun bindings", async () => {
       );
       assert.ok(seqB > seqA, "the two reports carry distinct identities");
 
+      // The user records a rerun decision for the earlier report while the
+      // later one is still open.
       await appendRecord(
         f.session,
         {
@@ -7340,6 +7376,7 @@ test("sibling reports stay open with correct rerun bindings", async () => {
 
       const noteSeq = foldLedger(f.session).lastSeq;
 
+      // Round 2 finalizes at ordinary differential scope, not the rerun.
       const round2Dir = path.join(
         f.session,
         ".state/reviews",
@@ -7370,6 +7407,9 @@ test("sibling reports stay open with correct rerun bindings", async () => {
         })
       );
 
+      // Closing the sibling report leaves the remaining report open, but round
+      // 2 already finalized past the executable rerun window: the entry carries
+      // no rerun binding and closes with a repository-changes note.
       await appendRecord(
         f.session,
         {
@@ -7477,6 +7517,7 @@ test("sibling reports stay open with correct rerun bindings", async () => {
       );
       assert.ok(seqB > seqA, "the two reports carry distinct identities");
 
+      // The rerun for the later report finalizes round 2 at whole-target scope.
       await appendRecord(
         f.session,
         {
@@ -7539,6 +7580,8 @@ test("sibling reports stay open with correct rerun bindings", async () => {
         `the remaining sibling carries no rerun binding: ${JSON.stringify(open)}`
       );
 
+      // A rerun decision recorded after round 2 finalized cannot execute, so it
+      // adds no binding; only a repository-changes note closes the report.
       await appendRecord(
         f.session,
         {
@@ -7776,6 +7819,8 @@ test("an all-failed round surfaces a checkout write failure instead of a quiet r
       fs.writeFileSync(slot.replyPath, "INVALID REPORT");
     }
 
+    // A persistence failure must stay explicit: the thrown review-failed names
+    // the unwritten report instead of implying durable repository evidence.
     const realWrite = fs.writeFileSync;
 
     const write = t.mock.method(
@@ -7908,6 +7953,8 @@ test("an all-failed round keeps an ignored failure report visible", async () => 
       fs.writeFileSync(slot.replyPath, "INVALID REPORT");
     }
 
+    // A report that matches no saved attempt is ignored, but the all-failed
+    // result still names it so the caller sees where its report went.
     const failed = await run(["--native-failed", "stale[0]#m9=voice gone"]);
 
     assert.equal(
@@ -8135,6 +8182,7 @@ export const stoppedIntegrationReview = async (historicalRounds = 0) => {
         reserve: false,
       }));
 
+      // Seed history for the byte replay. The active round below uses the actual review workflow.
       for (let round = 1; round <= historicalRounds; round += 1) {
         const dir = path.join(
           f.session,

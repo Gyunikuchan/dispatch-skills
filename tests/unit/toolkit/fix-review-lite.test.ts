@@ -42,6 +42,7 @@ const put = (f: Fixture, rel: string, text = "export const value = 1;\n") => {
   fs.writeFileSync(file, text);
 };
 
+// Scripts only the Git reads fix-review-lite makes: the repository listing and the round diff.
 const gitStub = (
   f: Fixture,
   listing: string[],
@@ -76,6 +77,7 @@ const gitStub = (
 
 const brief = async (f: Fixture, artifact = f.plan) => {
   f.lines.length = 0;
+  // The fixture copies only the review templates; the fix-review-lite template is read from the skill root.
   fs.copyFileSync(
     path.resolve(
       "skills/dispatch/references/templates/fix-review-lite-brief.md"
@@ -119,6 +121,7 @@ const brief = async (f: Fixture, artifact = f.plan) => {
   };
 };
 
+// One plan round whose only finding is accepted, then a fix appended to the plan.
 const reviewed = async (f: Fixture) => {
   const callResult = await f.call();
 
@@ -282,6 +285,7 @@ test("fix-review-lite brief: launch values come from the utility entry of the ho
 });
 
 test("fix-review-lite selection resolves the reviewed round across artifacts", async () => {
+  // fix-review-lite selection: picks the latest round of this artifact when a same-basename artifact has a later round
   {
     const f = await fixture();
 
@@ -318,6 +322,7 @@ test("fix-review-lite selection resolves the reviewed round across artifacts", a
     }
   }
 
+  // fix-review-lite selection: an artifact outside the repository renders and collides with no repository review
   {
     const f = await fixture();
 
@@ -364,6 +369,7 @@ test("fix-review-lite selection resolves the reviewed round across artifacts", a
     }
   }
 
+  // fix-review-lite selection: works with no bind record
   {
     const f = await fixture(false);
 
@@ -407,6 +413,7 @@ test("fix-review-lite selection resolves the reviewed round across artifacts", a
 });
 
 test("fix-review-lite refusals leave no file without reviewable accepted changes", async () => {
+  // fix-review-lite refusals: a round without artifactPath, an unreviewed artifact and a code-review artifact refuse without files
   {
     const f = await fixture();
 
@@ -443,6 +450,7 @@ test("fix-review-lite refusals leave no file without reviewable accepted changes
     }
   }
 
+  // fix-review-lite refusals: no accepted finding refuses
   {
     const f = await fixture();
 
@@ -462,6 +470,7 @@ test("fix-review-lite refusals leave no file without reviewable accepted changes
     }
   }
 
+  // fix-review-lite refusals: no change since the round input refuses and leaves no file
   {
     const f = await fixture();
 
@@ -482,6 +491,7 @@ test("fix-review-lite refusals leave no file without reviewable accepted changes
     }
   }
 
+  // fix-review-lite refusals: an unexpected diff exit is a fault and leaves no file
   {
     const f = await fixture();
 
@@ -502,6 +512,7 @@ test("fix-review-lite refusals leave no file without reviewable accepted changes
     }
   }
 
+  // fix-review-lite refusals: an unreadable spec refuses
   {
     const f = await fixture();
 
@@ -520,6 +531,7 @@ test("fix-review-lite refusals leave no file without reviewable accepted changes
 });
 
 test("fix-review-lite spec states the reviewed text or its unavailability", async () => {
+  // fix-review-lite spec: an unchanged spec names one governing path and no snapshot
   {
     const f = await fixture();
 
@@ -535,6 +547,7 @@ test("fix-review-lite spec states the reviewed text or its unavailability", asyn
     }
   }
 
+  // fix-review-lite spec: drift names the reviewed snapshot as the reviewed text
   {
     const f = await fixture();
 
@@ -554,6 +567,7 @@ test("fix-review-lite spec states the reviewed text or its unavailability", asyn
     }
   }
 
+  // fix-review-lite spec: drift without a snapshot states the reviewed spec text is unavailable
   {
     const f = await fixture();
 
@@ -573,6 +587,7 @@ test("fix-review-lite spec states the reviewed text or its unavailability", asyn
     }
   }
 
+  // fix-review-lite spec: a rewritten snapshot that no longer matches the round hash is unavailable
   {
     const f = await fixture();
 
@@ -875,6 +890,7 @@ for (const aliases of [
 }
 
 test("fix-review-lite consumer search excludes sessions roots and unlisted paths", async () => {
+  // fix-review-lite consumer search: excludes the sessions root and each flagged listed path, unsafe paths as globs
   {
     const f = await fixture();
 
@@ -905,11 +921,13 @@ test("fix-review-lite consumer search excludes sessions roots and unlisted paths
     }
   }
 
+  // fix-review-lite consumer search: a session outside the repository adds no sessions-root exclude
   {
     const f = await fixture();
 
     try {
       await reviewed(f);
+      // The repository is a subfolder of the virtual root, so the session and its sessions root sit outside it.
       const repo = path.join(f.root, "repo");
       fs.mkdirSync(repo, { recursive: true });
       const manifest = path.join(f.session, "manifest.json");
@@ -938,6 +956,7 @@ test("fix-review-lite consumer search excludes sessions roots and unlisted paths
     }
   }
 
+  // fix-review-lite consumer search: a listed path cited as unrenderable gets one glob exclude, an unlisted one none
   {
     const f = await fixture();
 
@@ -965,6 +984,7 @@ test("fix-review-lite consumer search excludes sessions roots and unlisted paths
       assert.ok(text.includes("`{ {x} }/a.md`: unrenderable name"));
       assert.ok(text.includes("`{ {y} }/b.md`: unrenderable name"));
       assert.equal(text.split('":(exclude,glob)??x??/a.md"').length - 1, 1);
+      // Sensitive and cited as unrenderable: one exclude, not one per reason.
       assert.equal(text.split('":(exclude,glob)??x??/.env"').length - 1, 1);
       assert.ok(
         !text.includes("??y??"),

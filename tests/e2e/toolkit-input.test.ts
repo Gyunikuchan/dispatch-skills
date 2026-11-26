@@ -117,6 +117,7 @@ describe("CLI payload matrix and shell quoting", () => {
 
       const base = r.git(["rev-parse", "HEAD"]);
 
+      // 1. brief explorer
       const expPayload = {
         objective: "Map inputs",
         questions: ["How do inputs parse?"],
@@ -198,6 +199,7 @@ describe("CLI payload matrix and shell quoting", () => {
       assert.equal(expConflict.exit, 1);
       assert.equal(expConflict.output.reason, "invalid-input");
 
+      // 2. brief test-cleanup (including --base + --integration-path)
       const tcPayload = { base, integrationPath: r.integration };
 
       const tcFile = path.join(r.root, "test-cleanup.json");
@@ -341,6 +343,7 @@ describe("CLI payload matrix and shell quoting", () => {
         assert.equal(bad.output.reason, "invalid-input", badArgs.join(" "));
       }
 
+      // 3. brief verifier
       const verPayload = {
         checkoutPath: r.integration,
         base,
@@ -423,6 +426,7 @@ describe("CLI payload matrix and shell quoting", () => {
       assert.equal(verConflict.exit, 1);
       assert.equal(verConflict.output.reason, "invalid-input");
 
+      // 4. lint run --edit / --json
       const planFile = path.join(r.root, "work.plan.md");
 
       const initialPlanHash = defined(
@@ -606,6 +610,7 @@ describe("CLI payload matrix and shell quoting", () => {
 
       const base = r.git(["rev-parse", "HEAD"], r.integration);
 
+      // 5. worktree commit --review-fix / --review-fix-json (file, -, inline, conflict)
       const rf1 = {
         review: "code-integration",
         round: 1,
@@ -690,10 +695,12 @@ describe("CLI payload matrix and shell quoting", () => {
       assert.equal(rfConflict.exit, 1);
       assert.equal(rfConflict.output.reason, "invalid-input");
 
+      // Record fresh evidence on current integration tree before test-cleanup
       const rechecked = await r.run(["check", "run"]);
 
       assert.equal(rechecked.exit, 0);
 
+      // 6. worktree commit --test-cleanup / --test-cleanup-json (file, -, inline, conflict)
       const tcData = { removed: ["SC1"], deleted: 1, merged: 0 };
 
       const tcFile = path.join(r.root, "tc.json");
@@ -719,6 +726,7 @@ describe("CLI payload matrix and shell quoting", () => {
       assert.equal(tcConflict.exit, 1);
       assert.equal(tcConflict.output.reason, "invalid-input");
 
+      // Test stdin - and inline --test-cleanup-json across separate cleanup sessions or file/stdin/inline
       const modes = ["file", "stdin", "inline"] as const;
 
       await Promise.all(
@@ -791,6 +799,7 @@ describe("CLI payload matrix and shell quoting", () => {
         })
       );
 
+      // 7. worktree deliver --commit / --message (file, -, inline, conflict)
       const msgFile = path.join(r.root, "commit-msg.txt");
 
       fs.writeFileSync(msgFile, "feat: deliver via file\n");
@@ -812,6 +821,7 @@ describe("CLI payload matrix and shell quoting", () => {
       assert.equal(deliverConflict.exit, 1);
       assert.equal(deliverConflict.output.reason, "invalid-input");
 
+      // Uncommitted deliver in main session, then commit via --message, and test file / stdin - concurrently in sub-repos
       const uncommitted = await r.run(["worktree", "deliver"]);
 
       assert.equal(uncommitted.exit, 0);
@@ -1117,6 +1127,7 @@ describe("CLI payload matrix and shell quoting", () => {
       const r = await toolkitRepo();
 
       try {
+        // 1. PowerShell UTF-8 $OutputEncoding stdin byte-equality on worktree deliver --commit -
         await r.approve();
         await r.level("low");
 
@@ -1177,6 +1188,7 @@ describe("CLI payload matrix and shell quoting", () => {
         );
         assert.equal(r.git(["log", "-1", "--format=%B"]).trim(), utf8Msg);
 
+        // 2. PowerShell inline quoting for --text (ask run) and --json (lint run) with spaces and quotes
         const initRes = await f.launch([
           "session",
           "init",
@@ -1206,6 +1218,7 @@ describe("CLI payload matrix and shell quoting", () => {
 
         const psAsk = `& '${process.execPath.replaceAll("'", "''")}' '${f.entry.replaceAll("'", "''")}' ask run --text 'Quote \\"check\\" & path/to/file?' --session '${session.replaceAll("'", "''")}' --host codex --level low`;
 
+        // NOTE: PowerShell 5.1 passes backslashed double-quotes safely to native executables; assert exact sha256 oracle.
         const askOut = spawnSync(
           "powershell.exe",
           ["-NoProfile", "-Command", psAsk],

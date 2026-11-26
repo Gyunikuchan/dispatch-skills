@@ -550,6 +550,7 @@ const stageRow = (text: string) =>
   );
 
 test("diagnostics render honors the enabled toggle across render, cost, failure and retro paths", async (t) => {
+  // diagnostics render writes the session report when enabled and reports off when disabled
   {
     const f = sessionFixture({ memory: true });
 
@@ -644,6 +645,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
     }
   }
 
+  // cost cells render from the skill rate table and fall back to not estimated without a host or table
   {
     const f = sessionFixture({ memory: true });
 
@@ -734,6 +736,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
     }
   }
 
+  // diagnostics render keeps an older report when the write fails
   {
     const f = sessionFixture({ memory: true });
 
@@ -775,6 +778,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
     }
   }
 
+  // diagnostics render reads host usage only while enabled
   {
     const f = sessionFixture({ memory: true });
 
@@ -893,6 +897,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
     }
   }
 
+  // report render and complete collect host usage without gating outcomes
   {
     const f = await hostTest_fixture();
 
@@ -1014,6 +1019,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
     }
   }
 
+  // diagnostics render warns on missing host retro only when enabled
   {
     const f = sessionFixture({ memory: true });
 
@@ -1249,6 +1255,7 @@ test("Overview lists each zero-invocation phase without folding", () => {
     );
     assert.match(overviewSection, /\| all phases \|/u);
 
+    // Driver, Host, User wait columns omitted when no row has a value; Wall is kept
     const header = defined(
       overviewSection.split("\n").find((l) => l.startsWith("| Phase |"))
     );
@@ -1304,6 +1311,7 @@ test("legend defines symbols and units, and empty Grounding and Top findings are
 });
 
 test("round workload render rereads host usage for started rounds and flags over-budget turns", async () => {
+  // round workload render reads host usage again only for rounds with a start
   {
     const f = sessionFixture({ memory: true });
 
@@ -1427,6 +1435,7 @@ test("round workload render rereads host usage for started rounds and flags over
     }
   }
 
+  // round turns: renders observed turns and flags only plan and design rounds over budget
   {
     const f = sessionFixture({ memory: true });
 
@@ -1485,6 +1494,7 @@ test("round workload render rereads host usage for started rounds and flags over
     }
   }
 
+  // round turns: renders code review workloads without the advisory budget
   {
     const f = sessionFixture({ memory: true });
 

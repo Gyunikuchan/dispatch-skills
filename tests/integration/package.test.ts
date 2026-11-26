@@ -5,6 +5,9 @@ import { test } from "node:test";
 
 import { REPO_ROOT } from "./scan.ts";
 
+// The cutover adds no dependency; native stripping defines the approved engine range.
+// Escalation approved: commitlint tooling for conventional commits.
+// Approved Oxc rollout adds formatting, type-aware linting and Ultracite presets.
 export const EXPECTED = {
   // SAFETY: test fixture pins the concrete shape asserted below.
   dependencies: [] as string[],

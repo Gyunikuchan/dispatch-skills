@@ -90,6 +90,7 @@ test("ledger records reject escaping links and allow contained links", async () 
   try {
     const input = f.artifact("record.json", "");
     const linked = path.join(f.root, "linked");
+    // Junctions permit a linked-directory case on Windows without elevation.
     fs.symlinkSync(
       f.session,
       linked,

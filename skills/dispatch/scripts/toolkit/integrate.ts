@@ -436,6 +436,7 @@ export const commit = async (ctx: HandlerContext) => {
       const cleanupTrailers = lines.filter((line) => line.startsWith(TRAILER));
 
       if (cleanup) {
+        // SECTION: test cleanup commit; a clean tree recovers an interrupted commit from its trailer
         if (
           tx.fold.records.some(
             (r) => r.kind === "integrate" && r.data["phase"] === "test-cleanup"

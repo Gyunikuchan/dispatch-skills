@@ -77,6 +77,7 @@ const refreshComponents = (skill: string, entries: Record<string, string>) => {
   }
 };
 
+/** `$version` from the repository package.json; omitted when it is absent or unreadable. */
 const packageVersion = (root: string) => {
   try {
     const manifest: unknown = JSON.parse(

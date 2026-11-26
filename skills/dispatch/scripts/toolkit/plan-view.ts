@@ -85,6 +85,7 @@ type PlanValue =
   | PlanValue[]
   | { [key: string]: PlanValue };
 
+// Plan data is JSON-shaped, so a leaf outside the JSON types is an absent field.
 const stripPositions = (value: unknown): PlanValue => {
   if (Array.isArray(value)) {
     return value.map(stripPositions);

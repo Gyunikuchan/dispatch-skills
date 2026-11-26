@@ -98,6 +98,7 @@ export interface DiagnosticInstructions {
   instructions?: string;
 }
 
+// Runner metadata is trusted past this check; `collect` contains any malformed row.
 const isInvocationRow = (value: unknown): value is Invocation =>
   Boolean(value) && typeof value === "object";
 
@@ -199,6 +200,7 @@ export const observeTool = (
       facts.config = loadConfig(deps.skillRoot).config;
     } catch {
       void 0;
+      // Version and build identity are optional capture facts.
     }
 
     let pendingPersistence = false;
@@ -221,6 +223,7 @@ export const observeTool = (
           (capture.storageFailed ?? 0) + 1
         );
 
+        // Preserve the previous capture when an optional update fails.
         const marker = file + CAPTURE_FAILURE_SUFFIX;
         const markerTemp = `${marker}.tmp`;
 
@@ -236,11 +239,13 @@ export const observeTool = (
           fs.renameSync(markerTemp, marker);
         } catch {
           void 0;
+          // The failure marker is itself best-effort; `pendingPersistence` still records the loss.
         } finally {
           try {
             fs.rmSync(markerTemp, { force: true });
           } catch {
             void 0;
+            // A leftover temp file is harmless.
           }
         }
       } finally {
@@ -248,6 +253,7 @@ export const observeTool = (
           fs.rmSync(temp, { force: true });
         } catch {
           void 0;
+          // A leftover temp file is harmless.
         }
       }
     };
@@ -380,6 +386,7 @@ export const observeTool = (
         }
       } catch {
         void 0;
+        /* Malformed optional runner metadata cannot change its outcome. */
       }
     };
 
@@ -543,6 +550,7 @@ export const observeTool = (
             persist();
           } catch {
             void 0;
+            // Diagnostic events never change a workflow outcome.
           }
         },
         async delegate(provider, request, mode) {
@@ -560,6 +568,7 @@ export const observeTool = (
                     request.onInvocation?.(row);
                   } catch {
                     void 0;
+                    // An observer failure must not change the delegate outcome.
                   }
                 },
               },
@@ -581,6 +590,7 @@ export const observeTool = (
               );
             } catch {
               void 0;
+              // Capture failure must not mask the delegate error rethrown below.
             }
 
             throw error;
@@ -622,6 +632,7 @@ export const observeTool = (
           const execution = facts.recoveryExecution;
 
           if (execution) {
+            // A second fan-out wave can replay slots launched earlier in this call.
             const saved = [...reused].filter(
               (slot) => !launched.has(slot)
             ).length;
@@ -660,6 +671,7 @@ export const observeTool = (
         } catch {
           // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the finished and failed branches.
           return undefined;
+          // A capture that cannot be finished offers no resume reference.
         }
       },
     };

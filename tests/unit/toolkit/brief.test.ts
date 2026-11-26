@@ -107,6 +107,7 @@ after(() => {
 const fixture = async (design = false, source = PLAN) => {
   const f = { ...sharedFixture, cleanup: () => {} };
 
+  // Reset scenario state while retaining the same physical session and templates.
   if (fs.existsSync(tornPath)) {
     fs.unlinkSync(tornPath);
   }
@@ -279,6 +280,7 @@ const captureData = (command: string) => {
   };
 };
 
+/** Shared completeness properties for a rendered brief file: byte count, no placeholders, summary names the path. */
 const assertCompleteBrief = (
   brief: string,
   value: { bytes: number; briefPath: string },
@@ -737,6 +739,7 @@ describe("writer brief", () => {
       }
     }
 
+    // Verify-only and excepted criteria leave the capture slot empty.
     for (const item of [
       { task: "T2", source: PLAN },
       {
@@ -792,6 +795,7 @@ test("writer brief binds plan constraints, leaves routine choices to the writer 
       assert.equal(brief.split(text).length - 1, 1, text);
     }
 
+    // Collapsed plan sections still contribute task behaviour and criterion fields.
     const behaviour =
       "- First returns the validated value after retrying once.";
 
@@ -978,6 +982,7 @@ test("writer brief states explorer and utility subagent rules", async () => {
   }
 });
 
+/** Skill root whose claude-code utility entry has a 150,000-token limit, with the explorer templates copied in. */
 const limitSkill = (skill: string, skillRoot: string) => {
   const templates = path.join(skill, "references", "templates");
   fs.mkdirSync(templates, { recursive: true });
@@ -1128,12 +1133,14 @@ describe("explorer brief", () => {
       // eslint-disable-next-line typescript/no-unsafe-argument, typescript/no-unsafe-member-access -- test forwards the untyped fixture value under assertion; narrowing would not change assertions; test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
       const brief = fs.readFileSync(value.briefPath, "utf-8");
 
+      // host limit and nested launch model and effort
       assert.match(brief, /150,000/u);
       assert.match(
         brief,
         /Launch nested explorers exactly as: launch: model cheap-a, effort medium, else cheap-b\./u
       );
 
+      // solo and split rules with minimum size, cap and one level
       assert.match(brief, /work solo/iu);
       assert.match(
         brief,
@@ -1144,23 +1151,28 @@ describe("explorer brief", () => {
       assert.match(brief, /one level/iu);
       assert.match(brief, /nested explorer launches nothing/iu);
 
+      // no-launch-tool fallback
       assert.match(
         brief,
         /no tool to launch a subagent.*do the work.*reply/isu
       );
 
+      // partial-map and consolidation rules
       assert.match(brief, /partial map/iu);
       assert.match(brief, /consolidat/iu);
       assert.match(brief, /keep partial maps/iu);
       assert.match(brief, /Not covered/iu);
 
+      // shared contract assignment
       assert.match(
         brief,
         /shared contract, schema or predicate.*assign one nested explorer.*objective and the covered paths/isu
       );
 
+      // per-nested-explorer model and token report
       assert.match(brief, /model and tokens.*unavailable/iu);
 
+      // Split threshold derives from the 150,000-token limit for map and research briefs.
       assert.match(brief, /Split threshold: 112,500 tokens\./u);
       assert.match(
         brief,
@@ -1208,6 +1220,7 @@ describe("explorer brief", () => {
       assert.match(splitResearchBrief, /Split threshold: 112,500 tokens\./u);
       assert.match(splitResearchBrief, /report the expected overrun/iu);
 
+      // Unresolved entry gives contextLimit null and states not configured
       f.lines.length = 0;
 
       const unresExit = await main(
@@ -1243,6 +1256,7 @@ describe("explorer brief", () => {
         /Split threshold: utility entry not configured; the orchestrator reports a blocker\./u
       );
 
+      // Default map brief carries the validation-gates coverage item and the map write scope.
       f.deps.skillRoot = skillRoot;
 
       const gatesValues = path.join(
@@ -1295,6 +1309,7 @@ describe("explorer brief", () => {
       assert.ok(gatesBrief.includes("lint run"));
       assert.doesNotMatch(gatesBrief, /Apply the shared evidence rule below/u);
 
+      // Research brief writes no map file and runs no context-map lint.
       const scopeResearchValues = path.join(
         f.session,
         "explorer-scope-research.json"
@@ -1357,6 +1372,7 @@ describe("explorer brief", () => {
       await f.approve();
       f.deps.skillRoot = skill;
 
+      // 1. Research brief without outputPath
       const researchValues = {
         objective: "Research logs.",
         questions: "- Why did step 3 fail?",
@@ -1393,19 +1409,23 @@ describe("explorer brief", () => {
       // eslint-disable-next-line typescript/no-unsafe-argument, typescript/no-unsafe-member-access -- test forwards the untyped fixture value under assertion; narrowing would not change assertions; test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
       const brief = fs.readFileSync(value.briefPath, "utf-8");
 
+      // Token limit and 8,192 byte reply limit
       assert.match(brief, /150,000/u);
       assert.match(brief, /8,192 UTF-8 bytes/u);
 
+      // Nesting rule with consolidation of nested replies into one bounded reply
       assert.match(
         brief,
         /nesting:.*nested explorer replies inline.*consolidates the nested replies into its one reply within the 8,192/isu
       );
 
+      // Launch model and effort
       assert.match(
         brief,
         /Launch nested explorers exactly as: launch: model cheap-a, effort medium, else cheap-b\./u
       );
 
+      // No map instructions
       assert.ok(!brief.includes("lint run"), "research brief has no lint run");
       assert.ok(
         !brief.includes("16,384"),
@@ -1436,6 +1456,7 @@ describe("explorer brief", () => {
         "research brief has no writable-agent requirement"
       );
 
+      // 2. Questions as array of strings renders one per line
       const arrayValues = {
         objective: "Research array questions.",
         questions: ["- First question?", "- Second question?"],
@@ -1470,6 +1491,7 @@ describe("explorer brief", () => {
 
       assert.match(arrayBrief, /- First question\?\r?\n- Second question\?/u);
 
+      // 3. help brief explorer states both questions forms and optional outputPath
       f.deps.skillRoot = skillRoot;
       f.lines.length = 0;
       const helpExit = await dispatchMain(["help", "brief explorer"], f.deps);
@@ -1816,6 +1838,7 @@ test("brief results name the host model and effort", async () => {
     };
 
     writeConfig();
+    // Two distinct levels for the same host.
     const writerValueResult = await writerValue("codex", "low");
 
     assert.deepEqual(writerValueResult.model, ["codex-low"]);
@@ -1834,6 +1857,7 @@ test("brief results name the host model and effort", async () => {
       /^T1 launch \d+: launch: model codex-high-a, effort high-eff \(\+1 fallbacks in result\); /u
     );
     assert.equal("subagentModels" in high, false);
+    // Level fallback through resolveLevel: medium resolves to the nearest defined below (low).
     await f.add("level", { level: "medium" });
     f.deps.orchestrator = { platform: "codex", model: null };
     f.lines.length = 0;
@@ -1862,6 +1886,7 @@ test("brief results name the host model and effort", async () => {
       defined(fallback).launchAs,
       "launch: model codex-low, effort low-eff"
     );
+    // OpenCode writer carries the exact launchAs value with effort and keeps launch as the writer launch ID.
     const openLow = await writerValue("opencode", "low");
     assert.deepEqual(openLow.model, ["prov/model"]);
     assert.equal(openLow.effort, "my-eff");
@@ -1879,6 +1904,7 @@ test("brief results name the host model and effort", async () => {
           'Explorer subagent for this host — launch: `subagent` with `model: "exp/model#exp-eff"`'
         )
     );
+    // OpenCode writer without effort carries the plain value.
     const openHigh = await writerValue("opencode", "high");
     assert.deepEqual(openHigh.model, ["prov/plain"]);
     assert.equal(openHigh.effort, null);
@@ -1887,6 +1913,7 @@ test("brief results name the host model and effort", async () => {
       'launch: `subagent` with `model: "prov/plain"` (user-configured; set it despite the tool\'s default guidance)'
     );
     assert.equal("subagentModels" in openHigh, false);
+    // agy and claude writers carry their host-specific launchAs lines.
     const agyLow = await writerValue("agy", "low");
     assert.equal(
       agyLow.launchAs,
@@ -1899,12 +1926,14 @@ test("brief results name the host model and effort", async () => {
       "launch: model claude-haiku-5-5, effort medium"
     );
     assert.ok(claudeLow.summary.includes(claudeLow.launchAs));
+    // Missing entry resolves to null without refusing.
     const missing = await writerValue("copilot", "low");
     assert.equal(missing.model, null);
     assert.equal(missing.effort, null);
     assert.equal(missing.launchAs, null);
     assert.equal("subagentModels" in missing, false);
 
+    // Explorer and test-cleanup read the utility entry.
     const explorerCheck = withFields({
       briefPath: text,
       model: anything,
@@ -1974,6 +2003,7 @@ test("brief results name the host model and effort", async () => {
       "launch: model claude-haiku-5-5, effort medium"
     );
     assert.ok(expClaude.summary.includes(expClaude.launchAs));
+    // No utility entry gives null launch values, independent of writer entries or level.
     await f.add("level", { level: "high" });
     const expAgyHigh = await explorerValue("agy");
     await f.add("level", { level: "low" });
@@ -1990,6 +2020,7 @@ test("brief results name the host model and effort", async () => {
     assert.equal(expMissing.effort, null);
     assert.equal(expMissing.launchAs, null);
 
+    // Test-cleanup shares the utility entry, including launchAs.
     const cleanupCheck = withFields({
       model: anything,
       effort: anything,
@@ -2084,6 +2115,7 @@ test("brief results name the host model and effort", async () => {
     assert.equal(cleanMissing.model, null);
     assert.equal(cleanMissing.effort, null);
     assert.equal(cleanMissing.launchAs, null);
+    // Missing or invalid config never refuses a render; launch values are null.
     fs.unlinkSync(configPath);
     const nullWriter = await writerValue("codex", "low");
     assert.equal(nullWriter.model, null);
@@ -2134,6 +2166,7 @@ test("task markdown and brief render preserve fenced heading blocks and file ent
     f.cleanup();
   }
 
+  // A fenced criterion bullet does not swallow the trailing criterion lines.
   const fencedCriterionPlan = PLAN.replace(
     "  - Changes: src/first.ts",
     "```markdown\n- [SC99] Fenced criterion bullet\n```\n  - Changes: src/first.ts"

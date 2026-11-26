@@ -52,6 +52,7 @@ const isSeverity = (value: string): value is Severity => value in RANK;
 
 const toPosix = (file: string) => file.split(path.sep).join("/");
 
+// Reviewer and path text must not add placeholders or relative links, which assertFilled refuses.
 const safeText = (value: string) =>
   value.replaceAll("{{", "{ {").replaceAll("}}", "} }").replaceAll("](", "] (");
 
@@ -106,6 +107,7 @@ const span = (citation: Citation) => {
 const list = (items: readonly string[]) =>
   items.length ? items.join("\n") : "- None.";
 
+// Completed rounds of one review, newest first; a round without findings.json is still running.
 const completedRounds = (reviewDir: string) => {
   if (!fs.existsSync(reviewDir)) {
     return [];
@@ -158,6 +160,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
     );
   }
 
+  // NOTE: selection by recorded artifactPath, not the bind, so a same-basename artifact or an unbound session never picks the wrong round.
   const review = reviewId(kind, artifact);
   const reviewDir = reviewDirectory(ctx.session, review);
   const artifactReal = canonical(artifact);
@@ -281,6 +284,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
     path.relative(root, path.dirname(ctx.session))
   );
 
+  // The sessions root is excluded from search only when it sits inside the repository.
   const sessionsInside =
     sessionsRootRel !== "" &&
     !sessionsRootRel.startsWith("..") &&
@@ -329,6 +333,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
       );
     }
 
+    // --no-index also exits 1 on an unreadable path, so exit 1 needs output.
     if (diff.exit !== 1 || !diff.stdout) {
       throw new ToolError(
         2,
@@ -347,6 +352,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
     const unrenderable = new Set<string>();
 
     const citationReason = (rel: string) => {
+      // Names must fit a Markdown list line and pass template validation.
       if (/[\r\n`]|\{\{|\}\}|\]\(/u.test(rel)) {
         return "unrenderable name";
       }
@@ -383,6 +389,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
     };
 
     for (const citation of addedCitations(diff.stdout)) {
+      // NOTE: normalize to the repository-relative POSIX path so `./a.ts:1` and `a.ts:1` share one entry and one check.
       const normalized: Citation = {
         ...citation,
         path: path.posix.normalize(citation.path),
@@ -450,6 +457,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
       }
     }
 
+    // Flagged listed paths drop out of the search: sensitive ones and listed ones cited as unrenderable are excludes (glob-rendered when unsafe); an unsafe sensitive one is also withheld.
     const excludes: string[] = sessionsInside ? [sessionsRootRel] : [];
 
     for (const rel of listing) {

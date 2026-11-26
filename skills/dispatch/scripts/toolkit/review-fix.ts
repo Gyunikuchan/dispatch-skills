@@ -17,6 +17,7 @@ export const reviewFixIdentity = (value: ReviewFix) => {
 
 const FIX_DATA = "Dispatch-Review-Fix-Data: ";
 
+// NOTE: commitlint config-conventional caps body and footer lines at 100 characters, so the data trailer repeats in ordered chunks.
 export const dataTrailers = (prefix: string, data: string) =>
   (data.match(new RegExp(`.{1,${100 - prefix.length}}`, "gu")) ?? []).map(
     (chunk) => prefix + chunk

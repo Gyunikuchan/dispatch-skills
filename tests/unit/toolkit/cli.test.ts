@@ -1162,6 +1162,7 @@ test("cli ledger append formats array summary and refreshes findings for new and
   }
 });
 
+// SECTION: refusal pointer
 test("the retired brief action returns unknown action", async () => {
   const f = sessionFixture({ memory: true });
 
@@ -1225,6 +1226,7 @@ test("refusal names the section for a resolved action and the call table otherwi
   };
 
   try {
+    // Unresolved action and parse failure on a valid action.
     assert.equal(await run(["bogus", "action", "--session", f.session]), 1);
     assert.equal(help(), "call table");
     assert.equal(await run(["--session", f.session]), 1);
@@ -1234,6 +1236,7 @@ test("refusal names the section for a resolved action and the call table otherwi
       1
     );
     assert.equal(help(), "status show");
+    // Handler fault and result-write fault.
     assert.equal(
       await run(["status", "show", "--session", f.session], (deps) => {
         deps.handler = () => {
@@ -1252,10 +1255,12 @@ test("refusal names the section for a resolved action and the call table otherwi
       2
     );
     assert.equal(help(), "status show");
+    // Gate refusal.
     const file = f.artifact("bad.plan.md", "# Work\n");
     assert.equal(await run(["lint", "run", file, "--session", f.session]), 4);
     assert.equal(f.output().reason, "lint-errors");
     assert.equal(help(), "lint run");
+    // native-pending and ok:true carry no pointer.
     assert.equal(
       await run(["status", "show", "--session", f.session], (deps) => {
         // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work

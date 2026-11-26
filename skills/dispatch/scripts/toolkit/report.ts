@@ -212,6 +212,7 @@ const testCleanupView = ({ data }: LedgerRecord) => ({
   merged: countValue(data["merged"]),
 });
 
+/** Captures only the plan, ledger and Git facts needed to decide completion. */
 // oxlint-disable-next-line eslint/complexity -- capture branches per bind state, integration presence, and fix-record kind.
 const capture = async (ctx: HandlerContext, fold: Fold) => {
   const bind = latest(fold, "bind");
@@ -575,6 +576,7 @@ const runtimeProofView = (
   };
 };
 
+/** Joins captured facts with changes and review results to form a rendered report. */
 // oxlint-disable-next-line eslint/complexity -- materialization branches per command exit, name-status action, and ledger kind.
 const materialize = async (ctx: HandlerContext, snapshot: Snapshot) => {
   const changes: WalkthroughView["changes"][number][] = [];

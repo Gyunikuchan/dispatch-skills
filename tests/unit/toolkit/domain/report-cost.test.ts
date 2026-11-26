@@ -27,6 +27,8 @@ import type {
 } from "../../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
 import { defined } from "../../../helpers/guards.ts";
 
+// SECTION: Diagnostics reports
+
 const SKILL_ROOT = fileURLToPath(
   new URL("../../../../skills/dispatch/", import.meta.url)
 );
@@ -80,6 +82,16 @@ const facts = (overrides: Partial<RunFacts> = {}) =>
     ...overrides,
     // SAFETY: fixture defaults and overrides describe a complete shape; undefined overrides are omitted at runtime.
   }) as RunFacts;
+
+// SECTION: Layout, durations, and token columns
+
+// SECTION: Heuristics, severity, and model attribution
+
+// SECTION: Scope gate and redaction
+
+// SECTION: Finding origin
+
+// SECTION: Estimated cost rendering
 
 const PRICES = {
   asOf: "2026-11-14",
@@ -140,6 +152,8 @@ const mega = (
     ...overrides,
   });
 
+// SECTION: Cost folding under the byte cap
+
 const CAP = DIAGNOSTIC_LIMITS.reportBytes;
 
 const FOLD_PRICES = {
@@ -182,6 +196,7 @@ const byKey = (a: string, b: string) => {
 const summaryCost = (text: string) =>
   /^- Estimated cost (?<g1>[^\s·]+)/mu.exec(text)?.[1];
 
+// Generated rows cycle through exact, range, unpriced and zero-rate costs; quarter-million token counts keep every cost exact in binary.
 interface Source {
   key: string;
   tokens: number;
@@ -255,6 +270,7 @@ const totalOf = (rows: readonly Source[]) =>
 const reasonsOf = (rows: readonly Source[]) =>
   [...new Set(rows.flatMap((r) => [...r.cost.reasons]))].toSorted();
 
+/** Asserts the kept rows are the best-ranked ones and the folded row sums, dimension-marks and unions the rest; returns the folded oracle rows. */
 const assertFolded = (
   kept: readonly string[][],
   folded: readonly string[],
@@ -309,6 +325,7 @@ const host = (
 };
 
 test("cost cells price units, sum phases and attribute coverage across tables", () => {
+  // cost cells show estimated cost in the Summary, Phases, Tokens by platform and Tokens by stage
   {
     const run = facts({ invocations: [mega("alpha", "high", M)] });
     const text = costRender([run]);
@@ -365,6 +382,7 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
     );
   }
 
+  // cost cells keep unpriced units out of the sum
   {
     const cost = (invocations: InvocationFacts[]) =>
       phaseCost(costRender([facts({ invocations })]), "code review")[0];
@@ -388,6 +406,7 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
     assert.match(text, /priced 1 · unpriced 2/mu);
   }
 
+  // phase cost sums CLI delegates and host rows by phase, with the rest in unattributed phase and a run total
   {
     const run = facts({
       phases: [
@@ -449,6 +468,7 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
     );
   }
 
+  // phase cost adds reasoning at the output rate only when the platform reports it apart from output
   {
     const usage = { input: 0, output: M, reasoning: M };
 
@@ -494,6 +514,7 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
     assert.match(costRender([host(true)]), /^- Estimated cost ~\$20\.00 /mu);
   }
 
+  // cost drivers share bars rank keys by cost midpoint share, with exact strings for each edge
   {
     const sharesOf = (invocations: InvocationFacts[]) => {
       const text = costRender([facts({ invocations })]);
@@ -507,10 +528,12 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
         });
     };
 
+    // range-priced key: tiered spans $1-$5 (midpoint 3) against alpha $10
     assert.deepEqual(
       sharesOf([mega("alpha", "low", M), mega("tiered", "high", M)]),
       ["alpha/low 77%", "tiered/high 23%"]
     );
+    // an unpriced key takes no share and renders —
     assert.deepEqual(
       sharesOf([
         mega("alpha", "low", M),
@@ -519,6 +542,7 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
       ]),
       ["alpha/low 77%", "tiered/high 23%", "mystery/low —"]
     );
+    // shares total 100% by largest remainder
     assert.deepEqual(
       sharesOf([
         mega("alpha", "low", 0.605 * M),
@@ -526,16 +550,19 @@ test("cost cells price units, sum phases and attribute coverage across tables", 
       ]),
       ["alpha/low 61%", "alpha/high 39%"]
     );
+    // no priced key: token shares
     assert.deepEqual(
       sharesOf([mega("mystery", "medium", 30), mega("lost", "medium", 10)]),
       ["mystery/medium 75%", "lost/medium 25%"]
     );
+    // zero priced total: shares unavailable
     assert.deepEqual(
       sharesOf([mega("zero", "high", 300), mega("zero", "low", 100)]),
       ["zero/high —", "zero/low —"]
     );
   }
 
+  // cost coverage names each reason in Tokens by platform and in host and subagent stage rows
   {
     const platform = (text: string, name: string) =>
       defined(
@@ -898,6 +925,7 @@ test("cost folding folds Tokens by platform rows last, after earlier tables fold
     [1, "1 smaller rows", expected]
   );
 
+  // Boundary: a small table never folds.
   const small = renderDiagnostics(
     [facts({ invocations: [mega("flat", "low", 1000)] })],
     foldPricer
@@ -937,6 +965,7 @@ test("cost end to end: mixed-platform facts price in all four locations and surv
       hostUsage: {
         platform: "claude",
         rows: [
+          // two haiku requests of 90,000 and 110,000 prompt tokens, one on each side of the tier threshold
           {
             stage: "plan",
             phase: "plan",
@@ -962,6 +991,7 @@ test("cost end to end: mixed-platform facts price in all four locations and surv
         ],
       },
       invocations: [
+        // the grandchild subagent counts under the Codex delegate invocation as its own model key; bands keep both below the 272K tier
         mega("gpt-6.1-terra", "high", 0, {
           phase: "review",
           usage: {
@@ -981,6 +1011,7 @@ test("cost end to end: mixed-platform facts price in all four locations and surv
             },
           },
         }),
+        // OpenCode reports reasoning apart from output, so it adds at the output rate
         mega("gemini-4-hydrogen", "low", 0, {
           provider: "opencode",
           phase: "review",
@@ -1104,9 +1135,12 @@ test("apart reasoning counts once in every token total and token share", () => {
   });
 
   const text = costRender([run]);
+  // opencode adds reasoning (150), claude does not (120) -> total 270
   assert.match(text, /^\| CLI delegates \|[^|]+\| — \| 270 \|/mu);
+  // token shares: 150/270 = 56%, 120/270 = 44%
   assert.match(text, /mystery \(configured\).*56% \| 150/u);
   assert.match(text, /lost \(configured\).*44% \| 120/u);
+  // appendix Reasoning and Total columns: opencode 30/150, claude 30 (in output)/120
   assert.ok(text.includes("| 30 | 150 | ok |"), text);
   assert.ok(text.includes("| 30 (in output) | 120 | ok |"), text);
 });
@@ -1210,6 +1244,7 @@ test("Cost drivers ranks up to five groups with remainder summing to 100% and ca
       .slice(2)
       .map((l) => l.slice(2, -2).split(" | "));
 
+  // 7 priced groups -> top 5 + remainder, shares total 100%, cache-hit = 50%
   const pricedRun = facts({
     invocations: [
       mega("alpha", "high", 500_000, {
@@ -1235,6 +1270,7 @@ test("Cost drivers ranks up to five groups with remainder summing to 100% and ca
     100
   );
 
+  // Priced + unpriced + remainder: 2 priced, 5 unpriced -> 5 listed (2 priced + 3 unpriced), 2 more (2 unpriced)
   const mixedRun = facts({
     invocations: [
       mega("alpha", "high", M, { provider: "claude" }),
@@ -1260,6 +1296,7 @@ test("Cost drivers ranks up to five groups with remainder summing to 100% and ca
     100
   );
 
+  // Zero priced total with billed tokens -> distinguishes no priced unit vs $0 priced cost
   const unpricedText = costRender([
     facts({
       invocations: [
@@ -1292,6 +1329,7 @@ test("Cost drivers ranks up to five groups with remainder summing to 100% and ca
     ]
   );
 
+  // Only usage-less launched units -> No priced cost or billed tokens, zero cache-hit denominator -> —
   const bareText = costRender([
     facts({ invocations: [bare({ provider: "codex" })] }),
   ]);

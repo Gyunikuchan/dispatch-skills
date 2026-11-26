@@ -1117,6 +1117,7 @@ test("codex real-shape rollout extracts tool calls and tool turns while omitting
         },
       },
       event(10, 1000),
+      // duplicate total snapshot
       event(10, 1100),
       {
         type: "response_item",

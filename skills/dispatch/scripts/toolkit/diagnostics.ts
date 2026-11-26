@@ -111,6 +111,9 @@ const invocation = (round: ReviewRound, slot: SlotOutcome) => {
 
   const targetModel = typeof primary === "string" ? primary : "unavailable";
 
+  // A recorded responder names its own model: a null model means the reserve
+  // ran unconfigured, never the logical target's model. The target fallback
+  // applies only when no responder data exists.
   let model = targetModel;
 
   if (responder) {
@@ -210,12 +213,14 @@ const reviewFacts = (round: ReviewRound, fold: Fold) => {
   };
 };
 
+/** A round plus every generation directory, so superseded invocations still map to their review. */
 type YieldRound = ReviewRound & {
   generations: { generation: number; subject: string }[];
 };
 
 const emptyRaised = () => ({ MUST: 0, SHOULD: 0, CONSIDER: 0 });
 
+/** Per-responder yield from current-generation findings, rulings and slot token cost. */
 // oxlint-disable-next-line eslint/complexity -- yield fold branches per ruling value, generation subject, and slot/roster match.
 const slotYieldFacts = (
   rounds: readonly YieldRound[],
@@ -279,6 +284,7 @@ const slotYieldFacts = (
     )?.subject;
 
     const slots = new Map(round.slots.map((slot) => [slot.slot, slot]));
+    // NOTE: a reserve logs its own slot but serves its target slot; map per invocation.
     const logical = new Map<string, InvocationFacts[]>();
 
     for (const row of invocations) {
@@ -553,6 +559,7 @@ export const stageMilestones = (
   return stages.toSorted((a, b) => a.atMs - b.atMs);
 };
 
+// Host milestone name for a round; the review hash keeps it within the phase key gate.
 const roundPhase = (review: string, round: number) =>
   `round-${review.slice(7)}-${round}`;
 
@@ -561,10 +568,15 @@ interface CaptureHost {
   hostThread?: string;
 }
 
+// Raw `tool-action[-kind]` key; a killed capture has invocations but no phases yet.
 const callKey = (capture: RunFacts) =>
   // oxlint-disable-next-line typescript/prefer-nullish-coalescing, typescript/strict-boolean-expressions -- empty phase keys fall through to the invocation phase.
   capture.phases[0]?.key || capture.invocations[0]?.phase || undefined;
 
+/**
+ * Each window closes at its last run, ruling or fix-review-lite note, before the next round starts.
+ * A capture belongs to the window holding its start, so closed windows never change on a later render.
+ */
 const roundTimeline = (
   rounds: readonly YieldRound[],
   measured: readonly RunFacts[],
@@ -892,6 +904,8 @@ const readRetro = (file: string): RetroRead => {
   }
 };
 
+// SECTION: Saved review shapes; a failed guard counts the file as corrupt
+
 const isPositiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 
@@ -1184,6 +1198,7 @@ export const sessionFacts = (
     );
   }
 
+  // Capture filenames are random; order by capture clock so a retry's later attempt wins, then by content for determinism.
   measured.sort(
     (a, b) =>
       (a.capture?.start ?? 0) - (b.capture?.start ?? 0) ||
@@ -1300,6 +1315,7 @@ export const sessionFacts = (
     const key = [value.subject ?? value.phase, value.slot ?? ""].join("|");
     const previous = native.get(key);
 
+    // Later captures and saved descriptors replace settings; tied captures preserve terminal evidence.
     if (
       !previous ||
       atMs > previous.atMs ||
@@ -1377,6 +1393,7 @@ export const sessionFacts = (
       let projectedOutcome =
         nativeState === "completed" ? "ok" : `native-${nativeState}`;
 
+      // A matching descriptor can outlive its terminal capture if the final slot save was interrupted.
       if (
         descriptor &&
         slot.cliFallback !== true &&
@@ -1421,6 +1438,7 @@ export const sessionFacts = (
         delete projected.effort;
       }
 
+      // Descriptors own physical settings; descriptor-less failures retain the latest captured actor.
       add(projected);
     }
   }
@@ -1514,6 +1532,7 @@ export const sessionFacts = (
       )?.createdAt;
     } catch {
       void 0;
+      /* ignore */
     }
   }
 
@@ -1620,6 +1639,7 @@ export const sessionFacts = (
     }
   }
 
+  // Second read: host rows attributed to each round window; a failure leaves the host tokens unavailable and never gates rendering.
   let roundWorkload = workload.rows;
 
   if (hostContext && workload.window) {
@@ -1699,6 +1719,7 @@ export const sessionFacts = (
     }
   }
 
+  // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
     ...(typeof level === "string" && { level }),
     ...(tasks.length && { verb: "implement" }),
@@ -1832,6 +1853,7 @@ export const retroWarning = (session: string) => {
   return undefined;
 };
 
+// NOTE: Render is not captured as a tool observation, so it cannot describe its own run.
 // oxlint-disable-next-line eslint/require-await -- handler signature requires async; render builds synchronously.
 export const diagnosticsRender = async ({
   session,

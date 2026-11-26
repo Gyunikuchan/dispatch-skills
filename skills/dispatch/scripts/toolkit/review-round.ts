@@ -114,6 +114,7 @@ interface Replacement {
   coverage?: "open" | "full";
 }
 
+// A confirmation-only round re-uses the previous target.
 const confirmationOnly = ({ metadata }: ConfirmationRound) =>
   /\(confirmation-only\)/iu.test(
     // oxlint-disable-next-line typescript/no-base-to-string -- scope is a string or undefined from parsed metadata; String renders its scalar text.
@@ -126,6 +127,8 @@ const UNCHANGED_TARGET =
 const UNCHANGED_TEXT =
   "none; the governed text is unchanged since the previous round.";
 
+// SECTION: Turn targets
+// NOTE: a plan that fails lint has no parsed file entries, so its target counts zero paths; the review still reports its defects.
 const planPaths = (source: string) => {
   const parsed = parsePlan(source);
 
@@ -184,6 +187,7 @@ const cleanupComplete = async (
 
     return status.exit === 0 && !status.stdout;
   } catch {
+    // Unreadable evidence still permits review.
     return false;
   }
 };
@@ -215,6 +219,7 @@ const reviewWarning = async (
     "the opened integration record"
   );
 
+  // Use the delivery proof rule so a subsequent cleanup commit preserves verification.
   const warnings: string[] = [];
 
   if (!currentRuntimeVerification(fold, opened.seq)) {
@@ -308,6 +313,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
   const n = admitted.nextRound;
   const cap1 = admitted.cap;
 
+  // Computed once after the slots exist: every return path reports the same blocked state.
   let blockedState: BlockedState | undefined;
 
   const blockedStateOf = () => (blockedState ??= blockedStateFor(directory, n));
@@ -320,6 +326,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       reason,
     }));
 
+  // The corrected severity of a finding, from every ruling recorded for it.
   const effective = (finding: Finding, rows: readonly LedgerRecord[]) =>
     effectiveSeverity(
       finding,
@@ -328,6 +335,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       )
     );
 
+  // A fresh review may skip at a zero-round level; an existing review runs the saved-cap checks below.
   if (!cap && !rounds) {
     return {
       ok: true,
@@ -337,6 +345,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     };
   }
 
+  // An incomplete round is reused before the ceiling checks; the round-cap predicate still applies.
   if (admitted.state === "escalation-open") {
     throw new ToolError(
       4,
@@ -380,6 +389,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     );
   }
 
+  // NOTE: a started all-failed round has no findings.json and counts as neither complete nor incomplete, so its reuse skips the new-round decision.
   if (admitted.state === "requires-coverage-decision") {
     throw new ToolError(
       4,
@@ -398,6 +408,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     );
   }
 
+  // A zero-round level reuses an incomplete round or pending rejection's saved source slots, but refuses a new unstaffed round.
   const existingRound = readStoredJson<Round>(
     reviewRoundFile(reviewRoundDirectory(directory, n))
   );
@@ -500,6 +511,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     })
   );
 
+  // Maps are per-session, keyed by artifact basename (phase-named); code reviews never receive one because the pre-change map is stale for code.
   const contextMapFile =
     kind === "code"
       ? undefined
@@ -514,6 +526,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       ...(round?.roster ?? []),
     ].find((slot) => slot.slot === name);
 
+  // Later rounds anchor target selection and decisive rulings to the latest substantive round.
   const latestSubstantive = () =>
     n > 1
       ? confirmationRounds.findLast(
@@ -554,10 +567,16 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       return false;
     }
 
+    // The decision binds to the report it acknowledges: a stale decision
+    // for an earlier report under a reused number grants nothing for the
+    // current one.
     if (!rerunGranted(session, fold, review, n - 1)) {
       return false;
     }
 
+    // The close decision binds to the actual report acknowledged: a later
+    // report under a reused round number still admits the rerun, including
+    // the equal-seq case with no intervening ledger record.
     const seqs = reportSeqs(session, review, n - 1);
 
     if (!seqs.length) {
@@ -578,6 +597,9 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
 
     const previous = latestSubstantive();
 
+    // A rerun note admits its named round + 1 at whole-target scope with every
+    // logical target of the named round on its current route. Earlier findings stay
+    // in `prior`; the next round uses normal targets.
     if (isRerunRound()) {
       const logical =
         previous?.metadata.roster.filter((slot) => !slot.reserve) ?? [];
@@ -586,6 +608,10 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
         return { targets: logical, narrowed: false };
       }
 
+      // An all-failed named round has no findings and no confirmation
+      // round: its saved round.json keeps the roster for the same
+      // whole-target rerun, and its failed report stays open until that
+      // rerun finalizes.
       const failedRound = readStoredJson<Round>(
         reviewRoundFile(reviewRoundDirectory(directory, n - 1))
       );
@@ -601,6 +627,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     const target = previous?.metadata.roster.find((slot) => !slot.reserve);
     const decisive = decisiveRound(previous);
 
+    // Open coverage replaces the narrowed slot, and a decisive finding keeps the full roster; both run at whole-target scope.
     const open =
       review === INTEGRATION_REVIEW
         ? coverageState(session, foldLedger(session), review, applies).open
@@ -627,6 +654,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     };
   };
 
+  // Accepted findings that no reviewer has checked yet: accepted after the latest round that reviewed a target.
   const acceptedSinceReview = () => {
     const window = latestSubstantive()?.metadata.startSeq;
 
@@ -649,6 +677,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     );
   };
 
+  // NOTE: a failed diff never refuses the round; REQ-4 keeps every gate, so extra information adds none.
   const interRoundDiff = async (
     captured: Capture,
     confirmationOnlyRound: boolean
@@ -693,6 +722,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
         after,
       ]);
 
+      // --no-index also exits 1 on an inaccessible path, so exit 1 needs output.
       if (result.exit !== 1 || !result.stdout) {
         return "unavailable.";
       }
@@ -726,6 +756,8 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
         ? confirmationRounds.find((value) => value.metadata.round === n - 1)
         : undefined;
 
+    // The fast path needs the captured identity the previous round reviewed; a
+    // rerun, coverage grant, decisive ruling or moved target keeps the standard prompt.
     const confirmationOnlyRound =
       n > 1 &&
       !rerun &&
@@ -801,6 +833,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       )}; comparison: ${comparison}`;
     }
 
+    // Narrowing reads the previous round's own findings: a MUST accepted there, or a SHOULD accepted before the cap, keeps the full roster.
     if (narrowed && !confirmationOnlyRound) {
       scope = scope.replace("(full)", "(narrowed)");
     }
@@ -815,6 +848,8 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     let slots: RosterSlot[];
 
     if (confirmationOnlyRound) {
+      // Only the assigned source slots and configured reserves are staffed; the
+      // reserves answer the source slot's own prompt when that slot fails.
       const resolved: RosterSlot[] = [];
 
       for (const source of new Set(
@@ -910,6 +945,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       throw new ToolError(4, "level-unapproved", noReviewer());
     }
 
+    // The reviewer input is governed text only; artifactHash and review identity keep the original artifact.
     if (
       (kind === "plan" || kind === "design") &&
       captured.source !== undefined
@@ -1003,6 +1039,8 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
 
     carryCheckoutBaseline(dir, previousGeneration);
     round = await start(previousGeneration + 1, captured);
+    // A change made before target movement reaches a later compare: a carried
+    // baseline also lists the target's own change, which the orchestrator explains.
   };
 
   const hadPending = fs.existsSync(pendingFile);
@@ -1029,6 +1067,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     }
   }
 
+  // Plan and design reviewers read governed text only; a resumed round reuses the same path and bytes.
   let reviewerArtifact = artifact;
 
   if (kind === "plan" || kind === "design") {
@@ -1148,6 +1187,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
 
     const interRound = round.interRound ? { interRound: round.interRound } : {};
 
+    // Decisions use the round's own start: a re-entered round keeps the list it first received.
     const decisions = userDecisions(
       foldLedger(session).records,
       review,
@@ -1235,6 +1275,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       };
     };
 
+    // NOTE: the entry precedes the failed slot file; coverage state reads a failed file without an entry as unreadable.
     const onFailed = (slot: string, outcome: { cls: string }) => {
       const live = present(round, "the review round");
 
@@ -1288,12 +1329,17 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       );
     }
 
+    // fanOut never returns a fallback marker, so every native here is launchable.
     const native = replies.filter(
       (reply): reply is Extract<SlotOutcome, { state: "native" }> =>
         reply.state === "native"
     );
 
     if (native.length) {
+      // A round that returns a native descriptor saves a baseline of each
+      // compared directory before native launch, keeping any existing file.
+      // Every native descriptor triggers the change check, including
+      // native-only voices, which run with the same write-capable boundary.
       const { dirs: baselineDirs } = comparedDirsFor(
         session,
         manifest.repositoryRoot,
@@ -1340,6 +1386,9 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       };
     }
 
+    // A capture or compare failure never blocks finalization: it keeps all
+    // replies and reports repositoryCheck. Runs after the existing same check,
+    // so target-moved wins.
     const { dirs: compareDirs, absentWorktree } = comparedDirsFor(
       session,
       manifest.repositoryRoot,
@@ -1360,6 +1409,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       asOfSeq: foldLedger(session).lastSeq,
     };
 
+    // An all-failed open-only or narrowed integration round finalizes as used, so its open slots get a whole-target rerun; a full-roster round keeps its number.
     if (
       !replies.some((reply) => reply.state === "done") &&
       round.coverage !== "open" &&
@@ -1463,6 +1513,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       writeCheckoutReport(dir, round.generation, checkout);
     } catch {
       void 0;
+      // Best effort; findings.json already carries the report.
     }
 
     if (kind === "code" && !gitTarget) {
@@ -1652,6 +1703,9 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       }
     }
 
+    // The finalized findings copy carries the same durable report identity as
+    // the per-generation checkout report, so one per-report decision closes
+    // both copies.
     pending.units = computeUnits();
     atomic(pendingFile, { ...pending, asOfSeq: checkout.asOfSeq });
     await deps.hook?.("review:after-pending");
@@ -1739,6 +1793,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     isUnresolvedLocus(finding.locus)
   );
 
+  // Advisory only: reporting a boundary opens no escalation and grants no round.
   const { budget } = admission(
     session,
     foldLedger(session),
@@ -1761,6 +1816,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
 
   const countsAndFiles = ` round ${n}/${round.cap}: ${counts("MUST")} MUST, ${counts("SHOULD")} SHOULD, ${counts("CONSIDER")} CONSIDER, ${recurrences} recurrences, ${renderBudget(budget)}, ${pending.failed.length} failed slots${unresolved.length ? `, ${unresolved.length} unresolved loci` : ""}${fixInduced ? `, ${fixInduced} fix-induced` : ""}; findings ${findingsFile}; rulings ${rulingsFile}`;
 
+  // Leave room for the cap's ellipsis if the notices push the summary over budget.
   const summaryReview =
     Buffer.byteLength(
       `${warningPrefix}review ${review}${countsAndFiles}`,
@@ -1810,6 +1866,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
       ...(state.blocked.length && { blocked: publicBlocked() }),
       ...(state.blockers.length && { blockers: state.blockers }),
       ...(round.underfill && { underfill: round.underfill }),
+      // The summary is bounded, so only this list names every marked finding.
       ...(unresolved.length && {
         unresolvedLoci: unresolved.map(({ id, locus }) => ({ id, locus })),
       }),

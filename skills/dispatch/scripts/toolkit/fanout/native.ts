@@ -75,6 +75,8 @@ export const blockedEntry = (
   raw: string
 ): BlockedAttempt => ({ provider, model, ...failureReasonEvidence(raw) });
 
+// Display form of a failure reason: reported BLOCKED evidence wins, the
+// protocol marker recovers its raw text, anything else keeps its wording.
 const blockedDisplayOf = (reason: string, evidence?: BlockedAttempt[]) => {
   const firstReason = evidence?.[0]?.reason;
 
@@ -89,6 +91,7 @@ const blockedDisplayOf = (reason: string, evidence?: BlockedAttempt[]) => {
   return failureReasonDisplay(raw);
 };
 
+// Blocked evidence for a reported attempt, attributed to the voice that ran it.
 export const reportEvidence = (
   native: { provider: string; model?: string | readonly string[] },
   report: NativeFailure
@@ -108,6 +111,7 @@ export const reportEvidence = (
   ];
 };
 
+// Native events name the voice that launched: a reserve attempt reports the reserve's provider and model under the logical slot.
 export const attemptOf = (
   logical: RosterSlot,
   voice: {
@@ -138,6 +142,10 @@ const invalidateReply = (replyPath: string) => {
   try {
     fs.renameSync(replyPath, target);
   } catch (error) {
+    // A sharing violation or permission error leaves the rejected reply in
+    // place while an unconfirmed native handle may still change it: never
+    // treat quarantine as done. Preserve the evidence under the quarantine
+    // name, then surface when the original cannot be removed.
     fs.copyFileSync(replyPath, target);
 
     try {
@@ -268,12 +276,14 @@ export const nativeVoice = (
       fs.writeFileSync(baseFile, baseText, { mode: 0o600 });
     } catch {
       void 0;
+      // appendNativeReply below rewrites the base file when it is unreadable.
     }
 
     const replyPath = oldReplyPathOf(slot.slot);
     const nonce = makeNonce();
     const attempt = `${slot.slot}#${nonce}`;
     emit(slot, { kind: "native", state: "pending" });
+    // Native-only keeps its prompt path and base text: base plus the reply section naming the working directory.
     appendNativeReply(baseFile, baseText, replyPath);
     const outcome = descriptor(slot, slot, baseFile, replyPath, attempt);
     markNativeLaunched();
@@ -309,6 +319,7 @@ export const nativeVoice = (
     return descriptor(logical, physical, nativeFile, replyPath, attempt);
   };
 
+  // An invalid native reply is quarantined and the attempt stays pending with the checked reason and evidence.
   const markInvalid = (
     slot: RosterSlot,
     native: Extract<SlotOutcome, { state: "native" }>,
@@ -337,6 +348,15 @@ export const nativeVoice = (
     return pending;
   };
 
+  // One fallback transition for a saved native attempt, in this order:
+  // (1) atomic slot file write with cliFallback, the native error and merged
+  // blocked evidence; (2) rename any reply to .invalid-<n>; (3) run the
+  // physical provider's CLI cascade from the base prompt under the logical
+  // slot; (4) on CLI failure a non-substitute takes the reserve once, else the
+  // slot saves failed. A substitute (physical.slot !== logical slot) never
+  // takes a second reserve, and a native-only attempt whose provider is no
+  // longer the host saves failed without minting a descriptor. The current
+  // host never runs its CLI: it takes the reserve or saves failed.
   const fallbackToCli = async (
     logical: RosterSlot,
     nativeSaved: Extract<SlotOutcome, { state: "native" }>,
@@ -345,6 +365,8 @@ export const nativeVoice = (
   ): Promise<SlotOutcome> => {
     const merged = mergeBlocked(nativeSaved.blocked, extraBlocked);
 
+    // Fail closed on the recorded error: the exact external marker, or an
+    // internal 'blocked: ' reason with its blocked evidence.
     const blockedFailure =
       isBlockedReply(nativeError) ||
       (nativeError.startsWith("blocked: ") && merged.length > 0);
@@ -437,6 +459,11 @@ export const nativeVoice = (
     return normalizeProvider(provider) === normalizeProvider(host);
   };
 
+  // A done owner frees the reserve only when it never consumed it: a CLI
+  // substitute saves done under the owner with the reserve as responder, and
+  // a consumed native substitute answers natively as the reserve provider. A
+  // pending native substitute for the reserve, or a fallback still running
+  // under the owner, keeps holding it, so substitutes stay single-use.
   const reserveConsumedBy = (ownerSaved: SlotOutcome | undefined) => {
     if (ownerSaved === undefined || firstReserve === undefined) {
       return false;
@@ -480,6 +507,13 @@ export const nativeVoice = (
     }
 
     if (reserveOwner !== undefined && reserveOwner !== logical) {
+      // A recorded owner that no longer holds the reserve releases it for
+      // another eligible target: a failed CLI-only retake (the plan
+      // exception), or a done owner that never consumed the reserve. A
+      // pending native attempt, a fallback rerun, an interrupted reservation
+      // (a native prompt on disk under a cliOnly failure), or a substitute
+      // (CLI or native) that already ran stays with its owner, so reserve
+      // substitutes stay single-use.
       let released: boolean;
 
       try {
@@ -514,6 +548,9 @@ export const nativeVoice = (
         return true;
       }
 
+      // A saved failed outcome with a durable cliOnly marker may retake, which
+      // also resumes an interrupted native reservation for its owner. A lost
+      // marker fails closed to no-retake.
       if (
         saved.state === "failed" &&
         // SAFETY: the state guard narrows saved to a failed outcome; the assertion only reads its optional cliOnly flag.
@@ -536,6 +573,9 @@ export const nativeVoice = (
     return reserveAvailableFor(logical);
   };
 
+  // A reserve launches only through takeReserve: an off-host native-only
+  // reserve keeps the failed outcome, so routing matches that gate instead
+  // of advertising a reserve that can never launch.
   const reserveLaunchable = (logical: string, cls: FailureClass) => {
     if (!reserveAllowed(logical, cls) || firstReserve === undefined) {
       return false;
@@ -544,6 +584,10 @@ export const nativeVoice = (
     return !(firstReserve.native && !isCurrentHost(firstReserve.provider));
   };
 
+  // A native-only reserve never runs the CLI: mint its descriptor under the
+  // logical slot, mirroring the fallbackToCli and CLI-only reserve branches.
+  // Callers gate on isCurrentHost; an off-host native-only reserve keeps the
+  // failed outcome instead of running voiceCLI.
   const createNativeOnlyReserve = (
     logical: RosterSlot,
     reserve: RosterSlot,
@@ -583,6 +627,13 @@ export const nativeVoice = (
     return publishNative(logical, withBlocked);
   };
 
+  // A saved native consumes on its physical route: native-first, or a
+  // native-only attempt from the current host. The CLI-only prepass uses
+  // routeTrue/nativeOnlyAttempt to make the same distinction before fallback.
+  // ONE per-slot native resolution shared by every path: physical route
+  // BEFORE substitution (missing physical fails closed on saved evidence,
+  // no CLI under the wrong voice) and the exact BLOCKED report marker in
+  // every report and replay path.
   const routeForNative = (saved: { attempt: string; provider: string }) => {
     const physicalSlot = saved.attempt.split("#")[0] ?? "";
     const physical = all.find((entry) => entry.slot === physicalSlot);
@@ -600,6 +651,9 @@ export const nativeVoice = (
     return { physical, routeOk, first };
   };
 
+  // One reserve gate for every path: native-first descriptor, native-only on
+  // current host, keep failed off-host, CLI only for non-native. The current
+  // host never runs its CLI: a host reserve mints a native descriptor.
   const takeReserve = async (
     logical: RosterSlot,
     failed: SlotOutcome,
@@ -666,6 +720,9 @@ export const nativeVoice = (
     return await takeReserve(slot, failed, baseFile);
   };
 
+  // A reported native failure ends its attempt. External reports use the exact
+  // 'BLOCKED:' marker only; any other casing is a refusal, not the protocol marker.
+  // A current-host attempt that is not a substitute takes its reserve when allowed.
   const saveReportFailure = async (
     slot: RosterSlot,
     native: Extract<SlotOutcome, { state: "native" }>,
@@ -707,6 +764,9 @@ export const nativeVoice = (
     return await saveLogical(slot, failed);
   };
 
+  // The responder records the launched voice, not the current roster: a config
+  // change between launch and consumption must not attribute the answer to a
+  // model or effort that never launched.
   const saveDoneFromNative = (
     slot: RosterSlot,
     native: Extract<SlotOutcome, { state: "native" }>,

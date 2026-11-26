@@ -18,6 +18,7 @@ import { artifactSections } from "./prompts.ts";
 import type { ReviewSnapshot } from "./review-state.ts";
 import { launchBase, launches } from "./writers.ts";
 
+// NOTE: shared by every target rejection so the host can correct its target in one turn.
 export const CODE_TARGETS =
   "code targets are integration, a bound-plan task ID, worktree, <a>..<b> or <rev>";
 
@@ -29,6 +30,7 @@ export type Capture = ReviewSnapshot & {
   changed: string[];
 };
 
+// NOTE: fix-review-lite reads the reviewed spec text from this snapshot; a failed write only leaves that text unavailable, so it never refuses the round.
 const writeSpecSnapshot = (file: string, text: string) => {
   const temp = `${file}.${crypto.randomUUID()}.tmp`;
 
@@ -37,15 +39,18 @@ const writeSpecSnapshot = (file: string, text: string) => {
     renameRetrying(temp, file);
   } catch {
     void 0;
+    /* advisory evidence only */
   } finally {
     try {
       fs.rmSync(temp, { force: true });
     } catch {
       void 0;
+      /* advisory evidence only */
     }
   }
 };
 
+// Reviewer input holds governed plan/design text; code reviews read the working tree directly.
 export const reviewerInputPath = (reviewDir: string, roundNumber: number) =>
   path.join(reviewDir, `round-${roundNumber}.input.md`);
 
@@ -58,6 +63,7 @@ export const writeReviewerInput = (
   reviewKind: ReviewKind,
   source: string
 ) => {
+  // A write failure refuses the round before any launch.
   const file = reviewerInputPath(reviewDir, roundNumber);
 
   try {
@@ -90,6 +96,7 @@ export const writeRoundSnapshots = (
   }
 };
 
+// NOTE: an unreadable spec reports the same invalid-input as capture, which keeps the refusal reason stable.
 export const specHashFor = (root: string, input: string) => {
   const specPath = path.resolve(root, input);
   let text: string;
@@ -289,6 +296,7 @@ export const captureReviewTarget = async (
           await gitOk(deps, cwd, ["add", "-A", "--", "."], env);
         }
 
+        // NOTE: an exclude pathspec makes git add exit 1 when it names an ignored path, so reset the session to HEAD after add.
         if (inside && relative) {
           await gitOk(
             deps,

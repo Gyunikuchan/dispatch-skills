@@ -154,6 +154,7 @@ test("dispatch entry routes sessions and toolkit operations with bounded output"
 
     assert.equal(readManifest(defined(explicit.path)).sessionId, "chosen");
 
+    // Quota preconditions and filesystem faults
     const quotaArgs = [
       "session",
       "quota-reprobe",
@@ -573,6 +574,7 @@ test("disabled diagnostics add neither lifecycle collection requests nor capture
   }
 });
 
+// SECTION: help command and session refusal pointer
 const toolkitText = stripGeneratedMarkers(
   fs.readFileSync(
     path.resolve("skills/dispatch/references/toolkit.md"),

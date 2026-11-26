@@ -7,6 +7,8 @@ import type { ChangeAction, LintDefect, PlanCriterion } from "./types.ts";
 export const governedPlanText = (source: string) =>
   withoutSections(source, [RESOLUTION_HEADING]);
 
+// SECTION: Paths
+
 /** Portable workspace-relative POSIX path, or the rejection reason. */
 export const normalizePlanPath = (raw: string) => {
   const trimmed = raw.trim();
@@ -22,6 +24,7 @@ export const normalizePlanPath = (raw: string) => {
     return { path: null, reason: "backslash" };
   }
 
+  // NOTE: drive-qualified (`C:/x`, `C:x`) and home (`~`) forms escape the workspace on resolve.
   if (
     rawPath.startsWith("/") ||
     /^[A-Za-z]:/u.test(rawPath) ||
@@ -52,6 +55,7 @@ export const headingPaths = (action: ChangeAction, text: string) => {
   const parts: string[] = [];
   let rest = text.trim();
 
+  // A comma ends a path only directly after it, so a trailing note after the last path may hold commas.
   for (
     let match = LISTED_PATH.exec(rest);
     match;
@@ -71,6 +75,8 @@ export const headingPaths = (action: ChangeAction, text: string) => {
 
   return { paths: parts.map((part) => normalizePlanPath(part)) };
 };
+
+// SECTION: Plan structure
 
 export const TASK_HEADING =
   /^###\s+(?<cap1>T[1-9]\d*)\s+[—–-]\s+(?<cap2>\S.*?)\s*$/u;
@@ -158,9 +164,11 @@ export const splitTaskMapRow = (source: string) => {
   return cells;
 };
 
-export const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/iu;
-/** A summary table that repeats Task Map IDs duplicates the map; the summary should link the map instead. */
+// SECTION: Plan lint
 
+export const PROSE_PLACEHOLDER = /\b(?:TODO|TBD|implement later|fill in)\b/iu;
+
+/** A summary table that repeats Task Map IDs duplicates the map; the summary should link the map instead. */
 export const lintGlanceRestatesTaskMap = (
   lines: readonly StructuralLine[],
   rows: readonly { id: string }[],
@@ -262,6 +270,7 @@ export const lintNotes = (
       continue;
     }
 
+    // A note shared by separate [DELETE] entries belongs on one grouped heading.
     const grouping =
       action === "DELETE" &&
       !intrinsic &&
@@ -283,11 +292,15 @@ export const lintNotes = (
   }
 };
 
+// SECTION: Test paths
+
+// Common test-path conventions; a lint hint only, so a test-like path outside every `Tests:` warns. Declared `Tests:` drive decisions.
 const TEST_PATH =
   /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$|(?:^|\/)test_[^/]+\.[^/]+$/iu;
 
 export const isTestPath = (value: string) => TEST_PATH.test(value);
 
+// Lint hint only: paths under these segments look like support files, so the `undeclared-test-path` check skips them.
 const TEST_SUPPORT_PATH = /(?:^|\/)(?:fixtures|helpers|mocks)\//iu;
 /** A test-like support path (fixture, helper, mock): exempt from the `undeclared-test-path` lint; a RED stage that changes or needs it must still list it in `Tests:`. */
 

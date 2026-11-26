@@ -147,6 +147,7 @@ const fixture = async (t: { after: (fn: () => void) => void }) => {
 };
 
 test("lint edits record the explicit baseline and derive the next edit", async (t) => {
+  // one lint call records the explicit baseline and the next edit derives it
   {
     const { edits, run, write } = await fixture(t);
     const before = artifactHash("plan", PLAN);
@@ -190,6 +191,7 @@ test("lint edits record the explicit baseline and derive the next edit", async (
     });
   }
 
+  // approval accepts an explicit new baseline and the following derived edit
   {
     const { edits, run, write, approve, approvalGate } = await fixture(t);
     const before = artifactHash("plan", PLAN);
@@ -218,6 +220,7 @@ test("lint edits record the explicit baseline and derive the next edit", async (
 });
 
 test("retry and rebound edits preserve seq, baseline and approval", async (t) => {
+  // retry returns the stored seq only for matching fields and baseline
   {
     const { edits, run, write } = await fixture(t);
     const before = artifactHash("plan", PLAN);
@@ -260,6 +263,7 @@ test("retry and rebound edits preserve seq, baseline and approval", async (t) =>
     assert.equal(edits().length, 1);
   }
 
+  // approval of a rebound plan needs an explicit first edit baseline
   {
     const { f, add, edits, run, write, approve, approvalGate } =
       await fixture(t);
@@ -326,6 +330,7 @@ test("retry and rebound edits preserve seq, baseline and approval", async (t) =>
     assert.deepEqual(approvalGate(current), { allowed: true });
   }
 
+  // retry after restoring an earlier plan binding preserves its approval
   {
     const { f, add, edits, run, write, approve, approvalGate } =
       await fixture(t);

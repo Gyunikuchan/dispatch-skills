@@ -1069,6 +1069,8 @@ const change = (key: string) => ({
   data: { text: "explained" },
 });
 
+// SECTION: Repository rerun and change note keys.
+
 test("repository note keys require a report suffix", () => {
   assert.doesNotThrow(() =>
     validateRecord(rerunWithKey("repository-rerun:code-worktree-abc:1:12"))

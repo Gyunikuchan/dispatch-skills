@@ -482,6 +482,7 @@ export const submit = async (ctx: HandlerContext) => {
         }
 
         await gitOk(ctx.deps, cwd, ["add", "-A"]);
+        // NOTE: plumbing skips host hooks, which may stage unowned generated files; integration commits still run them.
         head = await gitOk(ctx.deps, cwd, [
           "commit-tree",
           await gitOk(ctx.deps, cwd, ["write-tree"]),
