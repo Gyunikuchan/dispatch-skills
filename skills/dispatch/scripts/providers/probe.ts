@@ -10,6 +10,7 @@ import { bwrapArgv, unsupportedStandaloneDiagnostic } from "./opencode.ts";
 import {
   batchInvocation,
   isBatchLauncher,
+  resolveComSpec,
   sanitizeEnv,
 } from "./process-policy.ts";
 import type { PlatformEnv, ProviderId } from "./types.ts";
@@ -141,7 +142,7 @@ export const nodeProbeSpawn: ProbeSpawnPort = async (
     const batch = isBatchLauncher(process.platform, binary);
 
     const invocation = batch
-      ? batchInvocation(binary, args, env["COMSPEC"])
+      ? batchInvocation(binary, args, resolveComSpec(env))
       : { command: binary, args };
 
     const child = spawn(invocation.command, invocation.args, {

@@ -8,6 +8,7 @@ import {
   batchInvocation,
   killArgv,
   mustSpill,
+  resolveComSpec,
   sanitizeEnv,
 } from "../../../skills/dispatch/scripts/providers/process-policy.ts";
 import {
@@ -917,6 +918,19 @@ test("batch launchers go through cmd.exe with escaped verbatim args, never a raw
     () => batchInvocation("x.cmd", ["--model", "%PATH%"]),
     /contains %/u
   );
+  assert.throws(
+    () => batchInvocation(String.raw`C:\%PATH%\agy.cmd`, ["--print"]),
+    /path contains %/u
+  );
+});
+
+test("ComSpec resolves case-insensitively, survives env sanitizing, and falls back to cmd.exe", () => {
+  const comSpec = String.raw`C:\Windows\system32\cmd.exe`;
+
+  assert.equal(resolveComSpec(sanitizeEnv({ ComSpec: comSpec })), comSpec);
+  assert.equal(resolveComSpec({ COMSPEC: comSpec }), comSpec);
+  assert.equal(resolveComSpec({ ComSpec: "" }), "cmd.exe");
+  assert.equal(resolveComSpec({}), "cmd.exe");
 });
 
 test("parsed success retains process timeout and truncation failures", async () => {

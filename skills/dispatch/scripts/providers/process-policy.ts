@@ -36,6 +36,7 @@ const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   "LC_ALL",
   "SHELL",
   "COMSPEC",
+  "ComSpec",
   "GIT_EXEC_PATH",
 
   "HTTP_PROXY",
@@ -87,6 +88,23 @@ export const sanitizeEnv = (
   }
 
   return clean;
+};
+
+/** The host's cmd.exe from ComSpec (Windows keeps the key as `ComSpec`; lookup is case-insensitive), else `cmd.exe`. */
+export const resolveComSpec = (
+  env: Readonly<Record<string, string | undefined>>
+) => {
+  for (const [key, value] of Object.entries(env)) {
+    if (
+      key.toUpperCase() === "COMSPEC" &&
+      value !== undefined &&
+      value !== ""
+    ) {
+      return value;
+    }
+  }
+
+  return "cmd.exe";
 };
 
 export const isBatchLauncher = (os: string, binary: string) =>
@@ -146,6 +164,7 @@ export const waitWithin = async <T>(promise: Promise<T>, ms: number) =>
 const CMD_META_CHARS = /(?<rg1>[()\]!^"`<>&|;, *?])/gu;
 
 const escapeCmdArgument = (argument: string) => {
+  // A .bat re-parses its own arguments, so escapes must survive twice (qntm.org/cmd).
   const quoted = `"${argument
     .replaceAll(/(?<rg1>\\*)"/gu, String.raw`$1$1\"`)
     .replace(/(?<rg1>\\*)$/u, "$1$1")}"`.replaceAll(CMD_META_CHARS, "^$1");
@@ -171,6 +190,11 @@ export const batchInvocation = (
     throw new Error(
       "batch launcher argument contains a newline; spill it to a brief file"
     );
+  }
+
+  // NOTE: cmd expands %VAR% even inside caret escapes; spilling is the only safe route for args.
+  if (binary.includes("%")) {
+    throw new Error("batch launcher path contains %; cmd.exe would expand it");
   }
 
   if (args.some((arg) => arg.includes("%"))) {

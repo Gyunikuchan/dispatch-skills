@@ -3,7 +3,11 @@ import fs from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { nodeErrorCode } from "../lib/fs-ext.ts";
-import { batchInvocation, isBatchLauncher } from "./process-policy.ts";
+import {
+  batchInvocation,
+  isBatchLauncher,
+  resolveComSpec,
+} from "./process-policy.ts";
 import type { RunnerFs } from "./runner.ts";
 import type { Launch, ProcessPort, ProcessResult } from "./types.ts";
 
@@ -118,7 +122,7 @@ export const nodeProcess: ProcessPort = {
     }
 
     const batch = isBatchLauncher(process.platform, command)
-      ? batchInvocation(command, args, process.env["ComSpec"] ?? "cmd.exe")
+      ? batchInvocation(command, args, resolveComSpec(process.env))
       : null;
 
     const log = fs.openSync(io.logPath, "w", 0o600);

@@ -250,7 +250,6 @@ test("readable plan syntax: owned briefs carry Outcome, Constraints and every la
       "  - Changes: add a retry counter to fetchWithRetry.",
       "  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only."
     )
-    .replace("#### [GENERATED] docs/api.md", "#### [GENERATED] docs/api.md")
     .replace(
       "## Success Criteria",
       "### T2 — Check the companion\n- Constraints: Preserve companion withFields.\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n\n## Success Criteria"
