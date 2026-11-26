@@ -1551,6 +1551,157 @@ test("writer quality criteria omit prune directive while code and plan keep it",
   assert.match(cleanup, /executing `- Prune:` and ignoring `- Writer focus`/u);
 });
 
+test("code and writer receive naming, comments, and safe DRY rules", () => {
+  const bar = read(templates, "quality-bar.md");
+
+  for (const consumer of ["code", "writer"] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+
+    const namingLine = defined(
+      criteria
+        .split("\n")
+        .find((line) => line.startsWith("- Naming & comments:"))
+    );
+
+    const safeDryLine = defined(
+      criteria.split("\n").find((line) => line.startsWith("- Safe DRY:"))
+    );
+
+    for (const pattern of [
+      /one concept/iu,
+      /domain meaning with units\/qualifiers/iu,
+      /filler.*data.*info.*manager.*helper.*util.*temp/iu,
+      /numeric suffix/iu,
+      /rename for meaning.*taste/iu,
+      /external contracts/iu,
+      /glossar/iu,
+      /rationale or .*external facts/iu,
+      /lift .*facts into names/iu,
+      /narrating.*section-label.*dead-code/iu,
+      /\/\/ SECTION:/u,
+      /TODO:.*FIXME:/u,
+      /linter\/doc directives/iu,
+    ]) {
+      assert.match(
+        namingLine,
+        pattern,
+        `${consumer}: naming missing ${pattern}`
+      );
+    }
+
+    for (const pattern of [
+      /intent.*not text/iu,
+      /pass-through wrappers/iu,
+      /`utils`\/`helpers`/iu,
+      /five axes—boundaries\/rounding\/units,\s*empty\/null\/invalid inputs,\s*timezone\/locale\/text,\s*errors,\s*and side-effect ordering\/logging/iu,
+      /call-site nuances before migrating callers/iu,
+      /leave copies separate and report/iu,
+      /coincidental/iu,
+      />2–3 options/iu,
+      /money.*auth\/permissions.*migrations.*concurrency\/locking/iu,
+    ]) {
+      assert.match(
+        safeDryLine,
+        pattern,
+        `${consumer}: safe DRY missing ${pattern}`
+      );
+    }
+  }
+
+  for (const consumer of [
+    "plan",
+    "design",
+    "verifier",
+    "explorer",
+    "cleanup",
+  ] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+    assert.doesNotMatch(
+      criteria,
+      /^- Naming & comments:/mu,
+      `${consumer}: omits naming`
+    );
+    assert.doesNotMatch(
+      criteria,
+      /^- Safe DRY:/mu,
+      `${consumer}: omits safe DRY`
+    );
+  }
+});
+
+test("testing consumers receive stack-neutral test design and setup amortization rules", () => {
+  const bar = read(templates, "quality-bar.md");
+
+  for (const consumer of [
+    "code",
+    "writer",
+    "plan",
+    "cleanup",
+    "verifier",
+  ] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+
+    const shapeLine = defined(
+      criteria.split("\n").find((line) => line.startsWith("- Shape:"))
+    );
+
+    for (const pattern of [
+      /fastest-first ladder/iu,
+      /pure logic.*unit\/service.*integration\/route\/component.*end-to-end\/browser/iu,
+      /typed boundary fakes/iu,
+      /contract\/round-trip/iu,
+      /state over .*call counts/iu,
+      /exact literal values/iu,
+      /format-pattern assertions over type-only matchers/iu,
+      /amortize expensive setup at the highest viable level/iu,
+      /Run > File > Test/u,
+      /never add a browser\/E2E harness/iu,
+    ]) {
+      assert.match(shapeLine, pattern, `${consumer} Shape missing ${pattern}`);
+    }
+
+    assert.doesNotMatch(
+      shapeLine,
+      /\b(?:vitest|playwright|pnpm)\b/iu,
+      `${consumer}: stack-neutral`
+    );
+  }
+
+  for (const consumer of ["code", "plan", "cleanup"] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+
+    const pruneLine = defined(
+      criteria.split("\n").find((line) => line.startsWith("- Prune:"))
+    );
+
+    assert.match(
+      pruneLine,
+      /key-shape-only without values/iu,
+      `${consumer}: prune oracle precision`
+    );
+    assert.match(
+      pruneLine,
+      /cheapest layer/iu,
+      `${consumer}: prune cheapest layer`
+    );
+  }
+
+  for (const consumer of ["design", "explorer"] as const) {
+    const criteria = qualityCriteria(bar, consumer, 0, specStage);
+    assert.doesNotMatch(criteria, /Run > File > Test/u, `${consumer}: no Run`);
+    assert.doesNotMatch(
+      criteria,
+      /typed boundary fakes/iu,
+      `${consumer}: no boundary fakes`
+    );
+    assert.doesNotMatch(
+      criteria,
+      /browser\/E2E harness/iu,
+      `${consumer}: no E2E harness`
+    );
+  }
+});
+
 test("reviewPrompt renders MUST rejection confirmation instructions only when requests are assigned", () => {
   for (const kind of reviewKinds) {
     for (const context of [

@@ -1187,7 +1187,8 @@ test("lean simplicity rules have one shared home reached by every quality consum
 test("review prompt scope strings calibrate CLEAN, replace textbook smells, and reduce golden bytes", () => {
   const quality = readFileSync(new URL("quality-bar.md", root), "utf-8");
   const stage = readFileSync(new URL("../spec-stage.md", root), "utf-8");
-  const baselines = { code: 15_627, plan: 19_533, design: 15_297 } as const;
+  // NOTE: code baseline (16_246) reflects net-new naming/comments, safe-DRY, and test-design rules in quality-bar.md after lossless shared/testing compression.
+  const baselines = { code: 16_246, plan: 19_533, design: 15_297 } as const;
   const bytesByKind = { code: 0, plan: 0, design: 0 };
 
   for (const kind of ["code", "plan", "design"] as const) {
@@ -1255,6 +1256,13 @@ test("review prompt scope strings calibrate CLEAN, replace textbook smells, and 
   }
 
   assert.ok(!hay.includes("Smells (judgement calls"), "stale smell prefix");
+
+  for (const tool of ["vitest", "playwright", "pnpm"]) {
+    assert.ok(
+      !quality.toLowerCase().includes(tool),
+      `quality-bar stays stack-neutral without ${tool}`
+    );
+  }
 
   for (const term of [
     "IEEE 29148",

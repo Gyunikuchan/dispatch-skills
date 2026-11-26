@@ -322,14 +322,14 @@ test("rendered packs stay within the per-actor byte budgets", () => {
     );
 
   // NOTE: Pack budgets enforce totals and current component limits.
-  // NOTE: Code and plan ceilings (14899, 17256) reflect default-delete pruning, past/nothing/implementation buckets, qualitative low-complexity cutoff, cheapest-layer downgrades, test-only helper flagging, and code-review alignment in quality-bar.md#testing.
+  // NOTE: Code (16067) and plan (17260) ceilings reflect quality-bar.md compression (-299 B net in shared after restoring "partial failures and updates", +12 B), naming/comments and safe-DRY rules (+1174 B in code), and Shape/Prune updates (+280 B net in testing after restoring "for coverage", +24 B).
   assert.ok(
-    promptBytes("code") <= 14_899,
-    `code reviewer prompt exceeds 14899 budget`
+    promptBytes("code") <= 16_067,
+    `code reviewer prompt exceeds 16067 budget`
   );
   assert.ok(
-    promptBytes("plan") <= 17_256,
-    `plan reviewer prompt exceeds 17256 budget`
+    promptBytes("plan") <= 17_260,
+    `plan reviewer prompt exceeds 17260 budget`
   );
   // NOTE: 12734 covers the design altitude, severity, and advisory grounding-lead rules after consolidation.
   // NOTE: 12745 covers the design altitude, severity, and advisory grounding-lead rules after consolidation,
@@ -339,10 +339,10 @@ test("rendered packs stay within the per-actor byte budgets", () => {
     `design reviewer prompt exceeds 12745 budget`
   );
   const writer = templateBytes("writer-brief.md") + qualityBytes("writer");
-  // NOTE: 10784 covers the writer contract and separate task and assigned-fix reply forms.
+  // NOTE: 11757 reflects writer-brief.md compression + post-GREEN self-clean (3048 -> 3138 B, +90 B) and quality-bar updates (-299 B net shared after "partial failures and updates" restoration, +1174 B code, +256 B net testing excluding Prune).
   assert.ok(
-    writer <= 10_784,
-    `writer brief pack ${writer} exceeds 10784 budget`
+    writer <= 11_757,
+    `writer brief pack ${writer} exceeds 11757 budget`
   );
   const explorerBrief = templateBytes("explorer-brief.md");
   // NOTE: 7977 covers the explorer brief's split threshold, coherence, validation, reading, and output requirements.
@@ -359,34 +359,34 @@ test("rendered packs stay within the per-actor byte budgets", () => {
     `explorer pack ${explorer} exceeds 12638 budget`
   );
   const cleanupQuality = qualityBytes("cleanup");
-  // NOTE: 7961 covers the expanded default-delete testing bar and conflict-reporting wording in quality-bar.md.
+  // NOTE: 7964 (+3 B over 7961) reflects shared compression (-299 B net after "partial failures and updates" restoration) and Shape/Prune updates (+280 B net after "for coverage" restoration in Prune).
   assert.ok(
-    cleanupQuality <= 7961,
-    `test-cleanup rendered quality ${cleanupQuality} exceeds 7961 budget`
+    cleanupQuality <= 7964,
+    `test-cleanup rendered quality ${cleanupQuality} exceeds 7964 budget`
   );
   const verifierBrief = templateBytes("verifier-brief.md");
   assert.ok(verifierBrief <= 4096, "verifier brief exceeds 4096 bytes");
-  // NOTE: 6751 and 10033 record the baseline for the dedicated verifier quality consumer (shared + testing without Prune or Writer focus) and combined verifier pack.
+  // NOTE: 6765 and 10047 reflect shared compression (-299 B net after "partial failures and updates" restoration) offset by Shape test-design/amortization additions (+313 B in verifier's shared + testing subset without Prune or Writer focus).
   const verifierQuality = qualityBytes("verifier");
   assert.ok(
-    verifierQuality <= 6751,
-    `verifier rendered quality ${verifierQuality} exceeds 6751 budget`
+    verifierQuality <= 6765,
+    `verifier rendered quality ${verifierQuality} exceeds 6765 budget`
   );
   const verifier = verifierBrief + verifierQuality;
   assert.ok(
-    verifier <= 10_033,
-    `verifier pack ${verifier} exceeds 10033 budget`
+    verifier <= 10_047,
+    `verifier pack ${verifier} exceeds 10047 budget`
   );
   const cleanupBrief = templateBytes("test-cleanup-brief.md");
-  // NOTE: 2243 and 10204 add stale-test sweeps across untouched files, tier-downgrade preconditions, and test-only helper flagging.
+  // NOTE: 2426 and 10390 reflect test-cleanup-brief.md compression (2711 -> 2426 B, -285 B; net +183 B over 2243 B baseline) with cited-proof, keep-on-doubt, no-production-mutation, defect-concern, and Prune-aligned rules paired with cleanup quality (7964 B).
   assert.ok(
-    cleanupBrief <= 2243,
-    `test-cleanup brief template ${cleanupBrief} exceeds 2243 budget`
+    cleanupBrief <= 2426,
+    `test-cleanup brief template ${cleanupBrief} exceeds 2426 budget`
   );
   const cleanup = cleanupBrief + cleanupQuality;
   assert.ok(
-    cleanup <= 10_204,
-    `test-cleanup pack ${cleanup} exceeds 10204 budget`
+    cleanup <= 10_390,
+    `test-cleanup pack ${cleanup} exceeds 10390 budget`
   );
   // NOTE: The hand-filled brief needs its own budget for the child authority and reply contract.
   const incrementBrief = templateBytes("increment-orchestrator-brief.md");

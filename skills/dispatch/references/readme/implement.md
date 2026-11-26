@@ -43,7 +43,7 @@ Describe the change you want, or pass the path to a settled plan or approved des
 /dispatch implement: <approved design path>
 ```
 
-Implementation follows the artifact's prerequisites and recorded decisions. Independent tasks may run concurrently when `write-concurrency` is above one. The writer records observed RED failures before production edits; the contract does not require a separate refactor stage. If the host platform has no configured writer, see [Configure Dispatch](configuration.md).
+Implementation follows the artifact's prerequisites and recorded decisions. Independent tasks may run concurrently when `write-concurrency` is above one. The writer records observed RED failures before production edits and runs one focused post-GREEN self-clean check on its own production diff before checks and reporting; no separate refactor stage is required. If the host platform has no configured writer, see [Configure Dispatch](configuration.md).
 
 ## When requirements change
 

@@ -2599,3 +2599,148 @@ test("brief test-cleanup and verifier render updated pruning and gap-filling gui
     f.cleanup();
   }
 });
+
+test("writer brief instructs post-GREEN self-clean on production diff", async () => {
+  const f = await fixture(false, PLAN);
+
+  try {
+    await f.approve();
+    await f.launch();
+    const rendered = await f.call();
+    assert.equal(rendered.exit, 0, JSON.stringify(rendered.output));
+
+    const rawBrief = fs.readFileSync(
+      // eslint-disable-next-line typescript/no-unsafe-argument, typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
+      rendered.value.path,
+      "utf-8"
+    );
+
+    const brief = rawBrief.replaceAll(/\s+/gu, " ");
+
+    const briefBeforeQuality = defined(
+      rawBrief.split("## Quality")[0]
+    ).replaceAll(/\s+/gu, " ");
+
+    assert.match(briefBeforeQuality, /post-GREEN|after tests pass GREEN/iu);
+    assert.match(briefBeforeQuality, /production diff/iu);
+    assert.match(
+      briefBeforeQuality,
+      /names?,\s*comments?,?\s*(?:and\s+)?(?:safe\s+)?DRY/iu
+    );
+    assert.match(
+      briefBeforeQuality,
+      /preserv(?:e|ing)[^.\n]*scope[^.\n]*external contracts/iu
+    );
+    assert.match(briefBeforeQuality, /Shortcut:/u);
+    assert.match(briefBeforeQuality, /Writer focus/u);
+    assert.match(
+      briefBeforeQuality,
+      /test pruning,\s*merging,?\s*(?:and\s+)?tier downgrades/iu
+    );
+    assert.ok(brief.includes("own cache or index"));
+    assert.ok(
+      brief.includes(
+        "List each deliberate shortcut under concerns as `Shortcut: <what>; limit: <limit>; upgrade when: <trigger>`."
+      )
+    );
+    assert.ok(brief.includes("Add a code comment for a limit only when"));
+
+    const readme = fs
+      .readFileSync(
+        path.join(f.deps.skillRoot, "references/readme/implement.md"),
+        "utf-8"
+      )
+      .replaceAll(/\s+/gu, " ");
+
+    assert.match(readme, /post-GREEN|self-clean/iu);
+    assert.match(readme, /production diff/iu);
+    assert.match(readme, /no separate refactor/iu);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("test-cleanup brief requires cited surviving proof and forbids production mutation", async () => {
+  const f = await fixture();
+
+  try {
+    await f.approve();
+    const valuesPath = path.join(f.session, "cleanup-cited-values.json");
+    fs.writeFileSync(
+      valuesPath,
+      JSON.stringify({
+        base: "a".repeat(40),
+        integrationPath: ".scratch/worktrees/integration",
+      })
+    );
+    f.lines.length = 0;
+
+    assert.equal(
+      await main(
+        [
+          "brief",
+          "test-cleanup",
+          valuesPath,
+          "--session",
+          f.session,
+          "--host",
+          "codex",
+        ],
+        f.deps
+      ),
+      0,
+      JSON.stringify(f.lines)
+    );
+
+    const brief = fs.readFileSync(
+      // eslint-disable-next-line typescript/no-unsafe-argument, typescript/no-unsafe-member-access -- test reads the untyped JSON/fixture surface under assertion; narrowing would not change assertions
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")).briefPath,
+      "utf-8"
+    );
+
+    assert.match(
+      brief,
+      /temporary production[- ]?code mutation|temporary production mutation/iu
+    );
+    assert.match(brief, /to delete or update stale tests/iu);
+    assert.match(
+      brief,
+      /coverage-preserving deletion or downgrade[^.\n]*cit(?:e|ing)[^.\n]*surviving test path[^.\n]*contract oracle/iu
+    );
+    assert.match(
+      brief,
+      /prune reason[^.\n]*the past[^.\n]*nothing[^.\n]*no surviving coverage/iu
+    );
+    assert.match(
+      brief,
+      /changed files[^.\n]*<removed\/downgraded test> -> <surviving test path>: <contract oracle>[^.\n]*no-coverage[^.\n]*the past[^.\n]*nothing[^.\n]*<removed test> -> <prune reason>/iu
+    );
+    assert.match(
+      brief,
+      /Keep uncited or uncertain tests intact[^.\n]*under concerns/iu
+    );
+    assert.match(
+      brief,
+      /pre-existing defects?[^.\n]*concerns[^.\n]*without silently altering/iu
+    );
+
+    const templateBeforeQuality = defined(
+      fs
+        .readFileSync(
+          path.join(
+            f.deps.skillRoot,
+            "references/templates/test-cleanup-brief.md"
+          ),
+          "utf-8"
+        )
+        .split("## Quality")[0]
+    );
+
+    assert.doesNotMatch(
+      templateBeforeQuality,
+      /Run\s*[>/]\s*File\s*[>/]\s*Test|format-pattern|boundary fake/iu
+    );
+  } finally {
+    f.cleanup();
+  }
+});
