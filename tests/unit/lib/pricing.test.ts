@@ -707,9 +707,10 @@ const EXPECTED = {
   "muse-spark-1.3-contributor": { rates: rates(0.1, 0.2, 0.002) },
   "deepseek-v4.1-flash": { rates: rates(0.15, 0.6, 0.003) },
   "deepseek-v4.1-flash-1017": { rates: rates(0.15, 0.6, 0.003) },
-  "glm-5.3": { rates: rates(1.4, 4.4, 0.26) },
+  "glm-5.3": { rates: rates(0.0699, 1.4, 0.0689) },
   "glm-5.3-flash": { rates: rates(0.15, 0.5, 0.03) },
   hy4: { rates: rates(0.417, 1.2505, 0.021) },
+  "hy4-flash-free": { rates: rates(0.035, 0.1405, 0.0015) },
   "longcat-2.5-free": { rates: rates(0, 0, 0) },
   "mimo-v2.6-pro": { rates: rates(0.435, 0.87, 0.003625) },
   "minimax-m3.1-flash": { rates: rates(0.15, 0.6, 0.015) },
@@ -718,7 +719,7 @@ const EXPECTED = {
 test("shipped rate table holds the recorded official rates per model and no unconfirmed model", () => {
   // eslint-disable-next-line typescript/no-unsafe-assignment -- fixture/mock boundary: values are validated by helpers before use.
   const file: { asOf?: unknown; source?: unknown } = JSON.parse(tableText);
-  assert.equal(file.asOf, "2026-11-19");
+  assert.equal(file.asOf, "2026-11-28");
   assert.ok(
     Array.isArray(file.source) &&
       file.source.length > 0 &&
@@ -728,7 +729,7 @@ test("shipped rate table holds the recorded official rates per model and no unco
   );
   assert.deepEqual(table.models, EXPECTED);
   const pricer = shipped();
-  assert.equal(pricer.meta.asOf, "2026-11-19");
+  assert.equal(pricer.meta.asOf, "2026-11-28");
   assert.deepEqual(pricer.meta.source, file.source);
   const usage = { input: 1_000_000, output: 0 };
   near(pricer.price("gemini-4-carbon", usage, undefined, "2026-11-30").low, 2);

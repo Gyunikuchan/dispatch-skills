@@ -718,7 +718,7 @@ test("diagnostics render honors the enabled toggle across render, cost, failure 
         text,
         /^\| CLI delegates \| ██████████ 100% \| ~\$2\.00 \| 1,000,000 \| — \| — \| — \| — \| 1 legacy source unknown \|$/mu
       );
-      assert.match(text, /table 2026-11-19 · UTC day .*1 shipped, 0 override/u);
+      assert.match(text, /table 2026-11-28 · UTC day .*1 shipped, 0 override/u);
 
       writeJson(path.join(skill, "config.local.jsonc"), {
         pricing: {

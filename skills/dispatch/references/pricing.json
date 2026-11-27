@@ -1,5 +1,5 @@
 {
-  "asOf": "2026-11-19",
+  "asOf": "2026-11-28",
   "source": [
     "https://platform.claude.com/docs/en/about-claude/pricing",
     "https://developers.openai.com/api/docs/pricing",
@@ -152,13 +152,16 @@
       "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.003 }
     },
     "glm-5.3": {
-      "rates": { "input": 1.4, "output": 4.4, "cacheRead": 0.26 }
+      "rates": { "input": 0.0699, "output": 1.4, "cacheRead": 0.0689 }
     },
     "glm-5.3-flash": {
       "rates": { "input": 0.15, "output": 0.5, "cacheRead": 0.03 }
     },
     "hy4": {
       "rates": { "input": 0.417, "output": 1.2505, "cacheRead": 0.021 }
+    },
+    "hy4-flash-free": {
+      "rates": { "input": 0.035, "output": 0.1405, "cacheRead": 0.0015 }
     },
     "longcat-2.5-free": {
       "rates": { "input": 0, "output": 0, "cacheRead": 0 }
