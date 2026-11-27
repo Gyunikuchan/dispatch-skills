@@ -1,25 +1,37 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   BASELINE,
+  CALL_SEQUENCES,
   MANIFEST,
+  PACK_FIXTURE,
   SKILL_LINKS,
+  USAGE,
   checkGrowth,
+  cli,
+  fixtureIdentity,
   formatReport,
   main,
   measure,
   normalizeSkillLink,
+  portableText,
+  renderPackRows,
+  report,
   slug,
   validatePathLinks,
 } from "../../scripts/path-bytes.ts";
 import type {
   Figures,
+  PackRow,
   PathManifest,
   PathName,
+  ReportOptions,
 } from "../../scripts/path-bytes.ts";
 import { KINDS } from "../../skills/dispatch/scripts/toolkit/records.ts";
 import { defined } from "../helpers/guards.ts";
@@ -898,4 +910,443 @@ test("path bytes resolves one archived repair brief only when the live section i
     check(`${archivedHeading}\n\n### brief fix-second\n\n${liveHeading}`),
     0
   );
+});
+
+// SECTION: Report (actor packs, fixture identity and static call sequences)
+
+const FIXED_DIFF = `${[
+  "--- a/fixture.plan.md",
+  "+++ b/fixture.plan.md",
+  "@@ -1 +1,2 @@",
+  " # Fixture",
+  "+Writes are serialized.",
+].join("\n")}\n`;
+
+// Spawn-free Git port with the two answers fix-review-lite needs: the repository listing and the round diff.
+const fixedGit: NonNullable<ReportOptions["run"]> = async (argv) => {
+  await Promise.resolve();
+
+  if (argv[1] === "ls-files") {
+    return { exit: 0, stdout: "", stderr: "" };
+  }
+
+  if (argv[1] === "diff") {
+    return { exit: 1, stdout: FIXED_DIFF, stderr: "" };
+  }
+
+  throw new Error(`Unexpected Git argv ${argv.join(" ")}`);
+};
+
+const failingGit: NonNullable<ReportOptions["run"]> = async () => {
+  await Promise.resolve();
+
+  return { exit: 128, stdout: "", stderr: "fatal: no repository" };
+};
+
+const configHash = (bytes: string) =>
+  crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 12);
+
+const sinks = () => {
+  const out = { stdout: "", stderr: "" };
+
+  return {
+    out,
+    options: {
+      stdout: (text: string) => {
+        out.stdout += text;
+      },
+      stderr: (text: string) => {
+        out.stderr += text;
+      },
+    },
+  };
+};
+
+const withParent = async <T>(
+  segments: string[],
+  body: (parent: string) => Promise<T>
+) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "path-bytes-"));
+  const parent = path.join(base, ...segments);
+  fs.mkdirSync(parent, { recursive: true });
+
+  try {
+    return await body(parent);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+};
+
+const treeSnapshot = (dir: string): string[] =>
+  fs
+    .readdirSync(dir, { withFileTypes: true })
+    .toSorted((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        return treeSnapshot(full);
+      }
+
+      const stat = fs.statSync(full);
+
+      return [`${full}:${stat.size}:${stat.mtimeMs}`];
+    });
+
+const ROW_LINE =
+  /^(?<label>[a-z][^:\n]*): (?<rendered>\d+) rendered, (?<portable>\d+) portable$/gmu;
+
+const printedRows = (stdout: string) =>
+  [...stdout.matchAll(ROW_LINE)].map((match) => ({
+    label: defined(match.groups?.["label"]),
+    rendered: Number(match.groups?.["rendered"]),
+    portable: Number(match.groups?.["portable"]),
+  }));
+
+const PACK_LABELS = [
+  "writer brief (no RED capture)",
+  "explorer brief (map)",
+  "explorer brief (research)",
+  "test-cleanup brief",
+  "verifier brief",
+  "fix-review-lite brief",
+  "review prompt (code)",
+  "review prompt (plan)",
+  "review prompt (design)",
+  "ask prompt",
+];
+
+const rowFor = (rows: PackRow[], label: string) =>
+  defined(rows.find((row) => row.label === label));
+
+// One successful `--report` run serves every assertion that only reads its output, which keeps the file inside its time budget.
+let sharedRun:
+  | Promise<{
+      exit: number;
+      out: { stdout: string; stderr: string };
+      rows: PackRow[];
+      leftover: string[];
+      skillRootUntouched: boolean;
+    }>
+  | undefined;
+
+const successfulRun = async () =>
+  await (sharedRun ??= withParent(["fixture"], async (parent) => {
+    const before = treeSnapshot(skillDir);
+    const { out, options } = sinks();
+
+    const exit = await cli(["--report"], {
+      ...options,
+      fixtureParent: parent,
+      run: fixedGit,
+    });
+
+    const rows = await renderPackRows({ fixtureParent: parent, run: fixedGit });
+
+    return {
+      exit,
+      out,
+      rows,
+      leftover: fs.readdirSync(parent),
+      skillRootUntouched:
+        JSON.stringify(treeSnapshot(skillDir)) === JSON.stringify(before),
+    };
+  }));
+
+test("report renders every actor pack through its renderer", async () => {
+  const { rows } = await successfulRun();
+
+  assert.deepEqual(
+    rows.map((row) => row.label),
+    PACK_LABELS
+  );
+
+  const markers: [string, string[]][] = [
+    ["writer brief (no RED capture)", ["# Writer task T1"]],
+    [
+      "explorer brief (map)",
+      ["# Explorer brief", PACK_FIXTURE.explorer.mapFile],
+    ],
+    ["explorer brief (research)", ["# Explorer brief"]],
+    ["test-cleanup brief", ["# Test cleanup brief"]],
+    ["verifier brief", ["# Runtime verification brief"]],
+    ["fix-review-lite brief", ["# Fix-review-lite brief"]],
+    ["review prompt (code)", [PACK_FIXTURE.review.taskSummary]],
+    ["review prompt (plan)", [PACK_FIXTURE.planFile]],
+    ["review prompt (design)", [PACK_FIXTURE.designFile]],
+    ["ask prompt", ["# Ask", PACK_FIXTURE.ask.question]],
+  ];
+
+  for (const [label, wanted] of markers) {
+    const row = rowFor(rows, label);
+
+    for (const marker of wanted) {
+      assert.ok(row.text.includes(marker), `${label} carries ${marker}`);
+    }
+
+    assert.equal(row.rendered, Buffer.byteLength(row.text), label);
+    assert.ok(row.portable > 0, label);
+  }
+
+  assert.ok(
+    !rowFor(rows, "explorer brief (research)").text.includes(
+      PACK_FIXTURE.explorer.mapFile
+    )
+  );
+
+  const prompts = ["code", "plan", "design"].map(
+    (kind) => rowFor(rows, `review prompt (${kind})`).text
+  );
+
+  assert.equal(new Set(prompts).size, 3);
+});
+
+test("report prints the fixture identity, per-verb reading and every pack row on success", async () => {
+  const { exit, out, rows } = await successfulRun();
+  assert.equal(exit, 0);
+  assert.equal(out.stderr, "");
+
+  const header = fixtureIdentity(skillDir);
+  assert.match(header, /^Fixture: host claude · level medium · config /u);
+  assert.ok(header.endsWith(` · platform ${process.platform}`));
+  assert.ok(out.stdout.startsWith(`${header}\n`));
+
+  const order = [
+    header,
+    "Per-verb mandatory reading (after model, bytes)",
+    formatReport(measure(readFile, "after")),
+    "Actor packs (static fixture; rendered = raw UTF-8 bytes the actor receives; portable = paths and line endings normalized)",
+    "Static toolkit-call sequences (static; observed counts come from diagnostics render)",
+  ].map((text) => out.stdout.indexOf(text));
+
+  assert.ok(order.every((index) => index >= 0));
+  assert.deepEqual(
+    order,
+    order.toSorted((a, b) => a - b)
+  );
+
+  assert.deepEqual(
+    printedRows(out.stdout),
+    rows.map(({ label, rendered, portable }) => ({
+      label,
+      rendered,
+      portable,
+    }))
+  );
+});
+
+test("fixture identity names the config file or none", () => {
+  const skillRoot = fs.mkdtempSync(path.join(os.tmpdir(), "path-bytes-skill-"));
+
+  try {
+    assert.equal(
+      fixtureIdentity(skillRoot),
+      `Fixture: host claude · level medium · config none · platform ${process.platform}`
+    );
+
+    const headers = ["{}\n", "{ not json"].map((bytes) => {
+      fs.writeFileSync(path.join(skillRoot, "config.jsonc"), bytes);
+      const header = fixtureIdentity(skillRoot);
+
+      assert.ok(
+        header.includes(
+          `config config.jsonc sha256:${configHash(bytes)} · platform`
+        ),
+        header
+      );
+
+      return header;
+    });
+
+    assert.notEqual(headers[0], headers[1]);
+    fs.writeFileSync(path.join(skillRoot, "config.local.jsonc"), "{}\n");
+
+    assert.ok(
+      fixtureIdentity(skillRoot).includes(
+        `config config.local.jsonc sha256:${configHash("{}\n")} ·`
+      ),
+      "config.local.jsonc wins over config.jsonc"
+    );
+  } finally {
+    fs.rmSync(skillRoot, { recursive: true, force: true });
+  }
+});
+
+test("report portable bytes ignore the fixture location and path separators", async () => {
+  const { rows: short } = await successfulRun();
+
+  const long = await withParent(
+    ["much", "longer", "nested", "fixture", "parent"],
+    async (parent) =>
+      await renderPackRows({ fixtureParent: parent, run: fixedGit })
+  );
+
+  assert.deepEqual(
+    short.map(({ label, portable }) => [label, portable]),
+    long.map(({ label, portable }) => [label, portable])
+  );
+
+  assert.ok(
+    short.some((row, index) => row.rendered !== defined(long[index]).rendered),
+    "rendered bytes follow the path length"
+  );
+
+  const windows = portableText(
+    "see C:\\Users\\a\\fx\\session\\.state\\x.md and `C:\\Users\\a\\fx` with \\n kept\r\nnext",
+    [{ root: "C:\\Users\\a\\fx", placeholder: "<fixture>" }]
+  );
+
+  const posix = portableText(
+    "see /home/a/fx/session/.state/x.md and `/home/a/fx` with \\n kept\nnext",
+    [{ root: "/home/a/fx", placeholder: "<fixture>" }]
+  );
+
+  assert.equal(windows, posix);
+  assert.equal(
+    windows,
+    "see <fixture>/session/.state/x.md and `<fixture>` with \\n kept\nnext"
+  );
+
+  assert.equal(
+    portableText("/home/a/fxtra/x", [
+      { root: "/home/a/fx", placeholder: "<fixture>" },
+    ]),
+    "/home/a/fxtra/x"
+  );
+});
+
+test("report fails naming the pack and removes its fixture when a render fails", async () => {
+  const succeeded = await successfulRun();
+  assert.deepEqual(succeeded.leftover, []);
+  assert.ok(succeeded.skillRootUntouched);
+
+  const before = treeSnapshot(skillDir);
+
+  await withParent(["fixture"], async (parent) => {
+    const failed = sinks();
+
+    assert.equal(
+      await report({
+        ...failed.options,
+        fixtureParent: parent,
+        run: failingGit,
+      }),
+      1
+    );
+    assert.match(
+      failed.out.stderr,
+      /^fix-review-lite brief: .*fatal: no repository/u
+    );
+    assert.doesNotMatch(failed.out.stdout, /rendered|Actor packs/u);
+    assert.deepEqual(fs.readdirSync(parent), []);
+  });
+
+  assert.deepEqual(treeSnapshot(skillDir), before);
+});
+
+const SEQUENCE_LINES = [
+  "task path, normal: 5 calls — worktree create, brief render, worktree submit, worktree integrate, check run --task",
+  "task path, integrate conflict: 6 calls — worktree create, brief render, worktree submit, worktree integrate, worktree continue, check run --task",
+  "task path, check failure: 6 calls — worktree create, brief render, worktree submit, worktree integrate, check run --task, check run --task",
+  "review round, no fixes: 2 calls — review run, ledger append (ruling)",
+  "review round, plan/design fix batch: 5 calls — review run, ledger append (ruling), brief fix-review-lite, ledger append (note), lint run --edit",
+  "review round, code fix batch: 4 calls — review run, ledger append (ruling), worktree commit --review-fix, check run",
+];
+
+test("report prints static toolkit-call sequences with their flags", async () => {
+  const { out } = await successfulRun();
+
+  const printed = out.stdout
+    .split("\n")
+    .filter((line) => /^(?:task path|review round), /u.test(line));
+
+  assert.deepEqual(printed, SEQUENCE_LINES);
+
+  const actions = new Map<string, string>();
+  const records = new Set<string>();
+
+  for (const line of toolkit.split("\n")) {
+    const row =
+      /^\| (?<type>action|record) \| (?<heading>[^|]+?) \| (?<args>.*) \|$/u.exec(
+        line
+      );
+
+    if (row?.groups?.["type"] === "action") {
+      actions.set(defined(row.groups["heading"]), defined(row.groups["args"]));
+    } else if (row?.groups?.["type"] === "record") {
+      records.add(defined(row.groups["heading"]).replace(/ \(.*\)$/u, ""));
+    }
+  }
+
+  assert.equal(CALL_SEQUENCES.length, SEQUENCE_LINES.length);
+
+  for (const sequence of CALL_SEQUENCES) {
+    assert.ok(sequence.sources.length > 0, `${sequence.path} cites sources`);
+
+    for (const call of sequence.calls) {
+      const args = actions.get(call.action);
+      assert.ok(args !== undefined, `${call.action} is a call-table action`);
+
+      if (call.flag !== undefined) {
+        assert.ok(
+          args.includes(call.flag),
+          `${call.action} takes ${call.flag}`
+        );
+      }
+
+      if (call.kind !== undefined) {
+        assert.equal(call.action, "ledger append");
+        assert.ok(records.has(call.kind), `${call.kind} is a record kind`);
+      }
+    }
+  }
+});
+
+test("usage line lists every accepted path-bytes form", async () => {
+  const forms = [...USAGE.matchAll(/--[a-z-]+/gu)].map((match) => match[0]);
+  assert.deepEqual(forms.toSorted(), ["--at", "--check-baseline", "--report"]);
+  assert.ok(USAGE.startsWith("Usage: path-bytes ") && USAGE.endsWith("\n"));
+
+  const current = measure(readFile, "preload");
+
+  const git = (args: string[]) =>
+    args[0] === "rev-parse"
+      ? "ok"
+      : readFile(defined(defined(args[1]).split(":skills/dispatch/")[1]));
+
+  const { exit: reportExit } = await successfulRun();
+
+  const accepted: [string, number][] = [
+    ["no argument", main([], undefined, undefined, sinks().options)],
+    ["--at", main(["--at", "fake"], git, undefined, sinks().options)],
+    [
+      "--check-baseline",
+      main(["--check-baseline"], git, current, sinks().options),
+    ],
+    ["--report", reportExit],
+  ];
+
+  for (const [form, exit] of accepted) {
+    assert.equal(exit, 0, form);
+  }
+
+  const refused = await Promise.all(
+    [
+      ["--bad"],
+      ["--at"],
+      ["--report", "--at", "x"],
+      ["--report", "x"],
+      ["--check-baseline", "--report"],
+    ].map(async (args) => {
+      const { out, options } = sinks();
+
+      return { args, exit: await cli(args, options), out };
+    })
+  );
+
+  for (const { args, exit, out } of refused) {
+    assert.equal(exit, 2, args.join(" "));
+    assert.equal(out.stderr, USAGE);
+    assert.equal(out.stdout, "");
+  }
 });

@@ -33,6 +33,7 @@ import { nodeHostUsageFs } from "../skills/dispatch/scripts/lib/usage/index.ts";
 import { opencode } from "../skills/dispatch/scripts/lib/usage/opencode.ts";
 import type { HostUsageFacts } from "../skills/dispatch/scripts/lib/usage/rows.ts";
 import type { CliDeps } from "../skills/dispatch/scripts/toolkit/cli.ts";
+import { CAPTURE_FAILURE_SUFFIX } from "../skills/dispatch/scripts/toolkit/diagnostics-capture.ts";
 import { sessionFacts } from "../skills/dispatch/scripts/toolkit/diagnostics.ts";
 import {
   billedTokens,
@@ -109,12 +110,23 @@ type Efficiency = Omit<ReturnType<typeof efficiencyOf>, "responses"> & {
   verification: Verification | null;
 };
 
+export interface WallClock {
+  startMs: number | null;
+  endMs: number | null;
+  elapsedMs: number | null;
+  // True when trailing activity may follow the end; the elapsed time is then a minimum.
+  lowerBound: boolean;
+  limits: string[];
+}
+
 export interface SideResult {
   label: string;
   session: string;
   host: string;
   nativeId: string;
   window: { startMs: number; endMs: number; pathForm: PathForm };
+  wallClock: WallClock;
+  toolCall: { ms: number | null; untimed: number };
   rounds: { total: number; byReview: Record<string, number> };
   perRound: PerRound[];
   hostTokens?: number;
@@ -513,6 +525,362 @@ const latestCaptureEnd = (folder: string) => {
   return latest;
 };
 
+// SECTION: Wall clock
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const TERMINAL_RESULT =
+  /^(?<tool>report-complete|worktree-cleanup)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.json$/iu;
+
+const captureEndOf = (start: unknown, end: unknown) => {
+  if (isFiniteNumber(end)) {
+    return end;
+  }
+
+  return end === undefined && isFiniteNumber(start) ? start : undefined;
+};
+
+interface CaptureScan {
+  times: {
+    startMs: number;
+    endMs: number;
+    opened: boolean;
+    cleanup: boolean;
+  }[];
+  files: number;
+  malformed: number;
+  opened: number;
+  failures: number;
+  untimed: number;
+}
+
+/** Reads each capture for its end (its start while opened), cleanup phase and timing; counts what carries no usable time. `untimed` also counts malformed captures and storage-failure markers, whose durations are unknown. */
+const scanCaptures = (folder: string) => {
+  const scan: CaptureScan = {
+    times: [],
+    files: 0,
+    malformed: 0,
+    opened: 0,
+    failures: 0,
+    untimed: 0,
+  };
+
+  const directory = path.join(folder, ".state", "diagnostics");
+  let names: string[];
+
+  try {
+    names = listDir(directory).filter((name) => name.endsWith(".json"));
+  } catch {
+    scan.malformed += 1;
+
+    return scan;
+  }
+
+  for (const name of names) {
+    if (name.endsWith(`.json${CAPTURE_FAILURE_SUFFIX}`)) {
+      scan.failures += 1;
+      scan.untimed += 1;
+      continue;
+    }
+
+    scan.files += 1;
+    let raw: unknown;
+
+    try {
+      raw = JSON.parse(
+        stripBom(fs.readFileSync(path.join(directory, name), "utf-8"))
+      );
+    } catch {
+      scan.malformed += 1;
+      scan.untimed += 1;
+      continue;
+    }
+
+    // NOTE: same shape gate as sessionFacts, so a capture it rejects gives no timing evidence here.
+    if (
+      !isRecord(raw) ||
+      !Array.isArray(raw["phases"]) ||
+      !Array.isArray(raw["invocations"]) ||
+      !Array.isArray(raw["reviews"])
+    ) {
+      scan.malformed += 1;
+      scan.untimed += 1;
+      continue;
+    }
+
+    const { capture } = raw;
+    const start = isRecord(capture) ? capture["start"] : undefined;
+    const end = isRecord(capture) ? capture["end"] : undefined;
+
+    const phases: unknown[] = raw["phases"];
+
+    // An opened capture has no end yet; its start is the latest time it proves.
+    const endMs = captureEndOf(start, end);
+
+    if (endMs === undefined) {
+      scan.malformed += 1;
+      scan.untimed += 1;
+      continue;
+    }
+
+    const opened = !isFiniteNumber(end);
+
+    scan.times.push({
+      startMs: isFiniteNumber(start) ? start : endMs,
+      endMs,
+      opened,
+      // NOTE: an opened capture persists `phases: []` until finish, so only a completed capture can prove cleanup.
+      cleanup:
+        !opened &&
+        phases.some(
+          (phase) => isRecord(phase) && phase["key"] === "worktree-cleanup"
+        ),
+    });
+
+    if (opened) {
+      scan.opened += 1;
+    }
+
+    if (
+      opened ||
+      phases.some(
+        (phase) =>
+          isRecord(phase) &&
+          !(isFiniteNumber(phase["wallMs"]) && phase["wallMs"] >= 0)
+      )
+    ) {
+      scan.untimed += 1;
+    }
+  }
+
+  return scan;
+};
+
+interface ResultScan {
+  entries: number;
+  skipped: number;
+  unusable: number;
+  outside: boolean;
+  // Modification time of the latest successful report-complete result.
+  successMs: number | null;
+  cleanupMs: number[];
+  failedReportMs: number[];
+}
+
+/** Scans only report-complete and worktree-cleanup results; entries are read through lstat and never followed out of `.state/results/`. */
+const scanResults = (session: string) => {
+  const scan: ResultScan = {
+    entries: 0,
+    skipped: 0,
+    unusable: 0,
+    outside: false,
+    successMs: null,
+    cleanupMs: [],
+    failedReportMs: [],
+  };
+
+  const directory = path.join(session, ".state", "results");
+  let results: string;
+  let names: string[];
+
+  try {
+    results = fs.realpathSync.native(directory);
+    names = listDir(results);
+  } catch (error) {
+    if (!isMissing(error)) {
+      scan.skipped += 1;
+    }
+
+    return scan;
+  }
+
+  if (results === session || !isWithin(results, session)) {
+    scan.outside = true;
+
+    return scan;
+  }
+
+  for (const name of names) {
+    const tool = TERMINAL_RESULT.exec(name)?.groups?.["tool"];
+
+    if (tool === undefined) {
+      continue;
+    }
+
+    const file = path.join(results, name);
+    let modifiedMs: number;
+
+    try {
+      const stat = fs.lstatSync(file);
+
+      if (!stat.isFile() || !isWithin(fs.realpathSync.native(file), results)) {
+        scan.skipped += 1;
+        continue;
+      }
+
+      modifiedMs = stat.mtimeMs;
+    } catch {
+      scan.skipped += 1;
+      continue;
+    }
+
+    scan.entries += 1;
+
+    if (tool === "worktree-cleanup") {
+      scan.cleanupMs.push(modifiedMs);
+      continue;
+    }
+
+    let report: ReturnType<typeof readReportResult> = null;
+
+    try {
+      report = readReportResult(session, `.state/results/${name}`);
+    } catch {
+      report = null;
+    }
+
+    if (report === null) {
+      scan.unusable += 1;
+    } else if (Object.hasOwn(report, "reason")) {
+      scan.failedReportMs.push(modifiedMs);
+    } else {
+      scan.successMs = Math.max(scan.successMs ?? modifiedMs, modifiedMs);
+    }
+  }
+
+  return scan;
+};
+
+interface EndEvidence {
+  latest: number | null;
+  unparsable: number;
+  excludedRecords: number;
+  excludedCaptures: number;
+  excludedOpened: number;
+}
+
+/** Latest timestamp across ledger records, captures and terminal results; after a successful report only cleanup work counts. */
+const endEvidenceOf = (
+  fold: ReturnType<typeof foldLedger>,
+  captures: CaptureScan,
+  results: ResultScan
+) => {
+  const boundary = results.successMs;
+  const ends: number[] = [];
+
+  const evidence: EndEvidence = {
+    latest: null,
+    unparsable: 0,
+    excludedRecords: 0,
+    excludedCaptures: 0,
+    excludedOpened: 0,
+  };
+
+  for (const record of fold.records) {
+    const at = Date.parse(record.at);
+
+    if (Number.isNaN(at)) {
+      evidence.unparsable += 1;
+    } else if (boundary !== null && at > boundary) {
+      evidence.excludedRecords += 1;
+    } else {
+      ends.push(at);
+    }
+  }
+
+  // NOTE: later inspection calls persist captures and ledger reads, so they must not stretch a finished run.
+  for (const capture of captures.times) {
+    if (boundary !== null && !capture.cleanup && capture.startMs > boundary) {
+      // An opened capture has no action key until finish, so it may be trailing cleanup and is counted apart.
+      evidence[capture.opened ? "excludedOpened" : "excludedCaptures"] += 1;
+    } else {
+      ends.push(capture.endMs);
+    }
+  }
+
+  ends.push(
+    ...results.cleanupMs,
+    ...(boundary === null ? results.failedReportMs : [boundary])
+  );
+
+  evidence.latest = ends.length ? Math.max(...ends) : null;
+
+  return evidence;
+};
+
+const counted = (count: number, text: string) =>
+  count > 0 ? [`${text}: ${count}`] : [];
+
+/** Whole-run span from session creation to the latest timestamped ledger, capture or terminal-result activity, plus the limits that qualify it. */
+const wallClockOf = (
+  createdAt: string,
+  fold: ReturnType<typeof foldLedger>,
+  captures: CaptureScan,
+  results: ResultScan
+): WallClock => {
+  const parsedStart = Date.parse(createdAt);
+  const startMs = Number.isNaN(parsedStart) ? null : parsedStart;
+  const evidence = endEvidenceOf(fold, captures, results);
+  const { latest } = evidence;
+  const predates = latest !== null && startMs !== null && latest < startMs;
+  const endMs = predates ? null : latest;
+
+  const missing = [
+    ...(fold.records.length === 0 ? ["ledger"] : []),
+    ...(captures.files === 0 ? ["diagnostics captures"] : []),
+    ...(results.entries === 0 ? ["terminal results"] : []),
+  ];
+
+  const limits = [
+    "activity before session creation is unobserved",
+    "activity after the latest evidence is unobserved",
+    "result-file times are file modification times",
+    ...(results.successMs === null
+      ? [
+          "no successful report complete: later inspection calls may extend the end",
+        ]
+      : []),
+    ...(evidence.excludedRecords + evidence.excludedCaptures > 0
+      ? [
+          `excluded after the terminal boundary: ledger records ${evidence.excludedRecords}, captures ${evidence.excludedCaptures}`,
+        ]
+      : []),
+    ...(evidence.excludedOpened > 0
+      ? [
+          `opened captures after the terminal boundary: ${evidence.excludedOpened}, may be trailing cleanup`,
+        ]
+      : []),
+    ...(startMs === null ? ["createdAt is invalid"] : []),
+    ...(latest === null ? ["no usable end evidence"] : []),
+    ...(predates
+      ? ["latest end evidence predates session creation (clock order)"]
+      : []),
+    ...(missing.length
+      ? [`evidence source missing: ${missing.join(", ")}`]
+      : []),
+    ...counted(evidence.unparsable, "unparsable ledger timestamps"),
+    ...(fold.torn === null ? [] : ["ledger has a torn tail"]),
+    ...counted(captures.malformed, "malformed or unreadable captures"),
+    ...counted(captures.opened, "opened captures without an end"),
+    ...counted(captures.failures, "capture storage-failure markers"),
+    ...counted(
+      results.skipped,
+      "skipped non-regular or escaping result entries"
+    ),
+    ...(results.outside ? ["results folder outside the session"] : []),
+    ...counted(results.unusable, "unusable report-complete results"),
+  ];
+
+  return {
+    startMs,
+    endMs,
+    elapsedMs: startMs === null || endMs === null ? null : endMs - startMs,
+    lowerBound: evidence.excludedOpened > 0,
+    limits,
+  };
+};
+
 const hasCalls = (run: { roundWorkload?: { calls?: unknown }[] }) =>
   (run.roundWorkload ?? []).some((row) => row.calls !== undefined);
 
@@ -798,6 +1166,18 @@ const measureSide = (
   }
 
   const facts = sanitizeFacts(run);
+  const captures = scanCaptures(folder);
+
+  const wallClock = wallClockOf(
+    manifest.createdAt,
+    fold,
+    captures,
+    scanResults(folder)
+  );
+
+  const timedPhases = facts.phases.flatMap((phase) =>
+    phase.wallMs === undefined ? [] : [phase.wallMs]
+  );
 
   const { total, priced, unpriced, coverage, rateBasis } = costCoverage(
     [facts],
@@ -848,12 +1228,12 @@ const measureSide = (
 
   collectExclusions();
 
-  const captures = run.collection?.partial ?? 0;
+  const partialCaptures = run.collection?.partial ?? 0;
 
-  if (captures > 0) {
+  if (partialCaptures > 0) {
     unavailable.push(
-      `${CALLS_PARTIAL} captures partial (${captures})`,
-      `${HOST_TOKENS_PARTIAL} captures partial (${captures})`
+      `${CALLS_PARTIAL} captures partial (${partialCaptures})`,
+      `${HOST_TOKENS_PARTIAL} captures partial (${partialCaptures})`
     );
   }
 
@@ -937,6 +1317,11 @@ const measureSide = (
     host: side.host,
     nativeId,
     window: { startMs, endMs, pathForm },
+    wallClock,
+    toolCall: {
+      ms: timedPhases.length ? timedPhases.reduce((a, b) => a + b, 0) : null,
+      untimed: captures.untimed,
+    },
     rounds: { total: rows.length, byReview },
     perRound,
     denials,
@@ -1205,6 +1590,25 @@ export const renderComparison = (comparison: Comparison) => {
       "",
       `| Metric | ${sides.map((side) => side.label).join(" | ")} |`,
       `| --- | ${sides.map(() => "---:").join(" | ")} |`,
+      metric("Whole-run wall clock (includes user wait)", (side) => {
+        const { elapsedMs, lowerBound } = side.wallClock;
+
+        if (elapsedMs === null) {
+          return "unavailable";
+        }
+
+        return lowerBound
+          ? `${formatDuration(elapsedMs)} (lower bound)`
+          : formatDuration(elapsedMs);
+      }),
+      metric("Summed tool-call duration", (side) =>
+        side.toolCall.ms === null
+          ? "unavailable"
+          : withPartial(
+              formatDuration(side.toolCall.ms),
+              side.toolCall.untimed > 0
+            )
+      ),
       metric("Rounds", (side) => String(side.rounds.total)),
       metric("Calls in rounds", (side) =>
         withPartial(
@@ -1289,6 +1693,14 @@ export const renderComparison = (comparison: Comparison) => {
 
     if (pair.comparisonLimits.length) {
       lines.push("", `Comparison limits — ${pair.comparisonLimits.join(", ")}`);
+    }
+
+    for (const side of sides) {
+      lines.push(
+        "",
+        `Wall clock limits — ${side.label}:`,
+        ...side.wallClock.limits.map((limit) => `- ${limit}`)
+      );
     }
 
     lines.push(

@@ -1,9 +1,22 @@
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  CONFIG_CANDIDATES,
+  isRecord,
+} from "../skills/dispatch/scripts/lib/config.ts";
+import { nodeErrorCode } from "../skills/dispatch/scripts/lib/fs-ext.ts";
+import type { Manifest } from "../skills/dispatch/scripts/lib/session.ts";
+import type {
+  CliDeps,
+  HandlerContext,
+} from "../skills/dispatch/scripts/toolkit/cli.ts";
 import { stripGeneratedMarkers } from "../skills/dispatch/scripts/toolkit/contracts.ts";
+import type { GitDeps } from "../skills/dispatch/scripts/toolkit/git.ts";
 
 // SECTION: Types
 
@@ -980,6 +993,29 @@ export const formatReport = (
   return `${lines.join("\n")}\n`;
 };
 
+const SKILL_ROOT = path.join(import.meta.dirname, "../skills/dispatch");
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+
+const readSkillFile: Read = (rel) =>
+  fs.readFileSync(path.join(SKILL_ROOT, rel), "utf-8");
+
+interface Output {
+  stdout: (text: string) => void;
+  stderr: (text: string) => void;
+}
+
+const PROCESS_OUTPUT: Output = {
+  stdout: (text) => {
+    process.stdout.write(text);
+  },
+  stderr: (text) => {
+    process.stderr.write(text);
+  },
+};
+
+export const USAGE =
+  "Usage: path-bytes [--at <commit> | --check-baseline | --report]\n";
+
 /** Measures the checkout or a Git revision and checks the selected baseline. */
 export const main = (
   args: string[] = process.argv.slice(2),
@@ -989,26 +1025,18 @@ export const main = (
       stdio: ["ignore", "pipe", "pipe"],
     }),
   baseline: Record<PathName, Figures> = BASELINE,
-  output?: { stdout: (text: string) => void; stderr: (text: string) => void }
+  output?: Output
 ) => {
-  const io = output ?? {
-    stdout: (text) => {
-      process.stdout.write(text);
-    },
-    stderr: (text) => {
-      process.stderr.write(text);
-    },
-  };
+  const io = output ?? PROCESS_OUTPUT;
 
   if (!isValidMainArgs(args)) {
-    io.stderr("Usage: path-bytes [--at <commit> | --check-baseline]\n");
+    io.stderr(USAGE);
 
     return 2;
   }
 
   const archive = args[0] === "--check-baseline";
   const commit = archive ? BASELINE_COMMIT : args[1];
-  const skillDir = path.join(import.meta.dirname, "../skills/dispatch");
   let objectId = "";
 
   if (commit !== undefined) {
@@ -1023,7 +1051,7 @@ export const main = (
 
   const read: Read =
     commit === undefined
-      ? (rel) => fs.readFileSync(path.join(skillDir, rel), "utf-8")
+      ? readSkillFile
       : (rel) => git(["show", `${objectId}:skills/dispatch/${rel}`]);
 
   const result: Partial<Record<PathName, Figures>> = {};
@@ -1130,9 +1158,722 @@ const checkArchiveBaseline = (
   return unequal ? 1 : 0;
 };
 
+// SECTION: Actor-pack report
+
+export interface PackRow {
+  label: string;
+  text: string;
+  rendered: number;
+  portable: number;
+}
+
+export interface ReportOptions {
+  stdout?: (text: string) => void;
+  stderr?: (text: string) => void;
+  /** Directory that holds the throwaway fixture session; defaults to the OS temp directory. */
+  fixtureParent?: string;
+  /** Git port for the renderers; defaults to the fixed answers of PACK_FIXTURE, so rendering spawns nothing. */
+  run?: GitDeps["run"];
+}
+
+export interface SequenceCall {
+  action: string;
+  flag?: string;
+  kind?: string;
+}
+
+export interface CallSequence {
+  family: "task path" | "review round";
+  path: string;
+  calls: SequenceCall[];
+  sources: string[];
+}
+
+/** Fixed inputs of every pack row; a change here moves the baseline, so rerun the report before and after. */
+export const PACK_FIXTURE = {
+  host: "claude",
+  level: "medium",
+  task: "T1",
+  at: "2026-01-01T00:00:00.000Z",
+  specFile: "fixture.spec.md",
+  planFile: "fixture.plan.md",
+  designFile: "fixture.design.md",
+  spec: [
+    "# Fixture mission",
+    "",
+    "## Requirements",
+    "",
+    "### REQ-1 — Fixture behaviour",
+    "",
+    "The fixture works.",
+    "",
+  ].join("\n"),
+  // NOTE: the RED exception keeps the writer brief free of the RED-capture block, which encodes absolute paths that normalization cannot reach.
+  plan: [
+    "# Fixture work",
+    "",
+    "Shared fixture context.",
+    "",
+    "## Task Map",
+    "",
+    "| ID | Title | Outcome | Prerequisites | Criteria |",
+    "| --- | --- | --- | --- | --- |",
+    "| T1 | First | First works | none | SC1 |",
+    "",
+    "## Proposed Changes",
+    "",
+    "### T1 — First",
+    "",
+    "- Constraints: Preserve the first invariant.",
+    "",
+    "#### [NEW] src/first.ts",
+    "",
+    "- Purpose: First implementation detail.",
+    "",
+    "## Success Criteria",
+    "",
+    "- [SC1] First works",
+    "  - Changes: src/first.ts",
+    "  - Check: `node first-check`",
+    "  - Evidence: red",
+    "  - RED exception: behavior-preserving",
+    "",
+    "## Verification Plan",
+    "",
+    "### Automated Tests",
+    "",
+    "- `node first-check`",
+    "- `node contract-check`",
+    "",
+  ].join("\n"),
+  round: {
+    findingId: "R1-F001",
+    severity: "SHOULD",
+    locus: "§ Plan: Proposed Changes",
+    defect: "The first change names no owner for the shared state.",
+    requiredChange: "Name the single owner of the shared state.",
+    rationale: "The owner closes the gap.",
+    input: "# Fixture work\n",
+  },
+  diff: [
+    "--- a/fixture.plan.md",
+    "+++ b/fixture.plan.md",
+    "@@ -1 +1,2 @@",
+    " # Fixture work",
+    "+The first module owns the shared state.",
+    "",
+  ].join("\n"),
+  explorer: {
+    objective: "Map the fixture area before planning.",
+    questions: ["Which module owns the fixture state?", "Who consumes it?"],
+    mapFile: "explorer-map.md",
+  },
+  commit: "a".repeat(40),
+  verifier: { focus: "The first module serves the fixture state." },
+  review: {
+    scope: "Full review",
+    turnTarget: 40,
+    taskSummary: "Review the fixture change.",
+  },
+  ask: {
+    question: "Which module owns the fixture state?",
+    context: "The fixture has one module.",
+  },
+} as const;
+
+// SECTION: Static call sequences (source: the verb guides and review rules cited per entry)
+
+const step = (action: string, flag?: string): SequenceCall =>
+  flag === undefined ? { action } : { action, flag };
+
+const append = (kind: string): SequenceCall => ({
+  action: "ledger append",
+  kind,
+});
+
+const TASK_HEAD = [
+  step("worktree create"),
+  step("brief render"),
+  step("worktree submit"),
+  step("worktree integrate"),
+];
+
+const TASK_CHECK = step("check run", "--task");
+
+export const CALL_SEQUENCES: readonly CallSequence[] = [
+  {
+    family: "task path",
+    path: "normal",
+    calls: [...TASK_HEAD, TASK_CHECK],
+    sources: ["skills/dispatch/references/verbs/implement.md:17-19"],
+  },
+  {
+    family: "task path",
+    path: "integrate conflict",
+    calls: [...TASK_HEAD, step("worktree continue"), TASK_CHECK],
+    sources: ["skills/dispatch/references/verbs/implement.md:50"],
+  },
+  {
+    // The repair itself is writer or orchestrator work, so only the check rerun adds a toolkit call.
+    family: "task path",
+    path: "check failure",
+    calls: [...TASK_HEAD, TASK_CHECK, TASK_CHECK],
+    sources: ["skills/dispatch/references/verbs/implement.md:19"],
+  },
+  {
+    family: "review round",
+    path: "no fixes",
+    calls: [step("review run"), append("ruling")],
+    sources: [
+      "skills/dispatch/references/verbs/review.md:3",
+      "skills/dispatch/references/review-rules.md:29",
+    ],
+  },
+  {
+    family: "review round",
+    path: "plan/design fix batch",
+    calls: [
+      step("review run"),
+      append("ruling"),
+      step("brief fix-review-lite"),
+      append("note"),
+      step("lint run", "--edit"),
+    ],
+    sources: ["skills/dispatch/references/review-rules.md:52-55"],
+  },
+  {
+    family: "review round",
+    path: "code fix batch",
+    calls: [
+      step("review run"),
+      append("ruling"),
+      step("worktree commit", "--review-fix"),
+      step("check run"),
+    ],
+    sources: ["skills/dispatch/references/review-fixes.md:23"],
+  },
+];
+
+const callLabel = ({ action, flag, kind }: SequenceCall) => {
+  if (kind !== undefined) {
+    return `${action} (${kind})`;
+  }
+
+  return flag === undefined ? action : `${action} ${flag}`;
+};
+
+const sequenceLines = () =>
+  CALL_SEQUENCES.map(
+    ({ family, path: variant, calls }) =>
+      `${family}, ${variant}: ${calls.length} calls — ${calls.map(callLabel).join(", ")}`
+  );
+
+// SECTION: Fixture identity and portable bytes
+
+/** Names the config file that the renderers read, with the first 12 hex digits of the SHA-256 of its raw bytes. */
+export const fixtureIdentity = (skillRoot: string) => {
+  let config = "config none";
+
+  for (const name of CONFIG_CANDIDATES) {
+    try {
+      const digest = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(path.join(skillRoot, name)))
+        .digest("hex")
+        .slice(0, 12);
+
+      config = `config ${name} sha256:${digest}`;
+      break;
+    } catch (error) {
+      if (nodeErrorCode(error) !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  return `Fixture: host ${PACK_FIXTURE.host} · level ${PACK_FIXTURE.level} · ${config} · platform ${process.platform}`;
+};
+
+interface PathRoot {
+  root: string;
+  placeholder: string;
+}
+
+// Ends a path run inside prose: whitespace, quotes, the backtick and list punctuation.
+const PATH_END = String.raw`\s"'<>|*?()\[\]{},;` + String.fromCodePoint(96);
+
+const escapeRegExp = (text: string) =>
+  text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
+/** CRLF becomes LF; each root becomes its placeholder and the separators of the path run after it become `/`. Other backslashes stay. */
+export const portableText = (text: string, roots: readonly PathRoot[]) => {
+  let normalized = text.replaceAll("\r\n", "\n");
+
+  // Longest roots first: the skill root sits inside the repository root.
+  for (const { root, placeholder } of roots.toSorted(
+    (a, b) => b.root.length - a.root.length
+  )) {
+    const prefix = root
+      .replace(/[\\/]+$/u, "")
+      .split(/[\\/]+/u)
+      .map(escapeRegExp)
+      .join(String.raw`[\\/]+`);
+
+    // A prefix must end at a path boundary, so a sibling such as `<root>-other` stays.
+    const pattern = new RegExp(
+      String.raw`${prefix}(?:(?<rest>[\\/][^${PATH_END}]*)|(?![\w.-]))`,
+      process.platform === "win32" ? "giu" : "gu"
+    );
+
+    normalized = normalized.replaceAll(
+      pattern,
+      (_match: string, rest: string | undefined) =>
+        placeholder + (rest ?? "").replaceAll("\\", "/")
+    );
+  }
+
+  return normalized;
+};
+
+// SECTION: Fixture session and renderers
+
+const unusedRuntime = (): never => {
+  throw new Error("path-bytes report has no CLI runtime");
+};
+
+const fixtureGit: GitDeps["run"] = async (argv) => {
+  await Promise.resolve();
+
+  if (argv[1] === "ls-files") {
+    return { exit: 0, stdout: "", stderr: "" };
+  }
+
+  if (argv[1] === "diff") {
+    return { exit: 1, stdout: PACK_FIXTURE.diff, stderr: "" };
+  }
+
+  throw new Error(`Unexpected Git call: ${argv.join(" ")}`);
+};
+
+// NOTE: the toolkit loads on demand, so the no-argument workload gate keeps its startup cost.
+const loadToolkit = async () => {
+  const [brief, lite, prompts, domainPrompt, artifacts, confirmations, state] =
+    await Promise.all([
+      import("../skills/dispatch/scripts/toolkit/brief.ts"),
+      import("../skills/dispatch/scripts/toolkit/fix-review-lite.ts"),
+      import("../skills/dispatch/scripts/toolkit/prompts.ts"),
+      import("../skills/dispatch/scripts/toolkit/domain/prompt.ts"),
+      import("../skills/dispatch/scripts/toolkit/artifacts.ts"),
+      import("../skills/dispatch/scripts/toolkit/confirmations.ts"),
+      import("../skills/dispatch/scripts/toolkit/review-state.ts"),
+    ]);
+
+  return {
+    brief,
+    lite,
+    prompts,
+    domainPrompt,
+    artifacts,
+    confirmations,
+    state,
+  };
+};
+
+type Toolkit = Awaited<ReturnType<typeof loadToolkit>>;
+
+interface Pack {
+  label: string;
+  render: () => Promise<string> | string;
+}
+
+const writeJson = (file: string, value: unknown) => {
+  fs.writeFileSync(file, `${JSON.stringify(value)}\n`);
+};
+
+const json = (value: unknown) => ({ json: JSON.stringify(value) });
+
+// Each brief renderer writes its file under the session; the pack is that file as the actor reads it.
+const briefFile = async (
+  result: Promise<{ value: unknown }>,
+  key: "path" | "briefPath"
+) => {
+  const { value } = await result;
+  const file = isRecord(value) ? value[key] : undefined;
+
+  if (typeof file !== "string") {
+    throw new TypeError(`The renderer returned no ${key}`);
+  }
+
+  return fs.readFileSync(file, "utf-8");
+};
+
+/** Seeds the fixture session and repository, then lists each pack with the production renderer that builds it. */
+const seedPacks = (
+  fixtureRoot: string,
+  kit: Toolkit,
+  run: GitDeps["run"]
+): Pack[] => {
+  const fixture = PACK_FIXTURE;
+  const repo = path.join(fixtureRoot, "repo");
+  const session = path.join(fixtureRoot, "session");
+  const integration = path.join(fixtureRoot, "integration");
+  const specPath = path.join(repo, fixture.specFile);
+  const planPath = path.join(repo, fixture.planFile);
+  const designPath = path.join(repo, fixture.designFile);
+  const specHash = kit.artifacts.artifactHash("spec", fixture.spec);
+
+  fs.mkdirSync(repo);
+  fs.mkdirSync(session);
+  fs.writeFileSync(specPath, fixture.spec);
+  fs.writeFileSync(planPath, fixture.plan);
+
+  // The fix-review-lite pack needs one completed plan round whose only finding is accepted.
+  const review = kit.confirmations.reviewId("plan", planPath);
+  const reviewDir = kit.state.reviewDirectory(session, review);
+  const roundDir = kit.state.reviewRoundDirectory(reviewDir, 1);
+  fs.mkdirSync(roundDir, { recursive: true });
+
+  writeJson(kit.state.reviewRoundFile(roundDir), {
+    artifactPath: planPath,
+    spec: { path: specPath, hash: specHash },
+  });
+
+  writeJson(kit.state.reviewFindingsFile(roundDir), {
+    findings: [
+      {
+        id: fixture.round.findingId,
+        severity: fixture.round.severity,
+        locus: fixture.round.locus,
+        defect: fixture.round.defect,
+        requiredChange: fixture.round.requiredChange,
+      },
+    ],
+  });
+
+  fs.writeFileSync(
+    path.join(reviewDir, "round-1.input.md"),
+    fixture.round.input
+  );
+
+  // The writer gate needs a confirmed spec, an approved plan, a level and an open launch.
+  const planHash = kit.artifacts.artifactHash("plan", fixture.plan);
+
+  const records = [
+    { kind: "bind", data: { spec: fixture.specFile, plan: fixture.planFile } },
+    {
+      kind: "confirm",
+      by: "user",
+      quote: "Approved",
+      data: { spec: specHash },
+    },
+    { kind: "level", data: { level: fixture.level } },
+    {
+      kind: "approval",
+      by: "user",
+      quote: "Approved",
+      data: { spec: specHash, plan: planHash },
+    },
+    {
+      kind: "writer",
+      data: {
+        phase: "launched",
+        task: fixture.task,
+        path: `.state/worktrees/${fixture.task}-1`,
+        base: {
+          commit: fixture.commit,
+          taskSection: `sha256:${"b".repeat(64)}`,
+          seq: 1,
+        },
+      },
+    },
+    {
+      kind: "ruling",
+      data: {
+        subject: `review:${review}:${fixture.round.findingId}`,
+        ruling: "accepted",
+        rationale: fixture.round.rationale,
+      },
+    },
+  ];
+
+  fs.writeFileSync(
+    path.join(session, "ledger.jsonl"),
+    `${records
+      .map((entry, index) =>
+        JSON.stringify({
+          seq: index + 1,
+          at: fixture.at,
+          key: `record-${index + 1}`,
+          by: "orchestrator",
+          ...entry,
+        })
+      )
+      .join("\n")}\n`
+  );
+
+  const manifest: Manifest = {
+    schemaVersion: 1,
+    folderName: "20260101T0000Z-path-bytes",
+    sessionId: "path-bytes",
+    safeSessionId: "path-bytes",
+    repositoryRoot: repo,
+    sessionTitle: "path-bytes fixture",
+    createdAt: fixture.at,
+    lastUsedAt: fixture.at,
+    location: "workspace",
+  };
+
+  const deps: CliDeps = {
+    delegate: unusedRuntime,
+    modes: unusedRuntime,
+    orchestrator: { platform: fixture.host, model: null },
+    liveness: {},
+    run,
+    stdout: unusedRuntime,
+    env: {},
+    clock: () => Date.now(),
+    sleep: unusedRuntime,
+    pid: process.pid,
+    host: "path-bytes",
+    isAlive: () => true,
+    skillRoot: SKILL_ROOT,
+  };
+
+  const context = (
+    args: string[],
+    values: HandlerContext["values"] = {}
+  ): HandlerContext => ({ session, manifest, args, values, deps });
+
+  const reviewContext = {
+    skillRoot: SKILL_ROOT,
+    spec: { path: specPath, hash: specHash },
+    scope: fixture.review.scope,
+    turnTarget: fixture.review.turnTarget,
+    round: 1,
+  };
+
+  const { questions, objective } = fixture.explorer;
+
+  return [
+    {
+      label: "writer brief (no RED capture)",
+      render: async () =>
+        await briefFile(kit.brief.renderBrief(context([fixture.task])), "path"),
+    },
+    {
+      label: "explorer brief (map)",
+      render: async () =>
+        await briefFile(
+          kit.brief.renderExplorerBrief(
+            context(
+              [],
+              json({
+                objective,
+                questions,
+                outputPath: path.join(fixtureRoot, fixture.explorer.mapFile),
+              })
+            )
+          ),
+          "briefPath"
+        ),
+    },
+    {
+      label: "explorer brief (research)",
+      render: async () =>
+        await briefFile(
+          kit.brief.renderExplorerBrief(
+            context([], json({ objective, questions }))
+          ),
+          "briefPath"
+        ),
+    },
+    {
+      label: "test-cleanup brief",
+      render: async () =>
+        await briefFile(
+          kit.brief.renderTestCleanupBrief(
+            context(
+              [],
+              json({ base: fixture.commit, integrationPath: integration })
+            )
+          ),
+          "briefPath"
+        ),
+    },
+    {
+      label: "verifier brief",
+      render: async () =>
+        await briefFile(
+          kit.brief.renderVerifierBrief(
+            context(
+              [],
+              json({
+                checkoutPath: integration,
+                base: fixture.commit,
+                specPath,
+                focus: fixture.verifier.focus,
+              })
+            )
+          ),
+          "briefPath"
+        ),
+    },
+    {
+      label: "fix-review-lite brief",
+      render: async () =>
+        await briefFile(
+          kit.lite.renderFixReviewLiteBrief(context([planPath])),
+          "briefPath"
+        ),
+    },
+    {
+      label: "review prompt (code)",
+      render: () =>
+        kit.prompts.reviewPrompt("code", {
+          ...reviewContext,
+          artifact: "integration",
+          planPath,
+          taskSummary: fixture.review.taskSummary,
+        }),
+    },
+    {
+      label: "review prompt (plan)",
+      render: () =>
+        kit.prompts.reviewPrompt("plan", {
+          ...reviewContext,
+          artifact: planPath,
+        }),
+    },
+    {
+      label: "review prompt (design)",
+      render: () =>
+        kit.prompts.reviewPrompt("design", {
+          ...reviewContext,
+          artifact: designPath,
+        }),
+    },
+    {
+      label: "ask prompt",
+      render: () =>
+        kit.domainPrompt.askPrompt(fixture.ask.question, fixture.ask.context),
+    },
+  ];
+};
+
+const failureReason = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+/** Renders every actor pack in a throwaway fixture session and removes it, even when a render fails. */
+export const renderPackRows = async (options: ReportOptions = {}) => {
+  const created = fs.mkdtempSync(
+    path.join(options.fixtureParent ?? os.tmpdir(), "path-bytes-fixture-")
+  );
+
+  try {
+    // NOTE: the real path matches the paths the renderers resolve (Windows short names, macOS /var).
+    const fixtureRoot = fs.realpathSync.native(created);
+    const kit = await loadToolkit();
+    const packs = seedPacks(fixtureRoot, kit, options.run ?? fixtureGit);
+
+    const roots = [...new Set([fixtureRoot, created])].map((root) => ({
+      root,
+      placeholder: "<fixture>",
+    }));
+
+    for (const [dir, placeholder] of [
+      [SKILL_ROOT, "<skill-root>"],
+      [REPO_ROOT, "<repo-root>"],
+    ] as const) {
+      for (const root of new Set([dir, fs.realpathSync.native(dir)])) {
+        roots.push({ root, placeholder });
+      }
+    }
+
+    const rows: PackRow[] = [];
+
+    for (const { label, render } of packs) {
+      let text: string;
+
+      try {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- packs render in order: they share one session ledger and briefs folder.
+        text = await render();
+      } catch (error) {
+        throw new Error(`${label}: ${failureReason(error)}`, { cause: error });
+      }
+
+      rows.push({
+        label,
+        text,
+        rendered: Buffer.byteLength(text),
+        portable: Buffer.byteLength(portableText(text, roots)),
+      });
+    }
+
+    return rows;
+  } finally {
+    fs.rmSync(created, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
+  }
+};
+
+const outputOf = ({ stdout, stderr }: ReportOptions): Output => ({
+  stdout: stdout ?? PROCESS_OUTPUT.stdout,
+  stderr: stderr ?? PROCESS_OUTPUT.stderr,
+});
+
+/** Prints the fixture identity, per-verb reading, actor-pack bytes and static call sequences; resolves to the exit code. */
+export const report = async (options: ReportOptions = {}) => {
+  const io = outputOf(options);
+  let rows: PackRow[];
+
+  try {
+    rows = await renderPackRows(options);
+  } catch (error) {
+    io.stderr(`${failureReason(error)}\n`);
+
+    return 1;
+  }
+
+  const figures: Partial<Record<PathName, Figures>> = {};
+  measureManifest(readSkillFile, false, undefined, io, figures);
+
+  io.stdout(
+    [
+      fixtureIdentity(SKILL_ROOT),
+      "",
+      "Per-verb mandatory reading (after model, bytes)",
+      formatReport(figures),
+      "Actor packs (static fixture; rendered = raw UTF-8 bytes the actor receives; portable = paths and line endings normalized)",
+      ...rows.map(
+        ({ label, rendered, portable }) =>
+          `${label}: ${rendered} rendered, ${portable} portable`
+      ),
+      "",
+      "Static toolkit-call sequences (static; observed counts come from diagnostics render)",
+      ...sequenceLines(),
+      "",
+    ].join("\n")
+  );
+
+  return 0;
+};
+
+/** Runs `--report`, or one of the synchronous forms through `main`. */
+export const cli = async (
+  args: string[] = process.argv.slice(2),
+  options: ReportOptions = {}
+) =>
+  args.length === 1 && args[0] === "--report"
+    ? await report(options)
+    : main(args, undefined, undefined, outputOf(options));
+
 if (
   process.argv[1] !== undefined &&
   pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
 ) {
-  process.exitCode = main();
+  process.exitCode = await cli();
 }

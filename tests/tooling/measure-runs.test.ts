@@ -1595,3 +1595,744 @@ test("completed reports project only criterion states and disclose mismatches", 
     fx.cleanup();
   }
 });
+
+// SECTION: wall clock — whole-run span, its limits, and the summed tool-call duration.
+
+const RESULT_ID = (n: number) =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+const atOffset = (ms: number) => new Date(E0 + ms).toISOString();
+
+const wallSession = (fx: Fixture, n: number) =>
+  makeSession(fx, {
+    name: `20200101T00${String(n).padStart(2, "0")}Z-wall-clock`,
+  });
+
+const writeLedgerAt = (session: string, ats: string[], torn = false) => {
+  const lines = ats.map((at, index) =>
+    JSON.stringify({
+      seq: index + 1,
+      key: `note-${index}`,
+      at,
+      kind: "note",
+      by: "tool",
+      data: { text: "x" },
+    })
+  );
+
+  writeText(
+    path.join(session, "ledger.jsonl"),
+    `${lines.join("\n")}\n${torn ? '{"seq":' : ""}`
+  );
+};
+
+const touch = (file: string, offsetMs: number) => {
+  fs.utimesSync(file, new Date(E0 + offsetMs), new Date(E0 + offsetMs));
+};
+
+const OK_REPORT = { delivered: { source: "a".repeat(40) }, statuses: [] };
+const FAILED_REPORT = { statuses: [], reason: "refused" };
+
+const resultPath = (session: string, tool: string, n: number) =>
+  path.join(session, ".state", "results", `${tool}-${RESULT_ID(n)}.json`);
+
+const writeResultAt = (
+  session: string,
+  tool: string,
+  n: number,
+  value: unknown,
+  offsetMs: number
+) => {
+  const file = resultPath(session, tool, n);
+
+  writeJson(file, value);
+  touch(file, offsetMs);
+
+  return file;
+};
+
+// Capture times here are offsets from session creation.
+const writeTimedCapture = (
+  session: string,
+  name: string,
+  capture: { start: number; end?: number },
+  phases: { key: string; wallMs?: number }[]
+) => {
+  writeJson(path.join(session, ".state", "diagnostics", `${name}.json`), {
+    capture: {
+      state: capture.end === undefined ? "opened" : "completed",
+      start: E0 + capture.start,
+      ...(capture.end !== undefined && { end: E0 + capture.end }),
+    },
+    phases: phases.map((phase) => ({ name: "plan review", ...phase })),
+    invocations: [],
+    reviews: [],
+  });
+};
+
+const writeCaptureAt = (
+  session: string,
+  name: string,
+  capture: { start: number; end: number },
+  phase: string | undefined
+) => {
+  writeTimedCapture(
+    session,
+    name,
+    capture,
+    phase === undefined ? [] : [{ key: phase }]
+  );
+};
+
+interface WithWallClock {
+  wallClock: { limits: string[] };
+}
+
+const hasLimit = (side: WithWallClock, pattern: RegExp) =>
+  side.wallClock.limits.some((limit) => pattern.test(limit));
+
+const ALWAYS_LIMITS = [
+  /activity before session creation is unobserved/u,
+  /activity after the latest evidence is unobserved/u,
+  /result-file times are file modification times/u,
+];
+
+const NO_SUCCESS = /no successful report complete/u;
+
+test("whole-run wall clock ends at the latest ledger, capture or result activity", () => {
+  const fx = fixture();
+
+  try {
+    const cases: {
+      name: string;
+      build: (session: string) => void;
+      end: number;
+      lowerBound?: boolean;
+      present?: RegExp[];
+      absent?: RegExp[];
+    }[] = [
+      {
+        name: "ledger record latest",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000), atOffset(30_000)]);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 1000, end: 20_000 },
+            undefined
+          );
+        },
+        end: 30_000,
+        present: [NO_SUCCESS],
+      },
+      {
+        name: "capture end latest",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 30_000, end: 40_000 },
+            "ledger-append"
+          );
+        },
+        end: 40_000,
+      },
+      {
+        name: "terminal result latest",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+          writeResultAt(
+            session,
+            "worktree-cleanup",
+            1,
+            { cleaned: true },
+            50_000
+          );
+        },
+        end: 50_000,
+      },
+      {
+        name: "after a successful report only the report time counts; later inspection and failed reports are excluded",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000), atOffset(70_000)]);
+          writeResultAt(session, "report-complete", 1, OK_REPORT, 60_000);
+          writeResultAt(session, "report-complete", 2, FAILED_REPORT, 75_000);
+          writeResultAt(session, "status-show", 3, { ok: true }, 90_000);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 80_000, end: 85_000 },
+            "status-show"
+          );
+        },
+        end: 60_000,
+        present: [
+          /excluded after the terminal boundary: ledger records 1, captures 1/u,
+        ],
+        absent: [NO_SUCCESS],
+      },
+      {
+        name: "a failed cleanup and its retry move the end",
+        build: (session) => {
+          writeResultAt(session, "report-complete", 1, OK_REPORT, 60_000);
+          writeResultAt(
+            session,
+            "worktree-cleanup",
+            2,
+            { cleaned: false },
+            100_000
+          );
+          writeResultAt(
+            session,
+            "worktree-cleanup",
+            3,
+            { cleaned: true },
+            110_000
+          );
+        },
+        end: 110_000,
+      },
+      {
+        name: "a completed cleanup capture after the report extends the end",
+        build: (session) => {
+          writeResultAt(session, "report-complete", 1, OK_REPORT, 60_000);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 100_000, end: 120_000 },
+            "worktree-cleanup"
+          );
+        },
+        end: 120_000,
+        absent: [/opened captures after the terminal boundary/u],
+      },
+      {
+        name: "an opened capture after the report is excluded and counted as possible cleanup",
+        build: (session) => {
+          writeResultAt(session, "report-complete", 1, OK_REPORT, 60_000);
+          writeTimedCapture(session, "c1", { start: 120_000 }, []);
+        },
+        end: 60_000,
+        lowerBound: true,
+        present: [
+          /opened captures after the terminal boundary: 1, may be trailing cleanup/u,
+          /opened captures without an end: 1/u,
+        ],
+        absent: [/excluded after the terminal boundary/u],
+      },
+      {
+        name: "recovery after a failed report with no later success ends at the recovery",
+        build: (session) => {
+          writeResultAt(session, "report-complete", 1, FAILED_REPORT, 60_000);
+          writeLedgerAt(session, [atOffset(70_000)]);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 71_000, end: 80_000 },
+            "check-run"
+          );
+        },
+        end: 80_000,
+        present: [NO_SUCCESS],
+      },
+      {
+        name: "recovery then a later successful report includes the recovery",
+        build: (session) => {
+          writeResultAt(session, "report-complete", 1, FAILED_REPORT, 60_000);
+          writeLedgerAt(session, [atOffset(70_000)]);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 71_000, end: 80_000 },
+            "check-run"
+          );
+          writeResultAt(session, "report-complete", 2, OK_REPORT, 90_000);
+        },
+        end: 90_000,
+        absent: [NO_SUCCESS],
+      },
+    ];
+
+    const sessions: string[] = [];
+
+    for (const [index, entry] of cases.entries()) {
+      const session = wallSession(fx, index);
+      sessions.push(session);
+      entry.build(session);
+      const side = measureOne(fx, { session, host: "claude" });
+      assert.equal(side.wallClock.startMs, E0, entry.name);
+      assert.equal(side.wallClock.endMs, E0 + entry.end, entry.name);
+      assert.equal(side.wallClock.elapsedMs, entry.end, entry.name);
+
+      assert.equal(
+        side.wallClock.lowerBound,
+        entry.lowerBound ?? false,
+        entry.name
+      );
+
+      for (const pattern of [...ALWAYS_LIMITS, ...(entry.present ?? [])]) {
+        assert.ok(hasLimit(side, pattern), `${entry.name}: ${String(pattern)}`);
+      }
+
+      for (const pattern of entry.absent ?? []) {
+        assert.ok(
+          !hasLimit(side, pattern),
+          `${entry.name}: ${String(pattern)}`
+        );
+      }
+    }
+
+    // The capture-based window keeps its meaning: the latest capture end, not the wall-clock end.
+    const bounded = defined(sessions[3]);
+    const side = measureOne(fx, { session: bounded, host: "claude" });
+    assert.equal(side.window.endMs, E0 + 85_000);
+    assert.equal(side.wallClock.endMs, E0 + 60_000);
+
+    const markdown = renderComparison(
+      measureSides(fx, [{ session: bounded, host: "claude" }])
+    );
+
+    assert.match(
+      markdown,
+      /\| Whole-run wall clock \(includes user wait\) \| 1m 0s \|/u
+    );
+    assert.match(markdown, /\| Summed tool-call duration \|/u);
+    assert.match(markdown, /Wall clock limits/u);
+    assert.doesNotMatch(markdown, /lower bound/u);
+
+    const trailing = wallSession(fx, cases.length);
+    writeResultAt(trailing, "report-complete", 1, OK_REPORT, 60_000);
+    writeTimedCapture(trailing, "c1", { start: 120_000 }, []);
+
+    assert.match(
+      renderComparison(
+        measureSides(fx, [{ session: trailing, host: "claude" }])
+      ),
+      /\| Whole-run wall clock \(includes user wait\) \| 1m 0s \(lower bound\) \|/u
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("whole-run wall clock lists missing and unusable evidence as limits", () => {
+  const fx = fixture();
+
+  try {
+    interface Case {
+      name: string;
+      build: (session: string) => void;
+      start?: number | null;
+      end: number | null;
+      present: RegExp[];
+      absent?: RegExp[];
+    }
+
+    const cases: Case[] = [
+      {
+        name: "no captures or results",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+        },
+        end: 10_000,
+        present: [
+          NO_SUCCESS,
+          /evidence source missing: diagnostics captures, terminal results/u,
+        ],
+        absent: [/evidence source missing: ledger/u],
+      },
+      {
+        name: "fresh session with no end evidence",
+        build: () => {
+          void 0;
+        },
+        end: null,
+        present: [
+          /no usable end evidence/u,
+          /evidence source missing: ledger, diagnostics captures, terminal results/u,
+        ],
+      },
+      {
+        name: "malformed capture",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+          writeText(
+            path.join(session, ".state", "diagnostics", "bad.json"),
+            "{["
+          );
+        },
+        end: 10_000,
+        present: [/malformed or unreadable captures: 1/u],
+      },
+      {
+        name: "opened capture newer than every other timestamp",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+          writeTimedCapture(session, "c1", { start: 90_000 }, []);
+        },
+        end: 90_000,
+        present: [/opened captures without an end: 1/u],
+      },
+      {
+        name: "older valid capture with a newer storage-failure marker",
+        build: (session) => {
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: 1000, end: 10_000 },
+            "check-run"
+          );
+
+          const marker = path.join(
+            session,
+            ".state",
+            "diagnostics",
+            "c1.json.failure.json"
+          );
+
+          writeJson(marker, { kind: "storage-failure", count: 2 });
+          touch(marker, 99_000);
+        },
+        end: 10_000,
+        present: [/capture storage-failure markers: 1/u],
+        absent: [/malformed or unreadable captures/u],
+      },
+      {
+        name: "torn ledger tail",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000), atOffset(20_000)], true);
+        },
+        end: 20_000,
+        present: [/ledger has a torn tail/u],
+      },
+      {
+        name: "unparsable ledger timestamp",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000), "garbage"]);
+        },
+        end: 10_000,
+        present: [/unparsable ledger timestamps: 1/u],
+      },
+      {
+        name: "invalid createdAt",
+        build: (session) => {
+          const manifest = path.join(session, "manifest.json");
+
+          writeJson(manifest, {
+            ...readManifest(session),
+            createdAt: "garbage",
+          });
+          writeLedgerAt(session, [atOffset(10_000)]);
+        },
+        start: null,
+        end: 10_000,
+        present: [/createdAt is invalid/u],
+      },
+      {
+        name: "every end timestamp before session creation",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(-5000)]);
+          writeCaptureAt(
+            session,
+            "c1",
+            { start: -9000, end: -1000 },
+            "check-run"
+          );
+        },
+        end: null,
+        present: [
+          /latest end evidence predates session creation \(clock order\)/u,
+        ],
+      },
+      {
+        name: "unusable report-complete results never set the boundary or move the end",
+        build: (session) => {
+          writeLedgerAt(session, [atOffset(10_000)]);
+          writeText(resultPath(session, "report-complete", 1), "{[");
+          writeText(
+            resultPath(session, "report-complete", 2),
+            JSON.stringify(OK_REPORT) + " ".repeat(1024 * 1024)
+          );
+          fs.mkdirSync(resultPath(session, "report-complete", 3));
+          writeJson(resultPath(session, "report-complete", 4), [OK_REPORT]);
+
+          for (const n of [1, 2, 4]) {
+            touch(resultPath(session, "report-complete", n), 95_000);
+          }
+        },
+        end: 10_000,
+        present: [
+          NO_SUCCESS,
+          /unusable report-complete results: 3/u,
+          /skipped non-regular or escaping result entries: 1/u,
+        ],
+      },
+    ];
+
+    const sessions: string[] = [];
+
+    for (const [index, entry] of cases.entries()) {
+      const session = wallSession(fx, index);
+      sessions.push(session);
+      entry.build(session);
+      const side = measureOne(fx, { session, host: "claude" });
+      const wall = side.wallClock;
+      const start = entry.start === undefined ? E0 : entry.start;
+      assert.equal(wall.startMs, start, entry.name);
+      assert.equal(
+        wall.endMs,
+        entry.end === null ? null : E0 + entry.end,
+        entry.name
+      );
+      assert.equal(
+        wall.elapsedMs,
+        start === null || entry.end === null ? null : entry.end,
+        entry.name
+      );
+
+      for (const pattern of [...ALWAYS_LIMITS, ...entry.present]) {
+        assert.ok(hasLimit(side, pattern), `${entry.name}: ${String(pattern)}`);
+      }
+
+      for (const pattern of entry.absent ?? []) {
+        assert.ok(
+          !hasLimit(side, pattern),
+          `${entry.name}: ${String(pattern)}`
+        );
+      }
+    }
+
+    // A figure with no usable start or end renders as unavailable in the markdown.
+    for (const name of [
+      "fresh session with no end evidence",
+      "every end timestamp before session creation",
+      "invalid createdAt",
+    ]) {
+      const session = defined(
+        sessions[cases.findIndex((entry) => entry.name === name)]
+      );
+
+      assert.match(
+        renderComparison(measureSides(fx, [{ session, host: "claude" }])),
+        /\| Whole-run wall clock \(includes user wait\) \| unavailable \|/u,
+        name
+      );
+    }
+
+    // Links never widen the scan: a symlinked result and a results folder outside the session are skipped and counted.
+    const outside = path.join(fx.root, "outside-wall-results");
+    const target = path.join(outside, `report-complete-${RESULT_ID(9)}.json`);
+    writeJson(target, OK_REPORT);
+    touch(target, 99_000);
+
+    const linked = wallSession(fx, 40);
+    writeLedgerAt(linked, [atOffset(10_000)]);
+    fs.mkdirSync(path.join(linked, ".state", "results"), { recursive: true });
+    let symlinked = true;
+
+    try {
+      fs.symlinkSync(target, resultPath(linked, "report-complete", 1), "file");
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes(errorCode(error) ?? "")) {
+        throw error;
+      }
+
+      symlinked = false;
+    }
+
+    if (symlinked) {
+      const linkedSide = measureOne(fx, { session: linked, host: "claude" });
+      assert.equal(linkedSide.wallClock.endMs, E0 + 10_000);
+      assert.ok(hasLimit(linkedSide, NO_SUCCESS));
+      assert.ok(
+        hasLimit(
+          linkedSide,
+          /skipped non-regular or escaping result entries: 1/u
+        )
+      );
+    }
+
+    const escaped = wallSession(fx, 41);
+    writeLedgerAt(escaped, [atOffset(10_000)]);
+    fs.mkdirSync(path.join(escaped, ".state"), { recursive: true });
+    fs.symlinkSync(
+      outside,
+      path.join(escaped, ".state", "results"),
+      "junction"
+    );
+    const outsideSide = measureOne(fx, { session: escaped, host: "claude" });
+    assert.equal(outsideSide.wallClock.endMs, E0 + 10_000);
+    assert.ok(hasLimit(outsideSide, /results folder outside the session/u));
+    assert.ok(hasLimit(outsideSide, NO_SUCCESS));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("a malformed capture or a storage-failure marker marks the summed tool-call duration partial", () => {
+  const fx = fixture();
+
+  try {
+    const timed = (session: string) => {
+      writeTimedCapture(session, "c1", { start: 1000, end: 3000 }, [
+        { key: "check-run", wallMs: 2000 },
+      ]);
+    };
+
+    const malformed = wallSession(fx, 0);
+    timed(malformed);
+
+    writeText(path.join(malformed, ".state", "diagnostics", "bad.json"), "{[");
+
+    const failed = wallSession(fx, 1);
+    timed(failed);
+
+    writeJson(
+      path.join(failed, ".state", "diagnostics", "c1.json.failure.json"),
+      { kind: "storage-failure", count: 1 }
+    );
+
+    const clean = wallSession(fx, 2);
+    timed(clean);
+
+    const pair = measureSides(fx, [
+      { session: malformed, host: "claude" },
+      { session: failed, host: "claude" },
+      { session: clean, host: "claude" },
+    ]);
+
+    const { sides } = defined(pair.pairs[0]);
+
+    assert.deepEqual(
+      sides.map((side) => side.toolCall),
+      [
+        { ms: 2000, untimed: 1 },
+        { ms: 2000, untimed: 1 },
+        { ms: 2000, untimed: 0 },
+      ]
+    );
+
+    const row = renderComparison(pair)
+      .split("\n")
+      .find((line) => line.startsWith("| Summed tool-call duration |"));
+
+    assert.equal(
+      row,
+      "| Summed tool-call duration | 2s (partial) | 2s (partial) | 2s |"
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("a capture missing a required array is malformed, gives no timing evidence and marks the duration partial", () => {
+  const fx = fixture();
+
+  try {
+    const session = wallSession(fx, 0);
+
+    writeTimedCapture(session, "c1", { start: 1000, end: 3000 }, [
+      { key: "check-run", wallMs: 2000 },
+    ]);
+
+    writeJson(path.join(session, ".state", "diagnostics", "c2.json"), {
+      capture: { state: "completed", start: E0 + 5000, end: E0 + 90_000 },
+      phases: [{ name: "plan review", key: "check-run", wallMs: 1000 }],
+      reviews: [],
+    });
+
+    const pair = measureSides(fx, [{ session, host: "claude" }]);
+    const { sides } = defined(pair.pairs[0]);
+    const side = defined(sides[0]);
+
+    assert.deepEqual(side.toolCall, { ms: 2000, untimed: 1 });
+    assert.equal(side.wallClock.endMs, E0 + 3000);
+    assert.ok(hasLimit(side, /malformed or unreadable captures: 1/u));
+
+    assert.match(
+      renderComparison(pair),
+      /\| Summed tool-call duration \| 2s \(partial\) \|/u
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("summed tool-call duration totals timed phases and flags untimed ones", () => {
+  const fx = fixture();
+
+  try {
+    const exact = wallSession(fx, 0);
+    writeTimedCapture(exact, "c1", { start: 1000, end: 3000 }, [
+      { key: "check-run", wallMs: 1500 },
+    ]);
+    writeTimedCapture(exact, "c2", { start: 4000, end: 7000 }, [
+      { key: "ledger-append", wallMs: 2500 },
+    ]);
+    const exactSide = measureOne(fx, { session: exact, host: "claude" });
+    assert.deepEqual(exactSide.toolCall, { ms: 4000, untimed: 0 });
+
+    const none = wallSession(fx, 1);
+    const noneSide = measureOne(fx, { session: none, host: "claude" });
+    assert.deepEqual(noneSide.toolCall, { ms: null, untimed: 0 });
+
+    const untimedOnly = wallSession(fx, 2);
+    writeTimedCapture(untimedOnly, "c1", { start: 1000, end: 3000 }, [
+      { key: "check-run" },
+    ]);
+    assert.deepEqual(
+      measureOne(fx, { session: untimedOnly, host: "claude" }).toolCall,
+      { ms: null, untimed: 1 }
+    );
+
+    const opened = wallSession(fx, 3);
+    writeTimedCapture(opened, "c1", { start: 1000, end: 3000 }, [
+      { key: "check-run", wallMs: 2000 },
+    ]);
+    writeTimedCapture(opened, "c2", { start: 5000 }, []);
+    assert.deepEqual(
+      measureOne(fx, { session: opened, host: "claude" }).toolCall,
+      { ms: 2000, untimed: 1 }
+    );
+
+    // Two captures that share one phase key merge into one phase; the untimed one stays visible.
+    const merged = wallSession(fx, 4);
+    writeTimedCapture(merged, "c1", { start: 1000, end: 3000 }, [
+      { key: "check-run", wallMs: 2000 },
+    ]);
+    writeTimedCapture(merged, "c2", { start: 4000, end: 6000 }, [
+      { key: "check-run" },
+    ]);
+    assert.deepEqual(
+      measureOne(fx, { session: merged, host: "claude" }).toolCall,
+      { ms: 2000, untimed: 1 }
+    );
+
+    const pair = measureSides(fx, [
+      { session: exact, host: "claude" },
+      { session: none, host: "claude" },
+      { session: opened, host: "claude" },
+    ]);
+
+    const row = renderComparison(pair)
+      .split("\n")
+      .find((line) => line.startsWith("| Summed tool-call duration |"));
+
+    assert.equal(
+      row,
+      "| Summed tool-call duration | 4s | unavailable | 2s (partial) |"
+    );
+
+    assert.deepEqual(
+      defined(pair.pairs[0]).sides.map((side) => side.toolCall),
+      [
+        { ms: 4000, untimed: 0 },
+        { ms: null, untimed: 0 },
+        { ms: 2000, untimed: 1 },
+      ]
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
