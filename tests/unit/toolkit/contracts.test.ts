@@ -10,6 +10,7 @@ import {
 import { TOOL_ACTIONS } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
 import {
   ACTION_CONTRACTS,
+  ACTION_FLAGS,
   CALL_TABLE_MAX_BYTES,
   renderCallTable,
   SESSION_CONTRACTS,
@@ -370,6 +371,22 @@ describe("contracts and help call table", () => {
     assert.throws(
       () => parseCommand(["session", "bogus"]),
       /session requires init, reactivate, or quota-reprobe/u
+    );
+  });
+
+  test("worktree land is a contract that shares --ack-stale with integrate", () => {
+    assert.equal(
+      ACTION_CONTRACTS["worktree land"]?.arguments,
+      "worktree land <task> --session <session> [--ack-stale <rationale>]"
+    );
+    assert.deepEqual(ACTION_FLAGS.get("ack-stale"), [
+      "worktree integrate",
+      "worktree land",
+    ]);
+    assert.ok(
+      renderCallTable().includes(
+        "| action | worktree land | `worktree land <task> --session <session> [--ack-stale <rationale>]` |"
+      )
     );
   });
 

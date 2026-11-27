@@ -15,6 +15,15 @@ import type { Level } from "./types.ts";
 
 export const INTEGRATION_REVIEW = "code-integration";
 
+/** Real path when it resolves, else the resolved input, so a missing file still compares by path. */
+export const canonical = (file: string) => {
+  try {
+    return fs.realpathSync.native(file);
+  } catch {
+    return path.resolve(file);
+  }
+};
+
 export const reviewRoot = (session: string) =>
   path.join(session, ".state", "reviews");
 

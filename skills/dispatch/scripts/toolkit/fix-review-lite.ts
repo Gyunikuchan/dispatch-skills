@@ -35,6 +35,7 @@ import { present } from "./narrow.ts";
 import { clipBytes, ToolError } from "./output.ts";
 import { line } from "./review-findings.ts";
 import {
+  canonical,
   reviewDirectory,
   reviewRoundFile,
   reviewFindingsFile,
@@ -55,14 +56,6 @@ const toPosix = (file: string) => file.split(path.sep).join("/");
 // Reviewer and path text must not add placeholders or relative links, which assertFilled refuses.
 const safeText = (value: string) =>
   value.replaceAll("{{", "{ {").replaceAll("}}", "} }").replaceAll("](", "] (");
-
-const canonical = (file: string) => {
-  try {
-    return fs.realpathSync.native(file);
-  } catch {
-    return path.resolve(file);
-  }
-};
 
 const realpathOrNull = (file: string) => {
   try {

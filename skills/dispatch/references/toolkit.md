@@ -5,18 +5,18 @@
 ### call table
 <!-- GENERATED: call-table -->
 
-A subagent assigned a map may run `lint run` on that map only, without `--edit`. The host runs other tools. Native fields: `model`, `effort`, `launchAs`. Initialize first. Paths: artifact from repo root, record/question from cwd.
+A subagent assigned a map may run `lint run` on that map only, without `--edit`; the host runs other tools. Paths: artifact from repo root, record/question from cwd.
 
-Stdout is `{ok, summary, path, reason?}` (advisory `hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.
+Stdout is `{ok, summary, path, reason?}` (`hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.
 
-`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` returns raw text, exit 0, without a session. Unknown/empty headings return `usage` and valid headings. Unreadable help returns `fault` (2). Refusals may include `help` (next heading), except `native-pending`.
+`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` prints raw text (exit 0, no session); an unknown or empty heading returns `usage` with valid headings, unreadable help `fault` (2). Refusals may include `help` (next heading), except `native-pending`.
 
-In the table, `\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array. `--cleanup` needs stdin. `help <kind>` lists fields.
+`\|` separates alternatives; `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or a file above 4,096 B. `ledger append <record.json|-> --session <session>` reads an object or array. `help <kind>` lists fields.
 
 | Type | Heading | Arguments |
 | --- | --- | --- |
 | action | ask run | `ask run [<question-file\|->\|--text <text>] --session <session> --host <platform> [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...]` |
-| action | review run | `review run <target> --session <session> --host <platform> [--kind plan\|design\|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]` |
+| action | review run | `review run <target> --session <session> --host <platform> [--kind plan\|design\|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>] [--note <file\|->]` |
 | action | report render | `report render --session <session>` |
 | action | report complete | `report complete --session <session>` |
 | action | brief render | `brief render <task> --session <session> --host <platform>` |
@@ -32,6 +32,7 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | action | worktree cleanup | `worktree cleanup --session <session>` |
 | action | worktree create | `worktree create <task> --session <session> [--relaunch]` |
 | action | worktree submit | `worktree submit <task> --session <session>` |
+| action | worktree land | `worktree land <task> --session <session> [--ack-stale <rationale>]` |
 | action | worktree abandon | `worktree abandon <task> --session <session> --reason <reason>` |
 | action | check run | `check run --session <session> [--criteria SC1,SC2,contract \| --task T<n>] [--reuse \| --fresh]` |
 | action | brief verifier | `brief verifier [<values.json\|->] [--json <json>] --session <session> --host <platform>` |
@@ -39,7 +40,7 @@ In the table, `\|` separates alternatives and `?` marks optional record fields. 
 | action | ledger query | `ledger query --session <session> [--kind <kind>] [--key <key>] [--since <seq>]` |
 | action | doctor run | `doctor run --session <session> --host <platform> [--level <level>] [--probe]` |
 | action | status show | `status show --session <session> [--resume]` |
-| action | lint run | `lint run <artifact> --session <session> [--edit <fields.json\|-> \| --json <json>]` |
+| action | lint run | `lint run <artifact> --session <session> [--edit <fields.json\|-> \| --json <json>] [--fix-review-lite]` |
 | action | diagnostics render | `diagnostics render --session <session>` |
 | record | bind | spec, plan?, design? |
 | record | approval | spec, plan, design? |
@@ -81,13 +82,14 @@ Arguments: <!-- GENERATED: action:ask-run -->`ask run [<question-file|->|--text 
 
 ### review run
 
-Arguments: <!-- GENERATED: action:review-run -->`review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]`<!-- END GENERATED: action:review-run -->. Pass `--spec` until a spec is bound. Forward any compact status `resumeRef` via `--resume-ref` for optional diagnostics. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
+Arguments: <!-- GENERATED: action:review-run -->`review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>] [--note <file|->]`<!-- END GENERATED: action:review-run -->. Pass `--spec` until a spec is bound. Forward any compact status `resumeRef` via `--resume-ref` for optional diagnostics. `--native-failed` is repeatable; each value names a pending native `attempt` and its reason, and a malformed value is `invalid-input`. Always start `review run` as a background command when the host supports one. Wait for its completion notice without polling ([launch and continue](../SKILL.md#launch-and-continue)). Use a timeout of at least 90 minutes: a multi-reviewer round can exceed 30 minutes. Launch every native slot and retain its handle before the backgrounded rerun, so the CLI wave runs while native voices run.
 Result path: `findings.json` holds the full round. Completed-round summaries name `findings.md` and `rulings.json`. The session-relative `value.findingsFile` and `value.rulingsFile` survive summary clipping. Use them to [rule the round](review-rules.md#rulings-and-fix-scope).
 
 - `findings.json` carries `units` (`{unit, findings, hot, hotStreak, bytes?, delta?, growthStreak?}`), one entry per unit with findings in the round; the summary head lists hot units after the counts as `<unit> ×<hotStreak>` plus ` ±<delta> B` when sized, within 1,024 bytes (items drop first; else `+<k> more in findings.json units`).
 - A round that ran a host-platform voice as a native subagent also reports `repositoryChanges` (`[{cwd, paths}]`) and persists it to `gen-<n>/checkout-report.json` and `findings.json`; a failed capture or compare keeps all replies and reports `repositoryCheck: {state: "unavailable", reason}` instead.
 - Code review adds advisory `warning` to the value and summary for `worktree` with a bound plan and integrated task, or `integration` missing current verification or completed test cleanup.
 - The summary names changed paths.
+- `--note <file|->` takes one `note` record by `orchestrator` with key `fix-review-lite:<review>:<round>:<n>`, for a plan or design target and its latest completed round. It appends before every gate and round; an exact retry dedupes. A bad payload, key, stale round or stale path is `invalid-input` with step `note` and appends nothing. A later refusal keeps its reason, carries step `review` and names the note seq. A final batch with no further round records its note with `ledger append`.
 - Native descriptors carry `slot`, `provider`, `promptPath`, `replyPath`, `attempt`, `cwd`, `launchAs` and configured `model`/`effort`.
 - While a native voice is unfinished the value carries `cliWave` (`pending`: launch every native slot and retain its handle, then rerun at once to run the CLI wave; `done`: the wave settled) and unmatched `--native-failed` values are listed in `ignoredFailureReports`.
 - The value adds `budget` (`{cap, ceiling, nextRound, asOfSeq, state}`: the saved round-1 cap, the current ceiling and the conditional admission of `nextRound`, historical at ledger `asOfSeq`; `state` is `allowed`, `requires-continuation`, `requires-ceiling-resolution`, `escalation-open` or `requires-coverage-decision`; a `code-integration` budget with open slots or an incomplete round adds `coverage`: `{state: 'readable', open, decision, use?}` or `{state: 'unreadable'}`, and its summary adds `coverage <decision>, open: <slots>`), `blocked` (`{slot, provider, model, reason}` per blocked attempt of a logical slot; `reason` is sanitized display text) and `blockers` (`{slot, reason, rounds}` when the same slot and reason repeat in the nearest earlier round with findings).
@@ -212,6 +214,12 @@ Arguments: <!-- GENERATED: action:worktree-create -->`worktree create <task> --s
 
 Arguments: <!-- GENERATED: action:worktree-submit -->`worktree submit <task> --session <session>`<!-- END GENERATED: action:worktree-submit -->. Result path: task, launch, candidate commit and any uncommitted paths. Refusals: no-open-launch, out-of-scope, submit-pending or no-changes. The orchestrator invokes this Git-writing tool after the writer stops.
 
+### worktree land
+
+Arguments: <!-- GENERATED: action:worktree-land -->`worktree land <task> --session <session> [--ack-stale <rationale>]`<!-- END GENERATED: action:worktree-land -->. Runs submit, integrate and `check run --task` in order, each under its own lock. A step is skipped when its record exists (submit: launch `finished`; integrate: `done`); check always runs. The first failure stops the call and a rerun resumes there. `--ack-stale` goes to integrate. Result path: `{task, launch, steps, commit, checks:{passed}}` (steps `done` or `skipped`) plus the `check run` value under `check`.
+
+Refusals: a step's refusal keeps exit 4, its reason, `step` and `help`. The summary reads `<step>: <reason>`, counts, then up to five conflict paths or failed criteria with evidence paths. `conflict`, `checks-failed`, `mutated`, `dirty` and `integration-abandoned` (run `worktree create <task>`) are exit 0, ok false. Recover with [continue](#worktree-continue) or a `check run` rerun.
+
 ### worktree abandon
 
 Arguments: <!-- GENERATED: action:worktree-abandon -->`worktree abandon <task> --session <session> --reason <reason>`<!-- END GENERATED: action:worktree-abandon -->. Result path: preserved writer snapshot, task/launch and abandoned marker. Refusals: blank reason, no-open-launch or submit-pending. Preserve changes and follow the [user gate](decision-frame.md#user-gate-boundaries) when discarding work.
@@ -256,10 +264,11 @@ Refusals: positional arguments, invalid state or Git/filesystem fault. In the co
 
 ### lint run
 
-Arguments: <!-- GENERATED: action:lint-run -->`lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]`<!-- END GENERATED: action:lint-run -->. Pass the artifact path positionally.
+Arguments: <!-- GENERATED: action:lint-run -->`lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>] [--fix-review-lite]`<!-- END GENERATED: action:lint-run -->. Pass the artifact path positionally.
 Result path: artifact kind, hash, errors and warnings. Findings use `L<line|-> <code>: <message>`, errors first. Maps use raw hashes and check paths, ranges and invariant quotes. Other artifacts use canonical hashes. A plan warns `outside-increment` at each path outside its pinned increment, or when the pin cannot be read. Plan and design artifacts also fail closed with `broken-citation` on invalid backticked repo-relative `path:line` and `path:start-end` refs in governed sections (excluding fenced blocks and HTML comments, and ignoring bare paths without line numbers).
 Refusals: unreadable/unknown artifact or lint errors.
 With `--edit` (file or stdin `-`) or `--json` (mutually exclusive), pass UTF-8 JSON fields `class`, `affects`, `rationale`, `diffRef` and optional `before`. Edit a spec, plan or design at its bound path. `after` is the current lint hash. `before` defaults to the latest edit's `after` recorded for the same bound path. If that path has no recorded edit, run `lint run` without `--edit` before the first batch, then pass its `value.hash` as `before`. Lint errors, invalid inputs and unchanged hashes refuse the append. Exact retries deduplicate. The value adds `edit: {seq, deduped, before, after}`. The summary gives the sequence and append or retry status.
+With `--fix-review-lite` (needs `--edit` or `--json`; no `--host`), the call then renders the [fix-review-lite brief](#brief-fix-review-lite). The summary adds the brief path, `launchAs` and the note skeleton with its key; the value adds `brief`. Failures carry `step`: `edit` (lint errors, exit 4, nothing appended) or `fix-review-lite` (brief refusal; the edit stays and a retry dedupes it).
 
 ### diagnostics render
 

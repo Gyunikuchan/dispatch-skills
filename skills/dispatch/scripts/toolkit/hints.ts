@@ -255,12 +255,17 @@ export const stepHint = ({
         );
 
         if (autoChecks.length > 0) {
-          if (action !== "check run") {
+          if (action !== "check run" && action !== "worktree land") {
             // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.
             return undefined;
           }
 
-          const liveTree = verifiedLiveTree(result.value);
+          // Land nests the check run value under `check`.
+          const liveTree = verifiedLiveTree(
+            action === "worktree land" && isRecord(result.value)
+              ? result.value["check"]
+              : result.value
+          );
 
           if (liveTree === undefined || liveTree === "") {
             // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the skipped and hint branches.

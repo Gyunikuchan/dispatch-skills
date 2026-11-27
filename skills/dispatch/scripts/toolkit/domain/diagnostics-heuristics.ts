@@ -197,6 +197,7 @@ const TOOL_MODULES: ToolModules = {
   "worktree cleanup": "deliver",
   "worktree create": "writers",
   "worktree submit": "writers",
+  "worktree land": "land",
   "worktree abandon": "writers",
 };
 

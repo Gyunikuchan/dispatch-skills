@@ -100,7 +100,7 @@ export const isStale = (
 const open = (launch: Launch | undefined): launch is Launch =>
   !!launch && !launch.finished && !launch.abandoned && !launch.superseded;
 
-const completion = (fold: Fold, launch: Launch) => {
+export const completion = (fold: Fold, launch: Launch) => {
   const { finished } = launch;
 
   return (
@@ -229,7 +229,7 @@ export const terminalWorktrees = (
   return terminal;
 };
 
-const taskId = (ctx: HandlerContext) => {
+export const taskId = (ctx: HandlerContext) => {
   if (ctx.args.length !== 1) {
     throw new ToolError(1, "invalid-input", "One task ID is required");
   }

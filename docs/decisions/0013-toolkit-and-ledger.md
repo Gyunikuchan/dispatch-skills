@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-10-25
-- **Updated**: 2026-11-23
+- **Updated**: 2026-11-27
 - **Audience**: Maintainers
 
 ## Context
@@ -16,6 +16,7 @@ A frame-per-step state machine made protocol recovery and receipt admission a la
 - **Orchestrator-owned sequencing:** `dispatch.ts` routes to the toolkit CLI ([toolkit contract](../../skills/dispatch/references/toolkit.md)). Tools own provider fan-out, lint, brief rendering, verification, worktrees, integration, ledger operations, status, and reports; the orchestrator owns sequencing, rulings, and writer notices.
 - **Single-source call table and on-demand help:** `contracts.ts` and `recordSchemas()` define action, session, and ledger signatures. `npm run maintain` generates the marked `### call table` and argument spans in `toolkit.md` (`npm test` checks for drift). The orchestrator loads the compact `help call table` once per run and reads `help <heading>` only on demand or when an `ok: false` refusal names a `help` section. The [path workload measure](../../scripts/path-bytes.ts) gates must-load byte growth across all six verbs against baseline commit `88685174`.
 - **Advisory step hints:** Every `ok: true` toolkit stdout envelope (excluding `native-pending`) may include an optional single-line advisory `hint` (`<= 240` UTF-8 bytes, `<step> — help <heading> — <command>`) derived fail-open from the post-write ledger fold and current hashes (`hints.ts`). Hints prevent missed or misordered steps without adding persisted state or a second transition table, and are omitted on errors, `native-pending`, or orchestrator-decision boundaries. Hard toolkit step-transition enforcement remains rejected so the orchestrator is never locked out of valid recovery paths.
+- **Combined actions:** A fixed, judgment-free call chain may become one action that composes the existing primitives in process, each under its own lock and with no lock held across steps: `worktree land` (submit, integrate, `check run --task`), `lint run --edit --fix-review-lite` (edit, then brief) and `review run --note` (note append, then review). A combined action skips a step whose durable record exists (submit and integrate in `worktree land`; the edit and note appends), except that `worktree land` always reruns its check and records fresh evidence. It stops at the first failure and leaves the records that the separate calls leave, so a rerun resumes idempotently. Its failure output adds a `step` and the primitive's reason and exit; primitives keep their arguments, refusals and output, and stay the recovery path.
 - **Unified payload input:** Payload-taking actions (`ledger append`, `ask run`, `brief explorer`, `brief test-cleanup`, `brief verifier`, `lint run --edit`, `worktree commit`, `worktree deliver --commit`) accept file paths, stdin (`-` with UTF-8 BOM stripping), or explicit inline flags (`input.ts`), avoiding cross-platform shell-quoting failures.
 
 ### Append-only ledger and authority

@@ -36,6 +36,7 @@ import type {
 } from "../providers/types.ts";
 import { askRun } from "./ask.ts";
 import {
+  briefSummary,
   renderBrief,
   renderExplorerBrief,
   renderTestCleanupBrief,
@@ -60,6 +61,7 @@ import type { GitDeps } from "./git.ts";
 import { isHintExcludedAction, stepHint } from "./hints.ts";
 import { readJsonPayload } from "./input.ts";
 import { integrate, continueIntegration, commit, abort } from "./integrate.ts";
+import { land } from "./land.ts";
 import {
   appendCleanupCheckpoint,
   appendLintEdit,
@@ -74,6 +76,7 @@ import { lintArtifact } from "./lint.ts";
 import { present } from "./narrow.ts";
 import {
   capSummary,
+  stepPrefix,
   summaryWithItems,
   ToolError,
   writeResult,
@@ -84,7 +87,7 @@ import { reportComplete, reportRender } from "./report.ts";
 import { refreshFindingsSection, rulingReview } from "./review-findings.ts";
 import { reviewDirectory } from "./review-state.ts";
 import type { RecoverySelection } from "./review-state.ts";
-import { reviewRun } from "./review.ts";
+import { inStep, reviewRun } from "./review.ts";
 import { resumeStatus, statusReport } from "./status.ts";
 import { create, submit, abandon } from "./writers.ts";
 
@@ -106,9 +109,18 @@ const exclusiveFlags = [
   "commit",
   "pins",
   "native-failed",
+  "fix-review-lite",
+  "note",
 ];
 
-const booleanFlags = new Set(["relaunch", "reuse", "fresh", "probe", "resume"]);
+const booleanFlags = new Set([
+  "relaunch",
+  "reuse",
+  "fresh",
+  "probe",
+  "resume",
+  "fix-review-lite",
+]);
 
 const toolkitFlags: ParseArgsConfig["options"] = Object.fromEntries(
   Array.from(ACTION_FLAGS.keys(), (flag) => [
@@ -577,6 +589,7 @@ const handlers: HandlerTable = {
   "worktree cleanup": cleanup,
   "worktree create": create,
   "worktree submit": submit,
+  "worktree land": land,
   "worktree abandon": abandon,
   "check run": checkRun,
   // oxlint-disable-next-line eslint/complexity -- ledger-append branches per arg shape, cleanup value, and stdin presence.
@@ -834,6 +847,7 @@ const handlers: HandlerTable = {
       postFold: fold,
     };
   },
+  // oxlint-disable-next-line eslint/complexity -- lint-run branches per artifact errors, edit payload, and brief flag.
   "lint run": async (ctx) => {
     const { args, manifest, session, deps } = ctx;
     const [target] = args;
@@ -848,16 +862,37 @@ const handlers: HandlerTable = {
       );
     }
 
-    const editFields = readLintEditFields(ctx);
-    const artifactPath = path.resolve(target);
+    const withBrief = ctx.values["fix-review-lite"] === true;
+    let editFields: ReturnType<typeof readLintEditFields>;
 
-    const checked = editFields
-      ? await appendLintEdit(session, artifactPath, editFields, deps)
-      : {
-          value: lintArtifact(artifactPath, {
-            repositoryRoot: manifest.repositoryRoot,
-          }),
-        };
+    try {
+      editFields = readLintEditFields(ctx);
+    } catch (error) {
+      throw withBrief ? inStep(error, "edit") : error;
+    }
+
+    if (withBrief && !editFields) {
+      throw new ToolError(
+        1,
+        "invalid-input",
+        "--fix-review-lite needs --edit or --json"
+      );
+    }
+
+    const artifactPath = path.resolve(target);
+    let checked: Awaited<ReturnType<typeof appendLintEdit>>;
+
+    try {
+      checked = editFields
+        ? await appendLintEdit(session, artifactPath, editFields, deps)
+        : {
+            value: lintArtifact(artifactPath, {
+              repositoryRoot: manifest.repositoryRoot,
+            }),
+          };
+    } catch (error) {
+      throw withBrief ? inStep(error, "edit") : error;
+    }
 
     const { value } = checked;
     const ok = value.errors.length === 0;
@@ -868,40 +903,92 @@ const handlers: HandlerTable = {
 
     const edit = "edit" in checked ? checked.edit : undefined;
 
-    const suffix = edit
-      ? `; edit seq ${edit.seq} ${edit.deduped ? "deduped" : "appended"}`
+    const editStatus = edit
+      ? `edit seq ${edit.seq} ${edit.deduped ? "deduped" : "appended"}`
       : "";
+
+    const head = `${value.kind}: ${value.errors.length} errors, ${
+      value.warnings.length
+    } warnings; ${value.hash}${editStatus && `; ${editStatus}`}`;
+
+    if (withBrief && ok && edit) {
+      let rendered: Awaited<ReturnType<typeof renderFixReviewLiteBrief>>;
+
+      try {
+        rendered = await renderFixReviewLiteBrief({ ...ctx, args: [target] });
+      } catch (error) {
+        throw inStep(error, "fix-review-lite", editStatus);
+      }
+
+      const { value: brief, postFold } = rendered;
+
+      return {
+        ok: true,
+        value: { ...value, edit, brief },
+        summary: briefSummary(
+          `${head}; brief ${brief.review} round ${brief.round}: ${brief.citations} citations, ${brief.unresolved} unresolved, ${brief.withheld} withheld`,
+          deps.orchestrator?.platform,
+          brief,
+          brief.briefPath,
+          brief.bytes,
+          {
+            tail: `; skeleton ${JSON.stringify(brief.noteSkeleton)}`,
+            shortPath: `.state/briefs/${path.basename(brief.briefPath)}`,
+          }
+        ),
+        exit: 0,
+        postFold,
+      };
+    }
 
     return {
       ok,
       value: edit ? { ...value, edit } : value,
       summary: summaryWithItems(
-        `${value.kind}: ${value.errors.length} errors, ${
-          value.warnings.length
-        } warnings; ${value.hash}${suffix}`,
-        items
+        withBrief && !ok ? `lint-errors; ${head}` : head,
+        items,
+        withBrief && !ok ? Buffer.byteLength(stepPrefix("edit")) : 0
       ),
       exit: ok ? 0 : 4,
       ...(!ok && { reason: "lint-errors" }),
+      ...(!ok && withBrief && { step: "edit" }),
     };
   },
 };
 
 export const TOOL_ACTIONS = Object.keys(handlers);
 
+// SECTION: Combined actions
+// A stepped outcome points help at the primitive that failed, not at the combined action in argv.
+const STEP_HELP = new Map([
+  ["submit", "worktree submit"],
+  ["integrate", "worktree integrate"],
+  ["check", "check run"],
+  ["edit", "lint run"],
+  ["fix-review-lite", "brief fix-review-lite"],
+  ["note", "ledger append"],
+  ["review", "review run"],
+]);
+
+const stepHelp = (step: string, reason: string | undefined) =>
+  step === "integrate" && reason === "integration-abandoned"
+    ? "worktree create"
+    : STEP_HELP.get(step);
+
 // oxlint-disable-next-line eslint/complexity -- dispatch branches per arg rewrite, handler lookup, and native-pending reason.
 export const main = async (argv: string[], deps: CliDeps = nodeDeps()) => {
   const print = (result: ToolResult) => {
-    const { exit, ...output } = result;
+    const { exit, help: stepOverride, ...output } = result;
 
     // Refusals name the toolkit.md section to read; argv (not parsed positionals) keeps a parse failure on a valid action pointed at its section.
     let help: string | undefined;
 
     if (!output.ok && output.reason !== "native-pending") {
       help =
-        handlers[`${argv[0] ?? ""} ${argv[1] ?? ""}`] === undefined
+        stepOverride ??
+        (handlers[`${argv[0] ?? ""} ${argv[1] ?? ""}`] === undefined
           ? "call table"
-          : `${argv[0]} ${argv[1]}`;
+          : `${argv[0]} ${argv[1]}`);
     }
 
     deps.stdout(
@@ -1066,10 +1153,15 @@ export const main = async (argv: string[], deps: CliDeps = nodeDeps()) => {
 
     outcome = {
       ok: false,
-      summary: fault.message,
+      // A stepped refusal keeps its reason ahead of the detail so the prefixed summary reads `<step>: <reason>`.
+      summary:
+        fault.step === undefined || fault.message === fault.reason
+          ? fault.message
+          : `${fault.reason}: ${fault.message}`,
       reason: fault.reason,
       exit: fault.exit,
       value: { reason: fault.reason, message: fault.message },
+      ...(fault.step !== undefined && { step: fault.step }),
     };
   }
 
@@ -1137,12 +1229,20 @@ export const main = async (argv: string[], deps: CliDeps = nodeDeps()) => {
       }
     }
 
+    const { step } = outcome;
+    const stepped = step === undefined ? undefined : stepHelp(step, reason);
+
     return print({
       ok: outcome.ok,
-      summary: outcome.summary,
+      summary:
+        step === undefined
+          ? outcome.summary
+          : `${stepPrefix(step)}${outcome.summary}`,
       path: resultPath,
       exit: outcome.exit,
       ...(reason !== undefined && reason !== "" && { reason }),
+      ...(step !== undefined && { step }),
+      ...(stepped !== undefined && { help: stepped }),
       ...(hint !== undefined && hint !== "" && { hint }),
     });
   } catch (error) {

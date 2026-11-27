@@ -10,6 +10,7 @@ import type {
   HandlerContext,
 } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
 import { main } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
+import { landFailure } from "../../../skills/dispatch/scripts/toolkit/land.ts";
 import {
   appendRecord,
   foldLedger,
@@ -1592,4 +1593,422 @@ test("accepts optional correlation on review runs only", async () => {
   } finally {
     f.cleanup();
   }
+});
+
+describe("stepped outcomes", () => {
+  const stepped = withFields({
+    step: optional(text),
+    help: optional(text),
+    reason: optional(text),
+    summary: text,
+  });
+
+  const run = async (
+    f: ReturnType<typeof sessionFixture>,
+    args: string[],
+    handler: NonNullable<CliDeps["handler"]>
+  ) => {
+    f.lines.length = 0;
+
+    const exit = await main([...args, "--session", f.session], {
+      ...f.deps,
+      handler,
+    });
+
+    return { exit, out: narrow(f.output(), stepped) };
+  };
+
+  test("worktree land is a registered action that takes --ack-stale", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      let called = false;
+
+      const { exit, out } = await run(
+        f,
+        ["worktree", "land", "T1", "--ack-stale", "reviewed"],
+        // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+        async (ctx) => {
+          called = true;
+          assert.deepEqual(ctx.args, ["T1"]);
+          assert.equal(ctx.values["ack-stale"], "reviewed");
+
+          return { ok: true, summary: "landed", value: {}, exit: 0 };
+        }
+      );
+
+      assert.equal(exit, 0);
+      assert.equal(out.summary, "landed");
+      assert.equal(called, true);
+      assert.equal("step" in out, false);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("a step prefixes the summary and sets the help heading of that step", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      for (const [step, reason, help] of [
+        ["submit", "no-changes", "worktree submit"],
+        ["integrate", "stale-candidate", "worktree integrate"],
+        ["integrate", "integration-abandoned", "worktree create"],
+        ["check", "mutated", "check run"],
+        ["edit", "lint-errors", "lint run"],
+        ["fix-review-lite", "no-completed-round", "brief fix-review-lite"],
+        ["note", "invalid-input", "ledger append"],
+        ["review", "level-pending", "review run"],
+      ] as const) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits observe one output line at a time
+        const { exit, out } = await run(
+          f,
+          ["worktree", "land", "T1"],
+          // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+          async () => ({
+            ok: false,
+            summary: `${reason}; 2 paths`,
+            value: {},
+            exit: 0,
+            reason,
+            step,
+          })
+        );
+
+        assert.equal(exit, 0);
+        assert.equal(out.summary, `${step}: ${reason}; 2 paths`);
+        assert.equal(out.step, step);
+        assert.equal(out.reason, reason);
+        assert.equal(out.help, help);
+      }
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("a refusal that carries a step keeps its reason first in the summary", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const plain = await run(f, ["worktree", "land", "T1"], () => {
+        throw new ToolError(4, "no-open-launch", "no-open-launch", "submit");
+      });
+
+      assert.equal(plain.exit, 4);
+      assert.equal(plain.out.summary, "submit: no-open-launch");
+      assert.equal(plain.out.step, "submit");
+      assert.equal(plain.out.help, "worktree submit");
+
+      const detailed = await run(f, ["worktree", "land", "T1"], () => {
+        throw new ToolError(4, "integration-pending", "T2", "integrate");
+      });
+
+      assert.equal(detailed.out.summary, "integrate: integration-pending: T2");
+      assert.equal(detailed.out.help, "worktree integrate");
+
+      const bare = await run(f, ["worktree", "land", "T1"], () => {
+        throw new ToolError(4, "no-open-launch", "no-open-launch");
+      });
+
+      assert.equal(bare.out.summary, "no-open-launch");
+      assert.equal(bare.out.step, undefined);
+      assert.equal(bare.out.help, "worktree land");
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("land failures keep step, reason and counts when item lists overflow 1,024 B", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const paths = Array.from(
+        { length: 30 },
+        (_, index) =>
+          `src/${String(index).padStart(2, "0")}/${"p".repeat(300)}.ts`
+      );
+
+      const conflict = await run(
+        f,
+        ["worktree", "land", "T1"],
+        // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+        async () =>
+          landFailure("integrate", {
+            ok: false,
+            exit: 0,
+            reason: "conflict",
+            summary: "",
+            value: { task: "T1", paths, reason: "conflict" },
+          })
+      );
+
+      assert.ok(Buffer.byteLength(conflict.out.summary) <= 1024);
+      assert.ok(
+        conflict.out.summary.startsWith("integrate: conflict; 30 paths; first ")
+      );
+      assert.equal(
+        /first (?<shown>\d+):/u.exec(conflict.out.summary)?.groups?.["shown"],
+        "4"
+      );
+      assert.match(conflict.out.summary, /; \+26 more in result$/u);
+      assert.equal(conflict.out.step, "integrate");
+
+      const criteria = Array.from(
+        { length: 12 },
+        (_, index) => `SC${index + 1}`
+      );
+
+      const failed = await run(
+        f,
+        ["worktree", "land", "T1"],
+        // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+        async () =>
+          landFailure("check", {
+            ok: false,
+            exit: 0,
+            reason: "checks-failed",
+            summary: "",
+            value: {
+              checks: criteria.map((criterion) => ({
+                criterion,
+                path: `.state/evidence/${"e".repeat(300)}.json`,
+              })),
+              failed: criteria,
+              mutated: [],
+              dirty: [],
+            },
+          })
+      );
+
+      assert.ok(Buffer.byteLength(failed.out.summary) <= 1024);
+      assert.ok(
+        failed.out.summary.startsWith(
+          "check: checks-failed; 12 checks, 12 failed, 0 mutated, 0 dirty; first "
+        )
+      );
+      assert.match(failed.out.summary, /; \+\d+ more in result$/u);
+      assert.equal(failed.out.step, "check");
+      assert.equal(failed.out.help, "check run");
+
+      const few = landFailure("integrate", {
+        ok: false,
+        exit: 0,
+        reason: "conflict",
+        summary: "",
+        value: { paths: ["a.ts", "b.ts"] },
+      });
+
+      assert.equal(few.summary, "conflict; 2 paths; first 2: a.ts; b.ts");
+    } finally {
+      f.cleanup();
+    }
+  });
+});
+
+const noteRecord = (
+  key: string,
+  overrides: { kind?: string; by?: string } = {}
+) =>
+  JSON.stringify({
+    kind: "note",
+    by: "orchestrator",
+    key,
+    data: { text: "kind plan; raised 1" },
+    ...overrides,
+  });
+
+describe("bookkeeping flags", () => {
+  const stepped = withFields({
+    step: optional(text),
+    help: optional(text),
+    reason: optional(text),
+    summary: text,
+  });
+
+  const noteKey = "fix-review-lite:plan-work.plan:1:1";
+
+  const review = async (
+    f: ReturnType<typeof sessionFixture>,
+    args: string[],
+    payload: string
+  ) => {
+    f.lines.length = 0;
+
+    const exit = await main(
+      [
+        "review",
+        "run",
+        ...args,
+        "--host",
+        "codex",
+        "--note",
+        "-",
+        "--session",
+        f.session,
+      ],
+      { ...f.deps, readStdin: () => payload }
+    );
+
+    return { exit, out: narrow(f.output(), stepped) };
+  };
+
+  test("--fix-review-lite and --note are scoped to lint run and review run", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      assert.equal(
+        await main(
+          ["status", "show", "--fix-review-lite", "--session", f.session],
+          f.deps
+        ),
+        1
+      );
+      assert.equal(f.output().reason, "invalid-input");
+      assert.match(
+        f.output().summary,
+        /--fix-review-lite is only for lint run/u
+      );
+
+      f.lines.length = 0;
+      assert.equal(
+        await main(
+          ["status", "show", "--note", "-", "--session", f.session],
+          f.deps
+        ),
+        1
+      );
+      assert.match(f.output().summary, /--note is only for review run/u);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("a bare --fix-review-lite parses as a boolean and leaves the next flag alone", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const seen: unknown[] = [];
+
+      const exit = await main(
+        [
+          "lint",
+          "run",
+          "work.plan.md",
+          "--edit",
+          "fields.json",
+          "--fix-review-lite",
+          "--session",
+          f.session,
+        ],
+        {
+          ...f.deps,
+          // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+          handler: async (ctx: HandlerContext) => {
+            seen.push(
+              ctx.args,
+              ctx.values["edit"],
+              ctx.values["fix-review-lite"]
+            );
+
+            return { ok: true, exit: 0, summary: "ok", value: {} };
+          },
+        }
+      );
+
+      assert.equal(exit, 0);
+      assert.deepEqual(seen, [["work.plan.md"], "fields.json", true]);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("lint run refuses --fix-review-lite without an edit payload", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const before = foldLedger(f.session).lastSeq;
+
+      assert.equal(
+        await main(
+          [
+            "lint",
+            "run",
+            "work.plan.md",
+            "--fix-review-lite",
+            "--session",
+            f.session,
+          ],
+          f.deps
+        ),
+        1
+      );
+
+      const out = narrow(f.output(), stepped);
+
+      assert.equal(out.reason, "invalid-input");
+      assert.equal(out.step, undefined);
+      assert.match(out.summary, /--fix-review-lite needs --edit or --json/u);
+      assert.equal(foldLedger(f.session).lastSeq, before);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("review run refuses a --note payload that does not match this review before any append", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const before = foldLedger(f.session).lastSeq;
+
+      const cases: [string, string[], string][] = [
+        ["invalid JSON", ["work.plan.md", "--kind", "plan"], "not json"],
+        ["a non-object payload", ["work.plan.md", "--kind", "plan"], "[]"],
+        [
+          "a record kind other than note",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord(noteKey, { kind: "level" }),
+        ],
+        [
+          "a record author other than the orchestrator",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord(noteKey, { by: "user" }),
+        ],
+        [
+          "a key outside the fix-review-lite namespace",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord("other:plan-work.plan:1:1"),
+        ],
+        [
+          "another review's key",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord("fix-review-lite:plan-other.plan:1:1"),
+        ],
+        [
+          "a zero ordinal",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord("fix-review-lite:plan-work.plan:1:0"),
+        ],
+        [
+          "a round with no completed round on record",
+          ["work.plan.md", "--kind", "plan"],
+          noteRecord(noteKey),
+        ],
+        ["a code review target", ["integration"], noteRecord(noteKey)],
+      ];
+
+      for (const [label, args, payload] of cases) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits observe one output line at a time
+        const { exit, out } = await review(f, args, payload);
+
+        assert.equal(exit, 1, label);
+        assert.equal(out.reason, "invalid-input", label);
+        assert.equal(out.step, "note", label);
+        assert.equal(out.help, "ledger append", label);
+        assert.ok(out.summary.startsWith("note: "), label);
+        assert.equal(foldLedger(f.session).lastSeq, before, label);
+      }
+    } finally {
+      f.cleanup();
+    }
+  });
 });

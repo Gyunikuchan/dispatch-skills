@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isRecord } from "../lib/config.ts";
 import { nodeErrorCode } from "../lib/fs-ext.ts";
 import { artifactKind } from "./artifacts.ts";
 import type { HandlerContext } from "./cli.ts";
@@ -16,19 +17,161 @@ import {
   resolveSlots,
 } from "./fanout.ts";
 import { git } from "./git.ts";
-import { confirmGate, foldLedger, latest, levelGate } from "./ledger.ts";
+import { readJsonPayload } from "./input.ts";
+import {
+  appendRecord,
+  confirmGate,
+  foldLedger,
+  latest,
+  levelGate,
+} from "./ledger.ts";
 import { withLockFile } from "./lock.ts";
 import { isLevel, present } from "./narrow.ts";
 import { ToolError } from "./output.ts";
 import { loadPlan } from "./plan-view.ts";
 import { CODE_TARGETS, specHashFor } from "./review-capture.ts";
 import { runReviewRound } from "./review-round.ts";
-import { INTEGRATION_REVIEW, reviewDirectory } from "./review-state.ts";
+import {
+  canonical,
+  INTEGRATION_REVIEW,
+  reviewDirectory,
+  reviewFindingsFile,
+  reviewRoundDirectory,
+  reviewRoundEntries,
+  reviewRoundFile,
+  readStoredJson,
+} from "./review-state.ts";
 
 const REVIEW_KINDS = ["code", "plan", "design"] as const;
 
+// SECTION: fix-review-lite note
+/** Names the failing step; `detail` is the durable receipt and leads the message. A raw fault becomes a stepped `fault`; an already stepped error passes through. */
+export const inStep = (error: unknown, step: string, detail?: string) => {
+  if (error instanceof ToolError && error.step !== undefined) {
+    return error;
+  }
+
+  const [exit, reason, message] =
+    error instanceof ToolError
+      ? [error.exit, error.reason, error.message]
+      : [2, "fault", error instanceof Error ? error.message : String(error)];
+
+  // The receipt leads so the 1,024 B summary cap clips only the underlying message.
+  const rest =
+    error instanceof ToolError && message === reason ? "" : `; ${message}`;
+
+  return new ToolError(
+    exit,
+    reason,
+    detail === undefined ? message : detail + rest,
+    step
+  );
+};
+
+const NOTE_KEY = /^(?<round>[1-9]\d*):(?<ordinal>[1-9]\d*)$/u;
+
+const recordsArtifact = (roundDir: string, target: string) => {
+  const recorded = readStoredJson<{ artifactPath?: unknown }>(
+    reviewRoundFile(roundDir)
+  )?.artifactPath;
+
+  return typeof recorded === "string" && canonical(recorded) === target;
+};
+
+// NOTE: same selection as `brief fix-review-lite`: the newest completed round recorded for this artifact path, so a same-basename artifact never matches.
+const latestRound = (reviewDir: string, artifact: string) => {
+  const names = fs.existsSync(reviewDir) ? fs.readdirSync(reviewDir) : [];
+  const target = canonical(artifact);
+
+  return reviewRoundEntries(names)
+    .toReversed()
+    .find(({ name }) => {
+      const dir = path.join(reviewDir, name);
+
+      return (
+        recordsArtifact(dir, target) &&
+        Array.isArray(
+          readStoredJson<{ findings?: unknown }>(reviewFindingsFile(dir))
+            ?.findings
+        )
+      );
+    })?.number;
+};
+
+/** Appends the settled batch note when it belongs to this review and its latest completed round; the append dedupes an exact retry. */
+const appendNote = async (
+  ctx: HandlerContext,
+  review: string,
+  artifact: string
+) => {
+  const note = readJsonPayload(ctx, {
+    fileFlag: "note",
+    label: "--note record",
+  });
+
+  if (
+    !isRecord(note) ||
+    note["kind"] !== "note" ||
+    note["by"] !== "orchestrator"
+  ) {
+    throw new ToolError(
+      1,
+      "invalid-input",
+      "--note takes one note record by orchestrator"
+    );
+  }
+
+  const prefix = `fix-review-lite:${review}:`;
+  const key = typeof note["key"] === "string" ? note["key"] : "";
+
+  const parts = key.startsWith(prefix)
+    ? NOTE_KEY.exec(key.slice(prefix.length))?.groups
+    : undefined;
+
+  if (parts === undefined) {
+    throw new ToolError(
+      1,
+      "invalid-input",
+      `--note key must be ${prefix}<round>:<n> with a positive <n>`
+    );
+  }
+
+  const reviewDir = reviewDirectory(ctx.session, review);
+
+  // An existing record for the key dedupes or conflicts in the append, so a retry after the next round completed still succeeds; the key's own round must still record this artifact.
+  if (foldLedger(ctx.session).records.some((row) => row.key === key)) {
+    const roundDir = reviewRoundDirectory(reviewDir, parts["round"] ?? "");
+
+    if (!recordsArtifact(roundDir, canonical(artifact))) {
+      throw new ToolError(
+        1,
+        "invalid-input",
+        `--note round ${parts["round"]} of ${review} does not record this artifact path`
+      );
+    }
+
+    return await appendRecord(ctx.session, note, ctx.deps);
+  }
+
+  const round = latestRound(reviewDir, artifact);
+
+  if (round === undefined || Number(parts["round"]) !== round) {
+    throw new ToolError(
+      1,
+      "invalid-input",
+      `--note round must be the latest completed round of ${review} for this artifact (${round ?? "none"})`
+    );
+  }
+
+  return await appendRecord(ctx.session, note, ctx.deps);
+};
+
+interface NoteOutcome {
+  appended?: { seq: number; deduped: boolean };
+}
+
 // oxlint-disable-next-line eslint/complexity -- review dispatch validates one branch per target, kind, level, and gate; refactor deferred to avoid behavior drift.
-export const reviewRun = async (ctx: HandlerContext) => {
+const runReview = async (ctx: HandlerContext, noted: NoteOutcome) => {
   const { session, manifest, deps } = ctx;
 
   if (ctx.args.length !== 1) {
@@ -59,7 +202,7 @@ export const reviewRun = async (ctx: HandlerContext) => {
   }
 
   const kind: ReviewKind = knownKind;
-  const fold = foldLedger(session);
+  let fold = foldLedger(session);
 
   const requestedLevel: unknown =
     ctx.values["level"] ?? latest(fold, "level")?.data["level"] ?? "medium";
@@ -69,6 +212,36 @@ export const reviewRun = async (ctx: HandlerContext) => {
   }
 
   const level = requestedLevel;
+
+  // SECTION: --note append
+  // The note lands after pure argument validation and before every gate, so a later refusal leaves it durable.
+  if (ctx.values["note"] !== undefined) {
+    // Pins validate before the durable append; a run without --note keeps its gate-first refusal order.
+    parsePinsFlag(ctx.values["pins"]);
+
+    try {
+      if (kind === "code") {
+        throw new ToolError(
+          1,
+          "invalid-input",
+          "--note applies to plan and design review"
+        );
+      }
+
+      const artifactPath = path.resolve(manifest.repositoryRoot, requested);
+
+      noted.appended = await appendNote(
+        ctx,
+        reviewId(kind, artifactPath),
+        artifactPath
+      );
+    } catch (error) {
+      throw inStep(error, "note");
+    }
+
+    fold = foldLedger(session);
+  }
+
   const gate = levelGate(fold, level);
 
   if (!gate.allowed) {
@@ -99,7 +272,6 @@ export const reviewRun = async (ctx: HandlerContext) => {
   }
 
   const pins = parsePinsFlag(ctx.values["pins"]);
-
   const roster = resolveSlots(kind, level, deps, pins);
   const cap = roster.rounds;
 
@@ -213,4 +385,22 @@ export const reviewRun = async (ctx: HandlerContext) => {
         applies,
       })
   );
+};
+
+export const reviewRun = async (ctx: HandlerContext) => {
+  const noted: NoteOutcome = {};
+
+  try {
+    return await runReview(ctx, noted);
+  } catch (error) {
+    const { appended } = noted;
+
+    throw appended === undefined
+      ? error
+      : inStep(
+          error,
+          "review",
+          `note seq ${appended.seq} ${appended.deduped ? "deduped" : "appended"}`
+        );
+  }
 };

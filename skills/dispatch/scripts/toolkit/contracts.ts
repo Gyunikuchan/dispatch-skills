@@ -10,10 +10,10 @@ export interface ActionContract {
 export type SessionAction = (typeof SESSION_ACTIONS)[number];
 
 export const CALL_TABLE_INTRO: readonly string[] = [
-  "A subagent assigned a map may run `lint run` on that map only, without `--edit`. The host runs other tools. Native fields: `model`, `effort`, `launchAs`. Initialize first. Paths: artifact from repo root, record/question from cwd.",
-  "Stdout is `{ok, summary, path, reason?}` (advisory `hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.",
-  "`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` returns raw text, exit 0, without a session. Unknown/empty headings return `usage` and valid headings. Unreadable help returns `fault` (2). Refusals may include `help` (next heading), except `native-pending`.",
-  "In the table, `\\|` separates alternatives and `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or file over inline flags above 4,096 bytes. `ledger append <record.json|-> --session <session>` reads an object or array. `--cleanup` needs stdin. `help <kind>` lists fields.",
+  "A subagent assigned a map may run `lint run` on that map only, without `--edit`; the host runs other tools. Paths: artifact from repo root, record/question from cwd.",
+  "Stdout is `{ok, summary, path, reason?}` (`hint` <=240 B on `ok: true`); `summary` <=1024 B; `path` is session JSON or null on usage/write failure. Items: counts, `first <k>:` (<=5), `+<n> more in result`. Exit: 0 returned, 1 invalid input/usage, 2 fault, 3 lock held, 4 gate or `native-pending`.",
+  "`node <skills-dir>/dispatch/scripts/dispatch.ts help <heading words...>` prints raw text (exit 0, no session); an unknown or empty heading returns `usage` with valid headings, unreadable help `fault` (2). Refusals may include `help` (next heading), except `native-pending`.",
+  "`\\|` separates alternatives; `?` marks optional record fields. `<...|->` reads a UTF-8 file or stdin (`-`, BOM ignored; on Windows PowerShell 5.1 set `$OutputEncoding = [Text.Encoding]::UTF8` or use a file for non-ASCII); prefer `-` or a file above 4,096 B. `ledger append <record.json|-> --session <session>` reads an object or array. `help <kind>` lists fields.",
 ];
 
 export interface ActionContracts {
@@ -27,7 +27,7 @@ export const ACTION_CONTRACTS: ActionContracts = {
   },
   "review run": {
     arguments:
-      "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>]",
+      "review run <target> --session <session> --host <platform> [--kind plan|design|code] [--spec <path>] [--level <level>] [--pins <pins>] [--native-failed '<attempt>=<reason>' ...] [--resume-ref <ref>] [--note <file|->]",
   },
   "report render": { arguments: "report render --session <session>" },
   "report complete": { arguments: "report complete --session <session>" },
@@ -74,6 +74,10 @@ export const ACTION_CONTRACTS: ActionContracts = {
   "worktree submit": {
     arguments: "worktree submit <task> --session <session>",
   },
+  "worktree land": {
+    arguments:
+      "worktree land <task> --session <session> [--ack-stale <rationale>]",
+  },
   "worktree abandon": {
     arguments: "worktree abandon <task> --session <session> --reason <reason>",
   },
@@ -100,7 +104,7 @@ export const ACTION_CONTRACTS: ActionContracts = {
   "status show": { arguments: "status show --session <session> [--resume]" },
   "lint run": {
     arguments:
-      "lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>]",
+      "lint run <artifact> --session <session> [--edit <fields.json|-> | --json <json>] [--fix-review-lite]",
   },
   "diagnostics render": { arguments: "diagnostics render --session <session>" },
 };

@@ -48,7 +48,10 @@ test("toolkit stays within the structural size budgets", () => {
   // NOTE: The review.ts -> review-round.ts split overhead sits inside that total. Budget 59248 keeps 16 lines of headroom.
   // NOTE: 59248 was measured after that wave's no-comments autofix stripped rationale comments; restoring them adds 1067 lines over the 59232 measure (60299). Budget 60315 keeps 16 lines of headroom.
   // NOTE: db995365 adds case-insensitive ComSpec resolution and the batch-launcher % path guard (code-scanning #25/#35), reaching 60326. Budget 60342 keeps 16 lines of headroom.
-  const driverLocBudget = 60_342;
+  // NOTE: The `worktree land` combined handler adds 230 lines (the combined handler, step plumbing in the CLI and output, and the hint branch), reaching 60556. Budget 60572 keeps 16 lines of headroom.
+  // NOTE: The `lint run --fix-review-lite` and `review run --note` combined handlers add 230 lines (the brief chain, the note append and its step plumbing), reaching 60786. Budget 60802 keeps 16 lines of headroom.
+  // NOTE: Code-review fixes to those handlers (note retry dedupe and artifact binding, stepped faults, receipt-first summaries, pins validated before the note append) add 24 lines over 60786, reaching 60810. Budget 60826 keeps 16 lines of headroom.
+  const driverLocBudget = 60_826;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`

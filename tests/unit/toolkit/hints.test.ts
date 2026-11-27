@@ -1867,6 +1867,48 @@ describe("stepHint state machine and router hint envelope", () => {
         "Integrate T2 — help worktree integrate — worktree integrate T2 --session <session>"
       );
 
+      // worktree land carries the check run value under `check`, so it earns the same next-task hint
+      assert.equal(
+        stepHint({
+          fold: foldLedger(f.session),
+          current: hashes,
+          action: "worktree land",
+          result: okResult({
+            task: "T1",
+            checks: { passed: 2 },
+            check: checkResult(COMMIT_C).value,
+          }),
+          session: f.session,
+          manifest,
+        }),
+        "Integrate T2 — help worktree integrate — worktree integrate T2 --session <session>"
+      );
+      assert.equal(
+        stepHint({
+          fold: foldLedger(f.session),
+          current: hashes,
+          action: "worktree land",
+          result: okResult({
+            task: "T1",
+            check: checkResult(treeD).value,
+          }),
+          session: f.session,
+          manifest,
+        }),
+        undefined
+      );
+      assert.equal(
+        stepHint({
+          fold: foldLedger(f.session),
+          current: hashes,
+          action: "worktree land",
+          result: okResult({ task: "T1", checks: { passed: 2 } }),
+          session: f.session,
+          manifest,
+        }),
+        undefined
+      );
+
       // Discriminating post-fix seq test: both pass on COMMIT_B before fix, then check run on COMMIT_B without post-fix evidence yields undefined until both rerun after fix
       const fPostFix = sessionFixture({ memory: true });
 

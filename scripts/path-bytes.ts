@@ -242,8 +242,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
         conditional("repository change"),
       [`${TOOLKIT}#worktree-create`]: unconditional,
       [`${TOOLKIT}#brief-render`]: unconditional,
-      [`${TOOLKIT}#worktree-submit`]: unconditional,
-      [`${TOOLKIT}#worktree-integrate`]: unconditional,
+      [`${TOOLKIT}#worktree-land`]: unconditional,
       [`${TOOLKIT}#check-run`]: unconditional,
       [`${TOOLKIT}#brief-verifier`]: unconditional,
       "references/verbs/verify.md": unconditional,
@@ -282,8 +281,10 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       call("check run", 4),
       call("worktree create", 2),
       call("brief render", 2),
+      // NOTE: submit and integrate stay listed so the archived baseline reproduces; the normal path calls `worktree land`.
       call("worktree submit", 2),
       call("worktree integrate", 2),
+      call("worktree land", 2),
       call("brief verifier", 1),
       call("brief test-cleanup", 1),
       call("worktree commit", 2),
@@ -777,6 +778,9 @@ const pathReads = (spec: PathManifest, name: string) => {
 
 // SECTION: Measure
 
+// NOTE: the pinned baseline predates these sections, so the archived measure counts them as 0.
+const POST_BASELINE_SECTIONS: ReadonlySet<string> = new Set(["worktree land"]);
+
 export function measure(read: Read, model: Model): Record<PathName, Figures>;
 export function measure<K extends string>(
   read: Read,
@@ -795,6 +799,10 @@ export function measure(
 
   const section = (heading: string) => {
     let text = sectionOf(help, slug(heading));
+
+    if (text === null && archive && POST_BASELINE_SECTIONS.has(heading)) {
+      return 0;
+    }
 
     if (text === null && archive && heading === "brief fix-review-lite") {
       // The pinned baseline predates the rename.
@@ -1297,30 +1305,27 @@ const append = (kind: string): SequenceCall => ({
 const TASK_HEAD = [
   step("worktree create"),
   step("brief render"),
-  step("worktree submit"),
-  step("worktree integrate"),
+  step("worktree land"),
 ];
-
-const TASK_CHECK = step("check run", "--task");
 
 export const CALL_SEQUENCES: readonly CallSequence[] = [
   {
     family: "task path",
     path: "normal",
-    calls: [...TASK_HEAD, TASK_CHECK],
+    calls: TASK_HEAD,
     sources: ["skills/dispatch/references/verbs/implement.md:17-19"],
   },
   {
     family: "task path",
     path: "integrate conflict",
-    calls: [...TASK_HEAD, step("worktree continue"), TASK_CHECK],
+    calls: [...TASK_HEAD, step("worktree continue"), step("worktree land")],
     sources: ["skills/dispatch/references/verbs/implement.md:50"],
   },
   {
     // The repair itself is writer or orchestrator work, so only the check rerun adds a toolkit call.
     family: "task path",
     path: "check failure",
-    calls: [...TASK_HEAD, TASK_CHECK, TASK_CHECK],
+    calls: [...TASK_HEAD, step("check run", "--task")],
     sources: ["skills/dispatch/references/verbs/implement.md:19"],
   },
   {
@@ -1336,11 +1341,9 @@ export const CALL_SEQUENCES: readonly CallSequence[] = [
     family: "review round",
     path: "plan/design fix batch",
     calls: [
-      step("review run"),
+      step("review run", "--note"),
       append("ruling"),
-      step("brief fix-review-lite"),
-      append("note"),
-      step("lint run", "--edit"),
+      step("lint run", "--edit --fix-review-lite"),
     ],
     sources: ["skills/dispatch/references/review-rules.md:52-55"],
   },

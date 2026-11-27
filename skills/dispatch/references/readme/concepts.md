@@ -34,7 +34,7 @@ Explorer and utility subagents share the host platform's required `utility-subag
 ## What happens during implementation
 
 1. **Plan & tasks:** After spec settlement and scope grounding, the plan defines tasks with owned paths, prerequisites, criteria, and checks. Ready tasks run in isolated worktrees (concurrently up to `write-concurrency`, default `1`).
-2. **Integrate & check:** After each task finishes, your host agent inspects the delta and evidence (recording setup-only RED failures as concerns), integrates accepted work, and runs task checks.
+2. **Integrate & check:** After each task finishes, your host agent inspects the delta and evidence (recording setup-only RED failures as concerns), lands accepted work with one call (`worktree land`) that submits it, integrates it and runs task checks.
 3. **Verify, clean up & review:** Dispatch runs all-criteria checks, runtime verification, test cleanup, and final checks + code review before handoff.
 4. **Recover safely:** Interruptions resume from retained handles without relaunching duplicate writers, and already-delivered sources return the recorded outcome.
 

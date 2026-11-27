@@ -11,6 +11,7 @@ export interface HandlerResult {
   value: unknown;
   exit: number;
   reason?: string;
+  step?: string;
   postFold?: Fold;
   recoverySelection?: RecoverySelection;
 }
@@ -20,6 +21,8 @@ export interface ToolResult {
   summary: string;
   path: string | null;
   reason?: string;
+  step?: string;
+  help?: string;
   hint?: string;
   exit: number;
 }
@@ -27,11 +30,13 @@ export interface ToolResult {
 export class ToolError extends Error {
   readonly exit: number;
   readonly reason: string;
-  constructor(exit: number, reason: string, message: string) {
+  readonly step: string | undefined;
+  constructor(exit: number, reason: string, message: string, step?: string) {
     super(message);
     this.name = "ToolError";
     this.exit = exit;
     this.reason = reason;
+    this.step = step;
   }
 }
 
@@ -95,7 +100,15 @@ export const clipBytes = (text: string, max: number) => {
   return `${clipped}…`;
 };
 
-export const summaryWithItems = (head: string, items: readonly string[]) => {
+// A combined action names the failing step first; the CLI adds this prefix to the handler summary.
+export const stepPrefix = (step: string) => `${step}: `;
+
+/** `reserve` leaves room for text the caller adds before the 1,024 B cap applies. */
+export const summaryWithItems = (
+  head: string,
+  items: readonly string[],
+  reserve = 0
+) => {
   if (!items.length) {
     return head;
   }
@@ -113,7 +126,7 @@ export const summaryWithItems = (head: string, items: readonly string[]) => {
       .slice(0, shown)
       .join("; ")}${omitted > 0 ? `; +${omitted} more in result` : ""}`;
 
-    if (Buffer.byteLength(text, "utf-8") <= 1024) {
+    if (Buffer.byteLength(text, "utf-8") + reserve <= 1024) {
       return text;
     }
   }

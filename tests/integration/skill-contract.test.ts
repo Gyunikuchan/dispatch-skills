@@ -2614,18 +2614,15 @@ test("each preserved rule has one canonical home; review fix procedure and light
   for (const text of [
     "mode `inline`",
     "advisory",
-    "`brief fix-review-lite <artifact> --session <session> --host <platform>`",
+    "`lint run --edit --fix-review-lite`",
+    "`review run --note`",
   ]) {
     once(text);
   }
 
   assert.match(
     fixRules,
-    /Repeat the review once at most per batch and only when the batch fixed an accepted MUST finding/u
-  );
-  assert.match(
-    fixRules,
-    /For each edited artifact per batch, run `lint run --edit`/u
+    /Repeat the review once at most per batch, only when the batch fixed an accepted MUST finding/u
   );
   assert.match(
     defined(toolkit.split("### edit")[1]),
@@ -3094,7 +3091,7 @@ test("one home: implement order lives in the implement procedure", () => {
     referenceDoc("verbs/implement").split("## Interruption recovery")[0] ?? "";
 
   const order = [
-    "[integrate](../toolkit.md#worktree-integrate)",
+    "[Land](../toolkit.md#worktree-land)",
     "Run [verification stage](verify.md)",
     "Run the test cleanup",
     "8. Review code",
@@ -3249,4 +3246,59 @@ test("one home: verifier approval classification lives in the verifier brief", (
   ]) {
     assert.ok(proof.includes(term), term);
   }
+});
+
+test("one home: landing a finished task is one call in the implement procedure", () => {
+  const implement = referenceDoc("verbs/implement");
+  const procedure = implement.split("## Interruption recovery")[0] ?? "";
+  const step = guideLine(procedure, "5. Inspect the actual delta");
+
+  assert.ok(links(step).includes("../toolkit.md#worktree-land"));
+  assert.match(step, /`worktree continue`/u);
+  assert.match(step, /`check run --task <task>`/u);
+
+  for (const primitive of ["worktree-submit", "worktree-integrate"]) {
+    assert.ok(
+      !links(implement).includes(`../toolkit.md#${primitive}`),
+      primitive
+    );
+  }
+
+  assert.match(
+    guideLine(implement, "| Submit, integrate, and verify criteria"),
+    /\[worktree land\]\(\.\.\/toolkit\.md#worktree-land\)/u
+  );
+});
+
+test("one home: plan and design fix batches name the two combined forms in the edit-first order", () => {
+  const rules = referenceDoc("review-rules");
+
+  const item =
+    rules.split(/^8\. /mu)[1]?.split("\n\nFor code and integration fixes")[0] ??
+    "";
+
+  assert.ok(item.length > 0, "item 8 exists");
+  assert.doesNotMatch(item, /brief fix-review-lite/u);
+  assert.doesNotMatch(item, /--host/u);
+
+  const order = [
+    "`lint run --edit --fix-review-lite`",
+    "launch it on its",
+    "`review run --note`",
+    "`ledger append`",
+  ].map((term) => item.indexOf(term));
+
+  assert.ok(
+    order.every((index) => index >= 0),
+    String(order)
+  );
+  assert.deepEqual(
+    order,
+    order.toSorted((a, b) => a - b)
+  );
+  assert.match(
+    item,
+    /`ledger append`[^\n]*before the report after a final batch/u
+  );
+  assert.match(item, /`--fix-review-lite` on the further `lint run --edit`/u);
 });

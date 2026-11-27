@@ -16,6 +16,7 @@ import { present, textValue } from "./narrow.ts";
 import { ToolError } from "./output.ts";
 import type { LedgerRecord } from "./records.ts";
 import {
+  canonical,
   INTEGRATION_REVIEW,
   reviewDirectory,
   reviewRoundFile,
@@ -346,14 +347,6 @@ export const reviewId = (
   }
 
   return `${kind}-${slug}`;
-};
-
-const canonical = (file: string) => {
-  try {
-    return fs.realpathSync.native(file);
-  } catch {
-    return path.resolve(file);
-  }
 };
 
 type Selection = ReadonlyMap<

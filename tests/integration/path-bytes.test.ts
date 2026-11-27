@@ -1245,11 +1245,11 @@ test("report fails naming the pack and removes its fixture when a render fails",
 });
 
 const SEQUENCE_LINES = [
-  "task path, normal: 5 calls — worktree create, brief render, worktree submit, worktree integrate, check run --task",
-  "task path, integrate conflict: 6 calls — worktree create, brief render, worktree submit, worktree integrate, worktree continue, check run --task",
-  "task path, check failure: 6 calls — worktree create, brief render, worktree submit, worktree integrate, check run --task, check run --task",
+  "task path, normal: 3 calls — worktree create, brief render, worktree land",
+  "task path, integrate conflict: 5 calls — worktree create, brief render, worktree land, worktree continue, worktree land",
+  "task path, check failure: 4 calls — worktree create, brief render, worktree land, check run --task",
   "review round, no fixes: 2 calls — review run, ledger append (ruling)",
-  "review round, plan/design fix batch: 5 calls — review run, ledger append (ruling), brief fix-review-lite, ledger append (note), lint run --edit",
+  "review round, plan/design fix batch: 3 calls — review run --note, ledger append (ruling), lint run --edit --fix-review-lite",
   "review round, code fix batch: 4 calls — review run, ledger append (ruling), worktree commit --review-fix, check run",
 ];
 
@@ -1288,10 +1288,9 @@ test("report prints static toolkit-call sequences with their flags", async () =>
       assert.ok(args !== undefined, `${call.action} is a call-table action`);
 
       if (call.flag !== undefined) {
-        assert.ok(
-          args.includes(call.flag),
-          `${call.action} takes ${call.flag}`
-        );
+        for (const flag of call.flag.split(" ")) {
+          assert.ok(args.includes(flag), `${call.action} takes ${flag}`);
+        }
       }
 
       if (call.kind !== undefined) {
@@ -1349,4 +1348,95 @@ test("usage line lists every accepted path-bytes form", async () => {
     assert.equal(out.stderr, USAGE);
     assert.equal(out.stdout, "");
   }
+});
+
+// SECTION: Reading against the one-home consolidation (consolidated reading baseline)
+
+const CONSOLIDATED_READING: Record<PathName, Figures> = {
+  ask: {
+    distinct: 30_037,
+    workload: 30_037,
+    editableDistinct: 29_274,
+    editableWorkload: 29_274,
+  },
+  design: {
+    distinct: 80_854,
+    workload: 80_854,
+    editableDistinct: 67_979,
+    editableWorkload: 67_979,
+  },
+  review: {
+    distinct: 52_228,
+    workload: 52_228,
+    editableDistinct: 32_190,
+    editableWorkload: 32_190,
+  },
+  verify: {
+    distinct: 29_913,
+    workload: 29_913,
+    editableDistinct: 26_307,
+    editableWorkload: 26_307,
+  },
+  plan: {
+    distinct: 72_066,
+    workload: 72_066,
+    editableDistinct: 54_845,
+    editableWorkload: 54_845,
+  },
+  implement: {
+    distinct: 76_470,
+    workload: 76_470,
+    editableDistinct: 59_558,
+    editableWorkload: 59_558,
+  },
+};
+
+test("combined actions shrink implement and review reading and grow no verb", () => {
+  const result = measure(readFile, "after");
+
+  for (const name of GUIDES) {
+    for (const key of [
+      "distinct",
+      "workload",
+      "editableDistinct",
+      "editableWorkload",
+    ] as const) {
+      const figure = result[name][key];
+      const limit = CONSOLIDATED_READING[name][key];
+
+      if (name === "implement" || name === "review") {
+        assert.ok(figure < limit, `${name} ${key} ${figure} is below ${limit}`);
+      } else {
+        assert.ok(
+          figure <= limit,
+          `${name} ${key} ${figure} is at most ${limit}`
+        );
+      }
+    }
+  }
+});
+
+const withoutLand = (rel: string) =>
+  rel === "references/toolkit.md"
+    ? toolkit.replace(/### worktree land\n[\s\S]*?(?=\n### )/u, "")
+    : readFile(rel);
+
+test("path bytes check baseline skips a call section that the pinned baseline predates", () => {
+  assert.ok(
+    !withoutLand("references/toolkit.md").includes("### worktree land")
+  );
+
+  const git = (args: string[]) =>
+    args[0] === "rev-parse"
+      ? "ok"
+      : withoutLand(defined(defined(args[1]).split(":skills/dispatch/")[1]));
+
+  assert.equal(
+    main(
+      ["--check-baseline"],
+      git,
+      measure(withoutLand, "preload", MANIFEST, true)
+    ),
+    0
+  );
 });
