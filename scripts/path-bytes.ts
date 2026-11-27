@@ -173,6 +173,8 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       "references/decision-frame.md": unconditional,
       "references/spec-stage.md": unconditional,
       [`${TOOLKIT}#ledger-append`]: unconditional,
+      "references/templates/verifier-brief.md#proof-standards":
+        conditional("approval"),
     },
     calls: [
       call("brief verifier", 1),
@@ -250,6 +252,7 @@ export const MANIFEST: Record<PathName, PathManifest> = {
       [`${BAR}#code`]: unconditional,
       [`${BAR}#spec`]: unconditional,
       "SKILL.md#routing": unconditional,
+      "SKILL.md#launch-and-continue": conditional("relaunch"),
       "references/templates/test-cleanup-brief.md": unconditional,
       [`${TOOLKIT}#brief-test-cleanup`]: unconditional,
       [`${TOOLKIT}#worktree-commit`]: unconditional,
@@ -353,14 +356,6 @@ export const SKILL_LINKS = {
     review: false,
     verify: false,
   },
-  "references/review-rules.md#review-provenance-and-applicability": {
-    ask: false,
-    design: false,
-    plan: false,
-    implement: true,
-    review: false,
-    verify: false,
-  },
   "references/self-build.md": {
     ask: false,
     design: false,
@@ -458,6 +453,14 @@ export const SKILL_LINKS = {
     verify: false,
   },
   "references/verbs/implement.md": {
+    ask: false,
+    design: false,
+    plan: false,
+    implement: false,
+    review: false,
+    verify: false,
+  },
+  "references/verbs/implement.md#procedure": {
     ask: false,
     design: false,
     plan: false,

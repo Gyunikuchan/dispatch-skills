@@ -12,6 +12,7 @@ import {
   renderCallTable,
   stripGeneratedMarkers,
 } from "../../skills/dispatch/scripts/toolkit/contracts.ts";
+import { qualitySections } from "../../skills/dispatch/scripts/toolkit/domain/prompt.ts";
 import {
   KINDS,
   recordSchemas,
@@ -1179,7 +1180,11 @@ test("references keep branch detail and use the utility entry", () => {
     step6,
     /utility subagent \(\[routing\]\(\.\.\/\.\.\/SKILL\.md#routing\)\) on the `brief test-cleanup` result/u
   );
-  assert.match(step6, /runs only its edited test files/u);
+  assert.ok(
+    links(referenceDoc("verbs/implement")).includes(
+      "../templates/test-cleanup-brief.md"
+    )
+  );
 });
 
 test("native voice launch order failure reports and change rules are documented", () => {
@@ -1415,10 +1420,6 @@ test("orchestrator reads quality bar sections by stage", () => {
     assert.ok(review.includes(phrase), phrase);
   }
 
-  assert.doesNotMatch(
-    review.split("for plan,")[1]?.split(";")[0] ?? "",
-    /quality-bar\.md#code/u
-  );
   const implementLinks = links(read(`${root}references/verbs/implement.md`));
 
   for (const anchor of [
@@ -1431,27 +1432,85 @@ test("orchestrator reads quality bar sections by stage", () => {
   for (const guide of ["../spec-stage.md", "plan.md", "design.md"]) {
     assert.ok(implementLinks.includes(guide), guide);
   }
+});
 
-  for (const [file, anchor] of [
-    ["spec-authoring.md", "spec"],
-    ["verbs/plan.md", "plan"],
-    ["verbs/design.md", "design"],
-    ["verbs/implement.md", "code"],
-    ["verbs/review.md", "code"],
-    ["verbs/plan.md", "testing"],
-    ["verbs/implement.md", "testing"],
-    ["verbs/review.md", "testing"],
-  ]) {
-    const text = read(`${root}references/${file}`);
-    assert.ok(
-      links(text).some((link) => link.endsWith(`quality-bar.md#${anchor}`)),
-      file
-    );
-    assert.ok(
-      links(text).some((link) => link.endsWith("quality-bar.md#shared")),
-      file
+const qualityAnchors = (text: string) =>
+  [
+    ...new Set(
+      [...text.matchAll(/quality-bar\.md#(?<g1>[a-z]+)/gu)].map((match) =>
+        defined(match[1])
+      )
+    ),
+  ].toSorted(byDefaultOrder);
+
+const expectedQuality = (kind: keyof typeof qualitySections) =>
+  [...qualitySections[kind]].toSorted(byDefaultOrder);
+
+const authoringSentence = (file: string) => {
+  const line =
+    referenceDoc(file)
+      .split("\n")
+      .find((candidate) => candidate.startsWith("Apply the [shared]")) ?? "";
+
+  assert.notEqual(line, "", `${file} has its quality-criteria line`);
+
+  return line.split(" when authoring.")[0] ?? "";
+};
+
+test("quality lists: each guide links the qualitySections of its kind", () => {
+  assert.deepEqual(
+    qualityAnchors(authoringSentence("verbs/plan")),
+    expectedQuality("plan")
+  );
+  assert.deepEqual(
+    qualityAnchors(authoringSentence("verbs/design")),
+    expectedQuality("design")
+  );
+
+  const implement = referenceDoc("verbs/implement");
+
+  assert.deepEqual(
+    qualityAnchors(
+      implement.split("\n7. Apply [shared]")[1]?.split("\n8. Review")[0] ?? ""
+    ),
+    expectedQuality("cleanup")
+  );
+  assert.deepEqual(
+    qualityAnchors(
+      implement.split("\n8. Review")[1]?.split("\n9. When")[0] ?? ""
+    ),
+    expectedQuality("code")
+  );
+
+  const reviewLine =
+    referenceDoc("verbs/review")
+      .split("\n")
+      .find((line) => line.startsWith("At adjudication apply [shared]")) ?? "";
+
+  const clauses =
+    reviewLine
+      .split(" and: ")[1]
+      ?.split(". Adjudicate")[0]
+      ?.split(/; for /u)
+      .map((clause) => clause.replace(/^for /u, "")) ?? [];
+
+  assert.equal(clauses.length, 3, "review names plan, design and code clauses");
+
+  for (const [index, kind] of (["plan", "design", "code"] as const).entries()) {
+    const clause = clauses[index] ?? "";
+
+    assert.ok(clause.startsWith(kind), `${kind} clause`);
+    assert.deepEqual(
+      ["shared", ...qualityAnchors(clause)].toSorted(byDefaultOrder),
+      expectedQuality(kind),
+      `review ${kind}`
     );
   }
+
+  assert.deepEqual(qualityAnchors(referenceDoc("spec-authoring")), [
+    "shared",
+    "spec",
+  ]);
 });
 
 test("failed plan slot rule has one home", () => {
@@ -1881,8 +1940,6 @@ test("implement runs verification before test cleanup and verify states the appr
     "approval quote",
     "declined check",
     "not proved",
-    "Read-only calls",
-    "Persistent or shared state",
     "verification:<cycle>:V<n>",
     "On resume rule",
     "re-check only those issues",
@@ -2963,4 +3020,233 @@ test("implement step 7 and 8 synchronize stale-test cleanup and shared testing b
   assert.match(step8, /over-tiered|stale/iu);
   assert.match(step8, /downgrade/iu);
   assert.match(step8, /restor/iu);
+});
+
+// SECTION: One home per orchestrator rule
+
+const templateDoc = (name: string) => referenceDoc(`templates/${name}`);
+
+const guideLine = (text: string, lead: string) => {
+  const line = text.split("\n").find((candidate) => candidate.includes(lead));
+  assert.notEqual(line, undefined, `line containing ${lead}`);
+
+  return line ?? "";
+};
+
+const headingBody = (text: string, heading: string) =>
+  text.split(`## ${heading}\n`)[1]?.split("\n## ")[0] ?? "";
+
+test("one home: --reuse precondition lives in check run", () => {
+  for (const guide of ["verbs/implement", "verbs/verify"]) {
+    const text = referenceDoc(guide);
+
+    assert.doesNotMatch(text, /gitignored files and external state/u, guide);
+    assert.doesNotMatch(text, /commands\[\]/u, guide);
+    assert.doesNotMatch(text, /--fresh/u, guide);
+    assert.match(
+      text,
+      /`--reuse`[^\n]*\[precondition\]\(\.\.\/toolkit\.md#check-run\)/u,
+      guide
+    );
+  }
+
+  const checkRun = section(referenceDoc("toolkit"), "check run");
+
+  for (const term of [
+    "`--reuse`",
+    "gitignored files and external state (services, DBs, env, clock)",
+    "each reused command's source execution",
+    "`commands[]` in `.state/evidence/<hex>.json`",
+    ".state/evidence/commands/index/<cacheHex>.json",
+    ".state/evidence/commands/<execId>.json",
+    "`createdAt`, `command`, `tree`",
+    "even when no criterion evidence record was written yet",
+    "cannot be established for every selected command's source execution",
+  ]) {
+    assert.ok(checkRun.includes(term), term);
+  }
+
+  assert.equal(
+    checkRun.match(/bypasses within-run per-command deduplication/gu)?.length,
+    1,
+    "the --fresh bypass has one statement"
+  );
+});
+
+test("one home: implement order lives in the implement procedure", () => {
+  const skill = read(`${root}SKILL.md`);
+  const line = guideLine(skill, "- `implement`:");
+
+  assert.ok(links(line).includes("references/verbs/implement.md#procedure"));
+  assert.ok(links(line).includes("references/worktree-cleanup.md"));
+  assert.doesNotMatch(
+    line,
+    /integration checks|runtime verification|repair within scope|exact HEAD|Report behavior/u
+  );
+  assert.ok(line.indexOf("report complete") < line.indexOf("worktree cleanup"));
+  assert.ok(
+    !links(skill).includes(
+      "references/review-rules.md#review-provenance-and-applicability"
+    )
+  );
+
+  const procedure =
+    referenceDoc("verbs/implement").split("## Interruption recovery")[0] ?? "";
+
+  const order = [
+    "[integrate](../toolkit.md#worktree-integrate)",
+    "Run [verification stage](verify.md)",
+    "Run the test cleanup",
+    "8. Review code",
+    "9. When all review rounds settle",
+    "11. Deliver the exact verified source",
+    "Complete the [report](../toolkit.md#report-complete) after delivery",
+    "clean owned worktrees under [worktree cleanup]",
+  ].map((term) => procedure.indexOf(term));
+
+  assert.ok(
+    order.every((index) => index >= 0),
+    String(order)
+  );
+  assert.deepEqual(
+    order,
+    order.toSorted((a, b) => a - b)
+  );
+  assert.match(
+    procedure,
+    /Report behaviour, evidence and concerns through the walkthrough and artifact links\./u
+  );
+});
+
+test("one home: native writer write boundary lives in the role table and quality bar", () => {
+  const skill = read(`${root}SKILL.md`);
+
+  assert.doesNotMatch(skill, /Native writers edit only assigned paths/u);
+  assert.match(
+    skill,
+    /Native writers keep their role-table write scope and \[Git boundary\]\(references\/templates\/quality-bar\.md#shared\)\./u
+  );
+  assert.match(guideLine(skill, "| Writer |"), /Assigned task paths/u);
+  assert.ok(
+    templateDoc("quality-bar").includes(
+      "Run no Git write commands (add, stash, commit, checkout, reset, restore)."
+    )
+  );
+});
+
+test("one home: broken-citation fail-closed lives in lint run and review run", () => {
+  for (const guide of ["verbs/plan", "verbs/design"]) {
+    const text = referenceDoc(guide);
+
+    assert.doesNotMatch(text, /broken-citation/u, guide);
+    assert.ok(links(text).includes("../toolkit.md#lint-run"), guide);
+    assert.ok(links(text).includes("review.md"), guide);
+  }
+
+  assert.ok(
+    links(referenceDoc("verbs/review")).includes("../toolkit.md#review-run")
+  );
+
+  const toolkit = referenceDoc("toolkit");
+
+  assert.match(
+    section(toolkit, "lint run"),
+    /Plan and design artifacts also fail closed with `broken-citation` on invalid backticked repo-relative[^\n]*governed sections/u
+  );
+  assert.match(
+    section(toolkit, "review run"),
+    /Plan and design rounds also run blocking `broken-citation` validation[^\n]*governed sections/u
+  );
+});
+
+test("one home: context-map sourcing lives in grounding check and recover", () => {
+  const plan = referenceDoc("verbs/plan");
+  const design = referenceDoc("verbs/design");
+
+  for (const [name, text] of [
+    ["plan", plan],
+    ["design", design],
+  ] as const) {
+    assert.doesNotMatch(
+      text,
+      /spec-phase map|scope delta|current phase map|current design-phase map/u,
+      name
+    );
+    assert.ok(links(text).includes("../grounding.md#check-and-recover"), name);
+  }
+
+  assert.match(
+    plan,
+    /When the phase context map exists, take items from the context maps; for an increment plan, also take increment-local items from its increment map\. Apply \[map checks\]\(\.\.\/grounding\.md#check-and-recover\) to these sources\./u
+  );
+  assert.match(
+    design,
+    /When a context map exists, take items from the context maps\. Apply \[map checks\]\(\.\.\/grounding\.md#check-and-recover\) to these sources\./u
+  );
+
+  const recover = headingBody(referenceDoc("grounding"), "Check and recover");
+
+  for (const term of [
+    "spec-phase map",
+    "scope delta",
+    "current phase map",
+    "either is absent",
+  ]) {
+    assert.ok(recover.includes(term), term);
+  }
+});
+
+test("one home: two writers never share a worktree lives in launch and continue", () => {
+  const implement = referenceDoc("verbs/implement");
+
+  assert.doesNotMatch(implement, /do not run two writers/u);
+  assert.doesNotMatch(implement, /not a second writer/u);
+  assert.match(
+    implement,
+    /A relaunch acknowledges the old writer as stopped; [^\n]*\]\(\.\.\/\.\.\/SKILL\.md#launch-and-continue\)/u
+  );
+
+  const launch = headingBody(read(`${root}SKILL.md`), "Launch and continue");
+
+  assert.ok(
+    launch.includes(
+      "Two writers never share a worktree. A utility subagent under a writer is not a second writer."
+    )
+  );
+});
+
+test("one home: test cleanup runs only its edited test files in the cleanup brief", () => {
+  const implement = referenceDoc("verbs/implement");
+
+  assert.doesNotMatch(implement, /runs only its edited test files/u);
+  assert.ok(links(implement).includes("../templates/test-cleanup-brief.md"));
+  assert.match(
+    templateDoc("test-cleanup-brief"),
+    /Run only edited test files after edits/u
+  );
+});
+
+test("one home: verifier approval classification lives in the verifier brief", () => {
+  const verify = referenceDoc("verbs/verify");
+
+  assert.doesNotMatch(verify, /Read-only calls|Persistent or shared state/u);
+  assert.ok(
+    links(verify).includes("../templates/verifier-brief.md#proof-standards")
+  );
+  assert.match(
+    verify,
+    /returning `NEEDS_APPROVAL` with a batched request[^\n]*declined check is `not proved` and is a limit, not an issue/u
+  );
+
+  const proof = headingBody(templateDoc("verifier-brief"), "Proof standards");
+
+  for (const term of [
+    "Read-only calls, local servers and disposable resources you create and remove need no approval",
+    "persistent or shared state",
+    "external messages",
+    "paid calls",
+    "non-local actions",
+  ]) {
+    assert.ok(proof.includes(term), term);
+  }
 });

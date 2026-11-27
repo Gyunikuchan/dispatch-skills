@@ -29,7 +29,7 @@ Run `node <skills-dir>/dispatch/scripts/dispatch.ts help call table` once per ru
 - `review`: resolve the [governing spec](references/spec-stage.md) and target; adjudicate under [review rules](references/review-rules.md) and [review](references/verbs/review.md). Apply accepted fixes and verify.
 - `design` or `plan`: resolve the spec; author, lint and review the artifact. Resolve defects, report the reviewed artifact and concerns, and use the [Decision Frame](references/decision-frame.md) for applicable approval.
 - `verify`: follow the [verification stage](references/verbs/verify.md).
-- `implement`: resolve spec and plan; lint, review and obtain approval tuple. Use native writers; run integration checks and runtime verification, repair within scope, then run [test cleanup](references/verbs/implement.md). Review exact HEAD per [review provenance](references/review-rules.md#review-provenance-and-applicability). Deliver after review and checks pass. On success, run `report complete`, then `worktree cleanup` per [cleanup](references/worktree-cleanup.md). Report behavior, evidence, concerns via walkthrough and artifact links.
+- `implement`: resolve spec and plan; lint, review and obtain approval tuple; then follow the [implement procedure](references/verbs/implement.md#procedure) through `report complete` and `worktree cleanup` ([cleanup](references/worktree-cleanup.md)).
 
 Handle `native-pending` under [native slots](references/providers.md#native-slots). [Providers](references/providers.md) own provider controls.
 
@@ -72,7 +72,7 @@ Retain handles until run end or host drop. Await completion notices; never poll 
 
 Never invent decisions. Follow [user gates](references/decision-frame.md#user-gate-boundaries) and [approval provenance](references/spec-stage.md#approval), including actual user quotes and current approval tuples or recorded non-intent edit chains for medium+ briefs and integration.
 
-Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. CLI delegates stay read-only. Native writers edit only assigned paths and run no Git write commands ([boundary](references/templates/quality-bar.md#shared)). Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
+Present no solution, scope or option list for plan, design, a new spec or an `ask` recommending a change until grounding completes; before then, report only verified facts and what grounding will check. Standalone review is exempt. CLI delegates stay read-only. Native writers keep their role-table write scope and [Git boundary](references/templates/quality-bar.md#shared). Preserve unrelated dirty and ignored files. Tools own ledger and result files; append records through the CLI.
 
 After interruption, inspect [status show](references/toolkit.md#status-show) and retained worktrees; resume work. Retain uncertain effects until completion.
 

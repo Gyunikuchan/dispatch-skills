@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-08
-- **Updated**: 2026-11-23
+- **Updated**: 2026-11-27
 - **Audience**: Maintainers
 
 ## Context
@@ -11,7 +11,8 @@ Each actor needs a focused context pack containing only the rules for its task. 
 
 ## Decision
 
-- **Audience-tagged quality bar:** Each normative rule has one canonical home in [`quality-bar.md`](../../skills/dispatch/references/templates/quality-bar.md) and declares its audience via `<!-- for: ... -->` tags (`code`, `plan`, `design`, `writer`, `cleanup`, `explorer`, `all`, plus `author` for human/orchestrator file readers). Selection validates expected tag counts fail-closed so an unknown consumer, unknown tag, or count mismatch throws rather than emitting unfiltered text.
+- **Audience-tagged quality bar:** Each actor-facing quality rule has one canonical home in [`quality-bar.md`](../../skills/dispatch/references/templates/quality-bar.md) and declares its audience via `<!-- for: ... -->` tags (`code`, `plan`, `design`, `writer`, `cleanup`, `explorer`, `verifier`, `all`, plus `author` for human/orchestrator file readers). Selection validates expected tag counts fail-closed so an unknown consumer, unknown tag, or count mismatch throws rather than emitting unfiltered text.
+- **One orchestrator-side home per rule:** A normative orchestrator rule has one home: the reference its actor loads at the step where it applies. Toolkit behaviour lives in `toolkit.md`, gates in `decision-frame.md`, roles in the `SKILL.md` role table, and verb steps in that verb's guide. Other orchestrator sites link to that home. A template or quality-bar section the toolkit renders into a brief or prompt is that actor's own home, so it stays self-contained.
 - **Single-source review tags and stripped inputs:** Review tags come from one per-kind allowlist (`REVIEW_TAGS_BY_KIND` in `domain/report.ts`), checked against rendered quality families plus `standards` and `adjacent`. Plan and design reviewers read governed text from `.state/reviews/<review>/round-<n>.input.md` with `Review Findings & Resolutions` stripped so `### Settled in earlier rounds` is the single source of prior rulings.
 - **Self-contained rendered briefs:** The toolkit renders writer, explorer, `fix-review-lite`, `test-cleanup`, and [runtime verifier](../../skills/dispatch/references/templates/verifier-brief.md) briefs under `.state/briefs/` after validating all required placeholders, with no unresolved relative links.
 - **Step reads and byte budgets:** Each verb guide declares a `| Step | Reads |` table with one relative link per step so the orchestrator loads only the current step's reference (e.g., [review-fixes.md](../../skills/dispatch/references/review-fixes.md) loads only when accepted fixes run). The [structural targets test](../../tests/integration/structural-targets.test.ts) enforces per-step, `SKILL.md`, and per-actor pack byte budgets, and [`path-bytes.ts`](../../scripts/path-bytes.ts) tracks representative must-load reads and link declarations across verbs.
