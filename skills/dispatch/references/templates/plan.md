@@ -185,6 +185,6 @@ Notes that explain a lint code live in [plan field notes](plan-field-notes.md); 
 
 - Automated Tests: list fast commands. Each one that no criterion lists is a contract command: writers run it before they submit, and `check run` records it against the integrated tree. Put broad or slow gates in a criterion Check.
 
-- `[GENERATED]`: name the Command and Inputs needed to reproduce the output; a task producing an Input must be a (transitive) prerequisite. Run the generator before verification. Own each golden or generated output that renders an edited file, and each file whose line budget or byte cap the change can exceed, as a `[MODIFY]` or `[GENERATED]` entry of the task that changes it; an unowned output forces a mid-run plan edit.
+- `[GENERATED]`: name the Command and Inputs needed to reproduce the output; a task producing an Input must be a (transitive) prerequisite. Run the generator before verification. Own each pinned output per the [quality bar](quality-bar.md#plan) `Pins:` bullet; an unowned output forces a mid-run plan edit.
 
 - Satisfies: name the governing spec REQ IDs on every criterion; missing or unknown references are warnings.

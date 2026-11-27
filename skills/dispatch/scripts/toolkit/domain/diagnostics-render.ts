@@ -2234,6 +2234,7 @@ const buildSections = (
     yieldRows.length > 0;
 
   const healthRows: string[] = [];
+  const pastCapBullets: string[] = [];
   const reviewKeys = new Set<string>();
 
   const roundEntries: {
@@ -2278,6 +2279,29 @@ const buildSections = (
 
       const totalRounds = Math.max(...roundNums);
 
+      const review = /^review-[a-f0-9]{16}$/u.test(rk)
+        ? `subject ${rk.slice(7)}`
+        : phaseName(run, rk);
+
+      // The last recorded cap wins, as in H2; round.json supplies it even when no findings.json exists.
+      const cap = [...rList, ...tList]
+        .filter((r) => r.cap !== undefined)
+        .toSorted((a, b) => a.round - b.round)
+        .at(-1)?.cap;
+
+      const pastCap = roundNums.filter((rn) => cap !== undefined && rn > cap);
+
+      if (cap !== undefined && pastCap.length) {
+        const causes = pastCap.map(
+          (rn) =>
+            `R${rn} ${rList.find((r) => r.round === rn)?.cause ?? "unrecorded"}`
+        );
+
+        pastCapBullets.push(
+          `- Rounds past cap: ${singleRun ? "" : `run ${runIndex + 1} `}${review} (cap ${cap}): ${causes.join(", ")}`
+        );
+      }
+
       for (const rn of roundNums) {
         const rev = rList.find((r) => r.round === rn);
         const wl = wList.find((w) => w.round === rn);
@@ -2296,9 +2320,7 @@ const buildSections = (
 
         roundEntries.push({
           run: runIndex + 1,
-          review: /^review-[a-f0-9]{16}$/u.test(rk)
-            ? `subject ${rk.slice(7)}`
-            : phaseName(run, rk),
+          review,
           round: rn,
           totalRounds,
           spanText,
@@ -2345,6 +2367,7 @@ const buildSections = (
           roundEntries.map((e) => e.revTurns),
           roundEntries.some((e) => e.revPartial)
         )}`,
+        ...pastCapBullets,
         "",
         ...tableHeader([
           ...(singleRun ? [] : ["Run"]),

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { nodeErrorCode } from "../lib/fs-ext.ts";
+import type { FindingsValue } from "./findings.ts";
 import { ToolError } from "./output.ts";
 import {
   readStoredJson,
@@ -55,10 +56,9 @@ interface ReviewedFinding {
   origin?: string;
 }
 
-export interface FindingsFile {
-  review?: string;
+export type FindingsFile = Partial<Pick<FindingsValue, "review" | "cause">> & {
   findings?: ReviewedFinding[];
-}
+};
 
 export interface RoundFile {
   round: number;

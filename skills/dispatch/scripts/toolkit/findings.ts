@@ -22,7 +22,7 @@ import {
   parseReport,
 } from "./domain/report.ts";
 import { effectiveSeverity } from "./domain/severity.ts";
-import type { Finding, ReviewKind } from "./domain/types.ts";
+import type { Finding, ReviewKind, RoundCause } from "./domain/types.ts";
 import type { SlotOutcome } from "./fanout.ts";
 import type { Fold } from "./ledger.ts";
 import { parseRepositoryNoteKey } from "./ledger.ts";
@@ -64,6 +64,8 @@ export interface FindingsValue {
   units: FindingUnit[];
   clusters: { file: string; findings: string[] }[];
   failed: Extract<SlotOutcome, { state: "failed" }>[];
+  // Set only for round 2 and later, after the missing-RED gaps join the findings.
+  cause?: RoundCause;
   confirmations?: RejectionReply[];
   repositoryChanges?: RepositoryChange[];
   repositoryCheck?: RepositoryCheckState;
@@ -303,6 +305,67 @@ export const finalizeRound = (input: {
     }),
     ...(input.repositoryCheck && { repositoryCheck: input.repositoryCheck }),
   };
+};
+
+// SECTION: Round cause
+
+// Each finding counts once, so the counts partition the saved findings and the primary follows ROUND_CAUSES order.
+export type RoundCauseScope = "standard" | "confirmation" | "coverage";
+
+export const roundCause = (input: {
+  scope: RoundCauseScope;
+  findings: readonly ReviewedFinding[];
+  replies: readonly SlotOutcome[];
+}): RoundCause => {
+  const counts = {
+    fixInduced: 0,
+    recurring: 0,
+    unknownOrigin: 0,
+    new: 0,
+    failed: input.replies.filter((reply) => reply.state === "failed").length,
+  };
+
+  for (const finding of input.findings) {
+    if (finding.origin === "fix-induced") {
+      counts.fixInduced += 1;
+    } else if (finding.recurrence || finding.unresolved) {
+      counts.recurring += 1;
+    } else if (finding.origin === undefined || finding.origin === "unknown") {
+      counts.unknownOrigin += 1;
+    } else {
+      counts.new += 1;
+    }
+  }
+
+  const unanswered =
+    !input.replies.some((reply) => reply.state === "done") ||
+    input.findings.length === 0;
+
+  const primary = (): RoundCause["primary"] => {
+    if (counts.failed > 0 && unanswered) {
+      return "failed";
+    }
+
+    if (input.scope !== "standard") {
+      return input.scope;
+    }
+
+    if (counts.fixInduced > 0) {
+      return "fix-induced";
+    }
+
+    if (counts.recurring > 0) {
+      return "recurring";
+    }
+
+    if (counts.new > 0) {
+      return "new";
+    }
+
+    return counts.unknownOrigin > 0 ? "unknown-origin" : "clean";
+  };
+
+  return { primary: primary(), counts };
 };
 
 interface FindingUnit {

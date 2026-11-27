@@ -37,6 +37,18 @@ const roundCheck = withFields({
 
 const findingsCheck = withFields({
   asOfSeq: numeric,
+  cause: optional(
+    withFields({
+      primary: text,
+      counts: withFields({
+        fixInduced: numeric,
+        recurring: numeric,
+        unknownOrigin: numeric,
+        new: numeric,
+        failed: numeric,
+      }),
+    })
+  ),
   findings: listOf(withFields({ id: text, origin: optional(text) })),
   clusters: listOf(jsonObject),
   units: listOf(
@@ -1143,6 +1155,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
 
       assert.equal(callResult23.exit, 0);
       assert.match(readRound(f, 2).scope, /\(confirmation-only\)/u);
+      assert.equal(readFindings(f, 2).cause?.primary, "confirmation");
       assert.deepEqual(readRound(f, 2).interRound, {
         diff: UNCHANGED_TARGET,
         accepted: [{ id: "R1-F002", locus: "§ Notes" }],
@@ -1709,6 +1722,7 @@ test("origin: the round-2 prompt asks for it and findings.json and the summary c
     const first = await f.call();
     assert.equal(first.exit, 0, JSON.stringify(first.output));
     assert.equal(readFindings(f, 1).findings[0]?.origin, "original");
+    assert.equal(readFindings(f, 1).cause, undefined);
     assert.doesNotMatch(first.output.summary, /fix-induced/u);
     assert.ok(promptsOf(f).every((prompt) => !prompt.includes("add `origin`")));
     await f.add("ruling", {
@@ -1721,12 +1735,70 @@ test("origin: the round-2 prompt asks for it and findings.json and the summary c
     const second = await f.call();
     assert.equal(second.exit, 0, JSON.stringify(second.output));
     assert.equal(readFindings(f, 2).findings[0]?.origin, "fix-induced");
+    assert.deepEqual(readFindings(f, 2).cause, {
+      primary: "fix-induced",
+      counts: {
+        fixInduced: 1,
+        recurring: 0,
+        unknownOrigin: 0,
+        new: 0,
+        failed: 0,
+      },
+    });
     assert.match(second.output.summary, /, 1 fix-induced/u);
     assert.ok(
       promptsOf(f)
         .slice(before)
         .every((prompt) => prompt.includes("add `origin`"))
     );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("cause: a round-2 review interrupted after pending keeps the same cause in findings.json", async () => {
+  const f = await fixture();
+
+  try {
+    script(f, withOrigin);
+    const first = await f.call();
+    assert.equal(first.exit, 0, JSON.stringify(first.output));
+    await f.add("ruling", {
+      subject: "review:plan-work.plan:R1-F001",
+      ruling: "accepted",
+      rationale: "Fixed",
+    });
+    fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
+
+    const expected = {
+      primary: "fix-induced",
+      counts: {
+        fixInduced: 1,
+        recurring: 0,
+        unknownOrigin: 0,
+        new: 0,
+        failed: 0,
+      },
+    };
+
+    let pendingCause: unknown;
+
+    f.deps.hook = (point) => {
+      if (point === "review:after-pending") {
+        pendingCause = readJson(
+          path.join(f.directory, "round-2", "pending.json"),
+          findingsCheck
+        ).cause;
+        throw new Error("interrupt");
+      }
+    };
+
+    await f.call();
+    delete f.deps.hook;
+    assert.deepEqual(pendingCause, expected);
+    const resumed = await f.call();
+    assert.equal(resumed.exit, 0, JSON.stringify(resumed.output));
+    assert.deepEqual(readFindings(f, 2).cause, expected);
   } finally {
     f.cleanup();
   }

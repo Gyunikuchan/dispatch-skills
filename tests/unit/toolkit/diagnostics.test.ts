@@ -21,7 +21,13 @@ import {
   normalizeUsage,
   sanitizeFacts,
 } from "../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
+import type { Finding } from "../../../skills/dispatch/scripts/toolkit/domain/types.ts";
 import { fanOut } from "../../../skills/dispatch/scripts/toolkit/fanout.ts";
+import type { SlotOutcome } from "../../../skills/dispatch/scripts/toolkit/fanout.ts";
+import {
+  finalizeRound,
+  roundCause,
+} from "../../../skills/dispatch/scripts/toolkit/findings.ts";
 import type { Fold } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
 import { ToolError } from "../../../skills/dispatch/scripts/toolkit/output.ts";
 import { readReviews } from "../../../skills/dispatch/scripts/toolkit/review-storage.ts";
@@ -186,6 +192,9 @@ function saveRound<Outcome extends { slot: string; state: string }>(input: {
   roster: ReturnType<typeof rosterSlot>[];
   outcomes: Outcome[];
   findings?: unknown[];
+  /** Replaces the default `findings.json` body, e.g. with a `finalizeRound` value. */
+  findingsFile?: unknown;
+  cap?: number;
   generation?: number;
 }) {
   const generation = input.generation ?? 1;
@@ -194,7 +203,7 @@ function saveRound<Outcome extends { slot: string; state: string }>(input: {
   writeJson(path.join(roundDir, "round.json"), {
     round: input.round,
     generation,
-    cap: 4,
+    cap: input.cap ?? 4,
     level: "high",
     roster: input.roster,
     scope: "Full review",
@@ -210,7 +219,9 @@ function saveRound<Outcome extends { slot: string; state: string }>(input: {
     );
   }
 
-  if (input.findings) {
+  if (input.findingsFile !== undefined) {
+    writeJson(path.join(roundDir, "findings.json"), input.findingsFile);
+  } else if (input.findings) {
     writeJson(path.join(roundDir, "findings.json"), {
       review: input.review,
       round: input.round,
@@ -1815,6 +1826,273 @@ test("session diagnostics include producer rounds, invocations, and gated retro 
     assert.match(fs.readFileSync(emptyPath, "utf-8"), /Host retro: missing/u);
   } finally {
     empty.cleanup();
+    fixture.cleanup();
+  }
+});
+
+// SECTION: Rounds past cap
+
+const causeFinding = (
+  id: string,
+  origin: "original" | "fix-induced" | "unknown"
+): Finding => ({
+  id,
+  severity: "SHOULD",
+  impact: "degrades",
+  trigger: "realistic",
+  category: "correctness",
+  locus: "§ Work",
+  defect: `Defect ${id}`,
+  requiredChange: "Fix it",
+  sources: ["claude[0]"],
+  scope: "in",
+  origin,
+});
+
+const doneOutcomes: SlotOutcome[] = [
+  { slot: "claude[0]", state: "done", text: "review complete" },
+];
+
+/** The `findings.json` body `runReviewRound` saves: a `finalizeRound` value, plus `cause` from round 2. */
+const savedFindings = (input: {
+  review: string;
+  round: number;
+  cap: number;
+  scope?: "standard" | "confirmation" | "coverage";
+  findings: Finding[];
+}) => {
+  const value = finalizeRound({
+    review: input.review,
+    round: input.round,
+    generation: 1,
+    cap: input.cap,
+    level: "high",
+    startSeq: 0,
+    replies: [],
+    redGaps: input.findings,
+    prior: [],
+    priorTargets: {},
+    rulings: [],
+    kind: "plan",
+    artifact: "plan.md",
+    target: `sha256:${"b".repeat(64)}`,
+  });
+
+  return {
+    ...value,
+    escalations: undefined,
+    ...(input.scope && {
+      cause: roundCause({
+        scope: input.scope,
+        findings: value.findings,
+        replies: doneOutcomes,
+      }),
+    }),
+  };
+};
+
+const pastCapLines = (report: string) =>
+  report.split("\n").filter((line) => line.startsWith("- Rounds past cap:"));
+
+test("rounds past the saved cap render their primary cause or unrecorded after a findings.json round trip", () => {
+  const fixture = sessionFixture({ memory: true });
+
+  try {
+    const roster = [rosterSlot("claude[0]", "claude")];
+    const alpha = "review-alpha";
+    const cap = 2;
+
+    const rounds = [
+      { round: 1, findings: [causeFinding("R1-F001", "original")] },
+      {
+        round: 2,
+        scope: "standard" as const,
+        findings: [causeFinding("R2-F001", "fix-induced")],
+      },
+      {
+        round: 3,
+        scope: "standard" as const,
+        findings: [causeFinding("R3-F001", "fix-induced")],
+      },
+      {
+        round: 4,
+        scope: "coverage" as const,
+        findings: [causeFinding("R4-F001", "original")],
+      },
+      {
+        round: 5,
+        scope: "standard" as const,
+        findings: [causeFinding("R5-F001", "unknown")],
+      },
+      { round: 6, findings: [causeFinding("R6-F001", "original")] },
+    ];
+
+    for (const { round, ...rest } of rounds) {
+      saveRound({
+        session: fixture.session,
+        review: alpha,
+        round,
+        cap,
+        roster,
+        outcomes: doneOutcomes,
+        findingsFile: savedFindings({ review: alpha, round, cap, ...rest }),
+      });
+    }
+
+    // Every slot failed: no findings.json, so only round.json carries the cap.
+    for (const round of [1, 2, 3]) {
+      saveRound({
+        session: fixture.session,
+        review: "review-beta",
+        round,
+        cap: 1,
+        roster,
+        outcomes: [
+          {
+            slot: "claude[0]",
+            state: "failed",
+            cls: "timeout",
+            reason: "slow",
+          },
+        ],
+      });
+    }
+
+    const facts = sessionFacts(
+      fixture.session,
+      { records: [], lastSeq: 0, torn: null },
+      "pass"
+    );
+
+    const alphaKey = defined(defined(facts.reviews[0]).phase);
+
+    const betaKey = defined(
+      facts.roundTiming?.find((timing) => timing.review !== alphaKey)
+    ).review;
+
+    assert.deepEqual(
+      facts.reviews.map(({ round, cause }) => [round, cause]),
+      [
+        [1, undefined],
+        [2, "fix-induced"],
+        [3, "fix-induced"],
+        [4, "coverage"],
+        [5, "unknown-origin"],
+        [6, undefined],
+      ]
+    );
+
+    assert.deepEqual(
+      facts.roundTiming?.filter((t) => t.review === betaKey).map((t) => t.cap),
+      [1, 1, 1]
+    );
+
+    const report = fs.readFileSync(
+      writeDiagnostics(fixture.session, facts),
+      "utf-8"
+    );
+
+    assert.deepEqual(pastCapLines(report), [
+      `- Rounds past cap: subject ${alphaKey.slice(7)} (cap 2): R3 fix-induced, R4 coverage, R5 unknown-origin, R6 unrecorded`,
+      `- Rounds past cap: subject ${betaKey.slice(7)} (cap 1): R2 unrecorded, R3 unrecorded`,
+    ]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a malformed cause renders unrecorded and keeps the round's findings facts", () => {
+  const fixture = sessionFixture({ memory: true });
+
+  try {
+    const review = "review-gamma";
+    const roster = [rosterSlot("claude[0]", "claude")];
+
+    for (const [round, cause] of [
+      [1, undefined],
+      [2, { primary: "bogus", counts: "many" }],
+      [3, "fix-induced"],
+    ] as const) {
+      saveRound({
+        session: fixture.session,
+        review,
+        round,
+        cap: 1,
+        roster,
+        outcomes: doneOutcomes,
+        findingsFile: {
+          ...savedFindings({
+            review,
+            round,
+            cap: 1,
+            findings: [causeFinding(`R${round}-F001`, "original")],
+          }),
+          cause,
+        },
+      });
+    }
+
+    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- test fixture establishes this shape before the assertion
+    const fold = {
+      records: [
+        {
+          seq: 1,
+          key: "ruling-1",
+          at: "2026-01-01T00:00:00Z",
+          kind: "ruling",
+          by: "tool",
+          data: {
+            subject: `review:${review}:R2-F001`,
+            ruling: "accepted",
+            rationale: "Matches the bound rules.",
+          },
+        },
+        {
+          seq: 2,
+          key: "ruling-2",
+          at: "2026-01-01T00:00:01Z",
+          kind: "ruling",
+          by: "tool",
+          data: {
+            subject: `review:${review}:R3-F001`,
+            ruling: "rejected",
+            rationale: "Outside the requirement.",
+          },
+        },
+      ],
+      lastSeq: 2,
+      torn: null,
+    } as Fold;
+
+    assert.equal(readReviews(fixture.session).length, 3);
+
+    const facts = sessionFacts(fixture.session, fold, "pass");
+
+    assert.deepEqual(
+      facts.reviews.map(({ round, accepted, rejected, cause }) => [
+        round,
+        accepted,
+        rejected,
+        cause,
+      ]),
+      [
+        [1, 0, 0, undefined],
+        [2, 1, 0, undefined],
+        [3, 0, 1, undefined],
+      ]
+    );
+
+    const key = defined(defined(facts.reviews[0]).phase);
+
+    assert.deepEqual(
+      pastCapLines(
+        fs.readFileSync(writeDiagnostics(fixture.session, facts), "utf-8")
+      ),
+      [
+        `- Rounds past cap: subject ${key.slice(7)} (cap 1): R2 unrecorded, R3 unrecorded`,
+      ]
+    );
+  } finally {
     fixture.cleanup();
   }
 });

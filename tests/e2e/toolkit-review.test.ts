@@ -99,8 +99,20 @@ const FindingGuard = objectWith({
 
 const FailedSlotGuard = objectWith({ slot: isString, cls: maybe(isString) });
 
+const RoundCauseGuard = objectWith({
+  primary: isString,
+  counts: objectWith({
+    fixInduced: isNumber,
+    recurring: isNumber,
+    unknownOrigin: isNumber,
+    new: isNumber,
+    failed: isNumber,
+  }),
+});
+
 const FindingsFileGuard = objectWith({
   review: maybe(isString),
+  cause: maybe(RoundCauseGuard),
   asOfSeq: maybe(isNumber),
   findings: arrayOf(FindingGuard),
   failed: arrayOf(FailedSlotGuard),
@@ -1154,6 +1166,7 @@ test("toolkit code review reports missing evidence without admission gates and t
     const first = await review();
 
     assert.equal(first.findings.length, 1);
+    assert.equal(first.cause, undefined);
 
     const gap = defined(first.findings[0], "gap");
 
@@ -1182,6 +1195,16 @@ test("toolkit code review reports missing evidence without admission gates and t
     assert.deepEqual(defined(unchanged.findings[0], "finding").unresolved, {
       of: gap.id,
     });
+    assert.deepEqual(unchanged.cause, {
+      primary: "recurring",
+      counts: {
+        fixInduced: 0,
+        recurring: 1,
+        unknownOrigin: 0,
+        new: 0,
+        failed: 0,
+      },
+    });
     assert.equal(defined(unchanged.escalations, "escalations").length, 0);
 
     await f.level("high");
@@ -1189,6 +1212,19 @@ test("toolkit code review reports missing evidence without admission gates and t
     const next = await launch("second\n");
 
     const third = await review();
+
+    // The later-round missing-RED gap has origin unknown and joins the round after finalize, so the saved cause counts it.
+    assert.deepEqual(third.cause, {
+      primary: "unknown-origin",
+      counts: {
+        fixInduced: 0,
+        recurring: 0,
+        unknownOrigin: 1,
+        new: 0,
+        failed: 0,
+      },
+    });
+    assert.equal(third.findings.length, 1);
 
     assert.equal(
       defined(defined(third.escalations, "escalations")[0], "escalation").key,

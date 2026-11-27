@@ -39,6 +39,31 @@ export interface Finding {
 /** A parsed finding before the round assigns its id. */
 export type DraftFinding = Omit<Finding, "id" | "dupOf">;
 
+/** Why a round after round 1 ran; precedence order, highest first. */
+export const ROUND_CAUSES = [
+  "failed",
+  "confirmation",
+  "coverage",
+  "fix-induced",
+  "recurring",
+  "new",
+  "unknown-origin",
+  "clean",
+] as const;
+
+export type RoundCausePrimary = (typeof ROUND_CAUSES)[number];
+
+export interface RoundCause {
+  primary: RoundCausePrimary;
+  counts: {
+    fixInduced: number;
+    recurring: number;
+    unknownOrigin: number;
+    new: number;
+    failed: number;
+  };
+}
+
 // SECTION: Lint
 
 export type { LintDefect, LintDefectCode } from "./document-lint.ts";

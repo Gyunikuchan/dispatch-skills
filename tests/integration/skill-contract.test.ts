@@ -2663,6 +2663,40 @@ test("each preserved rule has one canonical home; review fix procedure and light
     /launches no subagent and changes no roster, cap or round rule/u
   );
   assert.match(fixRules, /mark the review inline in the verb report/u);
+
+  // Churn controls act before the next round: fixer step 4, the fix-review-lite objective and the plan quality bar each carry one.
+  const step4 = defined(/^4\. [^\n]*$/mu.exec(fixRules)?.[0]);
+  assert.match(
+    step4,
+    /Name the tests, golden fixtures and byte or line ceilings that pin it, with current headroom/u
+  );
+  assert.match(
+    step4,
+    /For each qualifier, branch or field the fix deletes or narrows, list the consumer that relied on it[^\n]*`edit` rationale[^\n]*confirm it still holds before the next round/u
+  );
+  assert.equal(
+    fixReviewLiteBrief.split("deletes or narrows").length - 1,
+    1,
+    "consumer search sentence appears once"
+  );
+  assert.match(
+    fixReviewLiteBrief,
+    /Search consumers for each qualifier, branch or field the diff deletes or narrows; report a consumer that relied on it as a broken consumer/u
+  );
+
+  const [planBar = ""] = defined(
+    read(`${root}references/templates/quality-bar.md`).split("\n## plan\n")[1]
+  ).split("\n## design\n");
+
+  assert.equal(planBar.split("- Pins:").length, 2, "one Pins bullet in plan");
+  assert.match(
+    planBar,
+    /- Pins: each task names the tests, golden fixtures and byte or line ceilings that pin its touched files, with current headroom, and owns as \[MODIFY\] or \[GENERATED\] each golden, generated output or ceiling its change can exceed; a missing pin or headroom is a defect\./u
+  );
+  assert.doesNotMatch(
+    read(`${root}references/templates/plan.md`),
+    /Own each golden or generated output/u
+  );
   assert.match(
     rules,
     /For the final completed review round[^\n]*plan and design batches[^\n]*step 8/u

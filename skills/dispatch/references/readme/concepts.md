@@ -54,7 +54,7 @@ Internal task and integration commits stay in Dispatch's worktrees; final delive
 
 ## Optional session diagnostics
 
-When `diagnostics` is `true`, Dispatch writes a cumulative `diagnostics.md` retrospective at each verb's final handoff (or `report complete`) with a compact executive dashboard (`Summary`, `Spend & Turns` with inline share bars and User/LLM/Tool turns, top `Cost drivers`, `Review health`, and `Findings`), 4 collapsed `<details>` deep-dive sections, and estimated `~$` costs (using `references/pricing.json` and any [`pricing` overrides](configuration.md#override-rates-for-cost-estimates)). Your host agent merges terse retro notes itself and may use a research explorer when investigating logs or chat. The report stays in the session folder and is never uploaded automatically.
+When `diagnostics` is `true`, Dispatch writes a cumulative `diagnostics.md` retrospective at each verb's final handoff (or `report complete`) with a compact executive dashboard (`Summary`, `Spend & Turns` with inline share bars and User/LLM/Tool turns, top `Cost drivers`, `Review health` (which lists rounds past the cap by cause), and `Findings`), 4 collapsed `<details>` deep-dive sections, and estimated `~$` costs (using `references/pricing.json` and any [`pricing` overrides](configuration.md#override-rates-for-cost-estimates)). Your host agent merges terse retro notes itself and may use a research explorer when investigating logs or chat. The report stays in the session folder and is never uploaded automatically.
 
 <details>
 <summary>How token &amp; cost measurement works</summary>

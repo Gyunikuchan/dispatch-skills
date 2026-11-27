@@ -2,7 +2,7 @@
 
 ## Objective
 
-Check the accepted fixes to the artifact below. Check that each citation's source supports the sentence that cites it. For each claim of data production or consumption, find the code that writes or reads it. Read the diff, the whole artifact and the spec. Report only false citations, contradictions, broken consumers and unmet requirement acceptance, each as `{kind, claim, citation}`. Never rule on findings. Edit no file.
+Check the accepted fixes to the artifact below. Check that each citation's source supports the sentence that cites it. For each claim of data production or consumption, find the code that writes or reads it. Read the diff, the whole artifact and the spec. Search consumers for each qualifier, branch or field the diff deletes or narrows; report a consumer that relied on it as a broken consumer. Report only false citations, contradictions, broken consumers and unmet requirement acceptance, each as `{kind, claim, citation}`. Never rule on findings. Edit no file.
 
 ## Accepted findings
 

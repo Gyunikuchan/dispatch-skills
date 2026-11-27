@@ -51,7 +51,9 @@ test("toolkit stays within the structural size budgets", () => {
   // NOTE: The `worktree land` combined handler adds 230 lines (the combined handler, step plumbing in the CLI and output, and the hint branch), reaching 60556. Budget 60572 keeps 16 lines of headroom.
   // NOTE: The `lint run --fix-review-lite` and `review run --note` combined handlers add 230 lines (the brief chain, the note append and its step plumbing), reaching 60786. Budget 60802 keeps 16 lines of headroom.
   // NOTE: Code-review fixes to those handlers (note retry dedupe and artifact binding, stepped faults, receipt-first summaries, pins validated before the note append) add 24 lines over 60786, reaching 60810. Budget 60826 keeps 16 lines of headroom.
-  const driverLocBudget = 60_826;
+  // NOTE: Round cause (the `cause` type, pure `roundCause` and its call after the missing-RED append) adds 99 lines over 60810, reaching 60909. Budget 60925 keeps 16 lines of headroom.
+  // NOTE: Rounds past cap (the `cause` fact, per-round `cap` in round timing, their allow-list gates and the `Rounds past cap` health bullet) add 56 lines over 60909, reaching 60965. Budget 60981 keeps 16 lines of headroom.
+  const driverLocBudget = 60_981;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
@@ -325,14 +327,15 @@ test("rendered packs stay within the per-actor byte budgets", () => {
     );
 
   // NOTE: Pack budgets enforce totals and current component limits.
+  // NOTE: The plan ceiling rose 17260 -> 17527 B for the quality-bar `Pins:` bullet (+267 B); `## plan` renders into neither the code prompt nor the writer pack.
   // NOTE: Code (16067) and plan (17260) ceilings reflect quality-bar.md compression (-299 B net in shared after restoring "partial failures and updates", +12 B), naming/comments and safe-DRY rules (+1174 B in code), and Shape/Prune updates (+280 B net in testing after restoring "for coverage", +24 B).
   assert.ok(
     promptBytes("code") <= 16_067,
     `code reviewer prompt exceeds 16067 budget`
   );
   assert.ok(
-    promptBytes("plan") <= 17_260,
-    `plan reviewer prompt exceeds 17260 budget`
+    promptBytes("plan") <= 17_527,
+    `plan reviewer prompt exceeds 17527 budget`
   );
   // NOTE: 12734 covers the design altitude, severity, and advisory grounding-lead rules after consolidation.
   // NOTE: 12745 covers the design altitude, severity, and advisory grounding-lead rules after consolidation,

@@ -40,6 +40,7 @@ import type {
   SlotYieldFacts,
 } from "./domain/diagnostics.ts";
 import { stableValue } from "./domain/stable-value.ts";
+import { ROUND_CAUSES } from "./domain/types.ts";
 import { foldLedger, latest } from "./ledger.ts";
 import type { Fold } from "./ledger.ts";
 import { present } from "./narrow.ts";
@@ -202,6 +203,10 @@ const reviewFacts = (round: ReviewRound, fold: Fold) => {
     }
   }
 
+  const cause = ROUND_CAUSES.find(
+    (primary) => primary === round.findings?.cause?.primary
+  );
+
   return {
     phase: round.review,
     round: round.round,
@@ -210,6 +215,7 @@ const reviewFacts = (round: ReviewRound, fold: Fold) => {
     rejected,
     recurring,
     ...(reraised.size && { reraised: [...reraised] }),
+    ...(cause && { cause }),
   };
 };
 
@@ -1567,6 +1573,7 @@ export const sessionFacts = (
     return {
       review: present(reviewKeys.get(round.review), "review key"),
       round: round.round,
+      cap: round.cap,
       slots: round.roster
         .filter((slot) => slot.reserve !== true)
         .map((slot) => {

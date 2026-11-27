@@ -38,8 +38,9 @@ import {
   repositoryRerunRounds,
   rerunGranted,
   rerunNotesFor,
+  roundCause,
 } from "./findings.ts";
-import type { Finalized, FindingsValue } from "./findings.ts";
+import type { Finalized, FindingsValue, RoundCauseScope } from "./findings.ts";
 import { git, gitPaths } from "./git.ts";
 import {
   currentRuntimeVerification,
@@ -1701,6 +1702,22 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
           }
         }
       }
+    }
+
+    if (n >= 2) {
+      let scope: RoundCauseScope = "standard";
+
+      if (confirmationRound) {
+        scope = "confirmation";
+      } else if (round.coverage) {
+        scope = "coverage";
+      }
+
+      pending.cause = roundCause({
+        scope,
+        findings: pending.findings,
+        replies,
+      });
     }
 
     // The finalized findings copy carries the same durable report identity as

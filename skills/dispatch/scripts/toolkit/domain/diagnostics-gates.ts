@@ -49,6 +49,7 @@ import type {
   RunFacts,
   Usage,
 } from "./diagnostics-types.ts";
+import { ROUND_CAUSES } from "./types.ts";
 
 const MAX_REVIEW_ROUND_CAP = 1000;
 
@@ -1425,6 +1426,7 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
       .flatMap((v) => {
         const round = count(v["round"]);
         const cap = count(v["cap"]);
+        const cause = ROUND_CAUSES.find((primary) => primary === v["cause"]);
 
         if (round === undefined || round === 0) {
           return [];
@@ -1458,6 +1460,7 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
               "cap",
               cap !== undefined && cap <= MAX_REVIEW_ROUND_CAP ? cap : undefined
             ),
+            ...opt("cause", cause),
           },
         ];
       }),
@@ -1467,6 +1470,7 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
         ? r["roundTiming"].filter(record).flatMap((v) => {
             const review = match(/^review-[a-f0-9]{16}$/u)(v["review"]);
             const round = count(v["round"]);
+            const cap = count(v["cap"]);
 
             if (review === undefined || round === undefined || round === 0) {
               return [];
@@ -1498,7 +1502,19 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
               return { slot: slot ?? DASH, attempts };
             });
 
-            return [{ review, round, slots }];
+            return [
+              {
+                review,
+                round,
+                ...opt(
+                  "cap",
+                  cap !== undefined && cap > 0 && cap <= MAX_REVIEW_ROUND_CAP
+                    ? cap
+                    : undefined
+                ),
+                slots,
+              },
+            ];
           })
         : undefined
     ),

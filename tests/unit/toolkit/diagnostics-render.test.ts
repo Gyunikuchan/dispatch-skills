@@ -23,6 +23,7 @@ import {
   sanitizeFacts,
 } from "../../../skills/dispatch/scripts/toolkit/domain/diagnostics.ts";
 import { stableValue } from "../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts";
+import type { RoundCausePrimary } from "../../../skills/dispatch/scripts/toolkit/domain/types.ts";
 import {
   checks,
   loadPlan,
@@ -1560,4 +1561,147 @@ test("reports linked restart work and unavailable coverage beside retry metrics"
     renderDiagnostics([{ ...facts, recoveryExecutions: [] }]).text,
     /Execution uncollected/u
   );
+});
+
+// SECTION: Rounds past cap
+
+const pastCapReview = "review-1234567890abcdef";
+
+const pastCapLines = (report: string) =>
+  report.split("\n").filter((line) => line.startsWith("- Rounds past cap:"));
+
+const pastCapRow = (
+  round: number,
+  extra: { cap?: number; cause?: RoundCausePrimary } = {}
+) => ({
+  phase: pastCapReview,
+  round,
+  accepted: 0,
+  rejected: 0,
+  ...extra,
+});
+
+const pastCapRun = (cause: "failed" | "clean") => ({
+  phases: [],
+  invocations: [],
+  reviews: [pastCapRow(1, { cap: 1 }), pastCapRow(2, { cap: 1, cause })],
+});
+
+const pastCapCause = (cause: unknown) => ({ ...pastCapRow(2), cause });
+
+const subjectKey = (index: number) =>
+  `review-${index.toString(16).padStart(16, "0")}`;
+
+test("the rounds-past-cap bullet survives the review-health row fold", () => {
+  // 30 reviews of 100 rounds exceed the report cap, so the health rows fold.
+  const keys = Array.from({ length: 30 }, (_, i) => subjectKey(i));
+
+  const { text: report } = renderDiagnostics([
+    {
+      phases: [],
+      invocations: [],
+      reviews: [
+        {
+          phase: defined(keys[0]),
+          round: 99,
+          accepted: 1,
+          rejected: 0,
+          cause: "recurring",
+        },
+      ],
+      roundTiming: keys.flatMap((review) =>
+        Array.from({ length: 100 }, (_, i) => ({
+          review,
+          round: i + 1,
+          cap: 98,
+          slots: [
+            { slot: "codex[0]", attempts: [{ startMs: 0, endMs: 1000 }] },
+          ],
+        }))
+      ),
+    },
+  ]);
+
+  assert.match(report, /\d+ review round rows omitted\./u);
+  assert.doesNotMatch(report, /\| subject 000000000000001d \| 100\/100 \|/u);
+
+  const bullets = pastCapLines(report);
+  assert.equal(bullets.length, 30);
+  assert.equal(
+    bullets[0],
+    "- Rounds past cap: subject 0000000000000000 (cap 98): R99 recurring, R100 unrecorded"
+  );
+  assert.equal(
+    bullets[29],
+    "- Rounds past cap: subject 000000000000001d (cap 98): R99 unrecorded, R100 unrecorded"
+  );
+});
+
+test("no rounds-past-cap bullet without a recorded cap or a round above it", () => {
+  for (const reviews of [
+    [pastCapRow(1), pastCapRow(2), pastCapRow(3)],
+    [1, 2, 3].map((round) => pastCapRow(round, { cap: 3 })),
+  ]) {
+    const { text: report } = renderDiagnostics([
+      { phases: [], invocations: [], reviews },
+    ]);
+
+    assert.match(report, /## Review health/u);
+    assert.doesNotMatch(report, /Rounds past cap/u);
+  }
+});
+
+test("a multi-run report prefixes each rounds-past-cap bullet with its run number", () => {
+  assert.deepEqual(
+    pastCapLines(
+      renderDiagnostics([pastCapRun("failed"), pastCapRun("clean")]).text
+    ),
+    [
+      "- Rounds past cap: run 1 subject 1234567890abcdef (cap 1): R2 failed",
+      "- Rounds past cap: run 2 subject 1234567890abcdef (cap 1): R2 clean",
+    ]
+  );
+});
+
+test("the diagnostics allow-list keeps only known round causes and positive in-range caps", () => {
+  const kept = sanitizeFacts({
+    phases: [],
+    invocations: [],
+    reviews: [
+      pastCapCause("fix-induced"),
+      pastCapCause("unknown-origin"),
+      pastCapCause("bogus"),
+      pastCapCause({ primary: "recurring" }),
+      pastCapCause(undefined),
+    ],
+  }).reviews.map((review) => review.cause);
+
+  assert.deepEqual(kept, [
+    "fix-induced",
+    "unknown-origin",
+    undefined,
+    undefined,
+    undefined,
+  ]);
+
+  const caps = sanitizeFacts({
+    phases: [],
+    invocations: [],
+    reviews: [],
+    roundTiming: [3, 0, -1, 1.5, 1001, "2"].map((cap, i) => ({
+      review: pastCapReview,
+      round: i + 1,
+      cap,
+      slots: [],
+    })),
+  }).roundTiming?.map((timing) => timing.cap);
+
+  assert.deepEqual(caps, [
+    3,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ]);
 });

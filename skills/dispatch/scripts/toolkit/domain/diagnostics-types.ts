@@ -12,7 +12,7 @@ import type {
 import type { LifecycleStep } from "../../providers/types.ts";
 import type { RecoverySelection } from "../review-state.ts";
 import type { FailureClass } from "../types.ts";
-import type { ReviewKind } from "./types.ts";
+import type { ReviewKind, RoundCausePrimary } from "./types.ts";
 
 export const PHASE_NAMES = [
   "plan",
@@ -171,6 +171,7 @@ export interface InvocationFacts {
 /**
  * `reraised` and `escalation` sit on a review's last round; they are the driver's own convergence result, never a re-derivation.
  * `cap` is the phase's resolved round cap on every round; absent, H2 falls back to `DIAGNOSTIC_THRESHOLDS.reviewRounds`.
+ * `cause` is the saved round cause's primary; absent on round 1, older sessions and invalid values.
  */
 export interface ReviewFacts {
   phase?: string;
@@ -181,6 +182,7 @@ export interface ReviewFacts {
   reraised?: readonly string[];
   escalation?: Escalation;
   cap?: number;
+  cause?: RoundCausePrimary;
 }
 
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
@@ -326,6 +328,8 @@ export interface RunFacts {
   roundTiming?: {
     review: string;
     round: number;
+    /** The saved round's cap; reviews whose rounds all failed have no findings facts to carry it. */
+    cap?: number;
     slots: {
       slot: string;
       attempts: {
