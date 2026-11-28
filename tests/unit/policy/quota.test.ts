@@ -3,9 +3,11 @@ import { describe, test } from "node:test";
 
 import {
   H,
+  emptyOutputBreakerOpen,
   quotaSnapshot,
 } from "../../../skills/dispatch/scripts/policy/quota.ts";
 import type {
+  EmptyOutputRecord,
   QuotaGeneration,
   QuotaKey,
   QuotaObservation,
@@ -107,5 +109,59 @@ describe("quota eligibility preserves exact keys and bounded expiry", () => {
       false
     );
     assert.equal(decide(4 * H, [observation], []).skipped, false);
+  });
+});
+
+// SECTION: Empty-output breaker
+
+const record = (
+  kind: EmptyOutputRecord["kind"],
+  seq: number,
+  observedAt = seq
+): EmptyOutputRecord => ({
+  schemaVersion: 1,
+  kind,
+  provider: "codex",
+  model: null,
+  seq,
+  observedAt,
+});
+
+const failure = (seq: number, observedAt?: number) =>
+  record("empty-output-failure", seq, observedAt);
+
+const reset = (seq: number, observedAt?: number) =>
+  record("empty-output-reset", seq, observedAt);
+
+const open = (records: readonly EmptyOutputRecord[]) =>
+  emptyOutputBreakerOpen({ records });
+
+describe("empty-output breaker trips only on strictly consecutive failures", () => {
+  test("one failure leaves the breaker closed and two consecutive failures trip it", () => {
+    assert.equal(open([]), false);
+    assert.equal(open([failure(1)]), false);
+    assert.equal(open([failure(1), failure(2)]), true);
+  });
+
+  test("a later reset clears earlier failures and only newer failures count", () => {
+    assert.equal(open([failure(1), failure(2), reset(3)]), false);
+    assert.equal(open([failure(1), failure(2), reset(3), failure(4)]), false);
+    assert.equal(
+      open([failure(1), failure(2), reset(3), failure(4), failure(5)]),
+      true
+    );
+  });
+
+  test("same-timestamp records order strictly by seq, never by observedAt", () => {
+    assert.equal(
+      open([failure(2, 100), reset(1, 100), failure(3, 100)]),
+      true,
+      "reset with a lower seq must not clear a later failure"
+    );
+    assert.equal(
+      open([failure(1, 100), reset(2, 100), failure(3, 100)]),
+      false,
+      "reset with a higher seq must clear an earlier failure"
+    );
   });
 });

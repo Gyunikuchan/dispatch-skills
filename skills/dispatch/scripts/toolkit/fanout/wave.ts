@@ -1,5 +1,7 @@
 import fs from "node:fs";
 
+import { publishExclusive } from "../../lib/fs-ext.ts";
+import { nodeLinkFs } from "../../lib/node-fs-ext.ts";
 import { parseBlockedReply } from "../domain/blocker.ts";
 import type { RosterSlot } from "../domain/types.ts";
 import {
@@ -33,6 +35,24 @@ const isOnly = (slot: RosterSlot) => slot.native;
 const settled = (outcomes: readonly (SlotOutcome | undefined)[]) =>
   outcomes.flatMap((outcome) => (outcome ? [outcome] : []));
 
+// NOTE: An unwritable marker falls back to this process-wide set, so another process can repeat the replay emit.
+const replayClaimedInMemory = new Set<string>();
+
+// Claims the once-per-slot replay emit; the marker file keeps the claim across processes.
+const claimReplayEmit = (marker: string) => {
+  if (replayClaimedInMemory.has(marker)) {
+    return false;
+  }
+
+  replayClaimedInMemory.add(marker);
+
+  try {
+    return publishExclusive(nodeLinkFs, marker, "");
+  } catch {
+    return true;
+  }
+};
+
 // oxlint-disable-next-line eslint/complexity -- wave fold branches per failure report, attempt match, and pending state.
 export const runNativeWave = async (
   input: Pick<FanOutInput, "validate" | "onIgnoredReport">,
@@ -42,7 +62,11 @@ export const runNativeWave = async (
     nativeFailures: readonly NativeFailure[];
     files: Pick<
       ReturnType<typeof slotFiles>,
-      "basePathOf" | "fileOfLogical" | "readSaved" | "saveLogical"
+      | "basePathOf"
+      | "fileOfLogical"
+      | "readSaved"
+      | "replayMarkerOf"
+      | "saveLogical"
     >;
     native: ReturnType<typeof nativeVoice>;
     emit: Emit;
@@ -56,7 +80,13 @@ export const runNativeWave = async (
     targets,
     nativeFirstProviders,
     nativeFailures,
-    files: { basePathOf, fileOfLogical, readSaved, saveLogical },
+    files: {
+      basePathOf,
+      fileOfLogical,
+      readSaved,
+      replayMarkerOf,
+      saveLogical,
+    },
     native: {
       baseTextOf,
       createNativeOnly,
@@ -1187,6 +1217,15 @@ export const runNativeWave = async (
             // the last pending voice must not drop it.
             const savedFailed = readSaved(slot.slot);
             const priorBlocked = savedFailed?.blocked;
+
+            // The saved failure replays once per slot, before any retry or reserve routing.
+            if (
+              savedFailed?.state === "failed" &&
+              claimReplayEmit(replayMarkerOf(slot.slot))
+            ) {
+              emit(slot, { kind: "slot", state: "failed", replay: true });
+            }
+
             // A native-only reserve mint appends its reply section to this same
             // file: rewrite the base prompt unconditionally, as the CLI-only
             // path does, so the retry never reads a native reply section.

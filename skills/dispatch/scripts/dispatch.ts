@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { parseCommand, SESSION_ACTIONS, UsageError } from "./lib/cli.ts";
-import { reprobeQuota } from "./lib/quota-store.ts";
+import { reprobeEmptyOutputBreaker, reprobeQuota } from "./lib/quota-store.ts";
 import {
   AmbiguousSessionIdentityError,
   findRepoRoot,
@@ -195,14 +195,18 @@ export const main = async (
         const key = { provider, model: flag("model") ?? null, mode };
         let result;
 
+        const store = {
+          sessionDir: path.resolve(required("session-dir")),
+          repositoryRoot: repo,
+          bucketWidth: H,
+        };
+
         try {
-          result = reprobeQuota(
-            {
-              sessionDir: path.resolve(required("session-dir")),
-              repositoryRoot: repo,
-              bucketWidth: H,
-            },
-            key
+          result = reprobeQuota(store, key);
+          reprobeEmptyOutputBreaker(
+            store,
+            { provider, model: key.model },
+            Date.now()
           );
         } catch (error) {
           if (

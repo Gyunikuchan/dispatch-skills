@@ -1190,6 +1190,96 @@ test("retro warning handles malformed, missing-grounding and clean retros", asyn
   }
 });
 
+test("subagent-1 alias numbers the first subagent independently of the host alias", () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const markdown = fs.readFileSync(
+      writeDiagnostics(f.session, {
+        outcome: "complete",
+        phases: [],
+        invocations: [],
+        reviews: [],
+        hostUsage: {
+          platform: "claude",
+          rows: [],
+          responses: [
+            {
+              stage: "plan",
+              role: "host",
+              agent: "host-1",
+              basis: "claude-assistant-message",
+              coverage: "complete",
+              observed: 1,
+            },
+            {
+              stage: "plan",
+              role: "subagent",
+              agent: "subagent-1",
+              basis: "claude-assistant-message",
+              coverage: "complete",
+              observed: 2,
+            },
+          ],
+        },
+      }),
+      "utf-8"
+    );
+
+    assert.match(
+      markdown,
+      /\| plan \| subagent \| subagent-1 \| claude-assistant-message \|/u
+    );
+    assert.doesNotMatch(markdown, /subagent-2/u);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("reserve responder renders beside the failed target slot on the critical-path row", () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const markdown = fs.readFileSync(
+      writeDiagnostics(f.session, {
+        outcome: "complete",
+        phases: [],
+        invocations: [],
+        reviews: [],
+        roundTiming: [
+          {
+            review: "review-0123456789abcdef",
+            round: 1,
+            slots: [
+              {
+                slot: "codex[0]",
+                responder: "claude[0]",
+                attempts: [{ surface: "cli", startMs: 0, endMs: 30 }],
+              },
+              {
+                slot: "native[0]",
+                attempts: [{ surface: "cli", startMs: 0, endMs: 10 }],
+              },
+            ],
+          },
+        ],
+      }),
+      "utf-8"
+    );
+
+    assert.match(
+      markdown,
+      /\| subject 0123456789abcdef \| 1 \| codex\[0\] → claude\[0\] \| [^|]+ \| ✓ \|/u
+    );
+    assert.match(
+      markdown,
+      /\| subject 0123456789abcdef \| 1 \| native\[0\] \| [^|]+ \| — \|/u
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("Overview lists each zero-invocation phase without folding", () => {
   const f = sessionFixture({ memory: true });
 
@@ -1488,7 +1578,7 @@ test("round workload render rereads host usage for started rounds and flags over
 
       assert.equal(
         budget,
-        "Advisory budget (lightweight fix review): <=6 toolkit calls, <=25 host turns; over: subject aaaaaaaaaaaaaaaa round 1"
+        "Advisory budget (lightweight fix review): <=10 toolkit calls, <=25 host turns; over: subject aaaaaaaaaaaaaaaa round 1"
       );
     } finally {
       f.cleanup();

@@ -1864,6 +1864,7 @@ test("review timing joins current generation and reserve attempts", async () => 
       },
       {
         slot: "native[0]",
+        responder: "claude[0]",
         attempts: [
           { surface: "cli", startMs: 0, endMs: 30 },
           { surface: "native" },
@@ -1873,6 +1874,275 @@ test("review timing joins current generation and reserve attempts", async () => 
     assert.deepEqual(facts.roundTiming?.[0]?.slots, [
       {
         slot: "codex[0]",
+        responder: "claude[0]",
+        attempts: [{ surface: "cli", startMs: 0, endMs: 30 }],
+      },
+    ]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("review timing drops a reserve responder once the target retries", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const skill = path.join(f.root, "skill");
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, "config.jsonc"), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    saveRound({
+      session: f.session,
+      review: "plan-a",
+      round: 1,
+      generation: 2,
+      roster: [
+        rosterSlot("codex[0]", "codex"),
+        rosterSlot("claude[0]", "claude", { reserve: true }),
+      ],
+      outcomes: [],
+    });
+    // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+    f.deps.delegate = async () => ({
+      outcome: { status: "ok", text: "ok", resume: null, sessionId: null },
+      invocations: [
+        {
+          provider: "claude",
+          model: "m",
+          mode: "cli",
+          effort: null,
+          launched: true,
+          outcome: "ok",
+          startMs: 0,
+          endMs: 30,
+        },
+      ],
+    });
+
+    const observer = defined(
+      observeTool(f.session, "review", "run", "plan", f.deps)
+    );
+
+    const generation = path.join(
+      f.session,
+      ".state",
+      "reviews",
+      "plan-a",
+      "round-1",
+      "gen-2"
+    );
+
+    await observer.deps.delegate(
+      "claude",
+      delegateReq(path.join(generation, "logs", "claude[0].log"), "codex[0]"),
+      "cli"
+    );
+    defined(defined(observer).deps.diagnostics)({
+      kind: "routing",
+      subject: generation,
+      slot: "claude[0]",
+      targetSlot: "codex[0]",
+      attempt: 1,
+      state: "reserve",
+    });
+    await observer.deps.delegate(
+      "codex",
+      delegateReq(path.join(generation, "logs", "codex[0].log")),
+      "cli"
+    );
+    observer.finish({ ok: true, exit: 0, summary: "done", value: null });
+
+    const facts = sessionFacts(
+      f.session,
+      { records: [], lastSeq: 0, torn: null },
+      "complete"
+    );
+
+    // The target retry was the last launch serving codex[0], so the reserve is not its responder.
+    assert.deepEqual(facts.roundTiming?.[0]?.slots, [
+      {
+        slot: "codex[0]",
+        attempts: [
+          { surface: "cli", startMs: 0, endMs: 30 },
+          { surface: "cli", startMs: 0, endMs: 30 },
+        ],
+      },
+    ]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("review timing trusts a saved done outcome over a stale reserve launch", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const skill = path.join(f.root, "skill");
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, "config.jsonc"), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    saveRound({
+      session: f.session,
+      review: "plan-a",
+      round: 1,
+      generation: 2,
+      roster: [
+        rosterSlot("codex[0]", "codex"),
+        rosterSlot("claude[0]", "claude", { reserve: true }),
+      ],
+      outcomes: [
+        {
+          slot: "codex[0]",
+          state: "done",
+          responder: {
+            slot: "codex[0]",
+            provider: "codex",
+            model: "m",
+            native: false,
+          },
+        },
+      ],
+    });
+    // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+    f.deps.delegate = async () => ({
+      outcome: { status: "ok", text: "ok", resume: null, sessionId: null },
+      invocations: [
+        {
+          provider: "claude",
+          model: "m",
+          mode: "cli",
+          effort: null,
+          launched: true,
+          outcome: "ok",
+          startMs: 0,
+          endMs: 30,
+        },
+      ],
+    });
+
+    const observer = defined(
+      observeTool(f.session, "review", "run", "plan", f.deps)
+    );
+
+    const generation = path.join(
+      f.session,
+      ".state",
+      "reviews",
+      "plan-a",
+      "round-1",
+      "gen-2"
+    );
+
+    await observer.deps.delegate(
+      "claude",
+      delegateReq(path.join(generation, "logs", "claude[0].log"), "codex[0]"),
+      "cli"
+    );
+    defined(defined(observer).deps.diagnostics)({
+      kind: "routing",
+      subject: generation,
+      slot: "claude[0]",
+      targetSlot: "codex[0]",
+      attempt: 1,
+      state: "reserve",
+    });
+    observer.finish({ ok: true, exit: 0, summary: "done", value: null });
+
+    const facts = sessionFacts(
+      f.session,
+      { records: [], lastSeq: 0, torn: null },
+      "complete"
+    );
+
+    // The saved outcome says codex[0] answered itself; the reserve launch is only an attempt.
+    assert.deepEqual(facts.roundTiming?.[0]?.slots, [
+      {
+        slot: "codex[0]",
+        attempts: [{ surface: "cli", startMs: 0, endMs: 30 }],
+      },
+    ]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("review timing takes the responder from a saved done outcome without a reserve launch", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const skill = path.join(f.root, "skill");
+    fs.mkdirSync(skill);
+    writeJson(path.join(skill, "config.jsonc"), { diagnostics: true });
+    f.deps.skillRoot = skill;
+    saveRound({
+      session: f.session,
+      review: "plan-a",
+      round: 1,
+      generation: 2,
+      roster: [
+        rosterSlot("codex[0]", "codex"),
+        rosterSlot("claude[0]", "claude", { reserve: true }),
+      ],
+      outcomes: [
+        {
+          slot: "codex[0]",
+          state: "done",
+          responder: {
+            slot: "claude[0]",
+            provider: "claude",
+            model: "m",
+            native: false,
+          },
+        },
+      ],
+    });
+    // oxlint-disable-next-line eslint/require-await -- type requires a Promise return; this mock has no awaitable work
+    f.deps.delegate = async () => ({
+      outcome: { status: "ok", text: "ok", resume: null, sessionId: null },
+      invocations: [
+        {
+          provider: "codex",
+          model: "m",
+          mode: "cli",
+          effort: null,
+          launched: true,
+          outcome: "ok",
+          startMs: 0,
+          endMs: 30,
+        },
+      ],
+    });
+
+    const observer = defined(
+      observeTool(f.session, "review", "run", "plan", f.deps)
+    );
+
+    const generation = path.join(
+      f.session,
+      ".state",
+      "reviews",
+      "plan-a",
+      "round-1",
+      "gen-2"
+    );
+
+    await observer.deps.delegate(
+      "codex",
+      delegateReq(path.join(generation, "logs", "codex[0].log")),
+      "cli"
+    );
+    observer.finish({ ok: true, exit: 0, summary: "done", value: null });
+
+    const facts = sessionFacts(
+      f.session,
+      { records: [], lastSeq: 0, torn: null },
+      "complete"
+    );
+
+    assert.deepEqual(facts.roundTiming?.[0]?.slots, [
+      {
+        slot: "codex[0]",
+        responder: "claude[0]",
         attempts: [{ surface: "cli", startMs: 0, endMs: 30 }],
       },
     ]);

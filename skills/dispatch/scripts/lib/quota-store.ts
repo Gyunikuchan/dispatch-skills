@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type {
+  EmptyOutputKey,
+  EmptyOutputRecord,
   QuotaGeneration,
   QuotaKey,
   QuotaObservation,
@@ -109,15 +111,7 @@ const realAncestors = (file: string) => {
   }
 };
 
-const directory = (options: QuotaStoreOptions, key: QuotaKey) => {
-  if (
-    !Number.isSafeInteger(options.bucketWidth) ||
-    options.bucketWidth <= 0 ||
-    !validKey(key)
-  ) {
-    throw new Error("Invalid quota key or bucket width");
-  }
-
+const ownedSession = (options: QuotaStoreOptions) => {
   const repo = fs.realpathSync(options.repositoryRoot);
   const session = path.resolve(options.sessionDir);
 
@@ -135,8 +129,20 @@ const directory = (options: QuotaStoreOptions, key: QuotaKey) => {
     throw new Error("Quota session ownership mismatch");
   }
 
+  return session;
+};
+
+const directory = (options: QuotaStoreOptions, key: QuotaKey) => {
+  if (
+    !Number.isSafeInteger(options.bucketWidth) ||
+    options.bucketWidth <= 0 ||
+    !validKey(key)
+  ) {
+    throw new Error("Invalid quota key or bucket width");
+  }
+
   const dir = path.join(
-    session,
+    ownedSession(options),
     ".state",
     "quota",
     crypto.createHash("sha256").update(tuple(key)).digest("hex")
@@ -380,3 +386,201 @@ export const reprobeQuota = (options: QuotaStoreOptions, key: QuotaKey) => {
 
   return generation;
 };
+
+// SECTION: Empty-output breaker
+
+export interface EmptyOutputSnapshot {
+  records: EmptyOutputRecord[];
+  warnings: string[];
+}
+
+const EMPTY_OUTPUT_RECORD_LIMIT = 4096;
+
+const emptyOutputKeyValid = (key: EmptyOutputKey) =>
+  typeof key.provider === "string" &&
+  !!key.provider.trim() &&
+  (key.model === null ||
+    (typeof key.model === "string" && !!key.model.trim())) &&
+  Buffer.byteLength(JSON.stringify([key.provider, key.model])) <= 2048;
+
+const emptyOutputDirectory = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey
+) => {
+  if (!emptyOutputKeyValid(key)) {
+    throw new Error("Invalid empty-output key");
+  }
+
+  const dir = path.join(
+    ownedSession(options),
+    ".state",
+    "quota",
+    `empty-output-${crypto
+      .createHash("sha256")
+      .update(JSON.stringify([key.provider, key.model]))
+      .digest("hex")}`
+  );
+
+  realAncestors(dir);
+
+  return dir;
+};
+
+// Newest first; a store that does not exist yet holds no records.
+const emptyOutputSeqs = (dir: string) => {
+  let names: string[];
+
+  try {
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    if (missing(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+
+  return names
+    .flatMap((name) => {
+      const seq = /^(?<seq>[1-9]\d*)\.json$/u.exec(name)?.groups?.["seq"];
+
+      return seq === undefined ? [] : [Number(seq)];
+    })
+    .filter((seq) => Number.isSafeInteger(seq))
+    .toSorted((a, b) => b - a);
+};
+
+const emptyOutputRecordOf = (
+  value: unknown,
+  key: EmptyOutputKey,
+  seq: number
+): EmptyOutputRecord => {
+  if (!isRecord(value)) {
+    throw new Error("Invalid empty-output record");
+  }
+
+  const { kind, observedAt } = value;
+
+  if (
+    value["schemaVersion"] !== 1 ||
+    (kind !== "empty-output-failure" && kind !== "empty-output-reset") ||
+    value["provider"] !== key.provider ||
+    value["model"] !== key.model ||
+    value["seq"] !== seq ||
+    typeof observedAt !== "number" ||
+    !Number.isSafeInteger(observedAt) ||
+    observedAt < 0
+  ) {
+    throw new Error("Invalid empty-output record");
+  }
+
+  return {
+    schemaVersion: 1,
+    kind,
+    provider: key.provider,
+    model: key.model,
+    seq,
+    observedAt,
+  };
+};
+
+// Stops at the latest reset: older records cannot change the open streak.
+export const readEmptyOutputBreaker = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey
+): EmptyOutputSnapshot => {
+  const records: EmptyOutputRecord[] = [];
+
+  try {
+    const dir = emptyOutputDirectory(options, key);
+
+    for (const seq of emptyOutputSeqs(dir)) {
+      const record = emptyOutputRecordOf(
+        readRecord(path.join(dir, `${seq}.json`), EMPTY_OUTPUT_RECORD_LIMIT),
+        key,
+        seq
+      );
+
+      records.push(record);
+
+      if (record.kind === "empty-output-reset") {
+        break;
+      }
+    }
+  } catch {
+    return { records: [], warnings: [WARNING] };
+  }
+
+  return { records: records.toReversed(), warnings: [] };
+};
+
+// NOTE: EEXIST retries the next seq, so concurrent writers never overwrite or share a seq.
+const publishEmptyOutput = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey,
+  kind: EmptyOutputRecord["kind"],
+  observedAt: number
+): EmptyOutputRecord => {
+  if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
+    throw new Error("Invalid empty-output observation");
+  }
+
+  const dir = emptyOutputDirectory(options, key);
+
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  for (let seq = (emptyOutputSeqs(dir)[0] ?? 0) + 1; ; seq += 1) {
+    const record: EmptyOutputRecord = {
+      schemaVersion: 1,
+      kind,
+      provider: key.provider,
+      model: key.model,
+      seq,
+      observedAt,
+    };
+
+    if (
+      publishExclusive(
+        nodeLinkFs,
+        path.join(dir, `${seq}.json`),
+        JSON.stringify(record)
+      )
+    ) {
+      return record;
+    }
+  }
+};
+
+const tryPublishEmptyOutput = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey,
+  kind: EmptyOutputRecord["kind"],
+  observedAt: number
+) => {
+  try {
+    publishEmptyOutput(options, key, kind, observedAt);
+
+    return { published: true };
+  } catch {
+    return { published: false, warning: WARNING };
+  }
+};
+
+export const recordEmptyOutputFailure = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey,
+  observedAt: number
+) => tryPublishEmptyOutput(options, key, "empty-output-failure", observedAt);
+
+export const resetEmptyOutputBreaker = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey,
+  observedAt: number
+) => tryPublishEmptyOutput(options, key, "empty-output-reset", observedAt);
+
+// Explicit reprobe: a write failure surfaces to the caller instead of failing open.
+export const reprobeEmptyOutputBreaker = (
+  options: QuotaStoreOptions,
+  key: EmptyOutputKey,
+  observedAt: number
+) => publishEmptyOutput(options, key, "empty-output-reset", observedAt);

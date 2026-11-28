@@ -462,8 +462,10 @@ test("fan-out cascades validation models modes quota and one reserve", async () 
     assert.equal(outcome.state === "done" && outcome.text, "reserve answer");
     const quotaDir = path.join(f.session, ".state", "quota");
 
+    // Empty-output breaker directories hold streak records, not cooldown observations.
     const observations = fs
       .readdirSync(quotaDir)
+      .filter((name) => !name.startsWith("empty-output-"))
       .flatMap((name) =>
         fs
           .readdirSync(path.join(quotaDir, name))
@@ -1258,8 +1260,10 @@ test("terminal failures take no reserve and publish no cooldown", async () => {
       "the quota store is consulted before the failure"
     );
 
+    // Empty-output breaker directories hold streak records, not cooldown observations.
     const observations = fs
       .readdirSync(quotaDir)
+      .filter((name) => !name.startsWith("empty-output-"))
       .flatMap((name) =>
         fs
           .readdirSync(path.join(quotaDir, name))
@@ -8396,6 +8400,218 @@ test("wrap-up resume leaves the stall resume count unchanged", async () => {
       f.launches.map((launch) => launch.request.resumesUsed),
       [0, 0]
     );
+  } finally {
+    f.cleanup();
+  }
+});
+
+// SECTION: Empty-output breaker routing
+
+test("empty-output breaker routes a voice straight to reserve after two consecutive empty outputs", async () => {
+  const f = sessionFixture();
+
+  try {
+    f.script("codex", "a", "");
+    f.script("codex", "b", "b answer");
+    f.script("copilot", "good", "reserve answer");
+    const slots = [slot("codex", ["a", "b"]), slot("copilot", "good", true)];
+
+    const run = async (name: string) =>
+      await fanOut(
+        {
+          dir: path.join(f.session, name),
+          slots,
+          prompt: "question",
+          validate,
+          quota,
+        },
+        f.deps
+      );
+
+    await run("first-empty");
+    await run("second-empty");
+    f.launches.length = 0;
+
+    const outcomes = await run("breaker-open");
+
+    const routed = defined(
+      outcomes.find((outcome) => outcome.slot === "codex[0]")
+    );
+
+    assert.ok(routed.state === "done");
+    assert.equal(routed.text, "reserve answer");
+    assert.equal(routed.responder?.slot, "copilot[0]");
+    assert.deepEqual(
+      f.launches.map((launch) => launch.provider),
+      ["copilot"]
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("empty-output breaker opens a voice whose open alias follows a healthy one", async () => {
+  const f = sessionFixture();
+
+  try {
+    f.script("codex", "a", "");
+    f.script("codex", "b", "b answer");
+    f.script("copilot", "good", "reserve answer");
+    const reserve = slot("copilot", "good", true);
+
+    const run = async (name: string, models: string[]) =>
+      await fanOut(
+        {
+          dir: path.join(f.session, name),
+          slots: [slot("codex", models), reserve],
+          prompt: "question",
+          validate,
+          quota,
+        },
+        f.deps
+      );
+
+    await run("solo-first", ["a"]);
+    await run("solo-second", ["a"]);
+    f.launches.length = 0;
+
+    const outcomes = await run("reordered", ["b", "a"]);
+
+    const routed = defined(
+      outcomes.find((outcome) => outcome.slot === "codex[0]")
+    );
+
+    assert.ok(routed.state === "done");
+    assert.equal(routed.text, "reserve answer");
+    assert.deepEqual(
+      f.launches.map((launch) => launch.provider),
+      ["copilot"]
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a settled success resets the empty-output streak before it can trip", async () => {
+  const f = sessionFixture();
+
+  try {
+    f.script("codex", "a", "");
+    f.script("codex", "b", "b answer");
+    const slots = [slot("codex", ["a", "b"])];
+
+    const run = async (name: string) =>
+      await fanOut(
+        {
+          dir: path.join(f.session, name),
+          slots,
+          prompt: "question",
+          validate,
+          quota,
+        },
+        f.deps
+      );
+
+    await run("empty-before-reset");
+    f.script("codex", "a", "a answer");
+    await run("success-resets");
+    f.script("codex", "a", "");
+    f.launches.length = 0;
+
+    const [outcome] = await run("empty-after-reset");
+
+    assert.deepEqual(
+      f.launches.map((launch) => launch.request.model),
+      ["a", "b"]
+    );
+    assert.equal(outcome?.state === "done" && outcome.text, "b answer");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("empty-output breaker faults fail open and keep the alias cascade", async () => {
+  const f = sessionFixture();
+
+  try {
+    // A regular file where the breaker's quota directory belongs makes every breaker read and write fail.
+    fs.mkdirSync(path.join(f.session, ".state"), { recursive: true });
+    fs.writeFileSync(path.join(f.session, ".state", "quota"), "blocked");
+    f.script("codex", "a", "");
+    f.script("codex", "b", "b answer");
+    const slots = [slot("codex", ["a", "b"])];
+
+    const run = async (name: string) =>
+      await fanOut(
+        {
+          dir: path.join(f.session, name),
+          slots,
+          prompt: "question",
+          validate,
+          quota,
+        },
+        f.deps
+      );
+
+    const rounds = [await run("one"), await run("two"), await run("three")];
+
+    for (const [outcome] of rounds) {
+      assert.equal(outcome?.state === "done" && outcome.text, "b answer");
+    }
+
+    assert.deepEqual(
+      f.launches.map((launch) => launch.request.model),
+      ["a", "b", "a", "b", "a", "b"]
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+// SECTION: Mixed native and CLI recovery replay
+
+test("mixed native and cli recovery replays a saved failure once across repeated consume", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    f.deps.orchestrator = { platform: "claude", model: null };
+    f.script("opencode", "good", {
+      status: "fail",
+      cls: "auth",
+      detail: "unavailable",
+    });
+    const replayed: string[] = [];
+    f.deps.diagnostics = (event) => {
+      if (
+        event.kind === "slot" &&
+        event.state === "failed" &&
+        event.replay === true
+      ) {
+        replayed.push(event.slot);
+      }
+    };
+
+    const input = {
+      dir: path.join(f.session, "mixed-recovery"),
+      slots: [slot("claude"), slot("opencode")],
+      prompt: "question",
+      validate,
+      quota,
+      sessionRoot: f.session,
+      nativeFirstProviders: ["claude"],
+    };
+
+    const first = await fanOut(input, f.deps);
+    await fanOut(input, f.deps);
+    const native = first.find((outcome) => outcome.state === "native");
+    assert.ok(native?.state === "native");
+    fs.writeFileSync(native.replyPath, "native");
+    replayed.length = 0;
+
+    await fanOut(input, f.deps);
+    await fanOut(input, f.deps);
+
+    assert.deepEqual(replayed, ["opencode[0]"]);
   } finally {
     f.cleanup();
   }

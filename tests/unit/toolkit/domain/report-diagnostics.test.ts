@@ -1745,9 +1745,48 @@ test("round workload renders observed calls, dashes for unavailable cells, and t
   );
   assert.match(
     text,
-    /Advisory budget \(lightweight fix review\): <=6 toolkit calls, <=25 host turns; over: none/u
+    /Advisory budget \(lightweight fix review\): <=10 toolkit calls, <=25 host turns; over: none/u
   );
   assert.doesNotMatch(text, /capture storage failure/u);
+});
+
+test("advisory fix-review budget flags plan and design rounds only above 10 toolkit calls or 25 host turns", () => {
+  const review = "review-1234567890abcdef";
+
+  const text = render([
+    facts({
+      roundWorkload: [
+        { review, kind: "plan", round: 1, calls: { total: 10, phases: [] } },
+        { review, kind: "plan", round: 2, calls: { total: 11, phases: [] } },
+        {
+          review,
+          kind: "design",
+          round: 3,
+          calls: { total: 1, phases: [] },
+          hostTurns: 25,
+        },
+        {
+          review,
+          kind: "design",
+          round: 4,
+          calls: { total: 1, phases: [] },
+          hostTurns: 26,
+        },
+        {
+          review,
+          kind: "code",
+          round: 5,
+          calls: { total: 20, phases: [] },
+          hostTurns: 40,
+        },
+      ],
+    }),
+  ]);
+
+  assert.match(
+    text,
+    /Advisory budget \(lightweight fix review\): <=10 toolkit calls, <=25 host turns; over: subject 1234567890abcdef round 2, subject 1234567890abcdef round 4/u
+  );
 });
 
 test("round workload notes storage failures once and is omitted without review rounds", () => {
@@ -1994,7 +2033,7 @@ test("response tables reconcile matched input while retaining partial and zero e
   );
   assert.match(
     text,
-    /\| code review \| delegate \| delegate-2 \| claude-assistant-message \| 0 \| complete \| 0 \| 0 \| — \|/u
+    /\| code review \| delegate \| delegate-1 \| claude-assistant-message \| 0 \| complete \| 0 \| 0 \| — \|/u
   );
   assert.match(
     text,

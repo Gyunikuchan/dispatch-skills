@@ -5,11 +5,17 @@ import { isRecord } from "../../lib/config.ts";
 import type { loadReadCommands } from "../../lib/config.ts";
 import { nodeErrorCode } from "../../lib/fs-ext.ts";
 import { currentPlatform } from "../../lib/platform.ts";
-import { readQuotaState, publishQuotaFailure } from "../../lib/quota-store.ts";
+import {
+  readEmptyOutputBreaker,
+  readQuotaState,
+  publishQuotaFailure,
+  recordEmptyOutputFailure,
+  resetEmptyOutputBreaker,
+} from "../../lib/quota-store.ts";
 import { validSessionId } from "../../lib/session.ts";
 import type { DiagnosticUsage } from "../../lib/usage/rows.ts";
 import { next as nextCascade } from "../../policy/cascade.ts";
-import { quotaSnapshot } from "../../policy/quota.ts";
+import { emptyOutputBreakerOpen, quotaSnapshot } from "../../policy/quota.ts";
 import { SPECS, isProviderId } from "../../providers/index.ts";
 import { sumSessionUsage, CONTINUE_PROMPT } from "../../providers/runner.ts";
 import type {
@@ -450,6 +456,31 @@ export const cliVoice = (
       }
     };
 
+    // Any open (provider, model) breaker ends the voice before an alias launches, so the wave reserves directly.
+    const breakerOpen = models.some((model) =>
+      emptyOutputBreakerOpen(readEmptyOutputBreaker(store, { provider, model }))
+    );
+
+    if (breakerOpen) {
+      return {
+        slot: physical.slot,
+        state: "failed",
+        cls: "empty-output",
+        reason: "empty-output-breaker",
+      };
+    }
+
+    // Each settled attempt group counts once: empty-output extends the streak, any other outcome resets it. Store faults fail open.
+    const settleAttempt = (model: string | null, emptyOutput: boolean) => {
+      const key = { provider, model };
+
+      if (emptyOutput) {
+        recordEmptyOutputFailure(store, key, deps.clock());
+      } else {
+        resetEmptyOutputBreaker(store, key, deps.clock());
+      }
+    };
+
     for (;;) {
       const remaining = voiceDeadline - deps.clock();
 
@@ -683,6 +714,8 @@ export const cliVoice = (
             });
 
             if (checked.ok) {
+              settleAttempt(model, false);
+
               return {
                 slot: logicalSlot,
                 state: "done",
@@ -760,6 +793,8 @@ export const cliVoice = (
           break;
         }
       }
+
+      settleAttempt(model, failure.cls === "empty-output");
 
       const cascade = nextCascade(failure.cls, position, config);
       emit(targetForEmit, {

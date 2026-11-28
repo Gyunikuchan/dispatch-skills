@@ -461,7 +461,16 @@ test("resume: stall resumes once after idle or empty-output with continue prompt
   }
 });
 
-test("resume: stall retries to the cap with the last valid session id", async () => {
+const idleStall = () =>
+  ok({
+    exit: null,
+    signal: "SIGTERM",
+    stdout: "partial",
+    timedOut: true,
+    idleMs: IDLE_TIMEOUT_MS,
+  });
+
+test("resume: idle stall retries to the cap with the last valid session id", async () => {
   for (const launches of [3, 4]) {
     const h = harness(posix);
 
@@ -476,7 +485,7 @@ test("resume: stall retries to the cap with the last valid session id", async ()
     await flush();
 
     for (let i = 0; i < launches - 1; i += 1) {
-      h.finish(ok({ exit: 1, stdout: "empty one" }));
+      h.finish(idleStall());
       // eslint-disable-next-line no-await-in-loop
       await flush();
       // eslint-disable-next-line no-await-in-loop
@@ -484,13 +493,7 @@ test("resume: stall retries to the cap with the last valid session id", async ()
     }
 
     const terminal = launches === 4;
-    h.finish(
-      ok(
-        terminal
-          ? { exit: 1, stdout: "empty final" }
-          : { stdout: "FINAL answer" }
-      )
-    );
+    h.finish(terminal ? idleStall() : ok({ stdout: "FINAL answer" }));
     // eslint-disable-next-line no-await-in-loop
     const done = await run;
     assert.equal(h.launches.length, launches);
@@ -515,17 +518,61 @@ test("resume: stall retries to the cap with the last valid session id", async ()
 
   const run = runDelegate(spec, req, "cli", h.ports);
   await flush();
-  h.finish(ok({ exit: 1, stdout: "empty one" }));
+  h.finish(idleStall());
   await flush();
   await flush();
   assert.match(h.launches[1]?.argv[1] ?? "", /resume:sess1/u);
-  h.finish(ok({ exit: 1, stdout: "empty two" }));
+  h.finish(idleStall());
   await flush();
   await flush();
   assert.match(h.launches[2]?.argv[1] ?? "", /resume:sess1/u);
   h.finish(ok({ stdout: "FINAL answer" }));
   // eslint-disable-next-line eslint/no-await-expression-member -- direct await member access is intentional in this assertion.
   assert.equal((await run).outcome.status, "ok");
+});
+
+test("resume: empty-output caps consecutive resumes at one even with a session id", async () => {
+  const h = harness(posix);
+  const run = runDelegate(makeNudgeSpec("sess1"), req, "cli", h.ports);
+
+  await flush();
+  h.finish(ok({ exit: 1, stdout: "empty one" }));
+  await flush();
+  await flush();
+  h.finish(ok({ exit: 1, stdout: "empty two" }));
+  await flush();
+  await flush();
+
+  assert.equal(h.launches.length, 2);
+  assert.match(h.launches[1]?.argv[1] ?? "", /resume:sess1/u);
+
+  const done = await run;
+  assert.equal(done.attempts, 2);
+  assert.equal(
+    done.outcome.status === "fail" && done.outcome.cls,
+    "empty-output"
+  );
+});
+
+test("resume: empty-output streak restarts after an idle stall", async () => {
+  const h = harness(posix);
+  const run = runDelegate(makeNudgeSpec("sess1"), req, "cli", h.ports);
+
+  await flush();
+  h.finish(ok({ exit: 1, stdout: "empty one" }));
+  await flush();
+  await flush();
+  h.finish(idleStall());
+  await flush();
+  await flush();
+  h.finish(ok({ exit: 1, stdout: "empty two" }));
+  await flush();
+  await flush();
+  h.finish(ok({ stdout: "FINAL answer" }));
+
+  const done = await run;
+  assert.equal(done.outcome.status, "ok");
+  assert.equal(h.launches.length, 4);
 });
 
 test("resume: stall nudge marks resume launches but not effort retries", async () => {

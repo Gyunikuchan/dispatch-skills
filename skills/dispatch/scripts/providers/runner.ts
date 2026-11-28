@@ -265,6 +265,9 @@ const runAttempts = async (
   let stalledOutcome: Extract<RunOutcome, { status: "fail" }> | null = null;
   let stalledResult: ProcessResult | null = null;
   const MAX_RESUMES = 3;
+  // NOTE: codex reports a session before an empty exit, so a session id alone does not prove the stall is recoverable.
+  const MAX_EMPTY_OUTPUT_RESUMES = 1;
+  let emptyOutputStreak = 0;
   const CAPACITY_WAIT_MS = 30_000;
   const CAPACITY_WAIT_CAP_MS = 120_000;
   const VALID_NUDGE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
@@ -891,6 +894,9 @@ const runAttempts = async (
         continue;
       }
 
+      emptyOutputStreak =
+        outcome.cls === "empty-output" ? emptyOutputStreak + 1 : 0;
+
       const isIdleKill = result.idleMs !== undefined;
 
       const resumable =
@@ -906,7 +912,11 @@ const runAttempts = async (
         lastSessionId = reportedSession(result, current) ?? lastSessionId;
         copyStalled(result, current.model);
 
-        if (resumesUsed < MAX_RESUMES) {
+        if (
+          resumesUsed < MAX_RESUMES &&
+          (outcome.cls !== "empty-output" ||
+            emptyOutputStreak <= MAX_EMPTY_OUTPUT_RESUMES)
+        ) {
           if (outcome.cls === "capacity" && lastSessionId !== null) {
             const waitMs = Math.min(
               outcome.retryAfterMs ?? CAPACITY_WAIT_MS,

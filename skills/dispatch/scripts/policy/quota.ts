@@ -1,4 +1,5 @@
 import type {
+  EmptyOutputRecord,
   QuotaGeneration,
   QuotaKey,
   QuotaObservation,
@@ -111,3 +112,20 @@ export const quotaSnapshot = (
       : base;
   }),
 });
+
+// SECTION: Empty-output breaker
+
+const EMPTY_OUTPUT_TRIP_STREAK = 2;
+
+/** Only failures strictly after the latest reset count; ordering uses seq, never observedAt. */
+export const emptyOutputBreakerOpen = (snapshot: {
+  readonly records: readonly EmptyOutputRecord[];
+}) => {
+  let streak = 0;
+
+  for (const record of snapshot.records.toSorted((a, b) => a.seq - b.seq)) {
+    streak = record.kind === "empty-output-reset" ? 0 : streak + 1;
+  }
+
+  return streak >= EMPTY_OUTPUT_TRIP_STREAK;
+};

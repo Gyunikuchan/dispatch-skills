@@ -554,6 +554,46 @@ test("lint run --fix-review-lite appends the edit and renders the brief in one c
   }
 });
 
+test("lint run --fix-review-lite from a repository subdirectory renders the canonical artifact brief", async () => {
+  const { f, g } = await startRepo();
+
+  try {
+    await reviewAndAccept(f, g);
+
+    const fields = fixPlan(f, g);
+    const subdirectory = path.join(f.root, "src");
+
+    // A relative target resolves against the process directory, so the real CLI runs from a subdirectory.
+    const run = spawnSync(
+      process.execPath,
+      [
+        path.resolve("skills/dispatch/scripts/dispatch.ts"),
+        "lint",
+        "run",
+        path.relative(subdirectory, planFile(f)),
+        "--edit",
+        fields,
+        "--fix-review-lite",
+        "--session",
+        g.session,
+      ],
+      { cwd: subdirectory, encoding: "utf-8", windowsHide: true }
+    );
+
+    const envelope = narrow(
+      parseJson(defined(run.stdout, "stdout")),
+      objectWith({ ok: isBoolean, summary: isString })
+    );
+
+    assert.equal(run.status, 0, run.stdout);
+    assert.equal(envelope.ok, true);
+    assert.doesNotMatch(envelope.summary, /nothing-to-review/u);
+    assert.ok(briefFiles(g).some((name) => name.startsWith("fix-review-lite")));
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("lint run --fix-review-lite stops at lint errors with step edit and renders no brief", async () => {
   const { f, g } = await startRepo();
 

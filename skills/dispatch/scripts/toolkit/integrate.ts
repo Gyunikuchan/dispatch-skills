@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { isRecord } from "../lib/config.ts";
 import type { HandlerContext } from "./cli.ts";
 import { stableValue } from "./domain/stable-value.ts";
@@ -24,12 +26,30 @@ import {
 import { candidate, isStale, abandonedRef } from "./writers.ts";
 
 const readReviewFix = (ctx: HandlerContext) => {
-  const parsed = readJsonPayload(ctx, {
-    fileFlag: "review-fix",
-    inlineFlag: "review-fix-json",
-    optional: true,
-    label: "review-fix",
-  });
+  let parsed: unknown;
+
+  try {
+    parsed = readJsonPayload(ctx, {
+      fileFlag: "review-fix",
+      inlineFlag: "review-fix-json",
+      optional: true,
+      label: "review-fix",
+    });
+  } catch (error) {
+    // NOTE: only the unreadable-file refusal gets the inline hint; malformed JSON keeps its own message.
+    if (
+      error instanceof ToolError &&
+      error.message.startsWith("Cannot read review-fix file")
+    ) {
+      throw new ToolError(
+        error.exit,
+        error.reason,
+        `${error.message}; --review-fix expects a file path, so pass inline JSON with --review-fix-json`
+      );
+    }
+
+    throw error;
+  }
 
   if (parsed === undefined) {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- explicit undefined keeps consistent-return satisfied across the absent and validated branches.
@@ -174,6 +194,14 @@ const done = async (tx: LedgerTransaction, id: string, commit: string) => {
   return result({ task: id, commit });
 };
 
+// NOTE: a 16-hex prefix separates the conflict sets of one attempt.
+const pathsDigest = (paths: readonly string[]) =>
+  crypto
+    .createHash("sha256")
+    .update(JSON.stringify(paths.toSorted()))
+    .digest("hex")
+    .slice(0, 16);
+
 const conflicts = async (
   ctx: HandlerContext,
   tx: LedgerTransaction,
@@ -187,9 +215,16 @@ const conflicts = async (
     "-z",
   ]);
 
+  // NOTE: the started seq and paths digest keep relaunch and rerun conflicts from hitting key-conflict.
+  const attempt = present(
+    pendingIntegration(tx.fold),
+    "the started integration"
+  );
+
   await tx.append({
     kind: "integrate",
     by: "tool",
+    key: `integrate:conflict:${id}:${attempt.seq}:${pathsDigest(paths)}`,
     data: { phase: "conflict", task: id, paths },
   });
 

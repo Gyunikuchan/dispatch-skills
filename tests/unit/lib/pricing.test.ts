@@ -714,6 +714,7 @@ const EXPECTED = {
   "longcat-2.5-free": { rates: rates(0, 0, 0) },
   "mimo-v2.6-pro": { rates: rates(0.435, 0.87, 0.003625) },
   "minimax-m3.1-flash": { rates: rates(0.15, 0.6, 0.015) },
+  "opencode-go/hungerg-free": { rates: rates(0, 0, 0) },
 };
 
 test("shipped rate table holds the recorded official rates per model and no unconfirmed model", () => {
@@ -744,6 +745,16 @@ test("shipped rate table holds the recorded official rates per model and no unco
     pricer.price("gemini-3.8-flash", usage, undefined, "2027-01-01").low,
     1.5
   );
+});
+
+test("shipped rate table prices opencode-go/hungerg-free as a priced zero-cost model", () => {
+  const priced = shipped().price("opencode-go/hungerg-free", {
+    input: 1_000_000,
+    output: 1_000_000,
+  });
+
+  assert.equal(priced.priced, true);
+  near(priced.low, 0);
 });
 
 test("shipped rate table prices every confirmed model in the sample config", () => {

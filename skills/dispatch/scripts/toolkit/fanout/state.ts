@@ -387,6 +387,9 @@ export const slotFiles = (
   const nativePathOf = (logical: string) =>
     path.join(dir, "prompts", `${name(logical)}.native.md`);
 
+  const replayMarkerOf = (logical: string) =>
+    path.join(dir, `replay-emitted-${name(logical)}.flag`);
+
   const replyPathFor = (logical: string, nonce: string) =>
     path.join(dir, "replies", `${name(logical)}.${nonce}.md`);
 
@@ -474,6 +477,7 @@ export const slotFiles = (
     fileOfLogical,
     basePathOf,
     nativePathOf,
+    replayMarkerOf,
     replyPathFor,
     oldReplyPathOf,
     readSaved,

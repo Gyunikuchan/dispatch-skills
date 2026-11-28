@@ -7,7 +7,10 @@ import { test } from "node:test";
 import { readManifest } from "../../../skills/dispatch/scripts/lib/session.ts";
 import { main } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
 import type { HandlerContext } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
-import { rejectionRequest } from "../../../skills/dispatch/scripts/toolkit/confirmations.ts";
+import {
+  rejectionRequest,
+  reviewId,
+} from "../../../skills/dispatch/scripts/toolkit/confirmations.ts";
 import type { RejectionRequest } from "../../../skills/dispatch/scripts/toolkit/confirmations.ts";
 import { stableValue } from "../../../skills/dispatch/scripts/toolkit/domain/stable-value.ts";
 import type { Finding } from "../../../skills/dispatch/scripts/toolkit/domain/types.ts";
@@ -18,7 +21,11 @@ import {
   latest,
 } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
 import type { LedgerRecord } from "../../../skills/dispatch/scripts/toolkit/records.ts";
-import { reviewIdentity } from "../../../skills/dispatch/scripts/toolkit/review-identity.ts";
+import {
+  evaluateReviewClosed,
+  isReviewClosed,
+  reviewIdentity,
+} from "../../../skills/dispatch/scripts/toolkit/review-identity.ts";
 import { defined } from "../../helpers/guards.ts";
 import { refusal } from "./helpers/json.ts";
 import { sessionFixture } from "./helpers/session.ts";
@@ -1579,5 +1586,574 @@ test("confirmation-only round preserves substantive review identity and rejects 
     } finally {
       f.cleanup();
     }
+  }
+});
+
+// SECTION: Closed-review recurrence escalations on resume
+
+const closedPlanReview = reviewId("plan", "old.plan.md");
+const closureHead = "a".repeat(40);
+const closureBase = "b".repeat(40);
+
+const seedCleanIntegrationRound = async (
+  f: ReturnType<typeof sessionFixture>,
+  findings: object[] = []
+) => {
+  f.artifact("work.spec.md", "# Work\n");
+  f.artifact("work.plan.md", source);
+  await appendRecord(
+    f.session,
+    {
+      kind: "bind",
+      by: "orchestrator",
+      key: "bind",
+      data: { spec: "work.spec.md", plan: "work.plan.md" },
+    },
+    f.deps
+  );
+
+  const artifacts = currentHashes(
+    f.root,
+    latest(foldLedger(f.session), "bind")
+  );
+
+  seedIdentityRounds(
+    f,
+    closureBase,
+    artifacts,
+    {
+      path: path.resolve(f.root, "work.spec.md"),
+      hash: defined(artifacts.spec),
+    },
+    [{ n: 1, scope: "Full review", head: closureHead, startSeq: 1, findings }]
+  );
+};
+
+const seedClosedPlanReview = (
+  f: ReturnType<typeof sessionFixture>,
+  findings: object[]
+) => {
+  const dir = path.join(
+    f.session,
+    ".state/reviews",
+    closedPlanReview,
+    "round-1"
+  );
+
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "round.json"),
+    JSON.stringify({
+      round: 1,
+      cap: 3,
+      generation: 1,
+      startSeq: 1,
+      target: "d".repeat(64),
+      spec: {
+        path: path.resolve(f.root, "work.spec.md"),
+        hash: "e".repeat(64),
+      },
+      scope: "Full review",
+      roster: identityRoster,
+    })
+  );
+  fs.writeFileSync(
+    path.join(dir, "findings.json"),
+    JSON.stringify({ review: closedPlanReview, round: 1, findings, failed: [] })
+  );
+};
+
+const recordEscalation = async (
+  f: ReturnType<typeof sessionFixture>,
+  id: string,
+  state: "open" | "resolved",
+  summary: string
+) =>
+  await appendRecord(
+    f.session,
+    {
+      kind: "escalation",
+      by: "tool",
+      key: `${id}:${state}`,
+      data: { id, state, summary },
+    },
+    f.deps
+  );
+
+const recordCeilingClose = async (
+  f: ReturnType<typeof sessionFixture>,
+  review: string
+) => {
+  const id = `ceiling:${review}:3`;
+
+  await recordEscalation(f, id, "open", "ceiling 3 reached");
+  await appendRecord(
+    f.session,
+    {
+      kind: "escalation",
+      by: "user",
+      quote: "close it",
+      key: `${id}:resolved`,
+      data: {
+        id,
+        state: "resolved",
+        summary: "close: accepted residual plan risk",
+      },
+    },
+    f.deps
+  );
+};
+
+const resumeIdentity = async (f: ReturnType<typeof sessionFixture>) =>
+  await reviewIdentity(
+    {
+      session: f.session,
+      manifest: readManifest(f.session),
+      args: [],
+      values: {},
+      deps: f.deps,
+    },
+    foldLedger(f.session),
+    f.root,
+    closureHead,
+    closureBase
+  );
+
+test("closed plan review recurrence escalations do not block code review resume after a clean pass", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "SHOULD",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "unruled SHOULD"
+    );
+
+    const identity = await resumeIdentity(f);
+
+    assert.equal(identity.round, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("closed plan review recurrence escalations do not block code review resume after a ceiling close", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "MUST",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "unruled MUST"
+    );
+    await recordCeilingClose(f, closedPlanReview);
+
+    const identity = await resumeIdentity(f);
+
+    assert.equal(identity.round, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("closed plan review recurrence escalations recorded after a ceiling close still block resume", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "MUST",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+    await recordCeilingClose(f, closedPlanReview);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "recurred after close"
+    );
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("closed plan review with a pending MUST rejection keeps recurrence escalations blocking resume", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "MUST",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+    await appendRecord(
+      f.session,
+      {
+        kind: "ruling",
+        by: "orchestrator",
+        key: "reject-plan-f1",
+        data: {
+          subject: `review:${closedPlanReview}:F1`,
+          ruling: "rejected",
+          rationale: "Plan finding is out of scope",
+        },
+      },
+      f.deps
+    );
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "pending rejection"
+    );
+    await recordCeilingClose(f, closedPlanReview);
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+const seedActiveRecurrence = async (
+  f: ReturnType<typeof sessionFixture>,
+  adjudicated: boolean
+) => {
+  await seedCleanIntegrationRound(f, [
+    {
+      id: "F1",
+      severity: "SHOULD",
+      sources: ["reviewer"],
+      locus: "src/file.ts:L1",
+    },
+  ]);
+  seedClosedPlanReview(f, [
+    {
+      id: "F2",
+      severity: "SHOULD",
+      sources: ["reviewer"],
+      locus: "work.plan.md:L1",
+    },
+  ]);
+  await recordEscalation(
+    f,
+    `recurrence:${closedPlanReview}:F2:g1`,
+    "open",
+    "closed plan recurrence"
+  );
+  await recordEscalation(
+    f,
+    "recurrence:code-integration:F1:g1",
+    "open",
+    "active review recurrence"
+  );
+
+  if (adjudicated) {
+    await appendRecord(
+      f.session,
+      {
+        kind: "ruling",
+        by: "orchestrator",
+        key: "accept-active-f1",
+        data: {
+          subject: "review:code-integration:F1",
+          ruling: "accepted",
+          rationale: "Accept the SHOULD fix",
+        },
+      },
+      f.deps
+    );
+  }
+};
+
+test("active review recurrence escalations keep blocking resume beside a closed plan review", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedActiveRecurrence(f, false);
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("adjudicated active review recurrence escalations keep blocking resume beside a closed plan review", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedActiveRecurrence(f, true);
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("open ceiling escalations keep blocking resume even when the closed plan review passed clean", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "SHOULD",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "unruled SHOULD"
+    );
+    await recordEscalation(
+      f,
+      `ceiling:${closedPlanReview}:3`,
+      "open",
+      "ceiling 3 reached"
+    );
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("recurrence escalations of a review without recorded rounds keep blocking resume", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "no rounds on disk"
+    );
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+const malformClosedPlanFindings = (f: ReturnType<typeof sessionFixture>) => {
+  fs.writeFileSync(
+    path.join(
+      f.session,
+      ".state/reviews",
+      closedPlanReview,
+      "round-1",
+      "findings.json"
+    ),
+    JSON.stringify({
+      review: closedPlanReview,
+      round: 1,
+      findings: "malformed",
+      failed: [],
+    })
+  );
+};
+
+test("closed plan review with malformed findings evidence keeps recurrence escalations blocking resume", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, []);
+    malformClosedPlanFindings(f);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "unruled SHOULD"
+    );
+
+    await assert.rejects(resumeIdentity(f), { reason: "review-required" });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("closed plan review with malformed findings evidence still closes recurrence escalations after a ceiling close", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, []);
+    malformClosedPlanFindings(f);
+    await recordEscalation(
+      f,
+      `recurrence:${closedPlanReview}:F1:g1`,
+      "open",
+      "unruled SHOULD"
+    );
+    await recordCeilingClose(f, closedPlanReview);
+
+    const identity = await resumeIdentity(f);
+
+    assert.equal(identity.round, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// SECTION: Closed-review recurrence predicate
+
+const closure = (
+  overrides: Partial<Parameters<typeof evaluateReviewClosed>[0]> = {}
+) => ({
+  reviewId: "plan-old",
+  activeReviewId: "code-integration",
+  pendingMustRejections: 0,
+  cleanPass: false,
+  latestRecurrenceSeq: 4,
+  latestCeiling: undefined,
+  ...overrides,
+});
+
+test("closed review recurrence predicate never closes the active review", () => {
+  assert.equal(
+    evaluateReviewClosed(
+      closure({ reviewId: "code-integration", cleanPass: true })
+    ),
+    false
+  );
+});
+
+test("closed review recurrence predicate closes a clean pass with no pending MUST rejection", () => {
+  assert.equal(evaluateReviewClosed(closure({ cleanPass: true })), true);
+});
+
+test("closed review recurrence predicate keeps a pending MUST rejection blocking after a clean pass", () => {
+  assert.equal(
+    evaluateReviewClosed(
+      closure({ cleanPass: true, pendingMustRejections: 1 })
+    ),
+    false
+  );
+});
+
+test("closed review recurrence predicate keeps a review without clean pass or ceiling close blocking", () => {
+  assert.equal(evaluateReviewClosed(closure()), false);
+});
+
+test("closed review recurrence predicate closes a ceiling close recorded after the latest recurrence", () => {
+  const latestCeiling = {
+    seq: 5,
+    state: "resolved",
+    summary: "close: accepted residual risk",
+  };
+
+  assert.equal(evaluateReviewClosed(closure({ latestCeiling })), true);
+});
+
+test("closed review recurrence predicate closes a ceiling defer recorded after the latest recurrence", () => {
+  const latestCeiling = {
+    seq: 5,
+    state: "resolved",
+    summary: "defer: revisit next release",
+  };
+
+  assert.equal(evaluateReviewClosed(closure({ latestCeiling })), true);
+});
+
+test("closed review recurrence predicate ignores a ceiling close recorded before the latest recurrence", () => {
+  const latestCeiling = {
+    seq: 3,
+    state: "resolved",
+    summary: "close: accepted residual risk",
+  };
+
+  assert.equal(evaluateReviewClosed(closure({ latestCeiling })), false);
+});
+
+test("closed review recurrence predicate ignores open ceilings and re-author grants", () => {
+  const open = { seq: 5, state: "open", summary: "ceiling 3 reached" };
+
+  const granted = {
+    seq: 5,
+    state: "resolved",
+    summary: "re-author: split the plan",
+  };
+
+  assert.equal(evaluateReviewClosed(closure({ latestCeiling: open })), false);
+  assert.equal(
+    evaluateReviewClosed(closure({ latestCeiling: granted })),
+    false
+  );
+});
+
+test("closed review recurrence predicate keeps a pending MUST rejection blocking after a ceiling close", () => {
+  const latestCeiling = {
+    seq: 5,
+    state: "resolved",
+    summary: "close: accepted residual risk",
+  };
+
+  assert.equal(
+    evaluateReviewClosed(closure({ pendingMustRejections: 1, latestCeiling })),
+    false
+  );
+});
+
+test("closed review recurrence predicate reads the recorded plan review from disk", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await seedCleanIntegrationRound(f);
+    seedClosedPlanReview(f, [
+      {
+        id: "F1",
+        severity: "SHOULD",
+        sources: ["reviewer"],
+        locus: "work.plan.md:L1",
+      },
+    ]);
+
+    const fold = foldLedger(f.session);
+
+    assert.equal(
+      isReviewClosed(f.session, fold, closedPlanReview, "code-integration"),
+      true
+    );
+    assert.equal(
+      isReviewClosed(f.session, fold, closedPlanReview, closedPlanReview),
+      false
+    );
+  } finally {
+    f.cleanup();
   }
 });

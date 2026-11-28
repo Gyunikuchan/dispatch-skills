@@ -1586,6 +1586,82 @@ describe("explorer brief", () => {
   });
 });
 
+test("brief explorer for agy adds write-capable self guidance to map launch values only", async () => {
+  const f = await fixture();
+  // NOTE: fixture deps are shared across tests, so the swapped skill root and host are restored.
+  const { skillRoot, orchestrator } = f.deps;
+
+  try {
+    await f.approve();
+
+    const skill = limitSkill(
+      path.join(f.root, "explorer-agy-skill"),
+      skillRoot
+    );
+
+    fs.writeFileSync(
+      path.join(skill, "config.jsonc"),
+      JSON.stringify({
+        "read-delegates": { agy: { targets: [{ low: { model: "reader" } }] } },
+        "utility-subagents": {
+          agy: { model: "agy-exp", effort: "low", "context-limit": 300_000 },
+        },
+      })
+    );
+    f.deps.skillRoot = skill;
+    f.deps.orchestrator = { platform: "agy", model: null };
+
+    const explorer = async (name: string, values: Record<string, string>) => {
+      const valuesPath = path.join(f.session, `${name}.json`);
+      fs.writeFileSync(
+        valuesPath,
+        JSON.stringify({ objective: "Map.", questions: "- Q?", ...values })
+      );
+      f.lines.length = 0;
+
+      assert.equal(
+        await main(
+          [
+            "brief",
+            "explorer",
+            valuesPath,
+            "--session",
+            f.session,
+            "--host",
+            "agy",
+          ],
+          f.deps
+        ),
+        0
+      );
+
+      const out = f.output();
+
+      const launch = readJson(
+        defined(out.path),
+        withFields({ launchAs: nullable(text) })
+      );
+
+      return { summary: out.summary, launchAs: launch.launchAs };
+    };
+
+    const map = await explorer("map", { outputPath: "out.md" });
+    const research = await explorer("research", {});
+
+    assert.match(defined(map.launchAs), /TypeName: self/u);
+    assert.match(map.summary, /TypeName: self/u);
+    assert.equal(
+      research.launchAs,
+      "launch: closest `Model` (`inherit`, `flash_lite`, `flash`, `pro`) to agy-exp, effort low"
+    );
+    assert.doesNotMatch(research.summary, /TypeName: self/u);
+  } finally {
+    f.deps.skillRoot = skillRoot;
+    f.deps.orchestrator = orchestrator;
+    f.cleanup();
+  }
+});
+
 describe("test-cleanup brief", () => {
   test("test-cleanup brief renders complete with no unfilled placeholder", async () => {
     const f = await fixture();

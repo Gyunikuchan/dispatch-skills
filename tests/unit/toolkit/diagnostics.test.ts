@@ -4385,7 +4385,7 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
         launched: true,
         outcome: "ok",
         usageSource: "session",
-        usage: { input: 100, output: 10, turns: 15 },
+        usage: { input: 100, output: 10, turns: 60 },
       },
     ],
     hostUsage: {
@@ -4398,7 +4398,7 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
           effort: null,
           input: 100,
           output: 10,
-          turns: 25,
+          turns: 60,
         },
       ],
       responses: [
@@ -4408,7 +4408,7 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
           agent: "subagent-1",
           basis: "claude-assistant-message",
           coverage: "complete",
-          observed: 20,
+          observed: 30,
         },
         {
           stage: "plan",
@@ -4416,7 +4416,7 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
           agent: "subagent-1",
           basis: "claude-assistant-message",
           coverage: "complete",
-          observed: 20,
+          observed: 30,
         },
       ],
     },
@@ -4427,12 +4427,12 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
   assert.ok(h11.every((f) => f.category === "token-economy"));
   assert.ok(
     h11.some(
-      (f) => f.evidence.includes("implementation") && f.evidence.includes("40")
+      (f) => f.evidence.includes("implementation") && f.evidence.includes("120")
     )
   );
   assert.ok(
     h11.some(
-      (f) => f.evidence.includes("subagent-1") && f.evidence.includes("40")
+      (f) => f.evidence.includes("subagent-1") && f.evidence.includes("60")
     )
   );
 
@@ -4527,6 +4527,69 @@ test("H11 emits non-review turn churn finding above threshold and stays silent o
     silent.filter((f) => f.source === "H11"),
     []
   );
+});
+
+const singleAgentChurnFindingsAt = (observed: number) =>
+  heuristics({
+    phases: [{ key: "plan", name: "plan" }],
+    reviews: [],
+    invocations: [],
+    hostUsage: {
+      platform: "claude",
+      rows: [],
+      responses: [
+        {
+          stage: "plan",
+          role: "subagent",
+          agent: "subagent-1",
+          basis: "claude-assistant-message",
+          coverage: "complete",
+          observed,
+        },
+      ],
+    },
+  }).filter((f) => f.source === "H11");
+
+const stageChurnFindingsAt = (delegateTurns: number) =>
+  heuristics({
+    phases: [{ key: "impl", name: "implementation" }],
+    reviews: [],
+    invocations: [
+      {
+        phase: "impl",
+        provider: "codex",
+        model: "m",
+        surface: "cli",
+        launched: true,
+        outcome: "ok",
+        usageSource: "session",
+        usage: { input: 100, output: 10, turns: delegateTurns },
+      },
+    ],
+    hostUsage: {
+      platform: "claude",
+      rows: [
+        {
+          stage: "implementation",
+          role: "host",
+          model: "m",
+          effort: null,
+          input: 100,
+          output: 10,
+          turns: 60,
+        },
+      ],
+    },
+  }).filter((f) => f.source === "H11");
+
+test("H11 single-agent churn fires at 60 non-review turns and stays silent at 59", () => {
+  assert.deepEqual(singleAgentChurnFindingsAt(59), []);
+  assert.equal(singleAgentChurnFindingsAt(60).length, 1);
+});
+
+test("H11 stage churn fires at 120 non-review turns and stays silent at 119", () => {
+  assert.deepEqual(stageChurnFindingsAt(59), []);
+  assert.equal(stageChurnFindingsAt(60).length, 1);
 });
 
 test("keeps bounded recovery facts and strips raw text and locators", () => {

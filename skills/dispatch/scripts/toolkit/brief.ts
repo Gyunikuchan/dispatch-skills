@@ -464,20 +464,32 @@ const publishUtilityBrief = (
   directory: string,
   kind: string,
   text: string,
-  details: Record<string, string | number | null>
+  details: Record<string, string | number | null>,
+  launchNote = ""
 ) => {
   const file = nextBriefPath(directory, kind);
   fs.writeFileSync(file, text);
   const host = ctx.deps.orchestrator?.platform;
   const launch = utilityLaunchValues(ctx.deps.skillRoot, host);
+  // NOTE: an unresolved launch stays null, so the note only decorates a resolved one.
+  const note = launch.launchAs === null ? "" : launchNote;
   const bytes = Buffer.byteLength(text);
-  const value = { briefPath: file, bytes, ...details, ...launch };
+
+  const value = {
+    briefPath: file,
+    bytes,
+    ...details,
+    ...launch,
+    launchAs: launch.launchAs === null ? null : `${launch.launchAs}${note}`,
+  };
 
   return {
     ok: true,
     exit: 0,
     value,
-    summary: briefSummary(`${kind} brief`, host, launch, file, bytes),
+    summary: capSummary(
+      `${briefSummary(`${kind} brief`, host, launch, file, bytes)}${note}`
+    ),
   };
 };
 
@@ -744,6 +756,10 @@ const EXPLORER_REQUIRED_VALUES = ["objective", "questions"] as const;
 const EXPLORER_OPTIONAL_VALUES = ["outputPath"] as const;
 const TEST_CLEANUP_VALUES = ["base", "integrationPath"] as const;
 
+// NOTE: Antigravity map explorers write the map file, so they need the write-capable `self` type.
+const AGY_MAP_SELF_NOTE =
+  "; TypeName: self (write-capable; the map explorer writes its file)";
+
 // oxlint-disable-next-line eslint/require-await -- handler signature requires async; this brief builds synchronously.
 export const renderExplorerBrief = async (ctx: HandlerContext) => {
   const values = validateValues(
@@ -779,12 +795,18 @@ export const renderExplorerBrief = async (ctx: HandlerContext) => {
     ? `${Math.floor(entry.contextLimit * 0.75).toLocaleString("en-US")} tokens`
     : limit;
 
+  const writesMap =
+    kind === "map" &&
+    normalizeProvider(ctx.deps.orchestrator?.platform ?? "") === "agy";
+
+  const mapNote = writesMap ? AGY_MAP_SELF_NOTE : "";
+
   const nestedLaunch = entry
-    ? launchLine(
+    ? `${launchLine(
         ctx.deps.orchestrator?.platform ?? "",
         entry.models,
         entry.effort
-      )
+      )}${mapNote}`
     : "utility entry not configured; the orchestrator reports a blocker";
 
   const templateText = fs.readFileSync(
@@ -821,10 +843,14 @@ export const renderExplorerBrief = async (ctx: HandlerContext) => {
   assertFilled("explorer", text);
   const directory = prepareBriefDirectory(ctx.session);
 
-  return publishUtilityBrief(ctx, directory, "explorer", text, {
-    kind,
-    contextLimit,
-  });
+  return publishUtilityBrief(
+    ctx,
+    directory,
+    "explorer",
+    text,
+    { kind, contextLimit },
+    mapNote
+  );
 };
 
 // oxlint-disable-next-line eslint/require-await -- handler signature requires async; this brief builds synchronously.

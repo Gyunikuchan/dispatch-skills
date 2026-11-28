@@ -332,6 +332,8 @@ export interface RunFacts {
     cap?: number;
     slots: {
       slot: string;
+      /** Reserve slot that served this target slot; omitted when no reserve attempt launched. */
+      responder?: string;
       attempts: {
         startMs?: number;
         endMs?: number;

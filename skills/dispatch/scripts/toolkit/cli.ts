@@ -102,6 +102,7 @@ const exclusiveFlags = [
   "message",
   "base",
   "integration-path",
+  "review-fix",
   "review-fix-json",
   "test-cleanup-json",
   "task",
@@ -915,7 +916,11 @@ const handlers: HandlerTable = {
       let rendered: Awaited<ReturnType<typeof renderFixReviewLiteBrief>>;
 
       try {
-        rendered = await renderFixReviewLiteBrief({ ...ctx, args: [target] });
+        // NOTE: pass the process-resolved path so a relative target is not re-resolved against the repository root.
+        rendered = await renderFixReviewLiteBrief({
+          ...ctx,
+          args: [artifactPath],
+        });
       } catch (error) {
         throw inStep(error, "fix-review-lite", editStatus);
       }

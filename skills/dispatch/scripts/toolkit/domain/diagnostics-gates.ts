@@ -115,6 +115,7 @@ const match = (re: RegExp) => (v: unknown) =>
   typeof v === "string" && re.test(v) && locatorFree(v) ? v : undefined;
 
 const responseAgent = match(/^(?:host|subagent)-(?:[1-9]|[12][0-9]|3[0-2])$/u);
+const slotLabel = match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/u);
 const token = match(/^[a-z][a-z0-9-]{0,39}$/u);
 const phaseKey = match(/^[a-z0-9][a-z0-9/._-]{0,127}$/u);
 
@@ -1477,9 +1478,8 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
             }
 
             const slots = list(v["slots"]).map((s) => {
-              const slot = record(s)
-                ? match(/^[A-Za-z0-9_.-]{1,40}(?:\[\d{1,3}\])?$/u)(s["slot"])
-                : undefined;
+              const slot = record(s) ? slotLabel(s["slot"]) : undefined;
+              const reserve = record(s) ? slotLabel(s["responder"]) : undefined;
 
               const attempts =
                 slot !== undefined && record(s)
@@ -1499,7 +1499,11 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
                     )
                   : [];
 
-              return { slot: slot ?? DASH, attempts };
+              return {
+                slot: slot ?? DASH,
+                ...opt("responder", reserve),
+                attempts,
+              };
             });
 
             return [

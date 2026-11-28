@@ -9,6 +9,7 @@ import { copilot } from "../../../skills/dispatch/scripts/providers/copilot.ts";
 import { opencode } from "../../../skills/dispatch/scripts/providers/opencode.ts";
 import {
   CONTINUE_PROMPT,
+  IDLE_TIMEOUT_MS,
   runDelegate,
 } from "../../../skills/dispatch/scripts/providers/runner.ts";
 import type { RunnerPorts } from "../../../skills/dispatch/scripts/providers/runner.ts";
@@ -803,7 +804,15 @@ test("wrap-up budget: wrap-up after three stall resumes records nudge and wrapUp
   await flush();
 
   for (let i = 0; i < 3; i += 1) {
-    h.finish(ok({ exit: 1, stdout: `empty ${i}` }));
+    h.finish(
+      ok({
+        exit: null,
+        signal: "SIGTERM",
+        stdout: `empty ${i}`,
+        timedOut: true,
+        idleMs: IDLE_TIMEOUT_MS,
+      })
+    );
     // eslint-disable-next-line no-await-in-loop
     await flush();
     // eslint-disable-next-line no-await-in-loop

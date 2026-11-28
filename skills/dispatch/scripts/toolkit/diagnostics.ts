@@ -1606,8 +1606,26 @@ export const sessionFacts = (
               : []
           );
 
+          // A saved done outcome is authoritative; invocation history only fills in when none exists.
+          const served = invocations.findLast(
+            (i) =>
+              i.subject === subject &&
+              i.launched &&
+              (i.targetSlot ?? i.slot) === slot.slot
+          );
+
+          const historyResponder =
+            served?.targetSlot === undefined ? undefined : served.slot;
+
+          const responder =
+            slotOutcome?.state === "done"
+              ? slotOutcome.responder?.slot
+              : historyResponder;
+
           return {
             slot: slot.slot,
+            ...(responder !== undefined &&
+              responder !== slot.slot && { responder }),
             attempts: slotNative
               ? [...attempts, { surface: "native" as const }]
               : attempts,

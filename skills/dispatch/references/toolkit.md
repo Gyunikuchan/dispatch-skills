@@ -336,7 +336,7 @@ data: id, state (open/resolved), summary. Allowed by: user, orchestrator, tool. 
 
 ### ruling
 
-data: `subject`, `ruling`, `rationale`, optional `impact`, `trigger` and `paths`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, and a verification subject is `verification:<cycle>:V<n>`; both use ruling accepted/rejected/duplicate/deferred. `impact` and `trigger` correct the finding's rating as a pair, only on an `accepted` ruling of a review finding; the toolkit derives the severity. Refused with `invalid-record`: a lone dimension, an invalid value, a `severity` key, a non-accepted or non-review ruling, a subject outside `review:<review>:R<n>-F|RED<n>`, a finding that is absent, unreadable or lacks a stored `impact`, a lowered `critical` impact (rule the finding rejected instead), an unchanged rating, and a rationale that omits a changed dimension name.
+data: `subject`, `ruling`, `rationale`, optional `impact`, `trigger` and `paths`. Allowed by: user, orchestrator, tool. A review subject is review:<review>:<finding>, and a verification subject is `verification:<cycle>:V<n>`; both use ruling accepted/rejected/duplicate/deferred. `impact` and `trigger` correct the finding's rating as a pair, only on an `accepted` ruling of a review finding; the toolkit derives the severity. Refused with `invalid-record`: a lone dimension, an invalid value, a `severity` key, a non-accepted or non-review ruling, a subject outside `review:<review>:R<n>-F|RED<n>`, a finding that is absent, unreadable or lacks a stored `impact`, a lowered `critical` impact (rule the finding rejected instead), an unchanged rating, and a rationale that does not literally name each changed dimension (`impact` and/or `trigger`).
 
 ### note
 
@@ -393,4 +393,4 @@ When multiple retained folders match the identity and repository, init returns e
 ### session quota-reprobe
 
 <!-- GENERATED: session:quota-reprobe -->
-`session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]`<!-- END GENERATED: session:quota-reprobe --> clears one quota key. Stdout: {v:1, action:'quota-reprobe', key:{provider,model,mode}, appliesTo:'future-waves'}. Omit model for the provider default (null). Provider and mode must match a known provider implementation. Changes affect future provider selection.
+`session quota-reprobe --session-dir <session> --provider <id> --mode <mode> [--model <alias>]`<!-- END GENERATED: session:quota-reprobe --> clears one quota key. Stdout: {v:1, action:'quota-reprobe', key:{provider,model,mode}, appliesTo:'future-waves'}. Omit model for the provider default (null). Provider and mode must match a known provider implementation. Changes affect future provider selection. It also clears the `(provider, model)` `empty-output` breaker for that key.

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 
+import { main as dispatchMain } from "../../../skills/dispatch/scripts/dispatch.ts";
 import { readManifest } from "../../../skills/dispatch/scripts/lib/session.ts";
 import type {
   CliDeps,
@@ -309,6 +310,85 @@ describe("toolkit CLI contract", () => {
       f.cleanup();
     }
   });
+  test("--review-fix is refused outside worktree commit as --review-fix-json is", async () => {
+    const f = sessionFixture({ memory: true });
+
+    const refuse = async (flag: string, message: RegExp) => {
+      f.lines.length = 0;
+      assert.equal(
+        await main(
+          ["status", "show", flag, "{}", "--session", f.session],
+          f.deps
+        ),
+        1
+      );
+      assert.equal(f.output().reason, "invalid-input");
+      assert.match(f.output().summary, message);
+    };
+
+    try {
+      await refuse("--review-fix", /--review-fix is only for worktree commit/u);
+      await refuse(
+        "--review-fix-json",
+        /--review-fix-json is only for worktree commit/u
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("--review-fix names --review-fix-json for an unreadable file and keeps malformed JSON unlabeled", async () => {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const missing = path.join(f.root, "missing-review-fix.json");
+
+      assert.equal(
+        await main(
+          [
+            "worktree",
+            "commit",
+            "--reason",
+            "fix",
+            "--review-fix",
+            missing,
+            "--session",
+            f.session,
+          ],
+          f.deps
+        ),
+        1
+      );
+      assert.equal(f.output().reason, "invalid-input");
+      assert.match(f.output().summary, /Cannot read review-fix file/u);
+      assert.match(f.output().summary, /--review-fix-json/u);
+
+      const malformed = f.artifact("malformed-review-fix.json", "{");
+
+      f.lines.length = 0;
+      assert.equal(
+        await main(
+          [
+            "worktree",
+            "commit",
+            "--reason",
+            "fix",
+            "--review-fix",
+            malformed,
+            "--session",
+            f.session,
+          ],
+          f.deps
+        ),
+        1
+      );
+      assert.match(f.output().summary, /review-fix from .+ is not valid JSON/u);
+      assert.doesNotMatch(f.output().summary, /--review-fix-json/u);
+    } finally {
+      f.cleanup();
+    }
+  });
+
   test("review-fix commit splits correction metadata into trailer lines of at most 100 characters", async () => {
     const f = sessionFixture({ memory: true });
 
@@ -1590,6 +1670,20 @@ test("accepts optional correlation on review runs only", async () => {
       0
     );
     assert.deepEqual(seen, [undefined, ref]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("help ruling requires severity-correction rationale to name impact or trigger literally", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    assert.equal(await dispatchMain(["help", "ruling"], f.deps), 0);
+    assert.match(
+      f.lines.join("\n"),
+      /a rationale that does not literally name each changed dimension \(`impact` and\/or `trigger`\)/u
+    );
   } finally {
     f.cleanup();
   }

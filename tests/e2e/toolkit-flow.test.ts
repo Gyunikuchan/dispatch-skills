@@ -45,6 +45,57 @@ const isStatus = objectWith({
   }),
 });
 
+type Repo = Awaited<ReturnType<typeof toolkitRepo>>;
+
+const twoFilePlan = planSource
+  .replace(
+    "#### [MODIFY] src/file.ts\n- Purpose: implements behavior.\n",
+    "#### [MODIFY] src/file.ts\n- Purpose: implements behavior.\n\n#### [MODIFY] src/other.ts\n- Purpose: implements behavior.\n"
+  )
+  .replace(
+    "  - Changes: src/file.ts\n",
+    "  - Changes: src/file.ts, src/other.ts\n"
+  );
+
+const conflictRecords = (session: string) =>
+  foldLedger(session).records.filter(
+    (record) =>
+      record.kind === "integrate" && record.data["phase"] === "conflict"
+  );
+
+// Submits the T1 writer with `files` (a path-to-text map) and leaves the candidate unintegrated.
+const submitT1 = async (f: Repo, files: Record<string, string>) => {
+  const created = await f.run(["worktree", "create", "T1"]);
+  const { path: writerRel } = narrow(created.value, isPath);
+
+  for (const [file, text] of Object.entries(files)) {
+    fs.writeFileSync(path.resolve(f.session, writerRel, file), text);
+  }
+
+  const submitted = await f.run(["worktree", "submit", "T1"]);
+
+  assert.equal(submitted.exit, 0);
+};
+
+// NOTE: destructuring keeps member access off the awaited run result, which lint forbids.
+const exitOf = async (f: Repo, args: string[]) => {
+  const { exit } = await f.run(args);
+
+  return exit;
+};
+
+const reasonOf = async (f: Repo, args: string[]) => {
+  const { output } = await f.run(args);
+
+  return output.reason;
+};
+
+const valueOf = async (f: Repo, args: string[]) => {
+  const { value } = await f.run(args);
+
+  return value;
+};
+
 describe("toolkit status sections", () => {
   test("reports the pending conflict and missing writer worktree", async () => {
     const f = await toolkitRepo();
@@ -106,6 +157,132 @@ describe("toolkit status sections", () => {
 
       assert.equal(conflict.task, "T1");
       assert.deepEqual(conflict.paths, ["src/file.ts"]);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("an abort and relaunch that conflicts on the same paths appends a new conflict record", async () => {
+    const f = await toolkitRepo();
+
+    try {
+      await f.level();
+      await submitT1(f, { "src/file.ts": "first\n" });
+
+      fs.writeFileSync(
+        path.join(f.integration, "src/file.ts"),
+        "integration\n"
+      );
+
+      assert.equal(
+        await exitOf(f, ["worktree", "commit", "--reason", "conflict"]),
+        0
+      );
+      assert.equal(
+        await reasonOf(f, ["worktree", "integrate", "T1"]),
+        "conflict"
+      );
+      assert.equal(
+        await exitOf(f, ["worktree", "abort", "T1", "--reason", "reject"]),
+        0
+      );
+
+      // The relaunched writer starts from the integration HEAD, so a later integration commit makes its candidate conflict again.
+      await submitT1(f, { "src/file.ts": "second\n" });
+
+      fs.writeFileSync(
+        path.join(f.integration, "src/file.ts"),
+        "integration again\n"
+      );
+
+      assert.equal(
+        await exitOf(f, ["worktree", "commit", "--reason", "conflict again"]),
+        0
+      );
+      assert.equal(
+        await reasonOf(f, ["worktree", "integrate", "T1"]),
+        "conflict"
+      );
+
+      const status = await f.run(["status", "show"]);
+
+      const conflict = defined(
+        narrow(status.value, isStatus).integration.pendingConflict,
+        "pending conflict"
+      );
+
+      assert.deepEqual(conflict.paths, ["src/file.ts"]);
+
+      const resume = narrow(
+        await valueOf(f, ["status", "show", "--resume"]),
+        objectWith({ reason: isString })
+      );
+
+      assert.equal(resume.reason, "integration-conflict");
+
+      const started = defined(
+        foldLedger(f.session).records.findLast(
+          (record) =>
+            record.kind === "integrate" && record.data["phase"] === "started"
+        ),
+        "started record"
+      );
+
+      assert.ok(
+        defined(conflictRecords(f.session).at(-1), "conflict record").seq >
+          started.seq
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("rerunning integrate after resolving one of two conflicting paths records the rest without key-conflict", async () => {
+    const f = await toolkitRepo(twoFilePlan, { "src/other.ts": "initial\n" });
+
+    try {
+      await f.level();
+      await submitT1(f, {
+        "src/file.ts": "writer\n",
+        "src/other.ts": "writer\n",
+      });
+
+      fs.writeFileSync(
+        path.join(f.integration, "src/file.ts"),
+        "integration\n"
+      );
+      fs.writeFileSync(
+        path.join(f.integration, "src/other.ts"),
+        "integration\n"
+      );
+
+      assert.equal(
+        await exitOf(f, ["worktree", "commit", "--reason", "conflict"]),
+        0
+      );
+      assert.equal(
+        await reasonOf(f, ["worktree", "integrate", "T1"]),
+        "conflict"
+      );
+      assert.deepEqual(
+        defined(conflictRecords(f.session).at(-1), "conflict record").data[
+          "paths"
+        ],
+        ["src/file.ts", "src/other.ts"]
+      );
+
+      fs.writeFileSync(path.join(f.integration, "src/file.ts"), "resolved\n");
+      f.git(["add", "src/file.ts"], f.integration);
+
+      const rerun = await f.run(["worktree", "integrate", "T1"]);
+
+      assert.equal(rerun.output.reason, "conflict");
+      assert.deepEqual(
+        defined(conflictRecords(f.session).at(-1), "conflict record").data[
+          "paths"
+        ],
+        ["src/other.ts"]
+      );
     } finally {
       f.cleanup();
     }

@@ -43,6 +43,22 @@ export type QuotaObservation = QuotaGeneration & {
   observedAt: number;
 };
 
+// SECTION: Empty-output breaker
+
+export interface EmptyOutputKey {
+  provider: string;
+  model: string | null;
+}
+
+export interface EmptyOutputRecord {
+  schemaVersion: 1;
+  kind: "empty-output-failure" | "empty-output-reset";
+  provider: string;
+  model: string | null;
+  seq: number;
+  observedAt: number;
+}
+
 interface QuotaDecision {
   key: QuotaKey;
   generation: string | null;

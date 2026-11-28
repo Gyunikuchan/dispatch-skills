@@ -12,15 +12,21 @@ import { parseJson } from "../../skills/dispatch/scripts/lib/integrity.ts";
 import type { JsonValue } from "../../skills/dispatch/scripts/lib/integrity.ts";
 import {
   publishQuotaFailure,
+  readEmptyOutputBreaker,
   readQuotaState,
+  recordEmptyOutputFailure,
   reprobeQuota,
 } from "../../skills/dispatch/scripts/lib/quota-store.ts";
 import { initSession } from "../../skills/dispatch/scripts/lib/session.ts";
 import {
   H,
+  emptyOutputBreakerOpen,
   quotaSnapshot,
 } from "../../skills/dispatch/scripts/policy/quota.ts";
-import type { QuotaKey } from "../../skills/dispatch/scripts/toolkit/types.ts";
+import type {
+  EmptyOutputKey,
+  QuotaKey,
+} from "../../skills/dispatch/scripts/toolkit/types.ts";
 import {
   defined,
   isBoolean,
@@ -165,7 +171,12 @@ const setup = () => {
     return parseJson(result.stdout);
   };
 
-  const cli = async (provider: string, mode: string, session = sessionDir) => {
+  const cli = async (
+    provider: string,
+    mode: string,
+    session = sessionDir,
+    model?: string
+  ) => {
     try {
       const result = await execute(
         process.execPath,
@@ -179,6 +190,7 @@ const setup = () => {
           provider,
           "--mode",
           mode,
+          ...(model === undefined ? [] : ["--model", model]),
         ],
         {
           cwd: repo,
@@ -517,6 +529,108 @@ describe("quota state survives sessions and reprobe races", () => {
         fs.readFileSync(path.join(f.sessionDir, ".state", "quota"), "utf-8"),
         "unwritable path"
       );
+    } finally {
+      f.cleanup();
+    }
+  });
+});
+
+describe("empty-output breaker survives sessions and reprobes", () => {
+  const target: EmptyOutputKey = { provider: "codex", model: "m" };
+  const nullModel: EmptyOutputKey = { provider: "codex", model: null };
+
+  test("session quota-reprobe closes only the breaker for its provider and model", async () => {
+    const f = setup();
+
+    try {
+      for (const breaker of [target, nullModel]) {
+        recordEmptyOutputFailure(f.options, breaker, now);
+        recordEmptyOutputFailure(f.options, breaker, now);
+      }
+
+      const result = await f.cli("codex", "cli", f.sessionDir, "m");
+
+      assert.equal(result.exit, 0, result.stderr);
+      assert.equal(
+        emptyOutputBreakerOpen(readEmptyOutputBreaker(f.options, target)),
+        false
+      );
+      assert.equal(
+        emptyOutputBreakerOpen(readEmptyOutputBreaker(f.options, nullModel)),
+        true
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("failures from concurrent processes publish distinct sequence records", async () => {
+    const f = setup();
+
+    try {
+      const publish =
+        "console.log(JSON.stringify(store.recordEmptyOutputFailure(x.options,x.key,x.now)));";
+
+      const published = await Promise.all(
+        Array.from(
+          { length: 4 },
+          async () =>
+            await f.subprocess(publish, {
+              options: f.options,
+              key: { provider: target.provider, model: target.model },
+              now,
+            })
+        )
+      );
+
+      assert.equal(
+        published.every(
+          (result) =>
+            narrow(result, objectWith({ published: isBoolean })).published
+        ),
+        true
+      );
+      assert.deepEqual(
+        readEmptyOutputBreaker(f.options, target)
+          .records.map((row) => row.seq)
+          .toSorted((a, b) => a - b),
+        [1, 2, 3, 4]
+      );
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test("CLI reprobe fails explicitly on a linked breaker store without writing outside it", async () => {
+    const f = setup();
+
+    try {
+      recordEmptyOutputFailure(f.options, target, now);
+
+      const dir = path.join(
+        f.sessionDir,
+        ".state",
+        "quota",
+        `empty-output-${crypto
+          .createHash("sha256")
+          .update(JSON.stringify([target.provider, target.model]))
+          .digest("hex")}`
+      );
+
+      const outside = path.join(f.root, "outside");
+
+      fs.mkdirSync(outside);
+      fs.rmSync(dir, { recursive: true });
+      fs.symlinkSync(
+        outside,
+        dir,
+        process.platform === "win32" ? "junction" : "dir"
+      );
+
+      const result = await f.cli("codex", "cli", f.sessionDir, "m");
+
+      assert.equal(result.exit, 1);
+      assert.deepEqual(fs.readdirSync(outside), []);
     } finally {
       f.cleanup();
     }

@@ -1119,9 +1119,11 @@ type ResponseEvidence = Omit<DelegateResponseFacts, "role"> & {
   role: "host" | "subagent" | "delegate";
 };
 
+// NOTE: each label prefix numbers from 1 independently; MAX_RESPONSE_AGENTS still caps all aliases together.
 const registerResponse = (
   entry: ResponseEvidence,
   aliases: Map<string, string>,
+  ordinals: Map<string, number>,
   runCount: number,
   index: number
 ) => {
@@ -1137,7 +1139,14 @@ const registerResponse = (
     (label === undefined || label === "") &&
     aliases.size < MAX_RESPONSE_AGENTS
   ) {
-    label = `${agent.startsWith("delegate-child-") ? "delegate-child" : entry.role}-${aliases.size + 1}`;
+    const prefix = agent.startsWith("delegate-child-")
+      ? "delegate-child"
+      : entry.role;
+
+    const ordinal = (ordinals.get(prefix) ?? 0) + 1;
+
+    ordinals.set(prefix, ordinal);
+    label = `${prefix}-${ordinal}`;
     aliases.set(agent, label);
   }
 
@@ -1226,9 +1235,10 @@ const responseEvidence = (runs: readonly RunFacts[]) => {
 
   for (const [index, run] of runs.entries()) {
     const aliases = new Map<string, string>();
+    const ordinals = new Map<string, number>();
 
     const register = (entry: ResponseEvidence) =>
-      registerResponse(entry, aliases, runs.length, index);
+      registerResponse(entry, aliases, ordinals, runs.length, index);
 
     const host = run.hostUsage?.responses ?? [];
     rows.push(...host.map(register));
@@ -1762,6 +1772,71 @@ const aggTurns = (
   }
 
   return `${num(total)}${forcePartial || vals.some((v) => v === undefined) ? " partial" : ""}`;
+};
+
+const roundTimingLines = (
+  rounds: NonNullable<RunFacts["roundTiming"]>,
+  limit: number | undefined
+) => {
+  const kept = rounds.slice(0, limit ?? rounds.length);
+
+  const lines = [
+    "### Review round timing",
+    "",
+    ...tableHeader(["Review", ":Round", "Slot", ":Wall", "Critical path"]),
+  ];
+
+  for (const round of kept) {
+    const spans = round.slots.map((slot) => {
+      const invalid =
+        slot.attempts.length === 0 ||
+        slot.attempts.some(
+          (a) =>
+            a.startMs === undefined ||
+            a.endMs === undefined ||
+            a.endMs < a.startMs
+        );
+
+      return invalid
+        ? undefined
+        : {
+            start: Math.min(...slot.attempts.map((a) => defined(a.startMs))),
+            end: Math.max(...slot.attempts.map((a) => defined(a.endMs))),
+          };
+    });
+
+    const latest = spans.every(Boolean)
+      ? spans.findIndex(
+          (s) =>
+            defined(s).end === Math.max(...spans.map((x) => defined(x).end))
+        )
+      : -1;
+
+    for (const [i, slot] of round.slots.entries()) {
+      lines.push(
+        row([
+          `subject ${round.review.slice(7)}`,
+          String(round.round),
+          slot.responder === undefined
+            ? slot.slot
+            : `${slot.slot} → ${slot.responder}`,
+          formatDuration(spans[i] && spans[i].end - spans[i].start),
+          i === latest ? "✓" : DASH,
+        ])
+      );
+    }
+  }
+
+  if (kept.length < rounds.length) {
+    lines.push(
+      "",
+      `${rounds.length - kept.length} review timing rounds omitted`
+    );
+  }
+
+  lines.push("");
+
+  return lines;
 };
 
 // oxlint-disable-next-line eslint/complexity -- section assembly branches per run phase shape, fault presence, and unit-row coverage.
@@ -2622,62 +2697,7 @@ const buildSections = (
     ];
 
     if (timing.length) {
-      const kept = timing.slice(0, fold.timing ?? timing.length);
-      out.push(
-        "### Review round timing",
-        "",
-        ...tableHeader(["Review", ":Round", "Slot", ":Wall", "Critical path"])
-      );
-
-      for (const round of kept) {
-        const spans = round.slots.map((slot) => {
-          const invalid =
-            slot.attempts.length === 0 ||
-            slot.attempts.some(
-              (a) =>
-                a.startMs === undefined ||
-                a.endMs === undefined ||
-                a.endMs < a.startMs
-            );
-
-          return invalid
-            ? undefined
-            : {
-                start: Math.min(
-                  ...slot.attempts.map((a) => defined(a.startMs))
-                ),
-                end: Math.max(...slot.attempts.map((a) => defined(a.endMs))),
-              };
-        });
-
-        const latest = spans.every(Boolean)
-          ? spans.findIndex(
-              (s) =>
-                defined(s).end === Math.max(...spans.map((x) => defined(x).end))
-            )
-          : -1;
-
-        for (const [i, slot] of round.slots.entries()) {
-          out.push(
-            row([
-              `subject ${round.review.slice(7)}`,
-              String(round.round),
-              slot.slot,
-              formatDuration(spans[i] && spans[i].end - spans[i].start),
-              i === latest ? "✓" : DASH,
-            ])
-          );
-        }
-      }
-
-      if (kept.length < timing.length) {
-        out.push(
-          "",
-          `${timing.length - kept.length} review timing rounds omitted`
-        );
-      }
-
-      out.push("");
+      out.push(...roundTimingLines(timing, fold.timing));
     }
 
     if (workload.length) {
@@ -2689,7 +2709,7 @@ const buildSections = (
       );
 
       const over = eligible.filter(
-        (round) => (round.calls?.total ?? 0) > 6 || (round.hostTurns ?? 0) > 25
+        (round) => (round.calls?.total ?? 0) > 10 || (round.hostTurns ?? 0) > 25
       );
 
       let overText = "";
@@ -2740,7 +2760,7 @@ const buildSections = (
           : []),
         ...(eligible.length
           ? [
-              `Advisory budget (lightweight fix review): <=6 toolkit calls, <=25 host turns; over: ${
+              `Advisory budget (lightweight fix review): <=10 toolkit calls, <=25 host turns; over: ${
                 overText === "" ? "none" : overText
               }`,
             ]

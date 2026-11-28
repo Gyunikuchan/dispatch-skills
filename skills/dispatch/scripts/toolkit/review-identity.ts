@@ -298,6 +298,115 @@ const correctionScope = (
   return file === null ? null : [file];
 };
 
+interface ReviewClosureFacts {
+  reviewId: string;
+  activeReviewId: string;
+  pendingMustRejections: number;
+  cleanPass: boolean;
+  latestRecurrenceSeq: number;
+  latestCeiling: { seq: number; state: unknown; summary: unknown } | undefined;
+}
+
+const CEILING_CLOSING_SUMMARY = /^(?:close|defer):/u;
+
+/** Closes a non-active review with no pending MUST rejection and a clean pass or a close/defer ceiling newer than its latest recurrence. */
+export const evaluateReviewClosed = (facts: ReviewClosureFacts) => {
+  const { latestCeiling } = facts;
+
+  const ceilingClosed =
+    latestCeiling !== undefined &&
+    latestCeiling.state === "resolved" &&
+    typeof latestCeiling.summary === "string" &&
+    CEILING_CLOSING_SUMMARY.test(latestCeiling.summary) &&
+    latestCeiling.seq > facts.latestRecurrenceSeq;
+
+  return (
+    facts.reviewId !== facts.activeReviewId &&
+    facts.pendingMustRejections === 0 &&
+    (facts.cleanPass || ceilingClosed)
+  );
+};
+
+const latestEscalation = (records: Fold["records"], prefix: string) =>
+  records.findLast((record) => {
+    const id: unknown = record.data["id"];
+
+    return (
+      record.kind === "escalation" &&
+      typeof id === "string" &&
+      id.startsWith(prefix)
+    );
+  });
+
+const isDecision = (record: Fold["records"][number]) =>
+  record.data["ruling"] === "accepted" ||
+  record.data["ruling"] === "rejected" ||
+  record.data["ruling"] === "duplicate";
+
+// NOTE: unreadable closure evidence throws, which keeps resume refused (fail closed).
+export const isReviewClosed = (
+  session: string,
+  fold: Fold,
+  reviewId: string,
+  activeReviewId: string
+) => {
+  const directory = reviewDirectory(session, reviewId);
+
+  const entries = fs.existsSync(directory)
+    ? reviewRead(() => reviewRoundEntries(fs.readdirSync(directory)))
+    : [];
+
+  const rounds = entries.map(({ name, number }) =>
+    loadIdentityRound(path.join(directory, name), number)
+  );
+
+  const substantive = rounds.findLast(
+    (round) => !/\(confirmation-only\)/iu.test(round.scope)
+  );
+
+  // NOTE: malformed findings evidence loads as zero rows, so it must not read as a clean pass.
+  const cleanPass =
+    substantive !== undefined &&
+    substantive.hasFindings &&
+    substantive.findings.every((finding) => {
+      const rulings = fold.records.filter(
+        (record) =>
+          record.kind === "ruling" &&
+          record.data["subject"] === `review:${reviewId}:${finding.id}`
+      );
+
+      if (effectiveSeverity(finding, rulings) !== "MUST") {
+        return true;
+      }
+
+      const decision = rulings.findLast(isDecision);
+
+      return decision !== undefined && decision.data["ruling"] !== "accepted";
+    });
+
+  const latestRecurrence = latestEscalation(
+    fold.records,
+    `recurrence:${reviewId}:`
+  );
+
+  const latestCeiling = latestEscalation(fold.records, `ceiling:${reviewId}:`);
+
+  return evaluateReviewClosed({
+    reviewId,
+    activeReviewId,
+    pendingMustRejections: loadRejections(session, fold, [reviewId]).filter(
+      (state) => state.state !== "confirmed"
+    ).length,
+    cleanPass,
+    latestRecurrenceSeq: latestRecurrence?.seq ?? 0,
+    latestCeiling: latestCeiling && {
+      seq: latestCeiling.seq,
+      state: latestCeiling.data["state"],
+      summary: latestCeiling.data["summary"],
+    },
+  });
+};
+
 // oxlint-disable-next-line eslint/complexity -- identity branches per confirmation state, coverage decision, and roster entry.
 export const reviewIdentity = async (
   ctx: HandlerContext,
@@ -483,7 +592,22 @@ export const reviewIdentity = async (
     }
   }
 
-  if ([...escalations.values()].includes("open")) {
+  // NOTE: review ids hold no colon, so the second segment of a recurrence id names its review.
+  const closedRecurrence = (id: string) => {
+    const [kind, review] = id.split(":");
+
+    return (
+      kind === "recurrence" &&
+      review !== undefined &&
+      isReviewClosed(ctx.session, fold, review, INTEGRATION_REVIEW)
+    );
+  };
+
+  if (
+    [...escalations].some(
+      ([id, state]) => state === "open" && !closedRecurrence(id)
+    )
+  ) {
     refuse("review-required");
   }
 

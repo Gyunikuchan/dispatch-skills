@@ -171,6 +171,9 @@
     },
     "minimax-m3.1-flash": {
       "rates": { "input": 0.15, "output": 0.6, "cacheRead": 0.015 }
+    },
+    "opencode-go/hungerg-free": {
+      "rates": { "input": 0, "output": 0, "cacheRead": 0 }
     }
   }
 }

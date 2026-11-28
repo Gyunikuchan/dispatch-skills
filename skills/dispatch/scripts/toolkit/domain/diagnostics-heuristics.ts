@@ -17,7 +17,8 @@ const DIAGNOSTIC_THRESHOLDS = {
   cacheReadShare: 0.5,
   invocationShare: 0.5,
   minCacheTokens: 100_000,
-  turnChurn: 40,
+  singleAgentTurnChurn: 60,
+  stageTurnChurn: 120,
 } as const;
 
 const NON_REVIEW_STAGES = new Set([
@@ -593,7 +594,7 @@ const h11StageChurn = (
       (sum(hRows.map((r) => r.turns)) ?? 0) +
       (sum(dRows.map((i) => i.usage?.turns)) ?? 0);
 
-    if (turns < T.turnChurn) {
+    if (turns < T.stageTurnChurn) {
       continue;
     }
 
@@ -629,7 +630,7 @@ const h11StageChurn = (
 
     const turns = sum(items.map((r) => r.observed)) ?? 0;
 
-    if (turns < T.turnChurn) {
+    if (turns < T.singleAgentTurnChurn) {
       continue;
     }
 

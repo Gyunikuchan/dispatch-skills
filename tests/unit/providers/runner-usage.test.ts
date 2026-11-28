@@ -1396,13 +1396,16 @@ test("usage baseline: Claude three-launch chain (session, result.usage, modelUsa
   files[sessionPath] = ""; // missing/empty transcript -> incomplete read
   h.finish(
     ok({
-      exit: 1,
+      exit: null,
+      signal: "SIGTERM",
       stdout: JSON.stringify({
         type: "result",
         result: "",
         session_id: "sess-chain",
         usage: { input_tokens: 20, output_tokens: 3 },
       }),
+      timedOut: true,
+      idleMs: IDLE_TIMEOUT_MS,
     })
   );
   await flush();
@@ -1460,12 +1463,15 @@ test("usage baseline: unmeasured middle or first launch leaves later cumulative 
     h.clock.advance(10);
     h.finish(
       ok({
-        exit: 1,
+        exit: null,
+        signal: "SIGTERM",
         stdout: JSON.stringify({
           type: "result",
           result: "",
           session_id: "sess-mid",
         }),
+        timedOut: true,
+        idleMs: IDLE_TIMEOUT_MS,
       })
       // eslint-disable-next-line eslint/no-inline-comments -- intentional test pattern.
     ); // unmeasured middle
