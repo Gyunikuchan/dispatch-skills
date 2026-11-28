@@ -2636,6 +2636,8 @@ test("compact status reports state-unreadable when a saved review round has a mi
   const f = sessionFixture({ memory: true });
 
   try {
+    // An isolated skill root keeps a maintainer's local diagnostics config from adding `resumeRef`.
+    f.deps.skillRoot = path.join(f.root, "isolated-skill");
     const { planFile } = await setupLowOpened(f);
     const head = "a".repeat(40);
     // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
