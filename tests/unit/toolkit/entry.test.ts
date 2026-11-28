@@ -423,7 +423,7 @@ test("session instructions always point at grounding and add diagnostics only wh
 
       assert.match(
         instructions,
-        /When a verb needs a new spec, run `doctor run --host <platform>` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery\./u
+        /When a verb needs a new spec, run `doctor run --session <session> --host <platform>` and ground under references\/grounding\.md before authoring the spec; after confirming it, ground again before design or plan authoring\. Launch explorers on doctor's `utility` entry for this platform; self-ground only when the host has no launch tool or no map survives recovery\./u
       );
       assert.doesNotMatch(
         instructions,

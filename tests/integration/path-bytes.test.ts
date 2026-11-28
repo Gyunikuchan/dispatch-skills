@@ -548,7 +548,7 @@ test("growth above the baseline fails and a smaller figure passes", () => {
 
 test("the report prints distinct, workload and editable bytes with reductions for both paths", () => {
   const result = measure(readFile, "after");
-  const report = formatReport(result);
+  const renderedReport = formatReport(result);
 
   for (const name of GUIDES) {
     const figures = result[name];
@@ -560,7 +560,7 @@ test("the report prints distinct, workload and editable bytes with reductions fo
       ["editable workload", "editableWorkload"],
     ] as const) {
       assert.match(
-        report,
+        renderedReport,
         new RegExp(
           `${name} ${label}: ${figures[key]} bytes \\(baseline \\d+, -?\\d+(\\.\\d)?%\\)`,
           "u"

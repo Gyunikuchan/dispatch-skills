@@ -15,8 +15,8 @@ SKILL_PATTERN='skills/dispatch/(SKILL\.md|references/|scripts/)'
 if git diff --cached --name-only | grep -qE "$SKILL_PATTERN"; then
   node scripts/generate-hashes.ts
 
-  # Stage the updated manifest so it's included in the commit.
-  git add skills/dispatch/skill-hashes.json
+  # Stage the updated manifest and any regenerated diagnostic component list so both are included in the commit.
+  git add skills/dispatch/skill-hashes.json skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts
 fi
 
 # Validate all found dispatch config files.

@@ -55,6 +55,11 @@ export default defineConfig({
     "landmines-style/no-comments": "off",
     // Annotations pin inference; removal widened types and broke never-narrowing tree-wide.
     "landmines-types/no-explicit-return-types": "off",
+    // AGENTS.md owns active TODO/FIXME markers; keep rejecting XXX and @todo.
+    "no-warning-comments": [
+      "error",
+      { decoration: ["*"], terms: ["xxx", "@todo"] },
+    ],
     // Spread-first pressure conflicts with typescript/no-misused-spread on string iteration; the safety rule wins.
     "prefer-spread": "off",
     // Contradicts unicorn/new-for-builtins on Array(n); explicit new wins.

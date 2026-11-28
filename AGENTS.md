@@ -60,8 +60,7 @@ Explain non-obvious rationale (quirks, invariants, architectural choices) in a s
 
 ## Verification Details
 
-- **TypeScript edits:** Run `npm run lint` and `npm run format:check` before handoff.
-- **Aggregate suites:** Run plan `Check:` commands and `npm test` after the last edit; run `npm run test:e2e` when touching toolkit, Git, or subprocess behavior (CI runs `npm run test:all`). Record evidence for each criterion; failed or unrun checks remain open.
+- **Aggregate suites:** Run plan `Check:` commands and `npm test` (which runs `typecheck`, `lint`, `format:check`, repo checks, and fast tests; use `npm run format` to auto-fix) after the last edit; run `npm run test:e2e` when touching toolkit, Git, or subprocess behavior (CI runs `npm run test:all`). Record evidence for each criterion; failed or unrun checks remain open.
 - **Focused Node tests:** Run:
   ```text
   node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts TEST_FILE
