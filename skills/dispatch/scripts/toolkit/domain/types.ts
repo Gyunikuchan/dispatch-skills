@@ -65,6 +65,14 @@ export interface RoundCause {
 }
 
 /** Marks a round whose churn needs a step-back outcome before its accepted rulings; see review-rules.md. */
+/** Step-back outcomes a `step-back:<review>:<round>` ruling may carry. */
+export const STEP_BACK_OUTCOMES = [
+  "patch",
+  "rewrite",
+  "re-author",
+  "user",
+] as const;
+
 export interface StepBack {
   units: string[];
   fixInduced?: [count: number, total: number];

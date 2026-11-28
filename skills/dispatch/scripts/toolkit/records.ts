@@ -5,6 +5,7 @@ import { isRecord } from "../lib/config.ts";
 import type { JsonObject } from "../lib/config.ts";
 import { IMPACTS, TRIGGERS } from "./domain/severity.ts";
 import { stableValue } from "./domain/stable-value.ts";
+import { STEP_BACK_OUTCOMES } from "./domain/types.ts";
 import { ToolError, clipBytes } from "./output.ts";
 
 export const KINDS = [
@@ -678,12 +679,7 @@ export function validateRecord(
           invalid("data.subject", "step-back:<review>:<round>");
         }
 
-        choice(
-          "patch",
-          "rewrite",
-          "re-author",
-          "user"
-        )(value.data["ruling"], "data.ruling");
+        choice(...STEP_BACK_OUTCOMES)(value.data["ruling"], "data.ruling");
       }
 
       if ("impact" in value.data || "trigger" in value.data) {

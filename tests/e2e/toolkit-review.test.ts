@@ -17,6 +17,7 @@ import {
   latest,
 } from "../../skills/dispatch/scripts/toolkit/ledger.ts";
 import { CLEAN } from "../helpers/e2e.ts";
+import { dropProposedFix, treeSnapshot } from "../helpers/review-fixture.ts";
 import type { Guard } from "./helpers/json.ts";
 import {
   arrayOf,
@@ -1864,39 +1865,6 @@ test("open slot rerun selects whole-target scope with the full roster after a de
   }
 });
 
-const treeBytes = (directory: string): Record<string, string> =>
-  Object.fromEntries(
-    fs
-      .readdirSync(directory, { recursive: true, encoding: "utf-8" })
-      .map((name) => {
-        const file = path.join(directory, name);
-
-        return [
-          name,
-          fs.statSync(file).isDirectory() ? "" : fs.readFileSync(file, "utf-8"),
-        ];
-      })
-  );
-
-/** Rewrites a saved findings payload as an earlier version saved it: no finding carries `proposedFix`. */
-const dropProposedFix = (file: string) => {
-  const saved = parseJson(fs.readFileSync(file, "utf-8"));
-
-  if (!isRecord(saved) || !Array.isArray(saved["findings"])) {
-    assert.fail("unexpected findings payload");
-  }
-
-  const findings = saved["findings"]
-    .filter(isRecord)
-    .map((finding) =>
-      Object.fromEntries(
-        Object.entries(finding).filter(([name]) => name !== "proposedFix")
-      )
-    );
-
-  fs.writeFileSync(file, JSON.stringify({ ...saved, findings }));
-};
-
 test("review run refuses saved findings without proposedFix and leaves the ledger and review directory untouched", async () => {
   const t = await coverageRepo(4);
 
@@ -1915,7 +1883,7 @@ test("review run refuses saved findings without proposedFix and leaves the ledge
 
     const before = {
       ledger: fs.readFileSync(ledger, "utf-8"),
-      tree: treeBytes(reviewDir),
+      tree: treeSnapshot(reviewDir),
     };
 
     const refused = await t.review();
@@ -1924,7 +1892,10 @@ test("review run refuses saved findings without proposedFix and leaves the ledge
     assert.equal(refused.output.reason, "stale-findings");
     assert.equal(t.calls.length, 0);
     assert.deepEqual(
-      { ledger: fs.readFileSync(ledger, "utf-8"), tree: treeBytes(reviewDir) },
+      {
+        ledger: fs.readFileSync(ledger, "utf-8"),
+        tree: treeSnapshot(reviewDir),
+      },
       before
     );
   } finally {

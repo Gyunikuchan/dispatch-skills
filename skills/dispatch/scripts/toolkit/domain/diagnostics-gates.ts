@@ -38,7 +38,6 @@ import {
   DASH,
   DIAGNOSTIC_LIMITS,
   PHASE_NAMES,
-  STEP_BACK_OUTCOMES,
 } from "./diagnostics-types.ts";
 import type {
   Category,
@@ -50,7 +49,7 @@ import type {
   RunFacts,
   Usage,
 } from "./diagnostics-types.ts";
-import { ROUND_CAUSES } from "./types.ts";
+import { ROUND_CAUSES, STEP_BACK_OUTCOMES } from "./types.ts";
 
 const MAX_REVIEW_ROUND_CAP = 1000;
 

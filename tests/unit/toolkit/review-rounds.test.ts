@@ -9,6 +9,7 @@ import { hotUnitsNotice } from "../../../skills/dispatch/scripts/toolkit/review-
 import { defined } from "../../helpers/guards.ts";
 import {
   CLEAN,
+  dropProposedFix,
   fixture,
   report,
   treeSnapshot,
@@ -2323,21 +2324,6 @@ test("spec snapshot: a failed snapshot write does not refuse the round", async (
 });
 
 // SECTION: Saved findings from an earlier version
-
-/** Rewrites a saved payload so its findings lack `proposedFix`, as an earlier version saved them. */
-const dropProposedFix = (file: string) => {
-  const payload = readJson(file, withFields({ findings: listOf(jsonObject) }));
-
-  fs.writeFileSync(
-    file,
-    JSON.stringify({
-      ...payload,
-      findings: payload.findings.map(
-        ({ proposedFix: _removed, ...rest }) => rest
-      ),
-    })
-  );
-};
 
 const refusalState = (f: RoundFixture) => ({
   ledger: fs.readFileSync(path.join(f.session, "ledger.jsonl"), "utf-8"),

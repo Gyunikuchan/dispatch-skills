@@ -14,6 +14,7 @@ import {
 import { defined } from "../../helpers/guards.ts";
 import {
   CLEAN,
+  dropProposedFix,
   fixture,
   report,
   treeSnapshot,
@@ -4044,25 +4045,6 @@ const staleFinding = (id: string, severity: "MUST" | "SHOULD") =>
     )
   );
 
-const stripProposedFix = (file: string) => {
-  const payload = readJson(
-    file,
-    both(jsonObject, withFields({ findings: listOf(jsonObject) }))
-  );
-
-  fs.writeFileSync(
-    file,
-    JSON.stringify({
-      ...payload,
-      findings: payload.findings.map((finding) =>
-        Object.fromEntries(
-          Object.entries(finding).filter(([name]) => name !== "proposedFix")
-        )
-      ),
-    })
-  );
-};
-
 const runPlan = async (
   f: ReviewFixture,
   level: string,
@@ -4152,7 +4134,7 @@ test("stale findings: the refusal beats the ceiling and opens no escalation", as
 
   try {
     await seedAcceptedCeiling(f);
-    stripProposedFix(path.join(f.directory, "round-4", "findings.json"));
+    dropProposedFix(path.join(f.directory, "round-4", "findings.json"));
     const before = durableState(f);
     const result = await runPlan(f, "medium");
 

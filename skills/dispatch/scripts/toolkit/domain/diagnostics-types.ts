@@ -12,7 +12,11 @@ import type {
 import type { LifecycleStep } from "../../providers/types.ts";
 import type { RecoverySelection } from "../review-state.ts";
 import type { FailureClass } from "../types.ts";
-import type { ReviewKind, RoundCausePrimary } from "./types.ts";
+import type {
+  ReviewKind,
+  RoundCausePrimary,
+  STEP_BACK_OUTCOMES,
+} from "./types.ts";
 
 export const PHASE_NAMES = [
   "plan",
@@ -184,14 +188,6 @@ export interface ReviewFacts {
   cap?: number;
   cause?: RoundCausePrimary;
 }
-
-/** Step-back outcomes a `step-back:<review>:<round>` ruling may carry. */
-export const STEP_BACK_OUTCOMES = [
-  "patch",
-  "rewrite",
-  "re-author",
-  "user",
-] as const;
 
 /**
  * Per-review fix-choice counts and step-back outcomes, built from ledger rulings alone.

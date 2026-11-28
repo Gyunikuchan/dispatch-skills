@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isRecord } from "../../skills/dispatch/scripts/lib/config.ts";
 import { parseJson } from "../../skills/dispatch/scripts/lib/integrity.ts";
 import type {
   JsonObject,
@@ -49,6 +50,25 @@ export const report = (
       },
     ],
   });
+
+/** Rewrites a saved findings payload as an earlier version saved it: no finding carries `proposedFix`. */
+export const dropProposedFix = (file: string) => {
+  const saved = parseJson(fs.readFileSync(file, "utf-8"));
+
+  if (!isRecord(saved) || !Array.isArray(saved["findings"])) {
+    assert.fail(`unexpected findings payload in ${file}`);
+  }
+
+  const findings = saved["findings"].map((finding) =>
+    isRecord(finding)
+      ? Object.fromEntries(
+          Object.entries(finding).filter(([name]) => name !== "proposedFix")
+        )
+      : finding
+  );
+
+  fs.writeFileSync(file, JSON.stringify({ ...saved, findings }));
+};
 
 /** Every entry under a directory with its bytes (directories map to ""), or null when the directory is absent; a refusal must leave it as it was. */
 export const treeSnapshot = (directory: string) => {

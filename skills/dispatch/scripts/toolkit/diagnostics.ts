@@ -25,10 +25,7 @@ import {
   hostThreadId,
 } from "./diagnostics-capture.ts";
 import { recoveryRef } from "./domain/diagnostics-gates.ts";
-import {
-  completeDelegateResponses,
-  STEP_BACK_OUTCOMES,
-} from "./domain/diagnostics-types.ts";
+import { completeDelegateResponses } from "./domain/diagnostics-types.ts";
 import type { ReviewChoiceFacts } from "./domain/diagnostics-types.ts";
 import {
   addYield,
@@ -44,7 +41,7 @@ import type {
   SlotYieldFacts,
 } from "./domain/diagnostics.ts";
 import { stableValue } from "./domain/stable-value.ts";
-import { ROUND_CAUSES } from "./domain/types.ts";
+import { ROUND_CAUSES, STEP_BACK_OUTCOMES } from "./domain/types.ts";
 import { foldLedger, latest } from "./ledger.ts";
 import type { Fold } from "./ledger.ts";
 import { present } from "./narrow.ts";
