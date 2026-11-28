@@ -5,8 +5,14 @@ import { test } from "node:test";
 
 import { rejectionState } from "../../../skills/dispatch/scripts/toolkit/confirmations.ts";
 import { appendRecord } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
+import { hotUnitsNotice } from "../../../skills/dispatch/scripts/toolkit/review-notices.ts";
 import { defined } from "../../helpers/guards.ts";
-import { CLEAN, fixture, report } from "../../helpers/review-fixture.ts";
+import {
+  CLEAN,
+  fixture,
+  report,
+  treeSnapshot,
+} from "../../helpers/review-fixture.ts";
 import {
   flag,
   jsonObject,
@@ -47,6 +53,12 @@ const findingsCheck = withFields({
         new: numeric,
         failed: numeric,
       }),
+    })
+  ),
+  stepBack: optional(
+    withFields({
+      units: listOf(text),
+      fixInduced: optional(listOf(numeric)),
     })
   ),
   findings: listOf(withFields({ id: text, origin: optional(text) })),
@@ -137,6 +149,7 @@ test("roster: later rounds roster scoping and labeling reflect finding severity"
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
       fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -177,6 +190,7 @@ test("roster: an accepted MUST past the round cap keeps every target", async () 
       await f.add("ruling", {
         subject: `review:plan-work.plan:R${step}-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Resolution",
       });
       fs.appendFileSync(f.plan, `\n## Fix ${step}\nChanged.\n`);
@@ -340,6 +354,7 @@ const correct = async (
   await f.add("ruling", {
     subject: `review:plan-work.plan:${id}`,
     ruling: "accepted",
+    fix: "proposed",
     ...CORRECTIONS[to],
   });
 
@@ -375,6 +390,7 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
         await f.add("ruling", {
           subject: "review:plan-work.plan:R1-F001",
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Applied the fix",
         });
       }
@@ -584,7 +600,7 @@ test("corrected finding severity governs roster, continuation, snapshot and conf
         scope: "in" as const,
         defect: "Defect",
         locus: "§ Work",
-        requiredChange: "Fix",
+        proposedFix: "Fix",
       };
 
       const round: Parameters<typeof rejectionState>[0][number] = {
@@ -885,6 +901,7 @@ test("round keeps loose-locus findings listed, counted and unlinked", async () =
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
       fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1001,6 +1018,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1061,6 +1079,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
       await f.add("ruling", {
         subject: `review:${narrow(first.value, withFields({ review: text })).review}:R1-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
       state.feature = "feature-2";
@@ -1146,6 +1165,7 @@ test("inter-round diff, rerun labels and unavailable inputs carry the accepted l
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F002",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Renamed",
       });
       phase = "later";
@@ -1518,6 +1538,7 @@ test("accepted findings and user decisions persist across rounds", async () => {
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1647,6 +1668,7 @@ test("accepted findings and user decisions persist across rounds", async () => {
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
       await escalate(
@@ -1728,6 +1750,7 @@ test("origin: the round-2 prompt asks for it and findings.json and the summary c
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1766,6 +1789,7 @@ test("cause: a round-2 review interrupted after pending keeps the same cause in 
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1835,6 +1859,7 @@ test("review run stores finding units for every round", async () => {
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.writeFileSync(
@@ -1942,6 +1967,7 @@ const acceptAll = async (f: RoundFixture, ids: readonly string[]) => {
     await f.add("ruling", {
       subject: `review:plan-work.plan:${id}`,
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
   }
@@ -2294,4 +2320,350 @@ test("spec snapshot: a failed snapshot write does not refuse the round", async (
     snapshotWrite.mock.restore();
     f.cleanup();
   }
+});
+
+// SECTION: Saved findings from an earlier version
+
+/** Rewrites a saved payload so its findings lack `proposedFix`, as an earlier version saved them. */
+const dropProposedFix = (file: string) => {
+  const payload = readJson(file, withFields({ findings: listOf(jsonObject) }));
+
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      ...payload,
+      findings: payload.findings.map(
+        ({ proposedFix: _removed, ...rest }) => rest
+      ),
+    })
+  );
+};
+
+const refusalState = (f: RoundFixture) => ({
+  ledger: fs.readFileSync(path.join(f.session, "ledger.jsonl"), "utf-8"),
+  review: treeSnapshot(f.directory),
+  launches: f.launches.length,
+});
+
+test("stale findings: a review with saved findings lacking proposedFix is refused before launch and changes nothing", async () => {
+  const f = await fixture();
+
+  try {
+    const first = await f.call();
+
+    assert.equal(first.exit, 0);
+    dropProposedFix(path.join(f.directory, "round-1", "findings.json"));
+    await f.add("ruling", {
+      subject: "review:plan-work.plan:R1-F001",
+      ruling: "accepted",
+      fix: "proposed",
+      rationale: "Fixed",
+    });
+
+    const before = refusalState(f);
+    const refused = await f.call();
+
+    assert.equal(refused.exit, 4);
+    assert.equal(refused.output.reason, "stale-findings");
+    assert.match(refused.output.summary, /earlier Dispatch version/u);
+    assert.deepEqual(refusalState(f), before);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("stale findings: one old finding among current ones refuses the review", async () => {
+  const f = await fixture();
+
+  try {
+    const first = await f.call();
+
+    assert.equal(first.exit, 0);
+    const file = path.join(f.directory, "round-1", "findings.json");
+
+    const payload = readJson(
+      file,
+      withFields({ findings: listOf(jsonObject) })
+    );
+
+    const [current] = payload.findings;
+
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...payload,
+        findings: [
+          current,
+          { ...current, id: "R1-F099", proposedFix: undefined },
+        ],
+      })
+    );
+
+    const refused = await f.call();
+
+    assert.equal(refused.output.reason, "stale-findings");
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("stale findings: current saved findings and another review's old findings do not refuse", async () => {
+  const f = await fixture();
+
+  try {
+    const first = await f.call();
+
+    assert.equal(first.exit, 0);
+    await f.add("ruling", {
+      subject: "review:plan-work.plan:R1-F001",
+      ruling: "accepted",
+      fix: "proposed",
+      rationale: "Fixed",
+    });
+
+    // An older review of another artifact holds old findings; it is a different review.
+    const other = path.join(
+      f.session,
+      ".state/reviews/plan-other.plan/round-1"
+    );
+
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(
+      path.join(other, "findings.json"),
+      JSON.stringify({ findings: [{ id: "R1-F001" }] })
+    );
+
+    const next = await f.call();
+
+    assert.equal(next.exit, 0, JSON.stringify(next.output));
+    assert.equal(readRound(f, 2).round, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// SECTION: Step-back
+
+const planOf = (body: string) =>
+  `# Work\n## Work\n### T1 — Task\n${body}\n## Review Findings & Resolutions\n`;
+
+const DEFECTS = [
+  "Retries never stop",
+  "Writes get lost",
+  "Locks leak",
+] as const;
+
+/** Runs rounds 1 to 3 over one unit that every round hits and every fix touches, so round 3 shows a streak of two. */
+const churned = async () => {
+  const f = await fixture();
+  fs.writeFileSync(f.plan, planOf("Original."));
+
+  for (const [index, defect] of DEFECTS.entries()) {
+    const round = index + 1;
+    f.deps.delegate = oneReviewerDelegate(
+      replyOf(["§ T1 — Task", defect, "MUST"])
+    );
+    // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+    const result = await f.call();
+    assert.equal(result.exit, 0, JSON.stringify(result.output));
+
+    if (round < DEFECTS.length) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      await acceptAll(f, [`R${round}-F001`]);
+      fs.writeFileSync(
+        f.plan,
+        planOf(`Revised ${round} ${"x".repeat(round)}.`)
+      );
+    }
+  }
+
+  return f;
+};
+
+const rulingsOf = (f: RoundFixture, round: number) =>
+  narrow(
+    f.read(round, "rulings.json"),
+    listOf(withFields({ key: text, data: jsonObject }))
+  );
+
+const outcomeRuling = (ruling: string) => ({
+  subject: "step-back:plan-work.plan:3",
+  ruling,
+  rationale: "Checked the shared cause",
+});
+
+test("step-back: a unit hot for two rounds saves the marker, names it in the summary and adds the outcome skeleton", async () => {
+  const f = await churned();
+
+  try {
+    assert.deepEqual(readFindings(f, 3).stepBack, { units: ["T1"] });
+    assert.equal(readFindings(f, 2).stepBack, undefined);
+    assert.equal(readFindings(f, 1).stepBack, undefined);
+    assert.match(f.output().summary, /; step-back due: T1(?:;|$)/u);
+
+    assert.deepEqual(
+      rulingsOf(f, 3).map((entry) => entry.key),
+      ["ruling:plan-work.plan:3:R3-F001", "step-back:plan-work.plan:3"]
+    );
+    assert.deepEqual(rulingsOf(f, 3)[1]?.data, {
+      subject: "step-back:plan-work.plan:3",
+      ruling: "",
+      rationale: "",
+    });
+    assert.equal(rulingsOf(f, 2).length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("step-back: a round of mostly fix-induced findings is marked from round 2 by share alone", async () => {
+  const f = await fixture();
+
+  try {
+    const gaps = (names: readonly string[], origin?: string) =>
+      JSON.stringify({
+        status: "FINDINGS",
+        findings: parseJson(
+          replyOf(...names.map((name) => ["§ Work", name, "MUST"] as const)),
+          withFields({ findings: listOf(jsonObject) })
+        ).findings.map((finding, index) => ({
+          ...finding,
+          proposedFix: `Close gap ${names[index]}`,
+          origin,
+        })),
+      });
+
+    f.deps.delegate = oneReviewerDelegate(
+      gaps(["Retries never stop", "Writes get lost"])
+    );
+    const first = await f.call();
+    assert.equal(first.exit, 0);
+    await acceptAll(f, ["R1-F001", "R1-F002"]);
+    fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
+    f.deps.delegate = oneReviewerDelegate(
+      gaps(["Locks leak", "Handles stay open"], "fix-induced")
+    );
+
+    const second = await f.call();
+    assert.equal(second.exit, 0, JSON.stringify(second.output));
+    assert.deepEqual(readFindings(f, 2).stepBack, {
+      units: [],
+      fixInduced: [2, 2],
+    });
+    assert.match(second.output.summary, /; step-back due: fix-induced 2 of 2/u);
+    assert.deepEqual(
+      rulingsOf(f, 2).map((entry) => entry.key),
+      [
+        "ruling:plan-work.plan:2:R2-F001",
+        "ruling:plan-work.plan:2:R2-F002",
+        "step-back:plan-work.plan:2",
+      ]
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("step-back: a marked round refuses its accepted rulings until an outcome is recorded", async () => {
+  const f = await churned();
+
+  try {
+    await assert.rejects(acceptAll(f, ["R3-F001"]), {
+      reason: "invalid-record",
+      message: /step-back:plan-work\.plan:3/u,
+    });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("step-back: no outcome value changes the next round's admission or roster", async () => {
+  for (const ruling of ["patch", "rewrite", "re-author", "user"]) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+    const f = await churned();
+
+    try {
+      const roster = targetSlots(readRound(f, 3));
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      await f.add("ruling", outcomeRuling(ruling));
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      await acceptAll(f, ["R3-F001"]);
+      fs.writeFileSync(f.plan, planOf(`Rewritten ${ruling}.`));
+      f.deps.delegate = oneReviewerDelegate(
+        replyOf(["§ T1 — Task", `Fresh gap ${ruling}`, "SHOULD"])
+      );
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      const fourth = await f.call();
+
+      assert.equal(
+        fourth.exit,
+        0,
+        `${ruling} ${JSON.stringify(fourth.output)}`
+      );
+      assert.deepEqual(targetSlots(readRound(f, 4)), roster, ruling);
+      assert.match(readRound(f, 4).scope, /^Re-review round 4 \(full\)/u);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+const hotUnit = (unit: string, hotStreak: number) => ({
+  unit,
+  hot: true,
+  hotStreak,
+});
+
+test("step-back: a round without a marker renders the hot-unit notice as before", () => {
+  const units = [
+    { ...hotUnit("T1", 1), delta: 12 },
+    { unit: "T2", hot: false, hotStreak: 0 },
+  ];
+
+  assert.equal(hotUnitsNotice(units, 100), "; 1 hot unit: T1 ×1 +12 B");
+  assert.equal(
+    hotUnitsNotice(units, 100, undefined),
+    "; 1 hot unit: T1 ×1 +12 B"
+  );
+  assert.equal(hotUnitsNotice([], 100), "");
+});
+
+test("step-back: the clause names units and the fix-induced share, and unit names trim first", () => {
+  assert.equal(
+    hotUnitsNotice([hotUnit("T1", 2), hotUnit("T2", 1)], 100, {
+      units: ["T1"],
+      fixInduced: [5, 8],
+    }),
+    "; 2 hot units: T1 ×2, T2 ×1; step-back due: T1; fix-induced 5 of 8"
+  );
+  assert.equal(
+    hotUnitsNotice([], 100, { units: [], fixInduced: [2, 3] }),
+    "; step-back due: fix-induced 2 of 3"
+  );
+
+  const units = Array.from(
+    { length: 30 },
+    (_, i) => `Unit number ${i} of many`
+  );
+
+  const notice = hotUnitsNotice(
+    units.map((unit) => hotUnit(unit, 2)),
+    200,
+    { units, fixInduced: [9, 10] }
+  );
+
+  assert.ok(Buffer.byteLength(notice) <= 1024 - 200, notice);
+  assert.match(
+    notice,
+    /; step-back due: \+30 more in findings\.json stepBack; fix-induced 9 of 10$/u
+  );
+  assert.match(notice, /^; 30 hot units: Unit number 0 of many ×2, /u);
+
+  assert.match(
+    hotUnitsNotice([hotUnit("T1", 2)], 1024 - 70, {
+      units: ["T1"],
+      fixInduced: [9, 10],
+    }),
+    /; step-back due: \+1 more in findings\.json stepBack; fix-induced 9 of 10$/u
+  );
 });

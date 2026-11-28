@@ -210,7 +210,7 @@ export const renderFixReviewLiteBrief = async (ctx: HandlerContext) => {
       clipBytes(
         safeText(
           `- ${line(id)} ${line(severity)} ${line(finding["locus"])}: ${line(finding["defect"])}` +
-            ` — required: ${line(finding["requiredChange"])} — ruling: ${line(rationale)}`
+            ` — Proposed fix: ${line(finding["proposedFix"])} — ruling: ${line(rationale)}`
         ),
         400
       )

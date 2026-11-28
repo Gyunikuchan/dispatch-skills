@@ -26,7 +26,7 @@ Load [failed-slot coverage](review-coverage.md#failed-slot-coverage) only on a s
 
 ## Rulings and fix scope
 
-Fill `rulings.json` with `accepted`, `rejected`, `duplicate` or `deferred` and evidence-backed rationales. Append the array in one `ledger append`. The template fills `review:<review>:<finding>` subjects and `ruling:<review>:<round>:<finding>` keys. For a later ruling of that finding, add `:<m>` to its initial key, counting from 2.
+Fill `rulings.json` with `accepted`, `rejected`, `duplicate` or `deferred` and evidence-backed rationales. `accepted` rulings also take `fix` (step 2). Append the array in one `ledger append`. The template fills `review:<review>:<finding>` subjects and `ruling:<review>:<round>:<finding>` keys. For a later ruling of that finding, add `:<m>` to its initial key, counting from 2.
 
 Correct a wrong rating on an `accepted` ruling with corrected `impact` and `trigger` under the same rubric; the rationale names each changed dimension. The fix stays required and no reviewer confirmation is needed. A current `critical` cannot be lowered by correction: use the rejection route. A correction to `critical` names the boundary crossed or the data lost in its rationale. A later ruling without values leaves the correction in force. A rejected finding takes the higher of its original and latest corrected severities. A downgrade appears in the walkthrough attention list. Reject repeated settled claims without new evidence by citing the prior ruling. Before accepting a finding that reverses an earlier accepted ruling or an approved plan criterion, cite the governing spec or plan in the ruling and resolve the conflict there.
 
@@ -43,12 +43,12 @@ Route accepted fixes within governing scope: plan and design fixes go to the orc
 The orchestrator runs steps 1–3, 7 and 8; each fixer runs steps 4–6.
 
 1. Rule every finding in the round before the first edit.
-2. An accepted ruling accepts the defect and cites its governing REQ, DEC, AD or code contract; leave the fix shape to the fixer.
+2. An accepted ruling accepts the defect, cites its governing REQ, DEC, AD or code contract, and judges the proposed fix. Set `fix: proposed` when the fix removes the cause for every failing state, is the smallest change that does so, sits at the right document layer, and leaves each consumer of the touched text or code holding; else set `fix: alternative: <reason>`. The choice sets direction; steps 4–6 stay with the fixer.
 3. Look for a cause shared across finding groups, then state one root cause per group. Resolve each group as one coherent change, ordered by actual interfaces. Fix a defective predicate so every failing state passes, not only the listed case.
 4. Before changing text or code, check why it exists and who uses it. Prefer narrowing or removal; if the fix grows its unit, state why neither meets the requirement. Name the tests, golden fixtures and byte or line ceilings that pin it, with current headroom. For each qualifier, branch or field the fix deletes or narrows, list the consumer that relied on it (in the reply or the `edit` rationale) and confirm it still holds before the next round.
 5. Fix at the artifact level. Spec states intent and acceptance. Design states architectural contracts and invariants. Plan states tactics, tasks, touched interfaces and verification. Code supplies routine implementation mechanisms. Resolve a request for design mechanism with a contract and route the tactics to the plan.
 6. Before writing an added or changed claim about existing code or docs, confirm at source that it supports the claim; for data production or consumption, find the code that writes or reads it. Write each verified fact the fix depends on into the artifact.
-7. Read `findings.json` units to identify hot units. Rewrite each hot unit whole with units that cite its task, criterion, REQ, DEC, AD or interface IDs. Use the governing requirements and search for those IDs in the artifact. Escalate a wider rewrite through the [Decision Frame](decision-frame.md#review-escalation).
+7. Read `findings.json` `units` and `stepBack`. Rewrite a hot unit, or step back when the summary states `step-back due`, under the [step-back procedure](#step-back-procedure).
 8. After each accepted plan or design fix batch, including final-round SHOULD fixes, run a lightweight fix review before the next round or report. Without a launch tool, run the brief inline, record mode `inline` in the note and mark the review inline in the verb report (the plan or design handoff).
    - Record the edit and render the brief via `lint run --edit --fix-review-lite`; launch it on its `launchAs`.
    - Verify each claim at source and fix or rule it before the next round or report. Reject only with source evidence that the requirement holds. Repeat the review once at most per batch, only when the batch fixed an accepted MUST finding, with `--fix-review-lite` on the further `lint run --edit`.
@@ -56,6 +56,18 @@ The orchestrator runs steps 1–3, 7 and 8; each fixer runs steps 4–6.
 
 For code and integration fixes, before the next review round, whoever applied accepted fixes re-reads the changed sections or paths together with the other consumers of each touched contract, and resolves conflicts before the round; this self-check launches no subagent and changes no roster, cap or round rule.
 
-Adjacent work and optional findings need user opt-in when outside approved scope; preserve unselected findings as follow-ups. In-scope acceptance supplies opt-in only for the selected bounded work. A recurring finding after an accepted fix escalates through the [Decision Frame](decision-frame.md#review-escalation).
+Adjacent work and optional findings need user opt-in when outside approved scope; preserve unselected findings as follow-ups. In-scope acceptance supplies opt-in only for the selected bounded work. A recurring finding after an accepted fix follows the [step-back procedure](#step-back-procedure).
 
 Malformed, empty, truncated or refused provider reports use [provider fallback](providers.md). Unknown nonempty tags remain usable as uncategorized with originalTag; do not silently drop their claims. A failed fix or failed check stays open with logs and options.
+
+### Step-back procedure
+
+Run this procedure when the `review run` summary states `step-back due` or a finding recurs after an accepted fix. `rulings.json` then holds a `step-back:<review>:<round>` skeleton; `ledger append` refuses the round's accepted rulings until a filled outcome is in the batch or the ledger. The orchestrator decides from round 2 without the user, except where `user` below applies.
+
+1. Look for a cause shared by the round's fix-induced findings and hot units: one fact stated in several places; a fix that added a mechanism the artifact never grounded; a requirement that the fixes cannot satisfy; content at the wrong document layer.
+2. Record one outcome as a `ruling` with subject `step-back:<review>:<round>` and a one-line `rationale`:
+   - `patch`: continue patching. State the evidence that the cause is local or the review is converging. A repeated `patch` in one review states what changed since the previous step-back. A unit rewritten in the previous round reads as hot again; a `patch` that names the rewrite is valid.
+   - `rewrite`: rewrite the named units whole; the rationale names them. Each rewritten unit is derived from its governing requirements and the accepted defects, not from the patch history, and cites its task, criterion, REQ, DEC, AD or interface IDs. Search the artifact for those IDs.
+   - `re-author`: re-author the plan or design the same way.
+   - `user`: take the decision through the [Decision Frame](decision-frame.md#review-escalation). It covers relaxing or splitting a requirement, moving a plan up to a design, and re-authoring code. Discarding integrated code stays a [user gate](decision-frame.md#user-gate-boundaries).
+3. The next round reviews a rewritten unit or re-authored artifact under the existing admission rules. At a final round with no accepted MUST, no round follows: choose `patch` or `user`.

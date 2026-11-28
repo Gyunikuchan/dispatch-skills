@@ -553,6 +553,7 @@ test("status budget and coverage admission reflect rulings and open slots", asyn
           data: {
             subject: `review:${review}:R2-F001`,
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           },
         },

@@ -1752,6 +1752,12 @@ const overviewPhase = (p: PhaseFacts) => {
     : `${p.name} · ${p.key}`;
 };
 
+/** The review name shared by the `Rounds past cap` bullet and the review-choice lines. */
+const reviewLabel = (run: RunFacts, key: string) =>
+  /^review-[a-f0-9]{16}$/u.test(key)
+    ? `subject ${key.slice(7)}`
+    : phaseName(run, key);
+
 const sampleCells = (samples: UsageSample[]) => {
   const t = totals(samples);
 
@@ -2306,7 +2312,8 @@ const buildSections = (
     reviews.length > 0 ||
     timing.length > 0 ||
     workload.length > 0 ||
-    yieldRows.length > 0;
+    yieldRows.length > 0 ||
+    runs.some((run) => (run.reviewChoices?.length ?? 0) > 0);
 
   const healthRows: string[] = [];
   const pastCapBullets: string[] = [];
@@ -2354,9 +2361,7 @@ const buildSections = (
 
       const totalRounds = Math.max(...roundNums);
 
-      const review = /^review-[a-f0-9]{16}$/u.test(rk)
-        ? `subject ${rk.slice(7)}`
-        : phaseName(run, rk);
+      const review = reviewLabel(run, rk);
 
       // The last recorded cap wins, as in H2; round.json supplies it even when no findings.json exists.
       const cap = [...rList, ...tList]
@@ -2410,6 +2415,25 @@ const buildSections = (
     }
   }
 
+  const choiceBullets = runs.flatMap((run, runIndex) =>
+    (run.reviewChoices ?? []).flatMap((choice) => {
+      const label = `${singleRun ? "" : `run ${runIndex + 1} `}${reviewLabel(run, choice.phase)}`;
+
+      return [
+        ...(choice.proposed || choice.alternative
+          ? [
+              `- Fix choices: ${label}: ${choice.proposed} proposed, ${choice.alternative} alternative`,
+            ]
+          : []),
+        ...(choice.stepBacks.length
+          ? [
+              `- Step-backs: ${label}: ${choice.stepBacks.map((s) => `R${s.round} ${s.outcome}`).join(", ")}`,
+            ]
+          : []),
+      ];
+    })
+  );
+
   for (const e of roundEntries) {
     healthRows.push(
       row([
@@ -2443,6 +2467,7 @@ const buildSections = (
           roundEntries.some((e) => e.revPartial)
         )}`,
         ...pastCapBullets,
+        ...choiceBullets,
         "",
         ...tableHeader([
           ...(singleRun ? [] : ["Run"]),
@@ -2464,6 +2489,10 @@ const buildSections = (
           : []),
         ""
       );
+    }
+
+    if (!roundEntries.length && choiceBullets.length) {
+      out.push(...choiceBullets, "");
     }
 
     if (yieldRows.length) {

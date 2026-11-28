@@ -970,7 +970,7 @@ const finding = (
   category: "correctness",
   locus: "scripts/dispatch.ts:L1",
   defect: `Finding ${id} describes a repeat`,
-  requiredChange: `Resolve ${id}`,
+  proposedFix: `Resolve ${id}`,
   sources: marker.sources ?? ["claude[0]"],
   scope: "in",
   ...(marker.recurrence && { recurrence: marker.recurrence }),
@@ -1843,7 +1843,7 @@ const causeFinding = (
   category: "correctness",
   locus: "§ Work",
   defect: `Defect ${id}`,
-  requiredChange: "Fix it",
+  proposedFix: "Fix it",
   sources: ["claude[0]"],
   scope: "in",
   origin,
@@ -4615,4 +4615,207 @@ test("keeps bounded recovery facts and strips raw text and locators", () => {
     }).recoveryExecution,
     undefined
   );
+});
+
+// SECTION: Review choices
+
+const choiceRuling = (
+  seq: number,
+  subject: string,
+  ruling: string,
+  extra: Record<string, string> = {}
+) => ({
+  seq,
+  key: `ruling-${seq}`,
+  at: "2026-01-01T00:00:00Z",
+  kind: "ruling",
+  by: "orchestrator",
+  data: { subject, ruling, rationale: "Checked against the source.", ...extra },
+});
+
+const choiceFold = (...records: ReturnType<typeof choiceRuling>[]) => {
+  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- test fixture establishes this shape before the assertion
+  const fold = { records, lastSeq: records.length, torn: null } as Fold;
+
+  return fold;
+};
+
+test("review choices count the latest fix choice per finding and list every step-back in ledger order without a findings file", () => {
+  const fixture = sessionFixture({ memory: true });
+
+  try {
+    const alpha = "review-alpha";
+
+    saveRound({
+      session: fixture.session,
+      review: alpha,
+      round: 1,
+      cap: 3,
+      roster: [rosterSlot("claude[0]", "claude")],
+      outcomes: doneOutcomes,
+      findingsFile: savedFindings({
+        review: alpha,
+        round: 1,
+        cap: 3,
+        findings: [causeFinding("R1-F001", "original")],
+      }),
+    });
+
+    const accepted = (seq: number, id: string, fix?: string) =>
+      choiceRuling(
+        seq,
+        `review:${alpha}:${id}`,
+        "accepted",
+        fix === undefined ? {} : { fix }
+      );
+
+    const facts = sessionFacts(
+      fixture.session,
+      choiceFold(
+        accepted(1, "R1-F001", "proposed"),
+        accepted(2, "R1-F002", "alternative: the proposal edits a shared type"),
+        accepted(3, "R1-F003", "proposed"),
+        accepted(4, "R1-F003", "alternative: later evidence"),
+        accepted(5, "R1-F004", "proposed"),
+        choiceRuling(6, `review:${alpha}:R1-F004`, "rejected"),
+        accepted(7, "R1-F005"),
+        choiceRuling(8, `review:${alpha}:R1-F006`, "deferred"),
+        choiceRuling(9, `step-back:${alpha}:2`, "patch"),
+        choiceRuling(10, "step-back:review-beta:3", "user"),
+        choiceRuling(11, `step-back:${alpha}:1`, "rewrite"),
+        choiceRuling(12, `step-back:${alpha}:2`, "patch")
+      ),
+      "pass"
+    );
+
+    const alphaKey = defined(defined(facts.reviews[0]).phase);
+    const betaKey = defined(facts.reviewChoices?.[1]).phase;
+
+    assert.match(betaKey, /^review-[a-f0-9]{16}$/u);
+    assert.notEqual(betaKey, alphaKey);
+
+    assert.deepEqual(facts.reviewChoices, [
+      {
+        phase: alphaKey,
+        proposed: 1,
+        alternative: 2,
+        stepBacks: [
+          { round: 2, outcome: "patch" },
+          { round: 1, outcome: "rewrite" },
+          { round: 2, outcome: "patch" },
+        ],
+      },
+      {
+        phase: betaKey,
+        proposed: 0,
+        alternative: 0,
+        stepBacks: [{ round: 3, outcome: "user" }],
+      },
+    ]);
+
+    assert.match(
+      fs.readFileSync(writeDiagnostics(fixture.session, facts), "utf-8"),
+      /- Fix choices: subject .*: 1 proposed, 2 alternative\n- Step-backs: subject .*: R2 patch, R1 rewrite, R2 patch/u
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("a ledger without a fix choice or step-back builds no review choices", () => {
+  const fixture = sessionFixture({ memory: true });
+
+  try {
+    const facts = sessionFacts(
+      fixture.session,
+      choiceFold(
+        choiceRuling(1, "review:review-alpha:R1-F001", "accepted"),
+        choiceRuling(2, "review:review-alpha:R1-F002", "rejected"),
+        choiceRuling(3, "verification:review-alpha", "accepted", {
+          fix: "proposed",
+        })
+      ),
+      "pass"
+    );
+
+    assert.equal("reviewChoices" in facts, false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("diagnostics render reads review choices only while diagnostics are enabled", async () => {
+  for (const enabled of [false, true]) {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const skill = path.join(f.root, "skill");
+      fs.mkdirSync(skill);
+      fs.writeFileSync(
+        path.join(skill, "config.jsonc"),
+        JSON.stringify({ diagnostics: enabled })
+      );
+      f.deps.skillRoot = skill;
+
+      for (const [name, data] of [
+        [
+          "fix",
+          {
+            subject: "review:review-alpha:R1-F001",
+            ruling: "accepted",
+            rationale: "Checked against the source.",
+            fix: "proposed",
+          },
+        ],
+        [
+          "step-back",
+          {
+            subject: "step-back:review-alpha:2",
+            ruling: "patch",
+            rationale: "The cause is local.",
+          },
+        ],
+      ] as const) {
+        const file = path.join(f.root, `${name}.json`);
+
+        fs.writeFileSync(
+          file,
+          JSON.stringify({
+            kind: "ruling",
+            by: "orchestrator",
+            key: `choice-${name}`,
+            data,
+          })
+        );
+
+        assert.equal(
+          // oxlint-disable-next-line eslint/no-await-in-loop -- sequential appends build the ledger the render reads
+          await main(
+            ["ledger", "append", file, "--session", f.session],
+            f.deps
+          ),
+          0
+        );
+      }
+
+      const diagnostics = path.join(f.session, "diagnostics.md");
+
+      assert.equal(
+        // oxlint-disable-next-line eslint/no-await-in-loop -- each iteration observes its own fixture
+        await main(["diagnostics", "render", "--session", f.session], f.deps),
+        0
+      );
+
+      if (enabled) {
+        assert.match(
+          fs.readFileSync(diagnostics, "utf-8"),
+          /- Fix choices: .*1 proposed, 0 alternative\n- Step-backs: .*R2 patch/u
+        );
+      } else {
+        assert.equal(fs.existsSync(diagnostics), false);
+      }
+    } finally {
+      f.cleanup();
+    }
+  }
 });

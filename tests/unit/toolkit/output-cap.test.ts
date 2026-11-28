@@ -193,7 +193,7 @@ test("summary byte cap preserves large ask answers review findings and native sl
         tag: "correctness",
         locus: `§ Work ${i}`,
         defect: `日本語😀 defect ${i}`,
-        requiredChange: `修正 ${i}`,
+        proposedFix: `修正 ${i}`,
       }));
 
       f.script(

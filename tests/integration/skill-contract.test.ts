@@ -366,7 +366,9 @@ test("skill contract keeps router entries and resolving reference links", () => 
       : [...schema.required, ...schema.optional];
 
     if (schema.kind === "ruling") {
-      assert.ok(body.includes("optional `impact`, `trigger` and `paths`"));
+      assert.ok(
+        body.includes("optional `impact`, `trigger`, `paths` and `fix`")
+      );
     }
 
     for (const field of new Set(fields)) {
@@ -2106,6 +2108,93 @@ test("review rules require governing evidence for a reversal", () => {
     ),
     "review rules must require governing evidence and conflict resolution before a reversal"
   );
+});
+
+test("review rules judge the proposed fix against four criteria, once, and leave mechanics to the fixer", () => {
+  const rules = read(`${root}references/review-rules.md`);
+  const scope = rules.split("## Rulings and fix scope")[1] ?? "";
+
+  const step = scope.split("\n").find((line) => line.startsWith("2. "));
+
+  assert.ok(step !== undefined, "step 2 exists");
+  assert.match(step, /proposed fix/u);
+  assert.match(step, /`fix: proposed`/u);
+  assert.match(step, /alternative: <reason>/u);
+  assert.match(step, /steps 4–6/u);
+  assert.doesNotMatch(rules, /leave the fix shape to the fixer/u);
+
+  for (const criterion of [
+    /removes the cause for every failing state/gu,
+    /smallest change that does so/gu,
+    /right document layer/gu,
+    /each consumer of the touched text or code/gu,
+  ]) {
+    assert.equal(
+      [...rules.matchAll(criterion)].length,
+      1,
+      `${criterion.source} stated once in review-rules`
+    );
+    assert.match(step, new RegExp(criterion.source, "u"));
+  }
+});
+
+test("review rules state the step-back procedure once and the other references link to it", () => {
+  const rules = read(`${root}references/review-rules.md`);
+  const scope = rules.split("## Rulings and fix scope")[1] ?? "";
+  const heading = "### Step-back procedure";
+  const home = "review-rules.md#step-back-procedure";
+
+  assert.equal(rules.split(heading).length, 2, "one procedure section");
+
+  const stepBackText =
+    (scope.split(heading)[1] ?? "").split(/\n#{2,3} /u)[0] ?? "";
+
+  const everyReference = refs
+    .map((ref) => read(`${root}references/${ref}.md`))
+    .join("\n");
+
+  for (const statement of [
+    /one fact stated in several places/gu,
+    /added a mechanism the artifact never grounded/gu,
+    /requirement that the fixes cannot satisfy/gu,
+    /wrong document layer/gu,
+    /derived from its governing requirements and the accepted defects/gu,
+    /final round with no accepted MUST/gu,
+  ]) {
+    assert.equal(
+      [...everyReference.matchAll(statement)].length,
+      1,
+      `${statement.source} stated once across the references`
+    );
+    assert.match(stepBackText, new RegExp(statement.source, "u"));
+  }
+
+  for (const outcome of ["patch", "rewrite", "re-author", "user"]) {
+    assert.ok(stepBackText.includes(`\`${outcome}\``), outcome);
+  }
+
+  const lines = scope.split("\n");
+  const stepSeven = lines.find((line) => line.startsWith("7. ")) ?? "";
+
+  assert.ok(links(stepSeven).includes("#step-back-procedure"), stepSeven);
+  assert.doesNotMatch(stepSeven, /Rewrite each hot unit whole/u);
+
+  const recurring =
+    lines.find((line) => line.startsWith("Adjacent work")) ?? "";
+
+  assert.ok(links(recurring).includes("#step-back-procedure"), recurring);
+
+  assert.ok(
+    links(read(`${root}references/verbs/plan.md`)).includes(`../${home}`)
+  );
+
+  const escalation =
+    read(`${root}references/decision-frame.md`).split(
+      "### Review escalation"
+    )[1] ?? "";
+
+  assert.match(escalation, /step-back/u);
+  assert.ok(links(escalation).includes(home));
 });
 
 const referenceFile = (file: string) => read(`${root}references/${file}`);

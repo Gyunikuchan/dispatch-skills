@@ -191,7 +191,7 @@ export const reviewPrompt = (
     ? `\n\n### Pending MUST rejection confirmation\nReview each original claim and the host evidence. Add \`confirmations\` to the JSON report with exactly \`requestId\`, \`decision\` (\`agree|disagree\`), and a nonblank evidence-backed \`rationale\`: [{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]. Answer every assigned request exactly once. Keep ordinary \`status\` and \`findings\`. A pending MUST rejection is open until explicit agreement; omission is not confirmation.\n${requests
         .map(
           (request) =>
-            `\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nRequired change: ${request.claim.requiredChange}\nHost rejection: ${request.rationale}\n`
+            `\nRequest ID: \`${request.requestId}\`\nOriginal finding: ${request.finding} ${request.claim.locus}: ${request.claim.defect}\nProposed fix: ${request.claim.proposedFix}\nHost rejection: ${request.rationale}\n`
         )
         .join("")}`
     : "";
@@ -248,7 +248,7 @@ export const confirmationPrompt = (
     `- Target: ${request.claim.locus}`,
     `- Spec: ${context.spec.path}`,
     `- Original finding: ${request.claim.defect}`,
-    `- Required change: ${request.claim.requiredChange}`,
+    `- Proposed fix: ${request.claim.proposedFix}`,
     `- Host rejection: ${request.rationale}`,
     "",
   ]);

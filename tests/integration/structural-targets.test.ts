@@ -55,7 +55,11 @@ test("toolkit stays within the structural size budgets", () => {
   // NOTE: Rounds past cap (the `cause` fact, per-round `cap` in round timing, their allow-list gates and the `Rounds past cap` health bullet) add 56 lines over 60909, reaching 60965. Budget 60981 keeps 16 lines of headroom.
   // NOTE: Resume phase reasons (`RESUME_ROUTES`, `taskPhaseReason`, `keptAutomatedChecks`, pre-integration/terminal/check routing) and the shared section helper (`deriveStatusSections`, `inspectStoredPath`) add 474 lines over 60965, reaching 61439. Budget 61455 keeps 16 lines of headroom.
   // NOTE: Verified bug fixes add 552 net lines over 61439, reaching 61991: integrate conflict keys, lint review-lite target resolution, review-fix exclusivity and file hint, agy map launch hint, empty-output resume cap with the (provider, model) breaker and reprobe reset, closed-review escalation filter, recovery wave outcome emit, diagnostics aliasing and reserve attribution, and H11 thresholds. The lint-driven round timing helper extraction is included. Budget 62007 keeps 16 lines of headroom.
-  const driverLocBudget = 62_007;
+  // NOTE: The `review run` stale-findings preflight (`lacksProposedFix`, `refuseStaleFindings` and the target resolution that now precedes the note append) adds 26 net lines over 62004, reaching 62030. Budget 62046 keeps 16 lines of headroom.
+  // NOTE: The `ruling` fix choice (`fix` field, its append-only validation and the pre-filled template field) adds 23 net lines over 62030, reaching 62053. Budget 62069 keeps 16 lines of headroom.
+  // NOTE: The step-back marker (`stepBackMark`, the `step-back due` summary clause, the outcome skeleton, the `step-back:` ruling validation and the `ledger append` refusal) adds 175 net lines over 62053, reaching 62228. Budget 62244 keeps 16 lines of headroom.
+  // NOTE: The diagnostics review choices (`reviewChoiceFacts`, its allow-list gate and type, the `reviewLabel` helper and the `Fix choices` and `Step-backs` health bullets) add 154 net lines over 62228, reaching 62382. Budget 62398 keeps 16 lines of headroom.
+  const driverLocBudget = 62_398;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`
@@ -440,6 +444,7 @@ test("ledger authority is limited to approval, exceptions and user-selected leve
         {
           subject: "review:finding",
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Verified defect",
         },
       ],

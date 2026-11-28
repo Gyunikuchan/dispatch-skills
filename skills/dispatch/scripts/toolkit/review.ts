@@ -36,6 +36,7 @@ import {
   INTEGRATION_REVIEW,
   reviewDirectory,
   reviewFindingsFile,
+  reviewPendingFile,
   reviewRoundDirectory,
   reviewRoundEntries,
   reviewRoundFile,
@@ -43,6 +44,34 @@ import {
 } from "./review-state.ts";
 
 const REVIEW_KINDS = ["code", "plan", "design"] as const;
+
+// SECTION: stale saved findings
+const lacksProposedFix = (file: string) =>
+  (readStoredJson<{ findings?: unknown[] }>(file)?.findings ?? []).some(
+    (finding) =>
+      !isRecord(finding) || typeof finding["proposedFix"] !== "string"
+  );
+
+/** Read-only preflight over every completed and pending payload, so the refusal precedes each write of the handler. */
+const refuseStaleFindings = (directory: string) => {
+  const names = fs.existsSync(directory) ? fs.readdirSync(directory) : [];
+
+  for (const { name } of reviewRoundEntries(names)) {
+    const round = path.join(directory, name);
+
+    if (
+      [reviewFindingsFile(round), reviewPendingFile(round)].some(
+        lacksProposedFix
+      )
+    ) {
+      throw new ToolError(
+        4,
+        "stale-findings",
+        `Saved findings in ${path.basename(directory)} come from an earlier Dispatch version; finish that review on the version that started it`
+      );
+    }
+  }
+};
 
 // SECTION: fix-review-lite note
 /** Names the failing step; `detail` is the durable receipt and leads the message. A raw fault becomes a stepped `fault`; an already stepped error passes through. */
@@ -213,71 +242,7 @@ const runReview = async (ctx: HandlerContext, noted: NoteOutcome) => {
 
   const level = requestedLevel;
 
-  // SECTION: --note append
-  // The note lands after pure argument validation and before every gate, so a later refusal leaves it durable.
-  if (ctx.values["note"] !== undefined) {
-    // Pins validate before the durable append; a run without --note keeps its gate-first refusal order.
-    parsePinsFlag(ctx.values["pins"]);
-
-    try {
-      if (kind === "code") {
-        throw new ToolError(
-          1,
-          "invalid-input",
-          "--note applies to plan and design review"
-        );
-      }
-
-      const artifactPath = path.resolve(manifest.repositoryRoot, requested);
-
-      noted.appended = await appendNote(
-        ctx,
-        reviewId(kind, artifactPath),
-        artifactPath
-      );
-    } catch (error) {
-      throw inStep(error, "note");
-    }
-
-    fold = foldLedger(session);
-  }
-
-  const gate = levelGate(fold, level);
-
-  if (!gate.allowed) {
-    throw new ToolError(4, gate.reason, gate.reason);
-  }
-
-  const confirmInput: unknown =
-    ctx.values["spec"] ?? latest(fold, "bind")?.data["spec"];
-
-  if (kind !== "code") {
-    // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
-    if (typeof confirmInput !== "string") {
-      throw new ToolError(
-        4,
-        "lint-errors",
-        "Review needs --spec or a bound spec"
-      );
-    }
-
-    const confirmation = confirmGate(
-      fold,
-      specHashFor(manifest.repositoryRoot, confirmInput)
-    );
-
-    if (!confirmation.allowed) {
-      throw new ToolError(4, confirmation.reason, confirmation.reason);
-    }
-  }
-
-  const pins = parsePinsFlag(ctx.values["pins"]);
-  const roster = resolveSlots(kind, level, deps, pins);
-  const cap = roster.rounds;
-
-  const nativeFailures = ctx.nativeFailures ?? [];
-  assertHostNotSandboxed(deps, roster, nativeFailures.length > 0);
-
+  // SECTION: target and stale-findings preflight
   const artifact =
     kind === "code"
       ? requested
@@ -337,6 +302,68 @@ const runReview = async (ctx: HandlerContext, noted: NoteOutcome) => {
 
   const review = reviewId(kind, artifact, gitTarget ? series : undefined);
 
+  const directory = reviewDirectory(session, review);
+  refuseStaleFindings(directory);
+
+  // SECTION: --note append
+  // The note lands after pure argument validation and before every gate, so a later refusal leaves it durable.
+  if (ctx.values["note"] !== undefined) {
+    // Pins validate before the durable append; a run without --note keeps its gate-first refusal order.
+    parsePinsFlag(ctx.values["pins"]);
+
+    try {
+      if (kind === "code") {
+        throw new ToolError(
+          1,
+          "invalid-input",
+          "--note applies to plan and design review"
+        );
+      }
+
+      noted.appended = await appendNote(ctx, review, artifact);
+    } catch (error) {
+      throw inStep(error, "note");
+    }
+
+    fold = foldLedger(session);
+  }
+
+  const gate = levelGate(fold, level);
+
+  if (!gate.allowed) {
+    throw new ToolError(4, gate.reason, gate.reason);
+  }
+
+  const confirmInput: unknown =
+    ctx.values["spec"] ?? latest(fold, "bind")?.data["spec"];
+
+  if (kind !== "code") {
+    // Refuse before the zero-round skip so plan/design review never bypasses confirmation.
+    if (typeof confirmInput !== "string") {
+      throw new ToolError(
+        4,
+        "lint-errors",
+        "Review needs --spec or a bound spec"
+      );
+    }
+
+    const confirmation = confirmGate(
+      fold,
+      specHashFor(manifest.repositoryRoot, confirmInput)
+    );
+
+    if (!confirmation.allowed) {
+      throw new ToolError(4, confirmation.reason, confirmation.reason);
+    }
+  }
+
+  const pins = parsePinsFlag(ctx.values["pins"]);
+  const roster = resolveSlots(kind, level, deps, pins);
+  const cap = roster.rounds;
+
+  const nativeFailures = ctx.nativeFailures ?? [];
+  assertHostNotSandboxed(deps, roster, nativeFailures.length > 0);
+
   const rejectionStates = () =>
     loadRejections(session, foldLedger(session), [review]);
 
@@ -350,7 +377,6 @@ const runReview = async (ctx: HandlerContext, noted: NoteOutcome) => {
     );
   }
 
-  const directory = reviewDirectory(session, review);
   fs.mkdirSync(directory, { recursive: true });
 
   // Coverage applies to the integration review alone; every admission caller passes the same predicate.

@@ -60,7 +60,7 @@ const FINDING_FIELDS = [
   "defect",
   "impact",
   "locus",
-  "requiredChange",
+  "proposedFix",
   "tag",
   "trigger",
 ];
@@ -432,33 +432,33 @@ const findingFieldsFailure = (item: JsonObject, index: number) => {
     return null;
   }
 
-  return `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, requiredChange, plus optional origin${missing.length ? `; missing: ${missing.join(", ")}` : ""}${unsupported.length ? `; unsupported: ${unsupported.join(", ")}` : ""}`;
+  return `finding ${index} fields must be exactly: impact, trigger, locus, tag, defect, proposedFix, plus optional origin${missing.length ? `; missing: ${missing.join(", ")}` : ""}${unsupported.length ? `; unsupported: ${unsupported.join(", ")}` : ""}`;
 };
 
 const sanitizedTexts = (
   defect: JsonValue | undefined,
-  requiredChange: JsonValue | undefined
-): ParseResult<{ defect: string; requiredChange: string }> => {
-  if (!nonEmpty(defect) || !nonEmpty(requiredChange)) {
+  proposedFix: JsonValue | undefined
+): ParseResult<{ defect: string; proposedFix: string }> => {
+  if (!nonEmpty(defect) || !nonEmpty(proposedFix)) {
     return {
       ok: false,
-      detail: "needs a defect and a requiredChange",
+      detail: "needs a defect and a proposedFix",
     };
   }
 
   const safeDefect = sanitizeText(defect);
-  const safeChange = sanitizeText(requiredChange);
+  const safeFix = sanitizeText(proposedFix);
 
-  if (!safeDefect || !safeChange) {
+  if (!safeDefect || !safeFix) {
     return {
       ok: false,
-      detail: "needs a defect and a requiredChange after sanitization",
+      detail: "needs a defect and a proposedFix after sanitization",
     };
   }
 
   return {
     ok: true,
-    value: { defect: safeDefect, requiredChange: safeChange },
+    value: { defect: safeDefect, proposedFix: safeFix },
   };
 };
 
@@ -505,7 +505,7 @@ const parseFinding = (
     };
   }
 
-  const { locus, tag, defect, requiredChange } = item;
+  const { locus, tag, defect, proposedFix } = item;
 
   if (!nonEmpty(tag)) {
     return { ok: false, detail: `finding ${index} needs a nonempty tag` };
@@ -514,13 +514,13 @@ const parseFinding = (
   const normalizedTag = tag.trim();
   const known = REVIEW_TAGS_BY_KIND[kind].has(normalizedTag);
 
-  const texts = sanitizedTexts(defect, requiredChange);
+  const texts = sanitizedTexts(defect, proposedFix);
 
   if (!texts.ok) {
     return { ok: false, detail: `finding ${index} ${texts.detail}` };
   }
 
-  const { defect: safeDefect, requiredChange: safeChange } = texts.value;
+  const { defect: safeDefect, proposedFix: safeFix } = texts.value;
 
   const normalizedLocus = nonEmpty(locus) ? normalizeLocus(kind, locus) : "";
   const resolved = pattern.test(normalizedLocus);
@@ -542,7 +542,7 @@ const parseFinding = (
     category,
     locus: resolved ? normalizedLocus : unresolvedLocus(locus),
     defect: safeDefect,
-    requiredChange: safeChange,
+    proposedFix: safeFix,
     sources: [source],
     scope: category === "adjacent" ? "adjacent" : "in",
     ...(!(originalTag === undefined) && { originalTag }),
@@ -555,7 +555,7 @@ const parseFinding = (
     resolved ? normalizedLocus : locus,
     draft.category,
     draft.defect,
-    draft.requiredChange,
+    draft.proposedFix,
     known ? null : normalizedTag,
   ]);
 
@@ -893,7 +893,7 @@ export const collectFindings = (
     const key: MatchKey = {
       locus: draft.locus,
       category: draft.category,
-      text: `${draft.defect} ${draft.requiredChange}`,
+      text: `${draft.defect} ${draft.proposedFix}`,
     };
 
     // Round 1 has no earlier fix; later rounds keep a reviewer's known value and mark every other reply `unknown`.
@@ -906,7 +906,7 @@ export const collectFindings = (
           {
             locus: prior.locus,
             category: prior.category,
-            text: `${prior.defect} ${prior.requiredChange}`,
+            text: `${prior.defect} ${prior.proposedFix}`,
           },
           key
         )

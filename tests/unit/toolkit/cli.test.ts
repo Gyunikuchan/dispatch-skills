@@ -1103,6 +1103,7 @@ test("cli ledger append formats array summary and refreshes findings for new and
         data: {
           subject: `review:${review}:R1-F001`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Fixed",
         },
       },
@@ -1174,6 +1175,7 @@ test("cli ledger append formats array summary and refreshes findings for new and
       data: {
         subject: `review:${review}:R1-F002`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Now fixed",
       },
     };

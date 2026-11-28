@@ -450,7 +450,7 @@ const h2Reviews = (run: RunFacts, add: AddFinding) => {
       evidence,
       "Each extra round adds voice launches and a host ruling turn.",
       capReached
-        ? "Raise the round cap or narrow scope."
+        ? "Follow the step-back procedure: record a step-back outcome, rewrite the churning units or re-author the artifact, or narrow scope."
         : "Reject re-raised findings that cite no new code or requirement evidence by citing the earlier ruling."
     );
   }

@@ -15,7 +15,7 @@ const finding = (id: string, extra: Partial<Saved> = {}): Saved => ({
   category: "correctness",
   locus: "§ Work",
   defect: `Defect ${id}`,
-  requiredChange: "Fix it",
+  proposedFix: "Fix it",
   sources: ["agy[0]"],
   scope: "in",
   origin: "original",

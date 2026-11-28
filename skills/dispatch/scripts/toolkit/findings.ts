@@ -22,7 +22,12 @@ import {
   parseReport,
 } from "./domain/report.ts";
 import { effectiveSeverity } from "./domain/severity.ts";
-import type { Finding, ReviewKind, RoundCause } from "./domain/types.ts";
+import type {
+  Finding,
+  ReviewKind,
+  RoundCause,
+  StepBack,
+} from "./domain/types.ts";
 import type { SlotOutcome } from "./fanout.ts";
 import type { Fold } from "./ledger.ts";
 import { parseRepositoryNoteKey } from "./ledger.ts";
@@ -66,6 +71,7 @@ export interface FindingsValue {
   failed: Extract<SlotOutcome, { state: "failed" }>[];
   // Set only for round 2 and later, after the missing-RED gaps join the findings.
   cause?: RoundCause;
+  stepBack?: StepBack;
   confirmations?: RejectionReply[];
   repositoryChanges?: RepositoryChange[];
   repositoryCheck?: RepositoryCheckState;
@@ -76,7 +82,7 @@ export type Finalized = FindingsValue & { escalations: RecordInput[] };
 const key = (finding: Finding) => ({
   locus: finding.locus,
   category: finding.category,
-  text: `${finding.defect} ${finding.requiredChange}`,
+  text: `${finding.defect} ${finding.proposedFix}`,
 });
 
 // oxlint-disable-next-line eslint/complexity -- finalization branches per reply state, report parse outcome, and confirmation class.
@@ -366,6 +372,32 @@ export const roundCause = (input: {
   };
 
   return { primary: primary(), counts };
+};
+
+// SECTION: Step-back marker
+
+export const stepBackMark = (input: {
+  round: number;
+  units: readonly { unit: string; hotStreak: number }[];
+  cause: { counts: { fixInduced: number } } | undefined;
+  total: number;
+}): StepBack | undefined => {
+  if (input.round < 2) {
+    return undefined;
+  }
+
+  const units = input.units
+    .filter((entry) => entry.hotStreak >= 2)
+    .map((entry) => entry.unit);
+
+  const count = input.cause?.counts.fixInduced ?? 0;
+
+  const fixInduced: StepBack["fixInduced"] =
+    count >= 2 && count * 2 > input.total ? [count, input.total] : undefined;
+
+  return units.length > 0 || fixInduced
+    ? { units, ...(fixInduced && { fixInduced }) }
+    : undefined;
 };
 
 interface FindingUnit {

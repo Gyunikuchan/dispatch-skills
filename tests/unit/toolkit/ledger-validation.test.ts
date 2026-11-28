@@ -4,7 +4,11 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { main } from "../../../skills/dispatch/scripts/toolkit/cli.ts";
-import { parseRepositoryNoteKey } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
+import {
+  appendRecords,
+  foldLedger,
+  parseRepositoryNoteKey,
+} from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
 import { validateRecord } from "../../../skills/dispatch/scripts/toolkit/records.ts";
 import { defined } from "../../helpers/guards.ts";
 import type { JsonObject } from "./helpers/json.ts";
@@ -923,6 +927,7 @@ const correction = (data: JsonObject, extra: JsonObject = {}) => ({
     subject: "review:plan-work.plan:R1-F001",
     ruling: "accepted",
     rationale: "impact: the gate surfaces it",
+    fix: "proposed",
     ...data,
   },
   ...extra,
@@ -1370,6 +1375,7 @@ test("only accepted review rulings can declare unique normalized correction path
       subject: "review:code-integration:R3-F001",
       ruling: "accepted",
       rationale: "Correct source and test",
+      fix: "proposed",
     };
 
     const paths = ["src/file.ts", "tests/file with spaces.test.ts"];
@@ -1442,6 +1448,333 @@ test("only accepted review rulings can declare unique normalized correction path
         .data.paths,
       paths
     );
+  } finally {
+    f.cleanup();
+  }
+});
+
+const fixChoice = (data: JsonObject = {}) => ({
+  kind: "ruling",
+  by: "orchestrator",
+  key: "ruling:plan-work.plan:1:R1-F001",
+  data: {
+    subject: "review:plan-work.plan:R1-F001",
+    ruling: "accepted",
+    rationale: "Verified the defect",
+    ...data,
+  },
+});
+
+test("an accepted review ruling needs a fix choice: proposed or alternative with a reason", () => {
+  for (const fix of ["proposed", "alternative: the cause is upstream"]) {
+    assert.doesNotThrow(() => validateRecord(fixChoice({ fix })), fix);
+  }
+
+  for (const data of [
+    {},
+    { fix: "" },
+    { fix: "  " },
+    { fix: "Proposed" },
+    { fix: "alternative" },
+    { fix: "alternative:" },
+    { fix: "alternative: " },
+    { fix: "alternative:reason" },
+    { fix: "proposed: yes" },
+    { fix: "own" },
+  ]) {
+    assert.throws(
+      () => validateRecord(fixChoice(data)),
+      // oxlint-disable-next-line promise/prefer-await-to-callbacks -- assert.throws validator must stay synchronous; an async rewrite would change the assertion contract
+      (error) => {
+        const failure = narrow(error, toolFailure);
+        assert.equal(failure.reason, "invalid-record");
+        assert.match(
+          failure.message,
+          /data\.fix.*proposed.*alternative: <reason>/u
+        );
+
+        return true;
+      },
+      JSON.stringify(data)
+    );
+  }
+
+  assert.throws(() => validateRecord(fixChoice({ fix: 1 })), {
+    reason: "invalid-record",
+  });
+});
+
+test("a fix choice on any other ruling is refused unless it is empty", () => {
+  for (const data of [
+    { ruling: "rejected" },
+    { ruling: "duplicate" },
+    { ruling: "deferred" },
+    { subject: "verification:cycle:V1" },
+    { subject: "plan:T1" },
+  ]) {
+    assert.doesNotThrow(() => validateRecord(fixChoice(data)));
+    assert.doesNotThrow(() => validateRecord(fixChoice({ ...data, fix: "" })));
+
+    for (const fix of ["proposed", "alternative: reason"]) {
+      assert.throws(
+        () => validateRecord(fixChoice({ ...data, fix })),
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- assert.throws validator must stay synchronous; an async rewrite would change the assertion contract
+        (error) => {
+          const failure = narrow(error, toolFailure);
+          assert.equal(failure.reason, "invalid-record");
+          assert.match(failure.message, /data\.fix/u);
+
+          return true;
+        },
+        JSON.stringify({ ...data, fix })
+      );
+    }
+  }
+});
+
+test("a stored accepted review ruling without a fix choice stays valid", () => {
+  const stored = {
+    ...fixChoice(),
+    seq: 1,
+    at: "2026-01-01T00:00:00.000Z",
+  };
+
+  assert.doesNotThrow(() => validateRecord(stored, true));
+  assert.doesNotThrow(() =>
+    validateRecord(
+      { ...stored, data: { ...stored.data, fix: "proposed" } },
+      true
+    )
+  );
+});
+
+test("one accepted ruling without a fix choice refuses the whole batch and appends nothing", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const batch = f.artifact(
+      "batch.json",
+      JSON.stringify([
+        fixChoice({ fix: "proposed" }),
+        {
+          ...fixChoice({ subject: "review:plan-work.plan:R1-F002" }),
+          key: "ruling:plan-work.plan:1:R1-F002",
+        },
+      ])
+    );
+
+    assert.equal(
+      await main(["ledger", "append", "--session", f.session, batch], f.deps),
+      1
+    );
+    const output = f.output();
+    assert.equal(output.reason, "invalid-record");
+    assert.match(output.summary, /data\.fix/u);
+    assert.deepEqual(ledgerRows(f), []);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// SECTION: Step-back outcome
+
+const REVIEW = "plan-work.plan";
+
+const outcome = (data: JsonObject = {}, key = `step-back:${REVIEW}:2`) => ({
+  kind: "ruling",
+  by: "orchestrator",
+  key,
+  data: {
+    subject: `step-back:${REVIEW}:2`,
+    ruling: "patch",
+    rationale: "The cause is local to one criterion",
+    ...data,
+  },
+});
+
+const accepted = (round: number, finding = 1) => ({
+  kind: "ruling",
+  by: "orchestrator",
+  key: `ruling:${REVIEW}:${round}:R${round}-F00${finding}`,
+  data: {
+    subject: `review:${REVIEW}:R${round}-F00${finding}`,
+    ruling: "accepted",
+    rationale: "Verified the defect",
+    fix: "proposed",
+  },
+});
+
+test("a step-back outcome takes one of four values, a reason and a review round subject", () => {
+  for (const ruling of ["patch", "rewrite", "re-author", "user"]) {
+    assert.doesNotThrow(() => validateRecord(outcome({ ruling })), ruling);
+  }
+
+  for (const data of [
+    { ruling: "" },
+    { ruling: "continue" },
+    { ruling: "Patch" },
+    { rationale: "" },
+    { rationale: "  " },
+    { subject: "step-back:plan-work.plan" },
+    { subject: "step-back::2" },
+    { subject: "step-back:plan-work.plan:" },
+    { subject: "step-back:plan-work.plan:0" },
+    { subject: "step-back:plan-work.plan:two" },
+    { subject: "step-back:plan-work.plan:2:2" },
+    { fix: "proposed" },
+  ]) {
+    assert.throws(
+      () => validateRecord(outcome(data)),
+      { reason: "invalid-record" },
+      JSON.stringify(data)
+    );
+  }
+
+  assert.doesNotThrow(() =>
+    validateRecord(
+      outcome({ subject: "stale-candidate T1 abc", ruling: "accept" })
+    )
+  );
+});
+
+const markedRound = (
+  f: ReturnType<typeof sessionFixture>,
+  round: number,
+  findings: string
+) => {
+  const dir = path.join(f.session, ".state/reviews", REVIEW, `round-${round}`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "findings.json"), findings);
+};
+
+const marker = JSON.stringify({ findings: [], stepBack: { units: ["T1"] } });
+
+const ledgerRows = (f: ReturnType<typeof sessionFixture>) =>
+  foldLedger(f.session).records.map((row) => row.key);
+
+test("a batch with an accepted ruling of a marked round needs its step-back outcome", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    markedRound(f, 2, marker);
+
+    await assert.rejects(
+      appendRecords(f.session, [accepted(1), accepted(2)], f.deps),
+      // oxlint-disable-next-line promise/prefer-await-to-callbacks -- assert.rejects validator must stay synchronous
+      (error) => {
+        const failure = narrow(error, toolFailure);
+        assert.equal(failure.reason, "invalid-record");
+        assert.match(failure.message, /step-back:plan-work\.plan:2/u);
+
+        return true;
+      }
+    );
+    assert.deepEqual(ledgerRows(f), []);
+
+    await assert.rejects(appendRecords(f.session, accepted(2), f.deps), {
+      reason: "invalid-record",
+    });
+    assert.deepEqual(ledgerRows(f), []);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("the step-back outcome satisfies its round from any batch position or from the ledger", async () => {
+  const batches = {
+    "outcome last": [accepted(2), outcome()],
+    "outcome first": [outcome(), accepted(2)],
+  };
+
+  for (const [name, batch] of Object.entries(batches)) {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      markedRound(f, 2, marker);
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+      await appendRecords(f.session, batch, f.deps);
+      assert.equal(ledgerRows(f).length, 2, name);
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  const g = sessionFixture({ memory: true });
+
+  try {
+    markedRound(g, 2, marker);
+    await appendRecords(g.session, outcome({ ruling: "rewrite" }), g.deps);
+    await appendRecords(g.session, accepted(2), g.deps);
+    assert.deepEqual(ledgerRows(g), [
+      `step-back:${REVIEW}:2`,
+      `ruling:${REVIEW}:2:R2-F001`,
+    ]);
+  } finally {
+    g.cleanup();
+  }
+});
+
+test("no step-back outcome is needed without an accepted ruling of a marked round", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    markedRound(f, 2, marker);
+    markedRound(f, 3, JSON.stringify({ findings: [] }));
+    markedRound(f, 4, "{not json");
+
+    await appendRecords(
+      f.session,
+      [
+        {
+          ...accepted(2),
+          key: "r",
+          data: {
+            subject: `review:${REVIEW}:R2-F001`,
+            ruling: "rejected",
+            rationale: "The contract holds",
+          },
+        },
+        accepted(3),
+        accepted(4),
+        accepted(5),
+      ],
+      f.deps
+    );
+    assert.equal(ledgerRows(f).length, 4);
+
+    await appendRecords(f.session, outcome({ ruling: "user" }), f.deps);
+    await appendRecords(
+      f.session,
+      outcome(
+        { subject: `step-back:${REVIEW}:3`, ruling: "patch" },
+        `step-back:${REVIEW}:3`
+      ),
+      f.deps
+    );
+    assert.equal(ledgerRows(f).length, 6);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("a repeated step-back outcome for one round is recorded under a suffixed key", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    await appendRecords(f.session, outcome(), f.deps);
+
+    await appendRecords(
+      f.session,
+      outcome(
+        { ruling: "rewrite", rationale: "Rewrite T1" },
+        `step-back:${REVIEW}:2:2`
+      ),
+      f.deps
+    );
+    assert.deepEqual(ledgerRows(f), [
+      `step-back:${REVIEW}:2`,
+      `step-back:${REVIEW}:2:2`,
+    ]);
   } finally {
     f.cleanup();
   }

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Check the accepted fixes to the artifact below. Check that each citation's source supports the sentence that cites it. For each claim of data production or consumption, find the code that writes or reads it. Read the diff, the whole artifact and the spec. Search consumers for each qualifier, branch or field the diff deletes or narrows; report a consumer that relied on it as a broken consumer. Report only false citations, contradictions, broken consumers and unmet requirement acceptance, each as `{kind, claim, citation}`. Never rule on findings. Edit no file.
+Judge each accepted fix to the artifact below against its finding's defect and governing requirement, not its proposed fix. Check that each citation's source supports its sentence. For each claim of data production or consumption, find the code that writes or reads it. Search consumers for each qualifier, branch or field the diff deletes or narrows; report a consumer that relied on it as a broken consumer. Report only false citations, contradictions, broken consumers and unmet requirement acceptance, each as `{kind, claim, citation}`. Never rule on findings. Edit no file.
 
 ## Accepted findings
 
@@ -28,7 +28,7 @@ Check the accepted fixes to the artifact below. Check that each citation's sourc
 
 ## Reading bound
 
-Read only the diff, the artifact, the spec paths above, the listed citations and matches, and consumer search hits. Read no other path, and never read a withheld path, even as a search hit.
+Read only the diff, the artifact, the spec paths above, the listed citations and matches, and consumer search hits; never read a withheld path, even as a search hit.
 
 Run the consumer search from the repository root, replacing `<name>` with one argument quoted for your shell: `{{consumerSearch}}`. When the name starts and ends with a word character, add `-w` before `-e`.
 

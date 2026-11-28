@@ -355,7 +355,7 @@ test("pending MUST rejection prevents report completion until attributed agreeme
       category: "correctness",
       locus: "§ Work",
       defect: "Unbounded writes",
-      requiredChange: "Bound writes",
+      proposedFix: "Bound writes",
       sources: ["claude[0]"],
       scope: "in",
     };

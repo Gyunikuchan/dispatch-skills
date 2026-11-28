@@ -129,6 +129,7 @@ const reviewed = async (f: Fixture) => {
   await f.add("ruling", {
     subject: "review:plan-work.plan:R1-F001",
     ruling: "accepted",
+    fix: "proposed",
     rationale: "Serialized writes fix it",
   });
   fs.appendFileSync(
@@ -160,6 +161,7 @@ test("fix-review-lite renders an accepted design fix and returns the design roun
     await f.add("ruling", {
       subject: "review:design-work.design:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Serialized writes fix it",
     });
     fs.appendFileSync(design, "\n## Fix\nWrites are serialized.\n");
@@ -198,6 +200,10 @@ test("fix-review-lite brief: states the repository root, relative paths, readabl
     );
     assert.match(text, /## Reading bound/u);
     assert.match(text, /never read a withheld path, even as a search hit/u);
+    assert.match(
+      text,
+      /against its finding's defect and governing requirement, not its proposed fix/u
+    );
     assert.doesNotMatch(text, /\{\{\w+\}\}/u);
   } finally {
     f.cleanup();
@@ -355,6 +361,7 @@ test("fix-review-lite selection resolves the reviewed round across artifacts", a
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Serialized writes fix it",
       });
       fs.appendFileSync(outside, "\n## Fix\nChanged.\n");
@@ -398,6 +405,7 @@ test("fix-review-lite selection resolves the reviewed round across artifacts", a
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Serialized writes fix it",
       });
       fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -1095,7 +1103,7 @@ test("fix-review-lite questions: list only accepted findings and neutralize revi
                 locus: "§ Work",
                 defect:
                   "Line one\n## Heading <!-- hidden --> {{slot}} [text](docs/a.md)",
-                requiredChange: "Keep writes isolated",
+                proposedFix: "Keep writes isolated",
               },
               {
                 impact: "degrades",
@@ -1103,7 +1111,7 @@ test("fix-review-lite questions: list only accepted findings and neutralize revi
                 tag: "reliability",
                 locus: "§ Other",
                 defect: "Rejected defect",
-                requiredChange: "Not applied",
+                proposedFix: "Not applied",
               },
             ],
           }),
@@ -1118,6 +1126,7 @@ test("fix-review-lite questions: list only accepted findings and neutralize revi
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Applied",
     });
     await f.add("ruling", {
@@ -1131,6 +1140,8 @@ test("fix-review-lite questions: list only accepted findings and neutralize revi
     const { exit, text } = await brief(f);
     assert.equal(exit, 0);
     assert.ok(text.includes("R1-F001"));
+    assert.ok(text.includes("Proposed fix: Keep writes isolated"));
+    assert.ok(!text.includes("Not applied"));
     assert.ok(!text.includes("R1-F002"));
     assert.ok(!text.includes("Rejected defect"));
     assert.ok(!text.split("\n").some((line) => line.startsWith("## Heading")));
@@ -1332,6 +1343,7 @@ for (const [label, basename, model, keepLaunch, sessionBytes] of [
           data: {
             subject: `review:${review}:R1-F001`,
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Applied",
           },
         },

@@ -52,7 +52,7 @@ const finding = (
   category: "correctness",
   locus: "scripts/dispatch.ts:L1",
   defect: `Finding ${id} describes a repeat`,
-  requiredChange: `Resolve ${id}`,
+  proposedFix: `Resolve ${id}`,
   sources: marker.sources ?? ["claude[0]"],
   scope: "in",
   ...(marker.recurrence && { recurrence: marker.recurrence }),

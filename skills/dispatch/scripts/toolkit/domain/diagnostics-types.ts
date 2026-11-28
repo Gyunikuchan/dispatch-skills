@@ -185,6 +185,25 @@ export interface ReviewFacts {
   cause?: RoundCausePrimary;
 }
 
+/** Step-back outcomes a `step-back:<review>:<round>` ruling may carry. */
+export const STEP_BACK_OUTCOMES = [
+  "patch",
+  "rewrite",
+  "re-author",
+  "user",
+] as const;
+
+/**
+ * Per-review fix-choice counts and step-back outcomes, built from ledger rulings alone.
+ * `phase` is the review key `ReviewFacts` uses; `stepBacks` keeps ledger order, repeats included.
+ */
+export interface ReviewChoiceFacts {
+  phase: string;
+  proposed: number;
+  alternative: number;
+  stepBacks: { round: number; outcome: (typeof STEP_BACK_OUTCOMES)[number] }[];
+}
+
 /** `calls` is absent when the round has no start; `hostTokens` is absent when host usage is unavailable. */
 export interface RoundWorkload {
   review: string;
@@ -324,6 +343,7 @@ export interface RunFacts {
   phases: PhaseFacts[];
   invocations: InvocationFacts[];
   reviews: ReviewFacts[];
+  reviewChoices?: ReviewChoiceFacts[];
   slotYield?: SlotYieldFacts[];
   roundTiming?: {
     review: string;

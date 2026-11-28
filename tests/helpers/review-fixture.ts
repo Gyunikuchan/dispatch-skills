@@ -45,10 +45,37 @@ export const report = (
         tag: "reliability",
         locus,
         defect,
-        requiredChange: "Keep writes isolated until finalization",
+        proposedFix: "Keep writes isolated until finalization",
       },
     ],
   });
+
+/** Every entry under a directory with its bytes (directories map to ""), or null when the directory is absent; a refusal must leave it as it was. */
+export const treeSnapshot = (directory: string) => {
+  if (!fs.existsSync(directory)) {
+    return null;
+  }
+
+  const entries: Record<string, string> = {};
+
+  const walk = (current: string) => {
+    for (const name of fs.readdirSync(current).toSorted()) {
+      const file = path.join(current, name);
+      const key = path.relative(directory, file);
+
+      if (fs.statSync(file).isDirectory()) {
+        entries[key] = "";
+        walk(file);
+      } else {
+        entries[key] = fs.readFileSync(file, "utf-8");
+      }
+    }
+  };
+
+  walk(directory);
+
+  return entries;
+};
 
 export const CONTEXT_MAP =
   "# Context map: work\n\n> **Commit:** abc123\n>\n> **Tool:** text\n\n## Map\n- Work — `work.plan.md:1`\n";

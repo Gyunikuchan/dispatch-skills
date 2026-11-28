@@ -25,7 +25,11 @@ import {
   hostThreadId,
 } from "./diagnostics-capture.ts";
 import { recoveryRef } from "./domain/diagnostics-gates.ts";
-import { completeDelegateResponses } from "./domain/diagnostics-types.ts";
+import {
+  completeDelegateResponses,
+  STEP_BACK_OUTCOMES,
+} from "./domain/diagnostics-types.ts";
+import type { ReviewChoiceFacts } from "./domain/diagnostics-types.ts";
 import {
   addYield,
   billedTokens,
@@ -217,6 +221,69 @@ const reviewFacts = (round: ReviewRound, fold: Fold) => {
     ...(reraised.size && { reraised: [...reraised] }),
     ...(cause && { cause }),
   };
+};
+
+const CHOICE_SUBJECT =
+  /^(?<kind>review|step-back):(?<review>[^:\s]+):(?<tail>[^:\s]+)$/u;
+
+/** Reads rulings only, never `findings.json`, so a step-back for a round without a findings file still counts. */
+const reviewChoiceFacts = (
+  fold: Fold,
+  keyOf: (review: string) => string
+): ReviewChoiceFacts[] => {
+  const reviews = new Map<
+    string,
+    { fixes: Map<string, unknown>; stepBacks: ReviewChoiceFacts["stepBacks"] }
+  >();
+
+  for (const record of fold.records) {
+    const subject = record.kind === "ruling" ? record.data["subject"] : null;
+
+    const { kind, review, tail } =
+      (typeof subject === "string"
+        ? CHOICE_SUBJECT.exec(subject)?.groups
+        : undefined) ?? {};
+
+    if (kind === undefined || review === undefined || tail === undefined) {
+      continue;
+    }
+
+    const entry = reviews.get(review) ?? {
+      fixes: new Map<string, unknown>(),
+      stepBacks: [],
+    };
+
+    reviews.set(review, entry);
+
+    if (kind === "review") {
+      // NOTE: the latest ruling per finding wins, as in the accepted and rejected counts; a later non-accepted ruling clears the choice.
+      entry.fixes.set(
+        tail,
+        record.data["ruling"] === "accepted" ? record.data["fix"] : undefined
+      );
+    } else {
+      const outcome = STEP_BACK_OUTCOMES.find(
+        (name) => name === record.data["ruling"]
+      );
+
+      if (outcome !== undefined) {
+        entry.stepBacks.push({ round: Number(tail), outcome });
+      }
+    }
+  }
+
+  return [...reviews].flatMap(([review, { fixes, stepBacks }]) => {
+    const choices = [...fixes.values()];
+    const proposed = choices.filter((fix) => fix === "proposed").length;
+
+    const alternative = choices.filter(
+      (fix) => typeof fix === "string" && fix.startsWith("alternative:")
+    ).length;
+
+    return proposed + alternative + stepBacks.length
+      ? [{ phase: keyOf(review), proposed, alternative, stepBacks }]
+      : [];
+  });
 };
 
 /** A round plus every generation directory, so superseded invocations still map to their review. */
@@ -1744,6 +1811,13 @@ export const sessionFacts = (
     }
   }
 
+  const reviewChoices = reviewChoiceFacts(
+    fold,
+    (review) =>
+      reviewKeys.get(review) ??
+      `review-${diagnosticSubject(reviewDirectory(session, review))}`
+  );
+
   // NOTE: the ledger records no verb; only writer records identify one, so other runs omit it rather than guess.
   return {
     ...(typeof level === "string" && { level }),
@@ -1768,6 +1842,7 @@ export const sessionFacts = (
           ]
         : [];
     }),
+    ...(reviewChoices.length && { reviewChoices }),
     ...(slotYield.length && { slotYield }),
     ...(roundTiming.length && { roundTiming }),
     ...(roundWorkload.length && { roundWorkload }),

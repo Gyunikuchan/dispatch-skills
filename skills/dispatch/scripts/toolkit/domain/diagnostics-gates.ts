@@ -38,6 +38,7 @@ import {
   DASH,
   DIAGNOSTIC_LIMITS,
   PHASE_NAMES,
+  STEP_BACK_OUTCOMES,
 } from "./diagnostics-types.ts";
 import type {
   Category,
@@ -1167,6 +1168,34 @@ const reviewIds = (value: unknown) =>
     .map(match(ID))
     .filter((id): id is string => id !== undefined);
 
+const reviewChoicesOf = (value: unknown) => {
+  const choices = list(value)
+    .filter(record)
+    .flatMap((v) => {
+      const phase = phaseKey(v["phase"]);
+      const proposed = count(v["proposed"]) ?? 0;
+      const alternative = count(v["alternative"]) ?? 0;
+
+      const stepBacks = list(v["stepBacks"])
+        .filter(record)
+        .flatMap((step) => {
+          const round = count(step["round"]);
+          const outcome = STEP_BACK_OUTCOMES.find((o) => o === step["outcome"]);
+
+          return round !== undefined && round > 0 && outcome !== undefined
+            ? [{ round, outcome }]
+            : [];
+        });
+
+      return phase !== undefined &&
+        (proposed > 0 || alternative > 0 || stepBacks.length > 0)
+        ? [{ phase, proposed, alternative, stepBacks }]
+        : [];
+    });
+
+  return choices.length ? choices : undefined;
+};
+
 const sanitizeConfigEntry = (key: string, value: JsonValue) => {
   if (key === "read-commands" && Array.isArray(value)) {
     return value.slice(0, 16).map(commandText);
@@ -1465,6 +1494,7 @@ export const sanitizeFacts = (run: unknown): RunFacts => {
           },
         ];
       }),
+    ...opt("reviewChoices", reviewChoicesOf(r["reviewChoices"])),
     ...opt(
       "roundTiming",
       Array.isArray(r["roundTiming"])

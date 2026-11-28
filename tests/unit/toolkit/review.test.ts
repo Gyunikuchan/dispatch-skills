@@ -12,7 +12,12 @@ import {
   foldLedger,
 } from "../../../skills/dispatch/scripts/toolkit/ledger.ts";
 import { defined } from "../../helpers/guards.ts";
-import { CLEAN, fixture, report } from "../../helpers/review-fixture.ts";
+import {
+  CLEAN,
+  fixture,
+  report,
+  treeSnapshot,
+} from "../../helpers/review-fixture.ts";
 import {
   both,
   dictionaryOf,
@@ -273,6 +278,7 @@ test("blocked reasons list distinctly, carry failures and survive sanitizing", a
           await f.add("ruling", {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           });
           fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -457,6 +463,7 @@ test("blocked slots, blockers and pending keep their notice", async () => {
           await f.add("ruling", {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           });
           fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -506,6 +513,7 @@ test("blocked slots, blockers and pending keep their notice", async () => {
           await f.add("ruling", {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           });
           fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -580,6 +588,7 @@ test("blocked slots, blockers and pending keep their notice", async () => {
           await f.add("ruling", {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           });
           fs.appendFileSync(f.plan, "\n## Fix\nChanged.\n");
@@ -839,6 +848,7 @@ const planAccepted = async (f: ReviewFixture, step: number, change = true) => {
   await f.add("ruling", {
     subject: `review:${PLAN_REVIEW}:R${step}-F001`,
     ruling: "accepted",
+    fix: "proposed",
     rationale: "Resolution",
   });
 
@@ -934,7 +944,7 @@ const seededFinding = (id: string, severity: "MUST" | "SHOULD") => ({
   category: "reliability",
   locus: "§ Work",
   defect: `Defect ${id}`,
-  requiredChange: `Fix ${id}`,
+  proposedFix: `Fix ${id}`,
   sources: ["claude[0]"],
   scope: "in",
 });
@@ -1010,6 +1020,7 @@ const seedAcceptedCeiling = async (f: ReviewFixture) => {
   const ruling = await f.add("ruling", {
     subject: `review:${PLAN_REVIEW}:R4-F001`,
     ruling: "accepted",
+    fix: "proposed",
     rationale: "Resolution",
   });
 
@@ -1027,6 +1038,7 @@ const seedAcceptedRound = async (f: ReviewFixture, round: number) => {
   const ruling = await f.add("ruling", {
     subject: `review:${PLAN_REVIEW}:${id}`,
     ruling: "accepted",
+    fix: "proposed",
     rationale: "Resolution",
   });
 
@@ -1148,6 +1160,7 @@ const codeAccepted = async (
   await f.add("ruling", {
     subject: `review:${id}:R${step}-F001`,
     ruling: "accepted",
+    fix: "proposed",
     rationale: "Resolution",
   });
 
@@ -1455,6 +1468,7 @@ test("review ceiling admission grants rounds by resolution and refuses otherwise
         const accepted = await f.add("ruling", {
           subject: `review:${PLAN_REVIEW}:R4-F002`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Fixed",
         });
 
@@ -1570,6 +1584,7 @@ test("review ceiling admission grants rounds by resolution and refuses otherwise
         const ruling = await f.add("ruling", {
           subject: `review:${PLAN_REVIEW}:R2-F001`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Resolution",
         });
 
@@ -1781,6 +1796,7 @@ test("moved incomplete round is refused without replacing pending state", async 
       const ruling = await f.add("ruling", {
         subject: `review:${PLAN_REVIEW}:R4-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
 
@@ -1935,6 +1951,7 @@ test("zero-round ceiling resolutions run required review for pending rejections"
       const accepted = await f.add("ruling", {
         subject: `review:${PLAN_REVIEW}:R4-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Resolution",
       });
 
@@ -2240,6 +2257,7 @@ test("review budget matches admission after rulings and ceiling resolutions", as
     await f.add("ruling", {
       subject: `review:${PLAN_REVIEW}:R5-F001`,
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Resolution",
     });
     const accepted = await statusBudget(f);
@@ -2459,7 +2477,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
         "- Target: § Work",
         `- Spec: ${round.spec.path}`,
         "- Original finding: Writes are unbounded",
-        "- Required change: Keep writes isolated until finalization",
+        "- Proposed fix: Keep writes isolated until finalization",
         "- Host rejection: The captured implementation bounds each write",
         '{"status":"CLEAN","findings":[],"confirmations":[{"requestId":"<assigned ID>","decision":"agree|disagree","rationale":"<nonblank evidence-based reason>"}]}',
       ]) {
@@ -2670,6 +2688,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
       const accepted = await f.add("ruling", {
         subject: `review:${PLAN_REVIEW}:R1-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Resolution",
       });
 
@@ -2737,6 +2756,7 @@ test("unchanged target with pending MUST rejection runs confirmation-only prompt
       await f.add("ruling", {
         subject: `review:${PLAN_REVIEW}:R1-F001`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Resolution",
       });
       planDelegate(f, CLEAN);
@@ -3793,6 +3813,7 @@ for (const item of reviewWarningCases) {
           await f.add("ruling", {
             subject: `review:code-integration:${finding.id}`,
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Fixed",
           });
         }
@@ -4011,5 +4032,163 @@ test("reviewRun refuses broken-citation on new and superseded rounds but not nat
     assert.equal(resumed.exit, 0, JSON.stringify(resumed.output));
   } finally {
     f4.cleanup();
+  }
+});
+
+// SECTION: Saved findings from an earlier version
+
+const staleFinding = (id: string, severity: "MUST" | "SHOULD") =>
+  Object.fromEntries(
+    Object.entries(seededFinding(id, severity)).filter(
+      ([name]) => name !== "proposedFix"
+    )
+  );
+
+const stripProposedFix = (file: string) => {
+  const payload = readJson(
+    file,
+    both(jsonObject, withFields({ findings: listOf(jsonObject) }))
+  );
+
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      ...payload,
+      findings: payload.findings.map((finding) =>
+        Object.fromEntries(
+          Object.entries(finding).filter(([name]) => name !== "proposedFix")
+        )
+      ),
+    })
+  );
+};
+
+const runPlan = async (
+  f: ReviewFixture,
+  level: string,
+  extra: string[] = []
+) => {
+  f.lines.length = 0;
+
+  const exit = await main(
+    [
+      "review",
+      "run",
+      f.plan,
+      "--kind",
+      "plan",
+      "--level",
+      level,
+      "--session",
+      f.session,
+      "--host",
+      "opencode",
+      ...extra,
+    ],
+    f.deps
+  );
+
+  return { exit, reason: f.output().reason };
+};
+
+const durableState = (f: ReviewFixture) => ({
+  ledger: fs.readFileSync(path.join(f.session, "ledger.jsonl"), "utf-8"),
+  review: treeSnapshot(f.directory),
+});
+
+const noteFile = (f: ReviewFixture) => {
+  const file = path.join(f.root, "note.json");
+
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      kind: "note",
+      by: "orchestrator",
+      key: `fix-review-lite:${PLAN_REVIEW}:1:1`,
+      data: { text: "kind plan; raised 1; confirmed 1; mode inline" },
+    })
+  );
+
+  return file;
+};
+
+test("stale findings: --note is not appended when the saved round lacks proposedFix", async () => {
+  // Control: the same note on current findings appends.
+  {
+    const f = await fixture();
+
+    try {
+      seedCompletedRound(f, 1, [seededFinding("R1-F001", "SHOULD")]);
+      const result = await runPlan(f, "medium", ["--note", noteFile(f)]);
+
+      assert.equal(result.exit, 0);
+      assert.ok(
+        foldLedger(f.session).records.some(
+          (row) => row.key === `fix-review-lite:${PLAN_REVIEW}:1:1`
+        )
+      );
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  const f = await fixture();
+
+  try {
+    seedCompletedRound(f, 1, [staleFinding("R1-F001", "SHOULD")]);
+    const before = durableState(f);
+    const result = await runPlan(f, "medium", ["--note", noteFile(f)]);
+
+    assert.deepEqual(result, { exit: 4, reason: "stale-findings" });
+    assert.equal(f.launches.length, 0);
+    assert.deepEqual(durableState(f), before);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("stale findings: the refusal beats the ceiling and opens no escalation", async () => {
+  const f = await fixture();
+
+  try {
+    await seedAcceptedCeiling(f);
+    stripProposedFix(path.join(f.directory, "round-4", "findings.json"));
+    const before = durableState(f);
+    const result = await runPlan(f, "medium");
+
+    assert.deepEqual(result, { exit: 4, reason: "stale-findings" });
+    assert.equal(openCeilingRows(f).length, 0);
+    assert.deepEqual(durableState(f), before);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("stale findings: a resumed round whose pending payload lacks proposedFix is not finalized", async () => {
+  const f = await fixture();
+
+  try {
+    seedCompletedRound(f, 1, [seededFinding("R1-F001", "SHOULD")]);
+    seedRound(f, 2);
+
+    fs.writeFileSync(
+      path.join(f.directory, "round-2", "pending.json"),
+      JSON.stringify({
+        findings: [staleFinding("R2-F001", "SHOULD")],
+        failed: [],
+        escalations: [],
+      })
+    );
+    const before = durableState(f);
+    const result = await runPlan(f, "medium");
+
+    assert.deepEqual(result, { exit: 4, reason: "stale-findings" });
+    assert.equal(f.launches.length, 0);
+    assert.ok(
+      !fs.existsSync(path.join(f.directory, "round-2", "findings.json"))
+    );
+    assert.deepEqual(durableState(f), before);
+  } finally {
+    f.cleanup();
   }
 });

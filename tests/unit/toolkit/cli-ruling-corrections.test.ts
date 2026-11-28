@@ -69,6 +69,7 @@ const correctionHarness = () => {
       data: {
         subject,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "impact: the Verify gate surfaces this gap",
         ...data,
       },

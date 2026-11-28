@@ -596,6 +596,7 @@ test("unanswered source in past-cap rejection rounds escalate across edits and r
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Repair the original finding",
     });
     phase = "agree";
@@ -744,10 +745,21 @@ test("accepted MUST fixes extend the round cap until a round has none", async ()
       const callResult26 = await f.call();
 
       assert.equal(callResult26.exit, 0);
+
+      if (step === 3) {
+        // The third round repeats a hot unit, so its rulings need a step-back outcome.
+        await f.add("ruling", {
+          subject: "step-back:plan-work.plan:3",
+          ruling: "patch",
+          rationale: "The cause is local to one section",
+        });
+      }
+
       await f.add("ruling", {
         subject: `review:plan-work.plan:R${step}-F001`,
         ruling,
         rationale: "Resolution",
+        fix: ruling === "accepted" ? "proposed" : "",
       });
       fs.appendFileSync(f.plan, `\n## Fix ${step}\nChanged.\n`);
     };
@@ -760,6 +772,7 @@ test("accepted MUST fixes extend the round cap until a round has none", async ()
     await f.add("ruling", {
       subject: "review:plan-work.plan:R2-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed after all",
     });
     severity = "SHOULD";

@@ -71,6 +71,7 @@ test("review rounds capture dedupe clusters scope caps and design prompts", asyn
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed the race",
     });
     fs.appendFileSync(f.plan, "\n## New work\nChanged.\n");
@@ -782,7 +783,7 @@ test("review run summary lists first findings by severity", async () => {
       tag: "reliability",
       locus: `§ Work ${i}`,
       defect: `${severity} defect ${i}`,
-      requiredChange: `Fix defect ${i}`,
+      proposedFix: `Fix defect ${i}`,
     });
 
     const findings = [
@@ -989,6 +990,7 @@ test("findings file: completed review writes raw Markdown and a JSON template be
           subject: "review:plan-work.plan:R1-F001",
           ruling: "",
           rationale: "",
+          fix: "",
         },
       },
     ]);
@@ -1057,10 +1059,22 @@ test("findings file: long review IDs and trailing notices retain both paths in t
       );
 
       assert.equal(findings.length, 1, result.output.summary);
+
+      if (round === 3) {
+        // The third round repeats a hot unit, so its rulings need a step-back outcome.
+        // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
+        await f.add("ruling", {
+          subject: `step-back:${review}:3`,
+          ruling: "patch",
+          rationale: "The cause is local to one section",
+        });
+      }
+
       // oxlint-disable-next-line eslint/no-await-in-loop -- sequential awaits build and observe fixture state
       await f.add("ruling", {
         subject: `review:${review}:${defined(findings[0]).id}`,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fix the defect",
       });
       fs.appendFileSync(plan, `\n## New work ${round}\nChanged.\n`);
@@ -1069,6 +1083,7 @@ test("findings file: long review IDs and trailing notices retain both paths in t
     await f.add("ruling", {
       subject: `review:${review}:R4-F001`,
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fix the defect",
     });
     // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await

@@ -57,7 +57,7 @@ const MUST_FINDING = {
       tag: "correctness",
       locus: "src/file.ts:L1",
       defect: "The file returns an invalid result",
-      requiredChange: "Return the expected result",
+      proposedFix: "Return the expected result",
     },
   ],
 };
@@ -113,6 +113,7 @@ const RoundCauseGuard = objectWith({
 const FindingsFileGuard = objectWith({
   review: maybe(isString),
   cause: maybe(RoundCauseGuard),
+  stepBack: maybe(objectWith({ units: arrayOf(isString) })),
   asOfSeq: maybe(isNumber),
   findings: arrayOf(FindingGuard),
   failed: arrayOf(FailedSlotGuard),
@@ -325,6 +326,7 @@ const coverageRepo = async (rounds: number) => {
         data: {
           subject: `review:code-integration:${id}`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Fix accepted",
         },
       },
@@ -471,7 +473,7 @@ test("pending MUST rejection keeps captured Git confirmation identity across nat
             tag: "correctness",
             locus: "src/file.ts:L1",
             defect: "Writes are unbounded",
-            requiredChange: "Bound the writes",
+            proposedFix: "Bound the writes",
           },
         ],
       })
@@ -657,7 +659,7 @@ test("unchanged target with a pending MUST rejection runs a confirmation-only ro
                     tag: "correctness",
                     locus: "src/file.ts:L1",
                     defect: "Writes are unbounded",
-                    requiredChange: "Bound the writes",
+                    proposedFix: "Bound the writes",
                   },
                 ],
               })
@@ -1337,7 +1339,7 @@ test("toolkit code review scopes integration recurrence and gaps to committed ow
                     tag: "correctness",
                     locus: "src/file.ts:L1",
                     defect: "The file returns an invalid result",
-                    requiredChange: "Return the expected result",
+                    proposedFix: "Return the expected result",
                   },
                 ],
               }),
@@ -1399,6 +1401,7 @@ test("toolkit code review scopes integration recurrence and gaps to committed ow
             data: {
               subject: `review:code-integration:${defined(first.findings[0], "finding").id}`,
               ruling: "accepted",
+              fix: "proposed",
               rationale: "Fix accepted",
             },
           },
@@ -1856,6 +1859,165 @@ test("open slot rerun selects whole-target scope with the full roster after a de
       t.calls.map((call) => call.provider).toSorted(),
       PROVIDERS
     );
+  } finally {
+    t.f.cleanup();
+  }
+});
+
+const treeBytes = (directory: string): Record<string, string> =>
+  Object.fromEntries(
+    fs
+      .readdirSync(directory, { recursive: true, encoding: "utf-8" })
+      .map((name) => {
+        const file = path.join(directory, name);
+
+        return [
+          name,
+          fs.statSync(file).isDirectory() ? "" : fs.readFileSync(file, "utf-8"),
+        ];
+      })
+  );
+
+/** Rewrites a saved findings payload as an earlier version saved it: no finding carries `proposedFix`. */
+const dropProposedFix = (file: string) => {
+  const saved = parseJson(fs.readFileSync(file, "utf-8"));
+
+  if (!isRecord(saved) || !Array.isArray(saved["findings"])) {
+    assert.fail("unexpected findings payload");
+  }
+
+  const findings = saved["findings"]
+    .filter(isRecord)
+    .map((finding) =>
+      Object.fromEntries(
+        Object.entries(finding).filter(([name]) => name !== "proposedFix")
+      )
+    );
+
+  fs.writeFileSync(file, JSON.stringify({ ...saved, findings }));
+};
+
+test("review run refuses saved findings without proposedFix and leaves the ledger and review directory untouched", async () => {
+  const t = await coverageRepo(4);
+
+  try {
+    t.replies.set("codex", MUST_FINDING);
+    const first = await t.review();
+
+    assert.equal(first.exit, 0);
+
+    dropProposedFix(path.join(t.dir(1), "findings.json"));
+    await t.accept("R1-F001");
+    t.calls.length = 0;
+
+    const reviewDir = path.dirname(t.dir(1));
+    const ledger = path.join(t.f.session, "ledger.jsonl");
+
+    const before = {
+      ledger: fs.readFileSync(ledger, "utf-8"),
+      tree: treeBytes(reviewDir),
+    };
+
+    const refused = await t.review();
+
+    assert.equal(refused.exit, 4, JSON.stringify(refused.output));
+    assert.equal(refused.output.reason, "stale-findings");
+    assert.equal(t.calls.length, 0);
+    assert.deepEqual(
+      { ledger: fs.readFileSync(ledger, "utf-8"), tree: treeBytes(reviewDir) },
+      before
+    );
+  } finally {
+    t.f.cleanup();
+  }
+});
+
+const acceptedRuling = (id: string) => ({
+  kind: "ruling",
+  by: "orchestrator",
+  key: `ruling:code-integration:${id}`,
+  data: {
+    subject: `review:code-integration:${id}`,
+    ruling: "accepted",
+    rationale: "Verified the defect",
+    fix: "proposed",
+  },
+});
+
+const CHURN = [
+  ["The file returns an invalid result", "Return the expected result"],
+  ["The parser drops trailing input", "Read to the end of the buffer"],
+  ["Retries never terminate", "Stop after the configured attempts"],
+] as const;
+
+test("a marked round needs a step-back outcome in its ruling batch and the next round runs as before", async () => {
+  const t = await coverageRepo(4);
+
+  try {
+    const batch = (...items: object[]) => {
+      const file = path.join(t.f.session, "batch.json");
+      fs.writeFileSync(file, JSON.stringify(items));
+
+      return file;
+    };
+
+    for (const [index, [defect, proposedFix]] of CHURN.entries()) {
+      t.replies.set("codex", {
+        status: "FINDINGS",
+        findings: [{ ...MUST_FINDING.findings[0], defect, proposedFix }],
+      });
+      // oxlint-disable-next-line eslint/no-await-in-loop -- rounds run in order
+      const ran = await t.review();
+      assert.equal(ran.exit, 0, JSON.stringify(ran.output));
+
+      if (index < CHURN.length - 1) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- rounds run in order
+        await t.accept(`R${index + 1}-F001`);
+      }
+    }
+
+    assert.deepEqual(t.findings(3).stepBack, { units: ["src/file.ts"] });
+    assert.equal(t.findings(2).stepBack, undefined);
+
+    const ledger = path.join(t.f.session, "ledger.jsonl");
+    const before = fs.readFileSync(ledger, "utf-8");
+
+    const refused = await t.f.run([
+      "ledger",
+      "append",
+      batch(acceptedRuling("R3-F001")),
+    ]);
+
+    assert.equal(refused.exit, 1, JSON.stringify(refused.output));
+    assert.equal(refused.output.reason, "invalid-record");
+    assert.match(refused.output.summary, /step-back:code-integration:3/u);
+    assert.equal(fs.readFileSync(ledger, "utf-8"), before);
+
+    const outcome = {
+      kind: "ruling",
+      by: "orchestrator",
+      key: "step-back:code-integration:3",
+      data: {
+        subject: "step-back:code-integration:3",
+        ruling: "patch",
+        rationale: "The cause is local to one file",
+      },
+    };
+
+    const appended = await t.f.run([
+      "ledger",
+      "append",
+      batch(acceptedRuling("R3-F001"), outcome),
+    ]);
+
+    assert.equal(appended.exit, 0, JSON.stringify(appended.output));
+
+    const roster = t.targets(3);
+    const fourth = await t.review();
+
+    assert.equal(fourth.exit, 0, JSON.stringify(fourth.output));
+    assert.deepEqual(t.targets(4), roster);
+    assert.match(t.round(4).scope, /^Re-review round 4 \(/u);
   } finally {
     t.f.cleanup();
   }
@@ -4137,7 +4299,7 @@ test("repository changes refuse a rerun at the ceiling but keep the report open"
           tag: "correctness",
           locus: "src/file.ts:L1",
           defect: "The file returns an invalid result",
-          requiredChange: "Return the expected result",
+          proposedFix: "Return the expected result",
         },
       ],
     };
@@ -4281,6 +4443,7 @@ test("repository changes refuse a rerun at the ceiling but keep the report open"
         data: {
           subject: `review:${third.review}:R3-F001`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Fix accepted",
         },
       },
@@ -4604,103 +4767,103 @@ test("repository changes report unavailable when checkout reads fail", async (t)
     },
   ];
 
-  await Promise.all(
-    patches.map(async (mode) => {
-      const f = await toolkitRepo();
+  const runMode = async (mode: (typeof patches)[number]) => {
+    const f = await toolkitRepo();
 
-      try {
-        f.deps.skillRoot = setupTestSkill(f.deps, f.session, "checkout-skill", {
-          "read-delegates": {
-            claude: { targets: [{ low: { model: "native-model" } }] },
-          },
-          phases: {
-            "code-review": { targets: { low: 1 }, rounds: { low: 2 } },
-          },
-        });
-        f.deps.orchestrator = { platform: "claude", model: null };
-        f.deps.liveness = { claude: true };
-        f.deps.delegate = async () => {
-          await Promise.resolve();
+    try {
+      f.deps.skillRoot = setupTestSkill(f.deps, f.session, "checkout-skill", {
+        "read-delegates": {
+          claude: { targets: [{ low: { model: "native-model" } }] },
+        },
+        phases: {
+          "code-review": { targets: { low: 1 }, rounds: { low: 2 } },
+        },
+      });
+      f.deps.orchestrator = { platform: "claude", model: null };
+      f.deps.liveness = { claude: true };
+      f.deps.delegate = async () => {
+        await Promise.resolve();
 
-          return {
-            outcome: {
-              status: "ok",
-              text: JSON.stringify(CLEAN),
-              resume: null,
-              sessionId: null,
-            },
-            invocations: [],
-          };
+        return {
+          outcome: {
+            status: "ok",
+            text: JSON.stringify(CLEAN),
+            resume: null,
+            sessionId: null,
+          },
+          invocations: [],
         };
+      };
 
-        await f.level("low");
-        await f.approve();
+      await f.level("low");
+      await f.approve();
 
-        const made = await f.run(["worktree", "create", "T1"]);
+      const made = await f.run(["worktree", "create", "T1"]);
 
-        assert.equal(made.exit, 0);
-        fs.writeFileSync(
-          path.resolve(f.session, createdPath(made), "src/file.ts"),
-          "candidate\n"
-        );
+      assert.equal(made.exit, 0);
+      fs.writeFileSync(
+        path.resolve(f.session, createdPath(made), "src/file.ts"),
+        "candidate\n"
+      );
 
-        const submitted = await f.run(["worktree", "submit", "T1"]);
+      const submitted = await f.run(["worktree", "submit", "T1"]);
 
-        assert.equal(submitted.exit, 0);
+      assert.equal(submitted.exit, 0);
 
-        const run = async () =>
-          await f.run([
-            "review",
-            "run",
-            "T1",
-            "--kind",
-            "code",
-            "--spec",
-            "work.spec.md",
-            "--level",
-            "low",
-          ]);
+      const run = async () =>
+        await f.run([
+          "review",
+          "run",
+          "T1",
+          "--kind",
+          "code",
+          "--spec",
+          "work.spec.md",
+          "--level",
+          "low",
+        ]);
 
-        const launched = await run();
+      const launched = await run();
 
-        assert.equal(launched.output.reason, "native-pending");
+      assert.equal(launched.output.reason, "native-pending");
 
-        const waved = await run();
+      const waved = await run();
 
-        assert.equal(waved.output.reason, "native-pending");
+      assert.equal(waved.output.reason, "native-pending");
 
-        const target = path.join(f.root, "src/file.ts");
+      const target = path.join(f.root, "src/file.ts");
 
-        fs.writeFileSync(target, `edit for ${mode.name}\n`);
+      fs.writeFileSync(target, `edit for ${mode.name}\n`);
 
-        for (const slot of pendingRun(waved).pending) {
-          fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
-        }
-
-        const restore = mode.patch(target);
-
-        const done = await (async () => {
-          try {
-            return await run();
-          } finally {
-            restore();
-          }
-        })();
-
-        assert.equal(
-          done.exit,
-          0,
-          `${JSON.stringify(done.output)} ${mode.name}`
-        );
-        assert.ok(
-          reviewResult(done).repositoryCheck?.state === "unavailable",
-          `${JSON.stringify(done.value)} ${mode.name}`
-        );
-      } finally {
-        f.cleanup();
+      for (const slot of pendingRun(waved).pending) {
+        fs.writeFileSync(slot.replyPath, JSON.stringify(CLEAN));
       }
-    })
-  );
+
+      const restore = mode.patch(target);
+
+      const done = await (async () => {
+        try {
+          return await run();
+        } finally {
+          restore();
+        }
+      })();
+
+      assert.equal(done.exit, 0, `${JSON.stringify(done.output)} ${mode.name}`);
+      assert.ok(
+        reviewResult(done).repositoryCheck?.state === "unavailable",
+        `${JSON.stringify(done.value)} ${mode.name}`
+      );
+    } finally {
+      f.cleanup();
+    }
+  };
+
+  // Modes share the global fs mocks, so a parallel restore would drop another mode's lstatSync patch.
+  for (const mode of patches) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- sequential modes keep each fs patch isolated
+    await runMode(mode);
+  }
 });
 
 test("repository changes carry the baseline across a superseded round", async () => {

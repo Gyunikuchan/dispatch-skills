@@ -303,6 +303,7 @@ const shapes = {
     impact: choice(...IMPACTS),
     trigger: choice(...TRIGGERS),
     paths: correctionPaths,
+    fix: string,
   },
   note: { text },
   edit: {
@@ -422,7 +423,7 @@ const FLAT_OPTIONAL: OptionalFields = {
   approval: ["design"],
   evidence: ["artifacts"],
   focus: ["visual"],
-  ruling: ["impact", "trigger", "paths"],
+  ruling: ["impact", "trigger", "paths", "fix"],
 };
 
 const PHASE_OPTIONAL: Readonly<
@@ -672,6 +673,19 @@ export function validateRecord(
         )(value.data["ruling"], "data.ruling");
       }
 
+      if (typeof subject === "string" && subject.startsWith("step-back:")) {
+        if (!/^step-back:[^:\s]+:[1-9]\d*$/u.test(subject)) {
+          invalid("data.subject", "step-back:<review>:<round>");
+        }
+
+        choice(
+          "patch",
+          "rewrite",
+          "re-author",
+          "user"
+        )(value.data["ruling"], "data.ruling");
+      }
+
       if ("impact" in value.data || "trigger" in value.data) {
         for (const dimension of ["impact", "trigger"]) {
           if (!(dimension in value.data)) {
@@ -694,6 +708,24 @@ export function validateRecord(
         invalid(
           "data.paths",
           "absent unless an accepted ruling names a review finding"
+        );
+      }
+
+      // Stored rows of earlier versions lack `fix`; only append requires it.
+      const { fix } = value.data;
+      const given = typeof fix === "string" && fix.trim() !== "";
+      let refused = given;
+
+      if (acceptedReview) {
+        refused = given
+          ? !/^(?:proposed$|alternative: \S)/u.test(fix)
+          : !stored;
+      }
+
+      if (refused) {
+        invalid(
+          "data.fix",
+          "`proposed` or `alternative: <reason>` on an accepted ruling of a review finding; absent or empty on any other ruling"
         );
       }
     }

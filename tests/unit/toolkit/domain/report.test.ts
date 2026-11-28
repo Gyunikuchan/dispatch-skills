@@ -37,7 +37,7 @@ const finding = (overrides: Record<string, string> = {}) => ({
   locus: "src/fetch.ts:L12",
   tag: "correctness",
   defect: "retry loop never terminates on persistent failure",
-  requiredChange: "bound the retry loop with a counter",
+  proposedFix: "bound the retry loop with a counter",
   ...overrides,
 });
 
@@ -86,7 +86,7 @@ const planFinding = (tag: string, heading: string, defect: string) => ({
   locus: `§ ${heading}`,
   tag,
   defect,
-  requiredChange: `revise ${heading} to address the gap`,
+  proposedFix: `revise ${heading} to address the gap`,
 });
 
 const parsedFindings = (kind: "plan" | "code" | "design", text: string) => {
@@ -956,7 +956,7 @@ test("finding collection dedups findings and preserves unknown tags", () => {
           locus: "src/other.ts:L3",
           tag: "performance",
           defect: "quadratic scan",
-          requiredChange: "index lookups",
+          proposedFix: "index lookups",
         }),
       ]),
     });
@@ -1721,10 +1721,8 @@ test("diagnostics amendment convergence: cap screening, reraises, escalations an
 
     assert.match(findingCap.evidence, /cap reached/u);
     assert.doesNotMatch(findingCap.evidence, /deadlock/u);
-    assert.equal(
-      findingCap.proposedFix,
-      "Raise the round cap or narrow scope."
-    );
+    assert.match(findingCap.proposedFix, /step-back/u);
+    assert.doesNotMatch(findingCap.proposedFix, /Raise the round cap/u);
 
     const deadlocked = [1, 2, 3].map((round) => ({
       phase: "review",

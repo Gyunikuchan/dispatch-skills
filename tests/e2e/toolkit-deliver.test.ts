@@ -555,7 +555,7 @@ describe("toolkit delivery and cleanup", () => {
               tag: "correctness",
               locus: "src/file.ts:L1",
               defect: "Unbounded writes",
-              requiredChange: "Bound writes",
+              proposedFix: "Bound writes",
             },
           ],
         })

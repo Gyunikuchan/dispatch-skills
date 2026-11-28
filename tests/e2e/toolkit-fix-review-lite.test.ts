@@ -40,7 +40,7 @@ const REPORT = JSON.stringify({
       tag: "reliability",
       locus: "§ Work",
       defect: "Writes overlap",
-      requiredChange: "Serialize writes",
+      proposedFix: "Serialize writes",
     },
   ],
 });
@@ -123,6 +123,7 @@ const reviewAndAccept = async (f: Repo, g: Second) => {
       data: {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Serialize writes",
       },
     },

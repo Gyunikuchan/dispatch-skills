@@ -165,6 +165,7 @@ test("cap-ending SHOULD fixes bound their verified commit chain by ruling paths"
       data: {
         subject: "review:code-integration:R3-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Accept the bounded correction",
         paths: ["src/file.ts", "src/helper.ts"],
       },
@@ -193,7 +194,7 @@ test("cap-ending SHOULD fixes bound their verified commit chain by ruling paths"
       severity: "SHOULD",
       locus: "src/file.ts:L1",
       defect: "The source is incorrect",
-      requiredChange: "Correct the source",
+      proposedFix: "Correct the source",
     };
 
     fs.writeFileSync(
@@ -291,6 +292,7 @@ test("cap-ending SHOULD fixes bound their verified commit chain by ruling paths"
       data: {
         subject: ruling.data.subject,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Correct the severity inputs",
         impact: "degrades",
         trigger: "realistic",
@@ -431,6 +433,7 @@ test("cap-ending SHOULD fixes bound their verified commit chain by ruling paths"
       data: {
         subject: ruling.data.subject,
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Accept the locus correction",
       },
     };
@@ -579,6 +582,7 @@ const correctedGate = async (
       data: {
         subject: "review:code-integration:R3-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "impact: corrected after review",
         ...correction,
       },
@@ -607,7 +611,7 @@ const correctedGate = async (
       ...stored,
       locus: "src/file.ts:L1",
       defect: "The source is incorrect",
-      requiredChange: "Correct the source",
+      proposedFix: "Correct the source",
     };
 
     fs.writeFileSync(
@@ -1134,7 +1138,7 @@ const reviewClaim = (id: string, defect: string): Finding => ({
   category: "correctness",
   locus: "src/file.ts:L1",
   defect,
-  requiredChange: "Bound the writes",
+  proposedFix: "Bound the writes",
   sources: ["reviewer"],
   scope: "in",
 });
@@ -1193,6 +1197,7 @@ test("confirmation-only round preserves substantive review identity and rejects 
           data: {
             subject: "review:code-integration:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "The bounded fix is required",
           },
         },
@@ -1360,6 +1365,7 @@ test("confirmation-only round preserves substantive review identity and rejects 
           data: {
             subject: "review:code-integration:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Claimed resolution",
           },
         },
@@ -1493,6 +1499,7 @@ test("confirmation-only round preserves substantive review identity and rejects 
           data: {
             subject: "review:code-integration:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "Claimed resolution",
           },
         },
@@ -1887,6 +1894,7 @@ const seedActiveRecurrence = async (
         data: {
           subject: "review:code-integration:F1",
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Accept the SHOULD fix",
         },
       },

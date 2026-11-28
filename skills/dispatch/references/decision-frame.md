@@ -92,6 +92,8 @@ Separate observed limitations from claims needing investigation. Present evidenc
 
 Present the recurring finding, prior accepted fixes, inspected feasibility and remaining uncertainty. Recommend keeping, relaxing or splitting the requirement, with concrete alternatives. Intent changes follow [spec operation](spec-stage.md#revision-protocol).
 
+A step-back outcome `user` ([step-back procedure](review-rules.md#step-back-procedure)) enters here. Present the cause shared by the round's fix-induced findings and hot units and the outcomes considered, with why `patch`, `rewrite` and `re-author` do not remove it. Recommend one option.
+
 A `review-ceiling` refusal is the ceiling branch of the [continuation rule](review-rules.md#review-provenance-and-applicability). Present the recurring findings, each prior accepted fix, and why that fix failed, verified against current artifacts. Recommend exactly one option from the evidence:
 
 - Re-author the artifact from current knowledge under a different approach.

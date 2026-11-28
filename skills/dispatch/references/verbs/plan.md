@@ -12,7 +12,7 @@ Run [lint](../toolkit.md#lint-run) and resolve parse-critical defects. Before pl
 
 Revise the plan in place under [revision protocol](../spec-stage.md#revision-protocol) and the [edit contract](../toolkit.md#edit). Notify affected writers under [implementation](implement.md).
 
-When findings in one requirement or area recur after an accepted fix, verify feasibility and present the [review escalation](../decision-frame.md#review-escalation).
+When findings in one requirement or area recur after an accepted fix, follow the [step-back procedure](../review-rules.md#step-back-procedure).
 
 ## Step reads
 

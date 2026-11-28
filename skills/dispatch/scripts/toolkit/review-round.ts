@@ -39,6 +39,7 @@ import {
   rerunGranted,
   rerunNotesFor,
   roundCause,
+  stepBackMark,
 } from "./findings.ts";
 import type { Finalized, FindingsValue, RoundCauseScope } from "./findings.ts";
 import { git, gitPaths } from "./git.ts";
@@ -1154,6 +1155,21 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     });
   };
 
+  const markUnits = (value: Finalized) => {
+    value.units = computeUnits();
+
+    const stepBack = stepBackMark({
+      round: n,
+      units: value.units,
+      cause: value.cause,
+      total: value.findings.length,
+    });
+
+    if (stepBack) {
+      value.stepBack = stepBack;
+    }
+  };
+
   const fanoutDir = reviewGenerationDirectory(dir, round.generation);
 
   const observeRecovery =
@@ -1655,7 +1671,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
             defect: `${defect}; Tests touched: ${
               gap.testsTouched ? "yes" : "no"
             }`,
-            requiredChange:
+            proposedFix:
               "Show the criterion's test failing before the fix in the writer report",
             sources: ["tool"],
             scope: "in",
@@ -1723,13 +1739,13 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     // The finalized findings copy carries the same durable report identity as
     // the per-generation checkout report, so one per-report decision closes
     // both copies.
-    pending.units = computeUnits();
+    markUnits(pending);
     atomic(pendingFile, { ...pending, asOfSeq: checkout.asOfSeq });
     await deps.hook?.("review:after-pending");
   }
 
   if (pending.units === undefined || pending.units === null) {
-    pending.units = computeUnits();
+    markUnits(pending);
     atomic(pendingFile, pending);
   }
 
@@ -1774,7 +1790,7 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
   );
   atomic(
     path.join(session, rulingsFile),
-    rulingsTemplate(review, n, pending.findings)
+    rulingsTemplate(review, n, pending.findings, pending.stepBack)
   );
   renameRetrying(pendingFile, reviewFindingsFile(dir));
 
@@ -1852,7 +1868,8 @@ export const runReviewRound = async (env: ReviewRoundEnv) => {
     countsHead +
     hotUnitsNotice(
       pending.units,
-      Buffer.byteLength(countsHead + suffixes, "utf-8")
+      Buffer.byteLength(countsHead + suffixes, "utf-8"),
+      pending.stepBack
     ) +
     suffixes;
 

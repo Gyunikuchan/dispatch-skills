@@ -656,7 +656,7 @@ const ratedFinding: Finding = {
   category: "reliability",
   locus: "§ Work",
   defect: "Lost write\n## heading",
-  requiredChange: "Apply under lock",
+  proposedFix: "Apply under lock",
   sources: ["agy[0]", "claude[0]"],
   scope: "in",
   origin: "fix-induced",
@@ -679,20 +679,50 @@ test("findings file: renders Markdown in severity order with neutralized text an
       "- Rating: blocks/realistic; category reliability; scope in; origin fix-induced",
       "- Locus: § Work",
       "- Defect: Lost write ## heading",
-      "- Required change: Apply under lock",
+      "- Proposed fix: Apply under lock",
       "- Sources: agy[0], claude[0]",
       "",
       "### R1-F001 SHOULD",
       "- Rating: —/—; category —; scope —; origin —",
       "- Locus: —",
       "- Defect: —",
-      "- Required change: —",
+      "- Proposed fix: —",
       "- Sources: —",
       "",
     ].join("\n")
   );
   assert.equal(renderFindingsFile([]), "No findings.\n");
   assert.deepEqual(rulingsTemplate("plan-work.plan", 1, []), []);
+});
+
+test("rulings template: the step-back outcome skeleton follows the findings only for a marked round", () => {
+  const review = "plan-work.plan";
+  const plain = rulingsTemplate(review, 2, [ratedFinding]);
+  assert.equal(plain.length, 1);
+  assert.deepEqual(
+    rulingsTemplate(review, 2, [ratedFinding], undefined),
+    plain
+  );
+
+  const marked = rulingsTemplate(review, 2, [ratedFinding], { units: [] });
+
+  assert.deepEqual(marked, [
+    ...plain,
+    {
+      kind: "ruling",
+      by: "orchestrator",
+      key: "step-back:plan-work.plan:2",
+      data: {
+        subject: "step-back:plan-work.plan:2",
+        ruling: "",
+        rationale: "",
+      },
+    },
+  ]);
+  assert.deepEqual(
+    rulingsTemplate(review, 2, [], { units: ["T1"], fixInduced: [2, 3] }),
+    marked.slice(1)
+  );
 });
 
 test("findings file: a filled batch appends and a later ruling needs a new key", async () => {
@@ -729,6 +759,7 @@ test("findings file: a filled batch appends and a later ruling needs a new key",
           subject: `review:plan-work.plan:${id}`,
           ruling: "",
           rationale: "",
+          fix: "",
         },
       }))
     );
@@ -742,6 +773,7 @@ test("findings file: a filled batch appends and a later ruling needs a new key",
         ...entry.data,
         ruling: "accepted",
         rationale: "Verified the defect",
+        fix: "proposed",
       },
     }));
 
@@ -756,6 +788,7 @@ test("findings file: a filled batch appends and a later ruling needs a new key",
         ...initial.data,
         ruling: "deferred",
         rationale: "Schedule separately",
+        fix: "",
       },
     };
 

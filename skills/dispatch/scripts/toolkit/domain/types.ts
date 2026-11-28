@@ -26,7 +26,7 @@ export interface Finding {
   category: string;
   locus: string;
   defect: string;
-  requiredChange: string;
+  proposedFix: string;
   sources: readonly SlotId[];
   scope: FindingScope;
   dupOf?: FindingId;
@@ -62,6 +62,12 @@ export interface RoundCause {
     new: number;
     failed: number;
   };
+}
+
+/** Marks a round whose churn needs a step-back outcome before its accepted rulings; see review-rules.md. */
+export interface StepBack {
+  units: string[];
+  fixInduced?: [count: number, total: number];
 }
 
 // SECTION: Lint

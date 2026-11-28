@@ -99,6 +99,10 @@ const sampleField = (
     return ["src/file.ts", "tests/file.test.ts"];
   }
 
+  if (kind === "ruling" && field === "fix") {
+    return "proposed";
+  }
+
   if (field === "affects" || field === "paths" || field === "differing") {
     return ["T1"];
   }
@@ -172,6 +176,19 @@ const sampleField = (
 };
 
 describe("contracts and help call table", () => {
+  test("the ruling record schema and call table list fix as an optional field", () => {
+    const ruling = recordSchemas().find((schema) => schema.kind === "ruling");
+    assert.ok(ruling && !ruling.phased);
+    assert.ok(ruling.optional.includes("fix"));
+    assert.ok(!ruling.required.includes("fix"));
+    assert.match(
+      renderCallTable()
+        .split("\n")
+        .find((line) => line.startsWith("| record | ruling |")) ?? "",
+      /fix\?/u
+    );
+  });
+
   // oxlint-disable-next-line eslint/complexity -- schema matrix asserts every kind and phase; splitting would scatter the assertions
   test("recordSchemas covers every ledger kind and phase matching validateRecord", () => {
     const schemas = recordSchemas();
@@ -232,8 +249,12 @@ describe("contracts and help call table", () => {
             [field]: sampleField(schema.kind, undefined, field),
           };
 
-          if (schema.kind === "ruling" && field === "paths") {
+          if (
+            schema.kind === "ruling" &&
+            (field === "paths" || field === "fix")
+          ) {
             withOptional["subject"] = "review:code-integration:R1-F001";
+            withOptional["fix"] = sampleField(schema.kind, undefined, "fix");
           }
 
           if (
@@ -241,6 +262,7 @@ describe("contracts and help call table", () => {
             (field === "impact" || field === "trigger")
           ) {
             withOptional["subject"] = "review:plan-1:R1-F001";
+            withOptional["fix"] = sampleField(schema.kind, undefined, "fix");
             withOptional["impact"] = sampleField(
               schema.kind,
               undefined,

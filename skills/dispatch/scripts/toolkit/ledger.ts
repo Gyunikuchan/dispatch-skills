@@ -404,6 +404,67 @@ const checkCorrection = (session: string, fold: Fold, data: unknown) => {
   }
 };
 
+// SECTION: step-back outcome
+
+const ACCEPTED_FINDING =
+  /^review:(?<cap1>[A-Za-z0-9][A-Za-z0-9._-]*):R(?<cap2>\d+)-/u;
+
+/** Refuses a batch whose accepted rulings sit in a round marked `stepBack` while neither batch nor ledger holds its outcome; an absent or unreadable findings file imposes nothing. */
+const checkStepBack = (
+  session: string,
+  fold: Fold,
+  added: readonly LedgerRecord[]
+) => {
+  const missing = new Set<string>();
+
+  for (const row of added) {
+    const [, review, round] =
+      row.kind === "ruling" && row.data["ruling"] === "accepted"
+        ? (ACCEPTED_FINDING.exec(textValue(row.data["subject"])) ?? [])
+        : [];
+
+    if (review === undefined || round === undefined) {
+      continue;
+    }
+
+    const subject = `step-back:${review}:${round}`;
+
+    if (
+      fold.records.some(
+        (other) => other.kind === "ruling" && other.data["subject"] === subject
+      )
+    ) {
+      continue;
+    }
+
+    try {
+      const saved: unknown = JSON.parse(
+        fs.readFileSync(
+          reviewFindingsFile(
+            reviewRoundDirectory(reviewDirectory(session, review), round)
+          ),
+          "utf-8"
+        )
+      );
+
+      if (isRecord(saved) && isRecord(saved["stepBack"])) {
+        missing.add(subject);
+      }
+    } catch {
+      void 0;
+      /* Absent and unreadable findings impose no requirement. */
+    }
+  }
+
+  if (missing.size) {
+    throw new ToolError(
+      1,
+      "invalid-record",
+      `step-back outcome missing: add a ruling with subject ${[...missing].join(", ")} (data.ruling: patch, rewrite, re-author or user; data.rationale: one line) to this batch or the ledger before accepted rulings of that round`
+    );
+  }
+};
+
 type PreparedRecord =
   | { record: RecordInput; key: string }
   | { seq: number; deduped: true };
@@ -759,6 +820,8 @@ export const appendRecords = async (
       toWrite.push(stored);
       results.push({ seq: stored.seq, deduped: false });
     }
+
+    checkStepBack(session, working, toWrite);
 
     if (toWrite.length) {
       writeRecords(session, fold, toWrite, options);

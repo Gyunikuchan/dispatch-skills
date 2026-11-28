@@ -1729,7 +1729,7 @@ test("reviewPrompt renders MUST rejection confirmation instructions only when re
         category: "correctness",
         locus: "src/api.ts:L1",
         defect: "Unbounded writes",
-        requiredChange: "Bound writes",
+        proposedFix: "Bound writes",
         sources: ["reviewer"],
         scope: "in",
       },
@@ -1758,7 +1758,7 @@ test("reviewPrompt renders MUST rejection confirmation instructions only when re
       "omission is not confirmation",
       request.requestId,
       request.claim.defect,
-      request.claim.requiredChange,
+      `Proposed fix: ${request.claim.proposedFix}`,
       request.rationale,
     ]) {
       assert.ok(prompt.includes(rule), `${kind}: ${rule}`);

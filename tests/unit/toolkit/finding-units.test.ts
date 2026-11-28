@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { findingUnits } from "../../../skills/dispatch/scripts/toolkit/findings.ts";
+import {
+  findingUnits,
+  stepBackMark,
+} from "../../../skills/dispatch/scripts/toolkit/findings.ts";
 import { defined } from "../../helpers/guards.ts";
 
 test("finding units classify and measure sections across rounds", () => {
@@ -277,4 +280,122 @@ test("finding units accept heading markers on exact loci", () => {
       ["artifact", ["e"]],
     ]
   );
+});
+
+// SECTION: Step-back marker
+
+const unitsAt = (...streaks: readonly (readonly [string, number])[]) =>
+  streaks.map(([unit, hotStreak]) => ({ unit, hotStreak }));
+
+const marked = (
+  round: number,
+  units: ReturnType<typeof unitsAt>,
+  fixInduced: number,
+  total: number
+) => stepBackMark({ round, units, cause: { counts: { fixInduced } }, total });
+
+test("step-back marker: a unit needs a streak of two and fix-induced findings need two and a majority", () => {
+  assert.equal(marked(2, unitsAt(["T1", 1]), 0, 1), undefined);
+  assert.deepEqual(marked(3, unitsAt(["T1", 2], ["T2", 1]), 0, 2), {
+    units: ["T1"],
+  });
+  assert.deepEqual(marked(3, unitsAt(["T1", 3], ["T2", 2]), 0, 2), {
+    units: ["T1", "T2"],
+  });
+  assert.equal(marked(2, [], 1, 1), undefined);
+  assert.equal(marked(2, [], 2, 4), undefined);
+  assert.deepEqual(marked(2, [], 2, 3), { units: [], fixInduced: [2, 3] });
+  assert.deepEqual(marked(3, unitsAt(["T1", 2]), 5, 8), {
+    units: ["T1"],
+    fixInduced: [5, 8],
+  });
+});
+
+test("step-back marker: round 1 and a round without cause carry none", () => {
+  assert.equal(marked(1, unitsAt(["T1", 2]), 3, 3), undefined);
+  assert.equal(
+    stepBackMark({ round: 2, units: [], cause: undefined, total: 3 }),
+    undefined
+  );
+  assert.deepEqual(
+    stepBackMark({
+      round: 2,
+      units: unitsAt(["T1", 2]),
+      cause: undefined,
+      total: 3,
+    }),
+    { units: ["T1"] }
+  );
+});
+
+// Compact per-round signals of a plan review over four rounds.
+test("step-back marker: the recorded plan review is marked from round 2", () => {
+  const rounds = [
+    { round: 1, units: [], fixInduced: 0, total: 21, expected: undefined },
+    {
+      round: 2,
+      units: unitsAt(
+        ["T3", 1],
+        ["§ Verification Plan", 0],
+        ["§ Key Interfaces & Data", 1],
+        ["T4", 1]
+      ),
+      fixInduced: 5,
+      total: 8,
+      expected: { units: [], fixInduced: [5, 8] },
+    },
+    {
+      round: 3,
+      units: unitsAt(
+        ["§ Key Interfaces & Data", 2],
+        ["T3", 2],
+        ["T4", 2],
+        ["artifact", 0]
+      ),
+      fixInduced: 9,
+      total: 10,
+      expected: {
+        units: ["§ Key Interfaces & Data", "T3", "T4"],
+        fixInduced: [9, 10],
+      },
+    },
+    {
+      round: 4,
+      units: unitsAt(
+        ["§ Key Interfaces & Data", 3],
+        ["T3", 3],
+        ["T5", 0],
+        ["§ Success Criteria", 0]
+      ),
+      fixInduced: 3,
+      total: 9,
+      expected: { units: ["§ Key Interfaces & Data", "T3"] },
+    },
+  ];
+
+  for (const { round, units, fixInduced, total, expected } of rounds) {
+    assert.deepEqual(
+      marked(round, units, fixInduced, total),
+      expected,
+      `round ${round}`
+    );
+  }
+});
+
+// A code-integration review that converges without churn stays unmarked.
+test("step-back marker: a converging code review is never marked", () => {
+  const rounds = [
+    { round: 1, units: unitsAt(["unresolved", 0]), fixInduced: 0, total: 3 },
+    {
+      round: 2,
+      units: unitsAt(["skills/dispatch/scripts/toolkit/diagnostics.ts", 0]),
+      fixInduced: 0,
+      total: 1,
+    },
+    { round: 3, units: [], fixInduced: 0, total: 0 },
+  ];
+
+  for (const { round, units, fixInduced, total } of rounds) {
+    assert.equal(marked(round, units, fixInduced, total), undefined);
+  }
 });

@@ -1035,7 +1035,7 @@ test("review fix status: completed re-review retains earlier fixes and their pat
       category: "correctness",
       locus: "src/task-1.ts:L1",
       defect: "The assertion is wrong",
-      requiredChange: "Correct the assertion",
+      proposedFix: "Correct the assertion",
       sources: ["reviewer"],
       scope: "in",
     };
@@ -1069,7 +1069,7 @@ test("review fix status: completed re-review retains earlier fixes and their pat
             locus: "src/task-1.ts:L1",
             tag: "correctness",
             defect: finding.defect,
-            requiredChange: finding.requiredChange,
+            proposedFix: finding.proposedFix,
           },
         ],
       }),
@@ -1083,6 +1083,7 @@ test("review fix status: completed re-review retains earlier fixes and their pat
         data: {
           subject: "review:code-integration:R3-F001",
           ruling: "accepted",
+          fix: "proposed",
           rationale: "The bounded correction is needed",
           paths: ["src/task-1.ts", "src/shared.ts"],
         },

@@ -9,7 +9,7 @@ import { RESOLUTION_HEADING } from "./domain/document-lint.ts";
 import { sectionRanges, structuralLines } from "./domain/markdown-structure.ts";
 import { neutralizeComments } from "./domain/sanitize.ts";
 import { effectiveSeverity, RANK } from "./domain/severity.ts";
-import type { Finding, Severity } from "./domain/types.ts";
+import type { Finding, Severity, StepBack } from "./domain/types.ts";
 import { admission, renderBudget } from "./findings.ts";
 import { foldLedger, latest } from "./ledger.ts";
 import type { Fold } from "./ledger.ts";
@@ -320,7 +320,7 @@ export const renderFindingsFile = (findings: readonly Finding[]) => {
         `- Rating: ${field(finding.impact)}/${field(finding.trigger)}; category ${field(finding.category)}; scope ${field(finding.scope)}; origin ${field(finding.origin)}`,
         `- Locus: ${field(finding.locus)}`,
         `- Defect: ${field(finding.defect)}`,
-        `- Required change: ${field(finding.requiredChange)}`,
+        `- Proposed fix: ${field(finding.proposedFix)}`,
         `- Sources: ${field(finding.sources?.join(", "))}`,
       ].join("\n")
     )
@@ -330,14 +330,35 @@ export const renderFindingsFile = (findings: readonly Finding[]) => {
 export const rulingsTemplate = (
   review: string,
   round: number,
-  findings: readonly Finding[]
-) =>
-  findings.map(({ id }) => ({
+  findings: readonly Finding[],
+  stepBack?: StepBack
+) => [
+  ...findings.map(({ id }) => ({
     kind: "ruling",
     by: "orchestrator",
     key: `ruling:${review}:${round}:${id}`,
-    data: { subject: `review:${review}:${id}`, ruling: "", rationale: "" },
-  }));
+    data: {
+      subject: `review:${review}:${id}`,
+      ruling: "",
+      rationale: "",
+      fix: "",
+    },
+  })),
+  ...(stepBack
+    ? [
+        {
+          kind: "ruling",
+          by: "orchestrator",
+          key: `step-back:${review}:${round}`,
+          data: {
+            subject: `step-back:${review}:${round}`,
+            ruling: "",
+            rationale: "",
+          },
+        },
+      ]
+    : []),
+];
 
 const lineStarts = (
   source: string,

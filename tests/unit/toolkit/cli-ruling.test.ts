@@ -98,6 +98,7 @@ describe("toolkit CLI rulings contract", () => {
         data: {
           subject: `review:${planReview}:R1-F001`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Plan fix applied",
         },
       });
@@ -216,6 +217,7 @@ describe("toolkit CLI rulings contract", () => {
         data: {
           subject: `review:${review}:R1-F001`,
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Repair completed",
         },
       };

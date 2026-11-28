@@ -1359,42 +1359,44 @@ test("usage line lists every accepted path-bytes form", async () => {
 // SECTION: Reading against the one-home consolidation (consolidated reading baseline)
 
 // NOTE: I05 replaces `outside-review` in `implement.md`'s recovery table with phase-reason rows (inventory row 1) and trims recovery-table wording (+705 B net in `implement.md`; lines outside `## Interruption recovery` stay untouched per REQ-5), raising `design` (unconditional link) and `implement` by 705 B each vs I04 (`81,104` -> `81,809` and `76,720` -> `77,425`); `ask` (`30,031`) and `verify` (`29,907`) were already at those measured figures at `8054ac44` (removing the 6 B cushion left in I04's pin); `review` and `plan` are unchanged. Every verb stays below `BASELINE` (REQ-2 acceptance 2).
+// NOTE: The `ruling` fix choice adds the judging criteria in step 2 of `review-rules.md`, the `fix` text in `toolkit.md` and `, fix?` in the call table. `design` (`81,809` -> `82,160`), `review` (`52,775` -> `53,126`), `plan` (`72,495` -> `72,846`) and `implement` (`77,425` -> `77,776`) rise by 351 B; `ask` (`30,031` -> `30,037`) and `verify` (`29,907` -> `29,913`) by 6 B. Every verb stays below `BASELINE`.
+// NOTE: The step-back procedure (new `### Step-back procedure` section in `review-rules.md`, the `stepBack` and step-back outcome text in `toolkit.md`, the `user` outcome paragraph in `decision-frame.md`) is a new rule reached through the `recur` link and step 7. Measured with the section in place: `design` 84,165, `review` 54,841, `plan` 74,829, `implement` 79,491, `verify` 30,203; `ask` stays 30,037. Every verb stays below `BASELINE`.
 const CONSOLIDATED_READING: Record<PathName, Figures> = {
   ask: {
-    distinct: 30_031,
-    workload: 30_031,
-    editableDistinct: 29_268,
-    editableWorkload: 29_268,
+    distinct: 30_037,
+    workload: 30_037,
+    editableDistinct: 29_274,
+    editableWorkload: 29_274,
   },
   design: {
-    distinct: 81_809,
-    workload: 81_809,
-    editableDistinct: 68_934,
-    editableWorkload: 68_934,
+    distinct: 84_165,
+    workload: 84_165,
+    editableDistinct: 71_290,
+    editableWorkload: 71_290,
   },
   review: {
-    distinct: 52_775,
-    workload: 52_775,
-    editableDistinct: 32_470,
-    editableWorkload: 32_470,
+    distinct: 54_841,
+    workload: 54_841,
+    editableDistinct: 34_536,
+    editableWorkload: 34_536,
   },
   verify: {
-    distinct: 29_907,
-    workload: 29_907,
-    editableDistinct: 26_301,
-    editableWorkload: 26_301,
+    distinct: 30_203,
+    workload: 30_203,
+    editableDistinct: 26_597,
+    editableWorkload: 26_597,
   },
   plan: {
-    distinct: 72_495,
-    workload: 72_495,
-    editableDistinct: 55_007,
-    editableWorkload: 55_007,
+    distinct: 74_829,
+    workload: 74_829,
+    editableDistinct: 57_341,
+    editableWorkload: 57_341,
   },
   implement: {
-    distinct: 77_425,
-    workload: 77_425,
-    editableDistinct: 60_513,
-    editableWorkload: 60_513,
+    distinct: 79_491,
+    workload: 79_491,
+    editableDistinct: 62_579,
+    editableWorkload: 62_579,
   },
 };
 

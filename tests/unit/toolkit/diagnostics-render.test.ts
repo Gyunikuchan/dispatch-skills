@@ -18,6 +18,7 @@ import {
   renderDiagnostics,
   unitsOf,
 } from "../../../skills/dispatch/scripts/toolkit/domain/diagnostics-render.ts";
+import type { ReviewChoiceFacts } from "../../../skills/dispatch/scripts/toolkit/domain/diagnostics-types.ts";
 import {
   normalizeUsage,
   sanitizeFacts,
@@ -1793,5 +1794,177 @@ test("the diagnostics allow-list keeps only known round causes and positive in-r
     undefined,
     undefined,
     undefined,
+  ]);
+});
+
+// SECTION: Review choices
+
+const choiceEntry = (
+  extra: {
+    phase?: string;
+    proposed?: number;
+    alternative?: number;
+    stepBacks?: ReviewChoiceFacts["stepBacks"];
+  } = {}
+) => ({
+  phase: pastCapReview,
+  proposed: 0,
+  alternative: 0,
+  stepBacks: [],
+  ...extra,
+});
+
+const choiceRun = (proposed: number) => ({
+  phases: [],
+  invocations: [],
+  reviews: [pastCapRow(1)],
+  reviewChoices: [choiceEntry({ proposed })],
+});
+
+const choiceLines = (report: string) =>
+  report
+    .split("\n")
+    .filter((line) => /^- (?:Fix choices|Step-backs):/u.test(line));
+
+test("review health lists fix-choice counts and each step-back in ledger order per review", () => {
+  const { text: report } = renderDiagnostics([
+    {
+      phases: [],
+      invocations: [],
+      reviews: [pastCapRow(1), pastCapRow(2)],
+      reviewChoices: [
+        choiceEntry({
+          proposed: 3,
+          alternative: 1,
+          stepBacks: [
+            { round: 2, outcome: "patch" },
+            { round: 2, outcome: "patch" },
+            { round: 3, outcome: "rewrite" },
+          ],
+        }),
+      ],
+    },
+  ]);
+
+  assert.deepEqual(choiceLines(report), [
+    "- Fix choices: subject 1234567890abcdef: 3 proposed, 1 alternative",
+    "- Step-backs: subject 1234567890abcdef: R2 patch, R2 patch, R3 rewrite",
+  ]);
+  assert.match(report, /\| subject 1234567890abcdef \| 2\/2 \|/u);
+});
+
+test("review health omits the part of a review-choice entry that has nothing to show", () => {
+  const linesOf = (entry: ReturnType<typeof choiceEntry>) =>
+    choiceLines(
+      renderDiagnostics([
+        {
+          phases: [],
+          invocations: [],
+          reviews: [pastCapRow(1)],
+          reviewChoices: [entry],
+        },
+      ]).text
+    );
+
+  assert.deepEqual(linesOf(choiceEntry({ proposed: 2 })), [
+    "- Fix choices: subject 1234567890abcdef: 2 proposed, 0 alternative",
+  ]);
+  assert.deepEqual(
+    linesOf(choiceEntry({ stepBacks: [{ round: 4, outcome: "user" }] })),
+    ["- Step-backs: subject 1234567890abcdef: R4 user"]
+  );
+});
+
+test("review health renders for a run whose only review fact is a review-choice entry", () => {
+  const { text: report } = renderDiagnostics([
+    {
+      phases: [],
+      invocations: [],
+      reviews: [],
+      reviewChoices: [
+        choiceEntry({
+          alternative: 1,
+          stepBacks: [{ round: 2, outcome: "re-author" }],
+        }),
+      ],
+    },
+  ]);
+
+  const [health = ""] = defined(report.split("## Review health")[1]).split(
+    "\n## "
+  );
+
+  assert.deepEqual(choiceLines(health), [
+    "- Fix choices: subject 1234567890abcdef: 0 proposed, 1 alternative",
+    "- Step-backs: subject 1234567890abcdef: R2 re-author",
+  ]);
+  assert.doesNotMatch(health, /\| Review \|/u);
+});
+
+test("review health renders as before when no review has a fix choice or step-back", () => {
+  const base = {
+    phases: [],
+    invocations: [],
+    reviews: [pastCapRow(1, { cap: 1 }), pastCapRow(2, { cap: 1 })],
+  };
+
+  const plain = renderDiagnostics([base]).text;
+
+  assert.equal(renderDiagnostics([{ ...base, reviewChoices: [] }]).text, plain);
+  assert.deepEqual(choiceLines(plain), []);
+  assert.doesNotMatch(
+    renderDiagnostics([{ phases: [], invocations: [], reviews: [] }]).text,
+    /## Review health/u
+  );
+});
+
+test("a multi-run report prefixes each review-choice line with its run number", () => {
+  assert.deepEqual(
+    choiceLines(renderDiagnostics([choiceRun(1), choiceRun(2)]).text),
+    [
+      "- Fix choices: run 1 subject 1234567890abcdef: 1 proposed, 0 alternative",
+      "- Fix choices: run 2 subject 1234567890abcdef: 2 proposed, 0 alternative",
+    ]
+  );
+});
+
+test("the diagnostics allow-list keeps review choices with four known fields and drops invalid parts and empty entries", () => {
+  const kept = sanitizeFacts({
+    phases: [],
+    invocations: [],
+    reviews: [],
+    reviewChoices: [
+      {
+        phase: pastCapReview,
+        proposed: 3,
+        alternative: 1,
+        stepBacks: [
+          { round: 2, outcome: "patch" },
+          { round: 0, outcome: "patch" },
+          { round: 3, outcome: "bogus" },
+          { round: 4, outcome: "user", extra: "x" },
+        ],
+        extra: "x",
+      },
+      { phase: pastCapReview, proposed: -1, alternative: "2", stepBacks: "x" },
+      {
+        phase: "/home/user/review",
+        proposed: 1,
+        alternative: 1,
+        stepBacks: [],
+      },
+    ],
+  }).reviewChoices;
+
+  assert.deepEqual(kept, [
+    {
+      phase: pastCapReview,
+      proposed: 3,
+      alternative: 1,
+      stepBacks: [
+        { round: 2, outcome: "patch" },
+        { round: 4, outcome: "user" },
+      ],
+    },
   ]);
 });

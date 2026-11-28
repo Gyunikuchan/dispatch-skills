@@ -14,7 +14,7 @@ Populate the template variables (kind blocks declare the rest):
 
 ### Context
 <<slot:context>>
-The Spec Hash is the canonical identity reported by lint; it is not a hash of the raw file bytes.
+The Spec Hash is the canonical identity reported by lint, not a hash of the raw file bytes.
 - Focus: <User Focus Areas>
 - Scope: <Review Scope>
 - Advisory Tool Turn Target: <Tool Turn Budget>
@@ -38,33 +38,33 @@ The governing spec's Decisions and Non-goals, and decisions recorded in an appro
 <<slot:quality>>
 
 ### Tags
-Tag each finding with one bold family from the quality criteria above, `standards` or `adjacent`; the bold bullets define each family.
+Tag each finding with one bold family from the quality criteria above, `standards` or `adjacent`.
 
 ### Budget
 The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
 in-scope risk.
-CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` time is listed (~5m earlier), stop tool calls when prompted and answer from work done so far.
+CLI delegates get a `[DEADLINE]` header: answer before it; if a `wrap-up at` time is listed (~5m earlier), stop tool calls when prompted and answer from work so far.
 <<slot:budget>>
 
 ### Severity
 <<slot:rubric>>
 <<slot:severity>>
-In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+In `defect`, state the concrete consequence at the locus and what must stop being true; `proposedFix` is one fix: the author may remove the defect by a different fix.
 Ground each finding in a concrete failure scenario, a host rule, a measurable cost, or a known
 vulnerability class. Preference is not a finding; between technically equivalent approaches, the
 author's choice stands. Simplicity findings name the cost removed: concepts, files, or code paths.
 Report one finding per defective predicate; list every failing state of it in `defect`.
 
 ### Reply
-Reply with one JSON object of all findings as the last thing in the reply, on its own line or in a final fenced block. If JSON cannot carry a finding, write it as plain
+Reply with one JSON object of all findings, last in the reply, on its own line or in a final fenced block. If JSON cannot carry a finding, write it as plain
 text. When all requirements, invariants, and boundaries hold, return `CLEAN` — a clean review on sound work is the expected high-signal outcome:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
 
-Otherwise use status `FINDINGS` and one or more findings with every field:
+Otherwise use status `FINDINGS`, each finding with every field:
 ```json
-{"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
+{"status":"FINDINGS","findings":[{"impact":"critical|blocks|degrades|minor","trigger":"realistic|contrived","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","proposedFix":"<proposed fix>"}]}
 ```
 
 <<slot:closing>>

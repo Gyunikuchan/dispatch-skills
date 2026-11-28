@@ -352,6 +352,7 @@ test("ledger append processes record arrays atomically", async (t) => {
         data: {
           subject: "review:plan-work.plan:R1-F001",
           ruling: "accepted",
+          fix: "proposed",
           rationale: "Fixed",
         },
       },
@@ -753,6 +754,7 @@ test("severity correction and missing-bind approval rejections include current s
           data: {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "impact: unchanged",
             impact: "degrades",
             trigger: "realistic",
@@ -768,6 +770,7 @@ test("severity correction and missing-bind approval rejections include current s
           data: {
             subject: "review:plan-work.plan:R1-F001",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "only severity changed",
             impact: "blocks",
             trigger: "realistic",
@@ -783,6 +786,7 @@ test("severity correction and missing-bind approval rejections include current s
           data: {
             subject: "review:plan-work.plan:R1-F002",
             ruling: "accepted",
+            fix: "proposed",
             rationale: "impact: lower",
             impact: "blocks",
             trigger: "realistic",

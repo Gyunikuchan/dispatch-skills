@@ -37,6 +37,7 @@ test("review recurrence requires accepted earlier ruling and changed target", as
           subject: "review:plan-work.plan:R1-F001",
           ruling: variant === "rejected" ? "rejected" : "accepted",
           rationale: "Resolution",
+          fix: variant === "rejected" ? "" : "proposed",
         });
       }
 
@@ -51,6 +52,7 @@ test("review recurrence requires accepted earlier ruling and changed target", as
             await f.add("ruling", {
               subject: "review:plan-work.plan:R1-F001",
               ruling: "accepted",
+              fix: "proposed",
               rationale: "Late",
             });
           }
@@ -110,6 +112,7 @@ test("review recurrence recovers durable boundaries and resolves superseded esca
       await f.add("ruling", {
         subject: "review:plan-work.plan:R1-F001",
         ruling: "accepted",
+        fix: "proposed",
         rationale: "Fixed",
       });
       fs.appendFileSync(f.plan, "\n## Fix\nFirst fix.\n");
@@ -188,6 +191,7 @@ test("review recurrence refuses changed bound spec before recovering pending fin
     await f.add("ruling", {
       subject: "review:plan-work.plan:R1-F001",
       ruling: "accepted",
+      fix: "proposed",
       rationale: "Fixed",
     });
     fs.appendFileSync(f.plan, "\n## Fixed\nChanged.\n");

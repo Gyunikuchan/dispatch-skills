@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import type { RosterSlot } from "./domain/types.ts";
+import type { RosterSlot, StepBack } from "./domain/types.ts";
 import type { BlockedAttempt, SlotOutcome } from "./fanout.ts";
 import { present } from "./narrow.ts";
 import { clipBytes } from "./output.ts";
@@ -137,7 +137,28 @@ export const blockedNotice = (
   return shown.join("; ") + (omitted ? `; +${omitted} more blocked` : "");
 };
 
-// NOTE: names take only the bytes the rest of the head leaves; the count and pointer stay even when the suffixes overflow, so the CLI cap cuts the suffixes first.
+const listed = (all: readonly string[], shown: number, pointer: string) =>
+  all.slice(0, shown).join(", ") +
+  (shown === all.length
+    ? ""
+    : `${shown ? ", " : ""}+${all.length - shown} more in findings.json ${pointer}`);
+
+// Drops names until the text fits `room`; the text at zero names stays.
+const fitNames = (
+  count: number,
+  text: (shown: number) => string,
+  room: number
+) => {
+  let shown = count;
+
+  while (shown > 0 && Buffer.byteLength(text(shown), "utf-8") > room) {
+    shown -= 1;
+  }
+
+  return text(shown);
+};
+
+// NOTE: names take only the bytes the rest of the head leaves; the counts, the `step-back due` words and the pointers stay even when the suffixes overflow, so the CLI cap cuts the suffixes first.
 export const hotUnitsNotice = (
   units: readonly {
     unit: string;
@@ -145,13 +166,10 @@ export const hotUnitsNotice = (
     hotStreak: number;
     delta?: number;
   }[],
-  restBytes: number
+  restBytes: number,
+  stepBack?: StepBack
 ) => {
   const hot = units.filter((unit) => unit.hot);
-
-  if (!hot.length) {
-    return "";
-  }
 
   const names = hot.map(
     (unit) =>
@@ -162,25 +180,34 @@ export const hotUnitsNotice = (
       }`
   );
 
-  const text = (shown: number) =>
-    `; ${hot.length} hot unit${hot.length === 1 ? "" : "s"}: ${names
-      .slice(0, shown)
-      .join(", ")}${
-      shown === names.length
-        ? ""
-        : `${shown ? ", " : ""}+${names.length - shown} more in findings.json units`
-    }`;
+  const dueNames = (stepBack?.units ?? []).map((unit) => clipBytes(unit, 40));
 
-  let shown = names.length;
+  const hotText = (shown: number) =>
+    `; ${hot.length} hot unit${hot.length === 1 ? "" : "s"}: ${listed(names, shown, "units")}`;
 
-  while (
-    shown > 0 &&
-    Buffer.byteLength(text(shown), "utf-8") > 1024 - restBytes
-  ) {
-    shown -= 1;
-  }
+  const dueText = (shown: number) =>
+    `; step-back due: ${[
+      ...(dueNames.length ? [listed(dueNames, shown, "stepBack")] : []),
+      ...(stepBack?.fixInduced
+        ? [`fix-induced ${stepBack.fixInduced[0]} of ${stepBack.fixInduced[1]}`]
+        : []),
+    ].join("; ")}`;
 
-  return text(shown);
+  const room = 1024 - restBytes;
+  // The hot-unit list yields to the clause: reserve the clause at its shortest.
+  const hotRoom = stepBack ? room - Buffer.byteLength(dueText(0)) : room;
+  const hotPart = hot.length ? fitNames(names.length, hotText, hotRoom) : "";
+
+  return (
+    hotPart +
+    (stepBack
+      ? fitNames(
+          dueNames.length,
+          dueText,
+          room - Buffer.byteLength(hotPart, "utf-8")
+        )
+      : "")
+  );
 };
 
 // Ids are `<kind>:<review>:<tail>`; only a later open record of the same id reopens a decision, so tool resolutions neither list nor remove one.
