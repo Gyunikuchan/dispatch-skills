@@ -781,7 +781,7 @@ test("statusReport reflects latest strict criterion evidence across pass-fail-pa
   }
 });
 
-test("compact status reports the recovery boundary before integration starts", async () => {
+test("compact status reports plan-pending before binding, including an absent ledger, and keeps torn ledgers unreadable", async () => {
   const f = sessionFixture({ memory: true });
 
   try {
@@ -795,8 +795,9 @@ test("compact status reports the recovery boundary before integration starts", a
     assert.deepEqual(
       JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
       {
-        next: "inspect",
-        reason: "state-unreadable",
+        next: "continue",
+        reason: "plan-pending",
+        action: "plan",
       }
     );
     f.lines.length = 0;
@@ -818,12 +819,61 @@ test("compact status reports the recovery boundary before integration starts", a
       0
     );
 
-    // eslint-disable-next-line typescript/no-unsafe-assignment -- test binds the untyped JSON/fixture surface for assertions; narrowing would not change assertions
-    const value = JSON.parse(
-      fs.readFileSync(defined(f.output().path), "utf-8")
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "continue",
+        reason: "plan-pending",
+        action: "plan",
+      }
     );
 
-    assert.deepEqual(value, { next: "inspect", reason: "outside-review" });
+    f.lines.length = 0;
+    f.artifact("mission.spec.md", "mission");
+    f.artifact("work.design.md", "design");
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind-spec-design",
+        by: "tool",
+        data: { spec: "mission.spec.md", design: "work.design.md" },
+      },
+      f.deps
+    );
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "continue",
+        reason: "plan-pending",
+        action: "plan",
+      }
+    );
+
+    f.lines.length = 0;
+    fs.appendFileSync(path.join(f.session, "ledger.jsonl"), "{torn");
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+      }
+    );
   } finally {
     f.cleanup();
   }
@@ -1085,7 +1135,7 @@ test("compact status points to the active round as history grows and rejects unr
       pins: null,
       startSeq: 0,
       scope: "Full review",
-      spec: { path: specPath, hash: hashes.spec },
+      spec: { path: fs.realpathSync.native(specPath), hash: hashes.spec },
       artifacts: hashes,
       target: { base, head },
       roster: [
@@ -1141,6 +1191,7 @@ test("compact status points to the active round as history grows and rejects unr
       assert.deepEqual(compact.value, {
         next: "review",
         reason: "round-pending",
+        action: "review run",
         round: roundFile,
         cleanup: "unbound",
       });
@@ -1196,6 +1247,7 @@ test("compact status points to the active round as history grows and rejects unr
     assert.deepEqual(statusResult.value, {
       next: "inspect",
       reason: "native-pending",
+      action: "review run",
       round: roundFile,
       evidence: nativePath,
       cleanup: "unbound",
@@ -1204,6 +1256,7 @@ test("compact status points to the active round as history grows and rejects unr
     const unreadable = {
       next: "inspect",
       reason: "state-unreadable",
+      action: "status show",
       cleanup: "unbound",
     };
 
@@ -1261,6 +1314,7 @@ test("compact status points to the active round as history grows and rejects unr
     assert.deepEqual(statusResult7.value, {
       next: "adjudicate",
       reason: "findings-pending",
+      action: "adjudicate",
       evidence: olderFindings,
       cleanup: "unbound",
     });
@@ -1277,6 +1331,7 @@ test("compact status points to the active round as history grows and rejects unr
     assert.deepEqual(statusResult8.value, {
       next: "inspect",
       reason: "gate-blocked",
+      action: "status show",
       cleanup: "unbound",
     });
     write(roundFile, { ...metadata, round: 20 });
@@ -1307,6 +1362,7 @@ test("compact status points to the active round as history grows and rejects unr
     assert.deepEqual(statusResult9.value, {
       next: "review",
       reason: "review-required",
+      action: "review run",
       round: roundFile,
       cleanup: "unbound",
     });
@@ -1318,6 +1374,7 @@ test("compact status points to the active round as history grows and rejects unr
     assert.deepEqual(statusResult10.value, {
       next: "inspect",
       reason: "arguments-unavailable",
+      action: "arguments",
       round: roundFile,
       cleanup: "unbound",
     });
@@ -1340,6 +1397,1334 @@ test("compact status points to the active round as history grows and rejects unr
     const statusResult13 = await status(true);
 
     assert.deepEqual(statusResult13.value, unreadable);
+  } finally {
+    f.cleanup();
+  }
+});
+
+const resumeCompact = async (f: ReturnType<typeof sessionFixture>) => {
+  f.lines.length = 0;
+  assert.equal(
+    await main(["status", "show", "--resume", "--session", f.session], f.deps),
+    0
+  );
+
+  return readJson(defined(f.output().path), jsonObject);
+};
+
+const setupLowOpened = async (f: ReturnType<typeof sessionFixture>) => {
+  f.artifact("mission.spec.md", "mission");
+  const planFile = f.artifact("work.plan.md", PLAN);
+  await appendRecord(
+    f.session,
+    {
+      kind: "bind",
+      key: "bind",
+      by: "tool",
+      data: { spec: "mission.spec.md", plan: "work.plan.md" },
+    },
+    f.deps
+  );
+  const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+  await appendRecord(
+    f.session,
+    {
+      kind: "level",
+      key: "level",
+      by: "orchestrator",
+      data: { level: "low" },
+    },
+    f.deps
+  );
+  await appendRecord(
+    f.session,
+    {
+      kind: "confirm",
+      key: "confirm",
+      by: "user",
+      quote: "confirmed",
+      data: { spec: hashes.spec },
+    },
+    f.deps
+  );
+  const integrationDir = path.join(f.session, ".state/worktrees/integration");
+  fs.mkdirSync(integrationDir, { recursive: true });
+  const head = "a".repeat(40);
+  const tree = "b".repeat(40);
+  f.deps.run = fakeGit({
+    session: f.session,
+    head,
+    tree,
+    testedTree: tree,
+    changes: [],
+    calls: [],
+  });
+  await appendRecord(
+    f.session,
+    {
+      kind: "integrate",
+      key: "opened",
+      by: "tool",
+      data: {
+        phase: "opened",
+        path: ".state/worktrees/integration",
+        branch: "integration",
+        base: head,
+        dest: { path: f.root, branch: "main" },
+      },
+    },
+    f.deps
+  );
+
+  return { planFile, integrationDir };
+};
+
+const pathVariant = (
+  f: ReturnType<typeof sessionFixture>,
+  tag: string,
+  kind: "absolute" | "traversing" | "symlink"
+) => {
+  if (kind === "absolute") {
+    return path.join(f.root, `outside-${tag}`);
+  }
+
+  if (kind === "traversing") {
+    return `../../outside-${tag}`;
+  }
+
+  const symlinkTarget = path.join(f.root, `symlink-target-${tag}`);
+  fs.mkdirSync(symlinkTarget, { recursive: true });
+  const symlinkRel = `.state/worktrees/link-${tag}`;
+  const symlinkFull = path.join(f.session, symlinkRel);
+  fs.mkdirSync(path.dirname(symlinkFull), { recursive: true });
+  fs.symlinkSync(symlinkTarget, symlinkFull, "junction");
+
+  return symlinkRel;
+};
+
+const checkTerminalResumeState = async (
+  terminal: "deliver-started" | "delivered" | "committed" | "closed"
+) => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    f.artifact("mission.spec.md", "mission");
+    f.artifact("work.plan.md", PLAN);
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind",
+        by: "tool",
+        data: { spec: "mission.spec.md", plan: "work.plan.md" },
+      },
+      f.deps
+    );
+
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "confirm",
+        key: "confirm",
+        by: "user",
+        quote: "confirmed",
+        data: { spec: hashes.spec },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "approval",
+        key: "approval",
+        by: "user",
+        quote: "approved",
+        data: hashes,
+      },
+      f.deps
+    );
+
+    const base = "a".repeat(40);
+    const source = "b".repeat(40);
+    const commitHash = "c".repeat(40);
+    const dest = { path: f.root, branch: "main" };
+
+    const integrationDir = path.join(f.session, ".state/worktrees/integration");
+
+    fs.mkdirSync(integrationDir, { recursive: true });
+    const gitCalls: string[][] = [];
+
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = (argv) => {
+      gitCalls.push(argv);
+
+      return Promise.resolve({
+        exit: 0,
+        stdout: `${source}\n`,
+        stderr: "",
+      });
+    };
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "opened",
+        by: "tool",
+        data: {
+          phase: "opened",
+          path: ".state/worktrees/integration",
+          branch: "integration",
+          base,
+          dest,
+        },
+      },
+      f.deps
+    );
+
+    if (terminal === "deliver-started") {
+      await appendRecord(
+        f.session,
+        {
+          kind: "integrate",
+          key: "deliver-started",
+          by: "tool",
+          data: {
+            phase: "deliver-started",
+            mode: "uncommitted",
+            dest,
+            from: base,
+            source,
+          },
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "continue",
+        reason: "delivery-pending",
+        action: "worktree deliver",
+        cleanup: "unbound",
+      });
+    } else if (terminal === "delivered") {
+      await appendRecord(
+        f.session,
+        {
+          kind: "integrate",
+          key: "delivered",
+          by: "tool",
+          data: {
+            phase: "delivered",
+            mode: "uncommitted",
+            dest,
+            from: base,
+            source,
+          },
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "continue",
+        reason: "delivered",
+        action: "report complete",
+        cleanup: "unbound",
+      });
+
+      fs.rmSync(integrationDir, { recursive: true, force: true });
+      f.lines.length = 0;
+      assert.equal(
+        await main(["status", "show", "--session", f.session], f.deps),
+        0
+      );
+
+      const detailed = readJson(
+        defined(f.output().path),
+        withFields({ integration: withFields({ state: text }) })
+      );
+
+      assert.equal(detailed.integration.state, "missing");
+      assert.deepEqual(await resumeCompact(f), {
+        next: "continue",
+        reason: "delivered",
+        action: "report complete",
+        cleanup: "unbound",
+      });
+    } else if (terminal === "committed") {
+      await appendRecord(
+        f.session,
+        {
+          kind: "integrate",
+          key: "delivered",
+          by: "tool",
+          data: {
+            phase: "delivered",
+            mode: "uncommitted",
+            dest,
+            from: base,
+            source,
+          },
+        },
+        f.deps
+      );
+      await appendRecord(
+        f.session,
+        {
+          kind: "integrate",
+          key: "committed",
+          by: "tool",
+          data: { phase: "committed", commit: commitHash, source },
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "continue",
+        reason: "delivered",
+        action: "report complete",
+        cleanup: "unbound",
+      });
+    } else {
+      await appendRecord(
+        f.session,
+        {
+          kind: "integrate",
+          key: "closed",
+          by: "tool",
+          data: { phase: "closed", reason: "Session complete" },
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "closed",
+        action: "worktree cleanup",
+        cleanup: "unbound",
+      });
+    }
+
+    assert.deepEqual(gitCalls, []);
+  } finally {
+    f.cleanup();
+  }
+};
+
+test("compact status distinguishes pre-integration approval, baseline, and terminal integration states", async () => {
+  // Pre-integration: approval-pending then baseline-pending
+  {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      f.artifact("mission.spec.md", "mission");
+      f.artifact("work.plan.md", PLAN);
+      await appendRecord(
+        f.session,
+        {
+          kind: "bind",
+          key: "bind",
+          by: "tool",
+          data: { spec: "mission.spec.md", plan: "work.plan.md" },
+        },
+        f.deps
+      );
+      await appendRecord(
+        f.session,
+        {
+          kind: "level",
+          key: "level",
+          by: "orchestrator",
+          data: { level: "medium" },
+        },
+        f.deps
+      );
+
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "approval-pending",
+        action: "approval",
+      });
+
+      const hashes = currentHashes(
+        f.root,
+        latest(foldLedger(f.session), "bind")
+      );
+
+      await appendRecord(
+        f.session,
+        {
+          kind: "confirm",
+          key: "confirm",
+          by: "user",
+          quote: "confirmed",
+          data: { spec: hashes.spec },
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "approval-pending",
+        action: "approval",
+      });
+
+      await appendRecord(
+        f.session,
+        {
+          kind: "approval",
+          key: "approval",
+          by: "user",
+          quote: "approved",
+          data: hashes,
+        },
+        f.deps
+      );
+      assert.deepEqual(await resumeCompact(f), {
+        next: "continue",
+        reason: "baseline-pending",
+        action: "check run",
+      });
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  // Terminal integration states run sequentially because memoryNodeFs hooks global fs.
+  await checkTerminalResumeState("deliver-started");
+  await checkTerminalResumeState("delivered");
+  await checkTerminalResumeState("committed");
+  await checkTerminalResumeState("closed");
+});
+
+test("compact status rejects missing integration worktree and missing or unparsable bound plan after opening at low level", async () => {
+  {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const { planFile } = await setupLowOpened(f);
+      fs.writeFileSync(planFile, "# Broken plan\n");
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+        cleanup: "unbound",
+      });
+      fs.rmSync(planFile);
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+        cleanup: "unbound",
+      });
+    } finally {
+      f.cleanup();
+    }
+  }
+
+  {
+    const f = sessionFixture({ memory: true });
+
+    try {
+      const { integrationDir } = await setupLowOpened(f);
+      fs.rmSync(integrationDir, { recursive: true, force: true });
+      assert.deepEqual(await resumeCompact(f), {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+        cleanup: "unbound",
+      });
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test("resume filters review-class criteria so automated verification reaches review-pending", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const planWithReview = [
+      "# Work",
+      "## Task Map",
+      "| ID | Title | Outcome | Prerequisites | Criteria |",
+      "| --- | --- | --- | --- | --- |",
+      "| T1 | File | Works | none | SC1, SC2 |",
+      "## Proposed Changes",
+      "### T1 \u2014 File",
+      "#### [NEW] src/file.ts",
+      "- Purpose: behavior.",
+      "## Success Criteria",
+      "- [SC1] Automated check",
+      "  - Changes: src/file.ts",
+      "  - Check: `node check`",
+      "  - Evidence: check",
+      "- [SC2] Review only criterion",
+      "  - Changes: src/file.ts",
+      "  - Review: check design intent",
+      "  - Evidence: review",
+      "## Verification Plan",
+      "### Automated Tests",
+      "- `node contract`",
+    ].join("\n");
+
+    f.artifact("mission.spec.md", "mission");
+    f.artifact("work.plan.md", planWithReview);
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind",
+        by: "tool",
+        data: { spec: "mission.spec.md", plan: "work.plan.md" },
+      },
+      f.deps
+    );
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+    await appendRecord(
+      f.session,
+      {
+        kind: "confirm",
+        key: "confirm",
+        by: "user",
+        quote: "confirmed",
+        data: { spec: hashes.spec },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "approval",
+        key: "approval",
+        by: "user",
+        quote: "approved",
+        data: hashes,
+      },
+      f.deps
+    );
+
+    const base = "a".repeat(40);
+    const head = "b".repeat(40);
+    const tree = "c".repeat(40);
+    const integrationDir = path.join(f.session, ".state/worktrees/integration");
+    fs.mkdirSync(integrationDir, { recursive: true });
+
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = ([, ...args]) => {
+      let stdout = "";
+
+      if (args[0] === "rev-parse") {
+        stdout = args[1] === "HEAD" ? `${head}\n` : `${tree}\n`;
+      } else if (args[0] === "write-tree") {
+        stdout = `${tree}\n`;
+      } else if (args[0] === "diff") {
+        stdout = "";
+      } else if (args[0] === "merge-base") {
+        return Promise.resolve({ exit: 0, stdout: "", stderr: "" });
+      } else if (args[0] === "--no-optional-locks") {
+        stdout = "";
+      }
+
+      return Promise.resolve({ exit: 0, stdout, stderr: "" });
+    };
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "opened",
+        by: "tool",
+        data: {
+          phase: "opened",
+          path: ".state/worktrees/integration",
+          branch: "integration",
+          base,
+          dest: { path: f.root, branch: "main" },
+        },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "writer",
+        key: "launched",
+        by: "tool",
+        data: {
+          phase: "launched",
+          task: "T1",
+          path: ".state/worktrees/T1-1",
+          base: {
+            commit: base,
+            seq: 1,
+            taskSection: `sha256:${"a".repeat(64)}`,
+          },
+        },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "writer",
+        key: "finished",
+        by: "tool",
+        data: { phase: "finished", task: "T1", launch: 1, candidate: head },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "done",
+        by: "tool",
+        data: { phase: "done", task: "T1", commit: head },
+      },
+      f.deps
+    );
+
+    const allChecks = planChecks(loadPlan(f.session, readManifest(f.session)));
+
+    for (const check of allChecks.filter((c) => c.evidenceClass !== "review")) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential ledger appends maintain distinct seq order
+      await appendRecord(
+        f.session,
+        {
+          kind: "evidence",
+          key: `ev-${check.criterion}`,
+          by: "tool",
+          data: {
+            criterion: check.criterion,
+            commandDigest: check.commandDigest,
+            tree,
+            clean: true,
+            before: tree,
+            after: tree,
+            exit: 0,
+            path: `.state/evidence/${check.criterion}.json`,
+          },
+        },
+        f.deps
+      );
+    }
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "verification",
+        by: "orchestrator",
+        data: {
+          phase: "verification",
+          cycle: 1,
+          outcome: "no-op",
+          head,
+          reason: "verified",
+          open: [],
+        },
+      },
+      f.deps
+    );
+    await main(
+      ["ledger", "append", "-", "--cleanup", "skip", "--session", f.session],
+      { ...f.deps, readStdin: () => JSON.stringify({ head }) }
+    );
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "review",
+        reason: "review-pending",
+        action: "review run",
+        cleanup: "checkpoint",
+      }
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+const checkEscapingWriterPath = async (
+  kind: "absolute" | "traversing" | "symlink"
+) => {
+  const f = sessionFixture({ memory: kind !== "symlink" });
+
+  try {
+    const stored = pathVariant(f, `writer-${kind}`, kind);
+
+    f.artifact("mission.spec.md", "mission");
+    f.artifact("work.plan.md", PLAN);
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind",
+        by: "tool",
+        data: { spec: "mission.spec.md", plan: "work.plan.md" },
+      },
+      f.deps
+    );
+
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "confirm",
+        key: "confirm",
+        by: "user",
+        quote: "confirmed",
+        data: { spec: hashes.spec },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "approval",
+        key: "approval",
+        by: "user",
+        quote: "approved",
+        data: hashes,
+      },
+      f.deps
+    );
+
+    const base = "a".repeat(40);
+    const tree = "b".repeat(40);
+
+    const integrationDir = path.join(f.session, ".state/worktrees/integration");
+
+    fs.mkdirSync(integrationDir, { recursive: true });
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "opened",
+        by: "tool",
+        data: {
+          phase: "opened",
+          path: ".state/worktrees/integration",
+          branch: "integration",
+          base,
+          dest: { path: f.root, branch: "main" },
+        },
+      },
+      f.deps
+    );
+
+    const realSession = fs.realpathSync(f.session);
+    const cwds: string[] = [];
+
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = ([, ...args], options) => {
+      cwds.push(options.cwd);
+
+      if (args[0] === "rev-parse" && args[1] === "HEAD") {
+        return Promise.resolve({
+          exit: 0,
+          stdout: `${base}\n`,
+          stderr: "",
+        });
+      }
+
+      if (args[0] === "rev-parse" || args[0] === "write-tree") {
+        return Promise.resolve({
+          exit: 0,
+          stdout: `${tree}\n`,
+          stderr: "",
+        });
+      }
+
+      return Promise.resolve({ exit: 0, stdout: "", stderr: "" });
+    };
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "writer",
+        key: `launched-${kind}`,
+        by: "tool",
+        data: {
+          phase: "launched",
+          task: "T1",
+          path: stored,
+          base: {
+            commit: base,
+            seq: 1,
+            taskSection: `sha256:${"a".repeat(64)}`,
+          },
+        },
+      },
+      f.deps
+    );
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+        cleanup: "unbound",
+      }
+    );
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(["status", "show", "--session", f.session], f.deps),
+      0
+    );
+
+    const detailed = readJson(
+      defined(f.output().path),
+      withFields({
+        writers: withFields({ state: text, reason: text }),
+        integration: withFields({ state: text }),
+        criteria: listOf(text),
+      })
+    );
+
+    assert.equal(detailed.writers.state, "unavailable");
+    assert.ok(
+      detailed.writers.reason.includes(stored),
+      detailed.writers.reason
+    );
+    assert.equal(detailed.integration.state, "present");
+
+    for (const cwd of cwds) {
+      const rel = path.relative(realSession, fs.realpathSync(cwd));
+      assert.ok(
+        rel !== ".." &&
+          !rel.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(rel),
+        `Git ran outside session: ${cwd}`
+      );
+    }
+  } finally {
+    f.cleanup();
+  }
+};
+
+const checkEscapingIntegrationPath = async (
+  kind: "absolute" | "traversing" | "symlink"
+) => {
+  const f = sessionFixture({ memory: kind !== "symlink" });
+
+  try {
+    const stored = pathVariant(f, `int-${kind}`, kind);
+
+    f.artifact("mission.spec.md", "mission");
+    f.artifact("work.plan.md", PLAN);
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind",
+        by: "tool",
+        data: { spec: "mission.spec.md", plan: "work.plan.md" },
+      },
+      f.deps
+    );
+
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "confirm",
+        key: "confirm",
+        by: "user",
+        quote: "confirmed",
+        data: { spec: hashes.spec },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "approval",
+        key: "approval",
+        by: "user",
+        quote: "approved",
+        data: hashes,
+      },
+      f.deps
+    );
+
+    const base = "a".repeat(40);
+    const cwds: string[] = [];
+
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = (_argv, options) => {
+      cwds.push(options.cwd);
+
+      return Promise.resolve({ exit: 0, stdout: `${base}\n`, stderr: "" });
+    };
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "opened",
+        by: "tool",
+        data: {
+          phase: "opened",
+          path: stored,
+          branch: "integration",
+          base,
+          dest: { path: f.root, branch: "main" },
+        },
+      },
+      f.deps
+    );
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(defined(f.output().path), "utf-8")),
+      {
+        next: "inspect",
+        reason: "state-unreadable",
+        action: "status show",
+        cleanup: "unbound",
+      }
+    );
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(["status", "show", "--session", f.session], f.deps),
+      0
+    );
+
+    const detailed = readJson(
+      defined(f.output().path),
+      withFields({
+        writers: listOf(withFields({ task: text, state: text })),
+        integration: withFields({ state: text, reason: text }),
+        criteria: withFields({ state: text, reason: text }),
+      })
+    );
+
+    assert.equal(detailed.integration.state, "unavailable");
+    assert.ok(
+      detailed.integration.reason.includes(stored),
+      detailed.integration.reason
+    );
+    assert.equal(detailed.criteria.state, "unavailable");
+    assert.ok(
+      detailed.criteria.reason.includes(stored),
+      detailed.criteria.reason
+    );
+    assert.equal(detailed.writers[0]?.state, "unlaunched");
+    assert.deepEqual(cwds, []);
+  } finally {
+    f.cleanup();
+  }
+};
+
+const checkEscapingLedgerSymlink = async () => {
+  const f = sessionFixture();
+
+  try {
+    const ledger = path.join(f.session, "ledger.jsonl");
+    const outsideLedger = path.join(f.root, "outside-ledger.jsonl");
+
+    // Populate a valid external ledger so failure proves symlink rejection rather than parse failure.
+    fs.writeFileSync(
+      outsideLedger,
+      `${JSON.stringify({
+        seq: 1,
+        key: "note-1",
+        at: "2026-01-01T00:00:00.000Z",
+        kind: "note",
+        by: "tool",
+        data: { text: "outside" },
+      })}\n`
+    );
+    fs.symlinkSync(outsideLedger, ledger, "file");
+
+    assert.deepEqual(await resumeCompact(f), {
+      next: "inspect",
+      reason: "state-unreadable",
+      action: "status show",
+    });
+  } finally {
+    f.cleanup();
+  }
+};
+
+test("status refuses escaping ledger, writer, and integration paths before running Git and marks affected sections unavailable", async () => {
+  await checkEscapingLedgerSymlink();
+  await checkEscapingWriterPath("absolute");
+  await checkEscapingWriterPath("traversing");
+  await checkEscapingWriterPath("symlink");
+  await checkEscapingIntegrationPath("absolute");
+  await checkEscapingIntegrationPath("traversing");
+  await checkEscapingIntegrationPath("symlink");
+});
+
+test("compact status with diagnostics resumeRef keeps result within 2048 B and stdout summary JSON within 1024 B", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const skill = path.join(f.root, "skill");
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(
+      path.join(skill, "config.jsonc"),
+      JSON.stringify({ diagnostics: true })
+    );
+    f.deps.skillRoot = skill;
+
+    const base = "a".repeat(40);
+    const head = "b".repeat(40);
+    const specPath = f.artifact("mission.spec.md", "# Mission");
+    f.artifact("work.plan.md", PLAN);
+    await appendRecord(
+      f.session,
+      {
+        kind: "bind",
+        key: "bind",
+        by: "tool",
+        data: { spec: "mission.spec.md", plan: "work.plan.md" },
+      },
+      f.deps
+    );
+
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+
+    await appendRecord(
+      f.session,
+      {
+        kind: "level",
+        key: "level",
+        by: "orchestrator",
+        data: { level: "low" },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "confirm",
+        key: "confirm",
+        by: "user",
+        quote: "confirmed",
+        data: { spec: hashes.spec },
+      },
+      f.deps
+    );
+    fs.mkdirSync(path.join(f.session, ".state/worktrees/integration"), {
+      recursive: true,
+    });
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "opened",
+        by: "tool",
+        data: {
+          phase: "opened",
+          path: ".state/worktrees/integration",
+          branch: "integration",
+          base,
+          dest: { path: f.root, branch: "main" },
+        },
+      },
+      f.deps
+    );
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "done",
+        by: "tool",
+        data: {
+          phase: "done",
+          task: "T1",
+          commit: head,
+        },
+      },
+      f.deps
+    );
+
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = ([, ...args]) =>
+      Promise.resolve({
+        exit: 0,
+        stdout:
+          args[0] === "diff" && args[1] === "--name-only"
+            ? "src/file.ts\0"
+            : head,
+        stderr: "",
+      });
+
+    for (let number = 1; number <= 19; number += 1) {
+      const priorDir = path.join(
+        f.session,
+        ".state/reviews/code-integration",
+        `round-${number}`
+      );
+
+      fs.mkdirSync(priorDir, { recursive: true });
+      write(path.join(priorDir, "round.json"), {
+        round: number,
+        generation: 1,
+        cap: 40,
+        level: "low",
+        pins: null,
+        startSeq: 0,
+        scope: "Full review",
+        spec: { path: fs.realpathSync.native(specPath), hash: hashes.spec },
+        artifacts: hashes,
+        target: { base, head },
+        roster: [
+          {
+            slot: "opencode[0]",
+            provider: "opencode",
+            index: 0,
+            native: true,
+            reserve: false,
+          },
+        ],
+      });
+      write(path.join(priorDir, "findings.json"), {
+        review: "code-integration",
+        round: number,
+        findings: [],
+        failed: [],
+      });
+    }
+
+    const roundDir = ".state/reviews/code-integration/round-20";
+    const slot = "opencode[0]";
+    const slotPath = `${roundDir}/gen-1/slots/${slot}.json`;
+
+    const replyPath = path.join(
+      f.session,
+      roundDir,
+      "gen-1/replies",
+      `${slot}.abcdef.md`
+    );
+
+    fs.mkdirSync(path.dirname(replyPath), { recursive: true });
+    fs.writeFileSync(replyPath, "reply");
+    write(path.join(f.session, `${roundDir}/round.json`), {
+      round: 20,
+      generation: 1,
+      cap: 40,
+      level: "low",
+      pins: null,
+      startSeq: 0,
+      scope: "Full review",
+      spec: { path: fs.realpathSync.native(specPath), hash: hashes.spec },
+      artifacts: hashes,
+      target: { base, head },
+      roster: [
+        { slot, provider: "opencode", index: 0, native: true, reserve: false },
+      ],
+    });
+    write(path.join(f.session, slotPath), {
+      slot,
+      state: "native",
+      provider: "opencode",
+      attempt: `${slot}#abcdef`,
+      replyPath,
+    });
+
+    f.lines.length = 0;
+    assert.equal(
+      await main(
+        ["status", "show", "--resume", "--session", f.session],
+        f.deps
+      ),
+      0
+    );
+
+    const out = f.output();
+    const resultBytes = fs.readFileSync(defined(out.path));
+    assert.ok(resultBytes.length <= 2048, `result bytes ${resultBytes.length}`);
+    assert.ok(
+      Buffer.byteLength(out.summary, "utf-8") <= 1024,
+      `summary bytes ${Buffer.byteLength(out.summary, "utf-8")}`
+    );
+
+    const parsedSummary = parseJson(
+      out.summary,
+      withFields({
+        next: text,
+        reason: text,
+        action: text,
+        round: text,
+        evidence: text,
+        cleanup: text,
+        resumeRef: text,
+      })
+    );
+
+    assert.equal(parsedSummary.next, "inspect");
+    assert.equal(parsedSummary.reason, "native-pending");
+    assert.equal(parsedSummary.action, "review run");
+    assert.deepEqual(JSON.parse(resultBytes.toString("utf-8")), parsedSummary);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("compact status reports gate-blocked in open integration before review round 1 when the gate fails", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const { planFile } = await setupLowOpened(f);
+    await appendRecord(
+      f.session,
+      {
+        kind: "level",
+        key: "level-medium",
+        by: "orchestrator",
+        data: { level: "medium" },
+      },
+      f.deps
+    );
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+    await appendRecord(
+      f.session,
+      {
+        kind: "approval",
+        key: "approval",
+        by: "user",
+        quote: "approved",
+        data: hashes,
+      },
+      f.deps
+    );
+
+    // Unrecorded parsable plan drift blocks the gate before taskPhaseReason runs.
+    fs.writeFileSync(planFile, `${PLAN}\n<!-- unrecorded edit -->\n`);
+    assert.deepEqual(await resumeCompact(f), {
+      next: "inspect",
+      reason: "gate-blocked",
+      action: "status show",
+      cleanup: "unbound",
+    });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("compact status reports state-unreadable when a saved review round has a missing or unparsable bound plan", async () => {
+  const f = sessionFixture({ memory: true });
+
+  try {
+    const { planFile } = await setupLowOpened(f);
+    const head = "a".repeat(40);
+    // eslint-disable-next-line typescript/promise-function-async -- mock returns a Promise; async would require a no-op await
+    f.deps.run = ([, ...args]) => {
+      let stdout = `${head}\n`;
+
+      if (args[0] === "--no-optional-locks") {
+        stdout = "";
+      } else if (args[0] === "diff" && args[1] === "--name-only") {
+        stdout = "src/file.ts\0";
+      }
+
+      return Promise.resolve({ exit: 0, stdout, stderr: "" });
+    };
+
+    const hashes = currentHashes(f.root, latest(foldLedger(f.session), "bind"));
+    await appendRecord(
+      f.session,
+      {
+        kind: "integrate",
+        key: "done",
+        by: "tool",
+        data: { phase: "done", task: "T1", commit: head },
+      },
+      f.deps
+    );
+
+    const roundDir = path.join(
+      f.session,
+      ".state/reviews/code-integration/round-1"
+    );
+
+    fs.mkdirSync(roundDir, { recursive: true });
+    write(path.join(roundDir, "round.json"), {
+      round: 1,
+      generation: 1,
+      cap: 3,
+      level: "low",
+      pins: null,
+      startSeq: 0,
+      scope: "Full review",
+      spec: {
+        path: fs.realpathSync.native(path.join(f.root, "mission.spec.md")),
+        hash: hashes.spec,
+      },
+      artifacts: hashes,
+      target: { base: head, head },
+      roster: [
+        {
+          slot: "opencode[0]",
+          provider: "opencode",
+          index: 0,
+          native: true,
+          reserve: false,
+        },
+      ],
+    });
+    write(path.join(roundDir, "findings.json"), {
+      review: "code-integration",
+      round: 1,
+      findings: [],
+      failed: [],
+    });
+
+    assert.deepEqual(await resumeCompact(f), {
+      next: "review",
+      reason: "review-required",
+      action: "review run",
+      round: ".state/reviews/code-integration/round-1/round.json",
+      cleanup: "unbound",
+    });
+
+    // Unparsable bound plan returns state-unreadable even when a review round exists.
+    fs.writeFileSync(planFile, "# Broken\n");
+    assert.deepEqual(await resumeCompact(f), {
+      next: "inspect",
+      reason: "state-unreadable",
+      action: "status show",
+      cleanup: "unbound",
+    });
+
+    // Missing bound plan also returns state-unreadable.
+    fs.unlinkSync(planFile);
+    assert.deepEqual(await resumeCompact(f), {
+      next: "inspect",
+      reason: "state-unreadable",
+      action: "status show",
+      cleanup: "unbound",
+    });
   } finally {
     f.cleanup();
   }

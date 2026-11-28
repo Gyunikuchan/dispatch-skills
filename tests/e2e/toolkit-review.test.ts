@@ -8163,6 +8163,7 @@ export const stoppedIntegrationReview = async (historicalRounds = 0) => {
         objectWith({
           next: isString,
           reason: isString,
+          action: isString,
           cleanup: isString,
           round: maybe(isString),
           evidence: maybe(isString),
@@ -8303,6 +8304,7 @@ test("implementation review recovery reuses saved work", async () => {
 
     assert.equal(view.next, "inspect");
     assert.equal(view.reason, "native-pending");
+    assert.equal(view.action, "review run");
     assert.equal(view.cleanup, "checkpoint");
 
     const roundFile = defined(view.round, "view.round");
@@ -8359,6 +8361,7 @@ test("implementation review recovery reuses saved work", async () => {
     assert.deepEqual(moved, {
       next: "review",
       reason: "target-moved",
+      action: "review run",
       round: view.round,
       cleanup: "checkpoint",
     });
@@ -8406,6 +8409,7 @@ test("implementation review recovery reuses saved work", async () => {
     assert.deepEqual(await resume(), {
       next: "continue",
       reason: "review-settled",
+      action: "re-check",
       cleanup: "checkpoint",
     });
     fs.writeFileSync(
@@ -8426,6 +8430,7 @@ test("implementation review recovery reuses saved work", async () => {
     assert.deepEqual(await resume(), {
       next: "continue",
       reason: "review-settled",
+      action: "re-check",
       cleanup: "unbound",
     });
   } finally {

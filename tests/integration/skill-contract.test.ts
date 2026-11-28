@@ -18,6 +18,7 @@ import {
   recordSchemas,
 } from "../../skills/dispatch/scripts/toolkit/records.ts";
 import type { RecordSchema } from "../../skills/dispatch/scripts/toolkit/records.ts";
+import { RESUME_ROUTES } from "../../skills/dispatch/scripts/toolkit/status.ts";
 import { defined } from "../helpers/guards.ts";
 import { OVERLAY_ROOT } from "./scan.ts";
 
@@ -3335,4 +3336,60 @@ test("one home: plan and design fix batches name the two combined forms in the e
     /`ledger append`[^\n]*before the report after a final batch/u
   );
   assert.match(item, /`--fix-review-lite` on the further `lint run --edit`/u);
+});
+
+test("every resume route has an action, one implement recovery-table row, and no outside-review remains", () => {
+  const implement = referenceDoc("verbs/implement").replaceAll("\r\n", "\n");
+  const recovery = headingBody(implement, "Interruption recovery");
+  assert.ok(recovery.length > 0, "implement.md has Interruption recovery");
+
+  const rows = recovery
+    .split("\n")
+    .filter(
+      (line) => line.startsWith("| ") && !/^\|(?:\s*:?-+:?\s*\|)+$/u.test(line)
+    )
+    .slice(1)
+    .map((line) =>
+      [...defined(line.split("|")[1]).matchAll(/`(?<reason>[^`]+)`/gu)].map(
+        (match) => defined(match.groups?.["reason"])
+      )
+    );
+
+  assert.ok(rows.length > 0, "recovery table has data rows");
+
+  const errors: string[] = [];
+
+  for (const [reason, route] of Object.entries(RESUME_ROUTES)) {
+    if (!route.action.trim()) {
+      errors.push(`${reason}: empty action`);
+    }
+
+    const rowMatches = rows.filter((reasons) => reasons.includes(reason));
+
+    if (rowMatches.length !== 1) {
+      errors.push(
+        `${reason}: expected 1 recovery row, found ${rowMatches.length}`
+      );
+    } else if (
+      defined(rowMatches[0]).filter((entry) => entry === reason).length !== 1
+    ) {
+      errors.push(`${reason}: repeated within its recovery row`);
+    }
+  }
+
+  for (const reasons of rows) {
+    for (const reason of reasons) {
+      if (!Object.hasOwn(RESUME_ROUTES, reason)) {
+        errors.push(`unknown recovery-table reason: ${reason}`);
+      }
+    }
+  }
+
+  for (const file of listOverlayFiles("skills/dispatch")) {
+    if (read(file).includes("outside-review")) {
+      errors.push(`outside-review remains in ${file.replaceAll("\\", "/")}`);
+    }
+  }
+
+  assert.deepEqual(errors, []);
 });

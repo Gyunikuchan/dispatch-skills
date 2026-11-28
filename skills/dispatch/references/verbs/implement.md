@@ -51,17 +51,23 @@ For conflicts, follow [continue](../toolkit.md#worktree-continue) or [abort](../
 
 ## Interruption recovery
 
-On re-entry, call `status show --resume` before starting implementation steps. Read only the indicated session-relative evidence.
+On re-entry, call `status show --resume` before starting implementation steps, reconcile live handles, read only indicated session-relative evidence, and run `action` at its procedure step:
 
-| Result | Action |
+| Reason | Handling |
 | --- | --- |
-| `inspect/state-unreadable`, `inspect/gate-blocked` | Use detailed status and the existing refusal or escalation procedure. |
-| `inspect/outside-review` | Use detailed status to find the current implementation step. Before launching review, recover a matched live cleanup result or rerun cleanup when completion cannot be established. |
-| `inspect/native-pending` | Read `evidence` for the saved `slot`, `state`, `attempt` and `replyPath`. Reconcile the host handle or saved reply before native consume or failure handling. |
-| `inspect/arguments-unavailable` | Recover the legacy invocation from host context or ask the user to confirm its arguments. |
-| `adjudicate/findings-pending` | Read `evidence` and apply the ruling and fix rules. |
-| `continue/review-settled` | Continue at step 9. Refresh current checks when required. |
-| `review/*` | Run integration code review with the saved arguments. |
+| `baseline-pending`, `candidate-ready`, `worktree-missing`, `task-ready`, `integration-abandoned`, `verification-pending`, `review-pending`, `delivery-pending`, `delivered`, `closed` | Run `action` at its procedure step. |
+| `plan-pending`, `approval-pending` | Step 1 (`plan` or `approval`). |
+| `writer-open` | Reconcile host handle; never land an active writer. |
+| `integration-conflict` | Resolve within both tasks' paths in integration, run `action`, then rerun `worktree land <task>`. |
+| `task-check-pending` | Repair failed check, then rerun `action`. |
+| `checks-pending` | Run `action`; if `cleanup` is `checkpoint`, start it in the background and `review run` on the same HEAD together (step 7). |
+| `cleanup-pending` | Launch cleanup, or record doc-only skip (`ledger append - --cleanup skip`, step 7); before review, recover a matched live cleanup result or rerun cleanup if completion cannot be established. |
+| `state-unreadable`, `gate-blocked` | Use detailed status and existing refusal/escalation procedure. |
+| `native-pending` | Read `evidence` for `slot`, `state`, `attempt`, `replyPath`; reconcile host handle or saved reply before consume/failure handling. |
+| `arguments-unavailable` | Recover legacy invocation from host context or ask user to confirm arguments. |
+| `findings-pending` | Read `evidence` and apply ruling/fix rules. |
+| `review-settled` | Continue at step 9; refresh current checks if required. |
+| `round-pending`, `target-moved`, `review-required` | Run integration code review with saved arguments. |
 
 For review and native continuation, read `round` for the recorded level and pins. Pass pins text as one `--pins` argument, omit the flag for null, and follow the legacy arguments procedure when the field is absent. Pass any status `resumeRef` as `--resume-ref` on the resumed review call. Review and delivery enforce their own gates. Cleanup proof is independent of review progress and current checks.
 

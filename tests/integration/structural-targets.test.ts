@@ -53,7 +53,8 @@ test("toolkit stays within the structural size budgets", () => {
   // NOTE: Code-review fixes to those handlers (note retry dedupe and artifact binding, stepped faults, receipt-first summaries, pins validated before the note append) add 24 lines over 60786, reaching 60810. Budget 60826 keeps 16 lines of headroom.
   // NOTE: Round cause (the `cause` type, pure `roundCause` and its call after the missing-RED append) adds 99 lines over 60810, reaching 60909. Budget 60925 keeps 16 lines of headroom.
   // NOTE: Rounds past cap (the `cause` fact, per-round `cap` in round timing, their allow-list gates and the `Rounds past cap` health bullet) add 56 lines over 60909, reaching 60965. Budget 60981 keeps 16 lines of headroom.
-  const driverLocBudget = 60_981;
+  // NOTE: Resume phase reasons (`RESUME_ROUTES`, `taskPhaseReason`, `keptAutomatedChecks`, pre-integration/terminal/check routing) and the shared section helper (`deriveStatusSections`, `inspectStoredPath`) add 474 lines over 60965, reaching 61439. Budget 61455 keeps 16 lines of headroom.
+  const driverLocBudget = 61_455;
   assert.ok(
     lines <= driverLocBudget,
     `driver TS LOC ${lines} exceeds ${driverLocBudget} budget. Cut or consolidate first without squashing or stripping comments; a genuine new behaviour or rule may raise the budget with the reason recorded beside it and reported in the handoff; duplicates never justify a raise.`

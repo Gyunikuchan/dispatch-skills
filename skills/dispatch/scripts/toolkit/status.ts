@@ -7,6 +7,7 @@ import { nodeErrorCode } from "../lib/fs-ext.ts";
 import { readManifest } from "../lib/session.ts";
 import type { CliDeps, HandlerContext } from "./cli.ts";
 import { applicableReviewIds, loadRejections } from "./confirmations.ts";
+import { safeRelativePath } from "./domain/context.ts";
 import { parsePlan } from "./domain/plan.ts";
 import { effectiveSeverity } from "./domain/severity.ts";
 import type { ParsedPlan } from "./domain/types.ts";
@@ -15,6 +16,7 @@ import {
   latestCleanup,
   criterionStatuses,
   eligibility,
+  strictEvidence,
 } from "./evidence.ts";
 import type { CriterionStatus } from "./evidence.ts";
 import { parsePinsFlag } from "./fanout.ts";
@@ -30,7 +32,11 @@ import {
 } from "./findings.ts";
 import type { ReviewBudget, FindingsValue } from "./findings.ts";
 import { gitOk, headTree, testedTree } from "./git.ts";
-import { integrationEnded, integrationRecord } from "./integration-state.ts";
+import {
+  currentRuntimeVerification,
+  integrationEnded,
+  integrationRecord,
+} from "./integration-state.ts";
 import {
   containedSessionPath,
   currentHashes,
@@ -44,7 +50,7 @@ import {
 import type { Fold } from "./ledger.ts";
 import { isLevel, present, textValue } from "./narrow.ts";
 import { ToolError } from "./output.ts";
-import { checks } from "./plan-view.ts";
+import { checks, taskCriteria } from "./plan-view.ts";
 import { captureReviewTarget } from "./review-capture.ts";
 import { reviewIdentity } from "./review-identity.ts";
 import {
@@ -84,10 +90,389 @@ interface IntegrationView {
 
 interface StatusSections {
   writers: ReturnType<typeof writerStates> | Unavailable;
-  integration: IntegrationView | null;
+  integration: IntegrationView | Unavailable | null;
   criteria: string[] | Unavailable;
   criterionStatuses: CriterionStatus[];
 }
+
+type StoredPathCheck =
+  | { ok: true; cwd: string; exists: boolean }
+  | { ok: false; reason: string };
+
+const isContainedInside = (
+  base: string,
+  target: string,
+  allowSelf: boolean
+) => {
+  const remainder = path.relative(base, target);
+
+  if (remainder === "") {
+    return allowSelf;
+  }
+
+  return (
+    remainder !== ".." &&
+    !remainder.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(remainder)
+  );
+};
+
+const unreadablePath = (label: string, error: unknown): StoredPathCheck => ({
+  ok: false,
+  reason: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+});
+
+// Check lexical bounds and realpath containment before any Git call; ENOENT means absent, not an escape, unless a symlink exists.
+const inspectStoredPath = (
+  session: string,
+  relative: string
+): StoredPathCheck => {
+  if (
+    !safeRelativePath(relative) ||
+    relative !== path.posix.normalize(relative)
+  ) {
+    return {
+      ok: false,
+      reason: `Stored path escapes session: ${relative}`,
+    };
+  }
+
+  const resolvedSession = path.resolve(session);
+  const resolved = path.resolve(resolvedSession, relative);
+
+  if (!isContainedInside(resolvedSession, resolved, false)) {
+    return {
+      ok: false,
+      reason: `Stored path escapes session: ${relative}`,
+    };
+  }
+
+  let realSession: string;
+
+  try {
+    realSession = fs.realpathSync(resolvedSession);
+  } catch (error) {
+    return unreadablePath(`Session path unreadable for ${relative}`, error);
+  }
+
+  try {
+    const realTarget = fs.realpathSync(resolved);
+
+    if (!isContainedInside(realSession, realTarget, false)) {
+      return {
+        ok: false,
+        reason: `Stored path escapes session: ${relative}`,
+      };
+    }
+
+    return { ok: true, cwd: resolved, exists: true };
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") {
+      return unreadablePath(`Stored path unreadable (${relative})`, error);
+    }
+  }
+
+  // A broken symlink fails realpath with ENOENT while lstat still sees the link entry.
+  for (
+    let probe = resolved;
+    probe !== resolvedSession &&
+    isContainedInside(resolvedSession, probe, false);
+    probe = path.dirname(probe)
+  ) {
+    if (probe !== resolved) {
+      try {
+        const realAncestor = fs.realpathSync(probe);
+
+        if (!isContainedInside(realSession, realAncestor, true)) {
+          return {
+            ok: false,
+            reason: `Stored path escapes session: ${relative}`,
+          };
+        }
+
+        break;
+      } catch (error) {
+        if (nodeErrorCode(error) !== "ENOENT") {
+          return unreadablePath(`Stored path unreadable (${relative})`, error);
+        }
+      }
+    }
+
+    try {
+      fs.lstatSync(probe);
+
+      return {
+        ok: false,
+        reason: `Stored path is a broken symlink: ${relative}`,
+      };
+    } catch (error) {
+      if (nodeErrorCode(error) !== "ENOENT") {
+        return unreadablePath(`Stored path unreadable (${relative})`, error);
+      }
+    }
+  }
+
+  return { ok: true, cwd: resolved, exists: false };
+};
+
+interface CriteriaResult {
+  criteria: string[] | Unavailable;
+  criterionStatuses: CriterionStatus[];
+}
+
+interface DerivedSections {
+  plan: ParsedPlan | undefined;
+  sections: Omit<StatusSections, "criteria" | "criterionStatuses"> | undefined;
+  writerPathRejected: boolean;
+  integrationPathRejected: boolean;
+  loadCriteria: () => Promise<CriteriaResult> | CriteriaResult;
+}
+
+// oxlint-disable-next-line eslint/complexity -- shared section derivation validates stored paths and observes writer, integration, and criteria state.
+const deriveStatusSections = async (
+  session: string,
+  repositoryRoot: string,
+  deps: CliDeps,
+  fold: Fold
+): Promise<DerivedSections> => {
+  const opened = integrationRecord(fold);
+  const hasWriters = fold.records.some((record) => record.kind === "writer");
+
+  if (!opened && !hasWriters) {
+    return {
+      plan: undefined,
+      sections: undefined,
+      writerPathRejected: false,
+      integrationPathRejected: false,
+      loadCriteria: () => ({ criteria: [], criterionStatuses: [] }),
+    };
+  }
+
+  const bound = latest(fold, "bind")?.data ?? {};
+  let plan: ParsedPlan | undefined;
+  let reason = "No bound plan";
+
+  if (typeof bound["plan"] === "string" && bound["plan"] !== "") {
+    try {
+      const planPath = path.resolve(repositoryRoot, textValue(bound["plan"]));
+      const parsed = parsePlan(fs.readFileSync(planPath, "utf-8"));
+
+      if (parsed.ok) {
+        ({ plan } = parsed);
+      } else {
+        reason = JSON.stringify(parsed.defects);
+      }
+    } catch (error) {
+      reason = `Bound plan unreadable: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+  }
+
+  const unavailable = { state: "unavailable", reason };
+
+  const checkedWriters = new Map<string, StoredPathCheck>();
+  let rejectedWriterReason: string | undefined;
+
+  for (const record of fold.records) {
+    if (record.kind !== "writer" || record.data["phase"] !== "launched") {
+      continue;
+    }
+
+    const relative = textValue(record.data["path"]);
+
+    if (checkedWriters.has(relative)) {
+      continue;
+    }
+
+    const checked = inspectStoredPath(session, relative);
+    checkedWriters.set(relative, checked);
+
+    if (!checked.ok && rejectedWriterReason === undefined) {
+      rejectedWriterReason = checked.reason;
+    }
+  }
+
+  const observations = new Map<
+    string,
+    { exists: boolean; dirty: boolean; head: string }
+  >();
+
+  if (plan && rejectedWriterReason === undefined) {
+    for (const [relative, checked] of checkedWriters) {
+      if (!checked.ok) {
+        continue;
+      }
+
+      const { cwd, exists } = checked;
+      observations.set(relative, {
+        exists,
+        dirty: exists
+          ? // oxlint-disable-next-line eslint/no-await-in-loop -- iterations share mutable orchestration state and control flow; sequential execution is by design.
+            !!(await gitOk(deps, cwd, ["status", "--porcelain"]))
+          : false,
+        // oxlint-disable-next-line eslint/no-await-in-loop -- iterations share mutable orchestration state and control flow; sequential execution is by design.
+        head: exists ? await gitOk(deps, cwd, ["rev-parse", "HEAD"]) : "",
+      });
+    }
+  }
+
+  let writers: ReturnType<typeof writerStates> | Unavailable;
+
+  if (rejectedWriterReason !== undefined) {
+    writers = { state: "unavailable", reason: rejectedWriterReason };
+  } else if (plan) {
+    writers = writerStates(
+      fold,
+      plan.tasks.map((task) => task.id),
+      (relative) =>
+        present(observations.get(relative), "the observed writer worktree")
+    );
+  } else {
+    writers = unavailable;
+  }
+
+  let integration: IntegrationView | Unavailable | null = null;
+  let integrationPathRejected = false;
+
+  let loadCriteria: () => Promise<CriteriaResult> | CriteriaResult = () => ({
+    criteria: plan ? checks(plan).map((check) => check.criterion) : unavailable,
+    criterionStatuses: [],
+  });
+
+  if (opened) {
+    const checkedIntegration = inspectStoredPath(
+      session,
+      textValue(opened.data["path"])
+    );
+
+    if (checkedIntegration.ok) {
+      const { cwd, exists } = checkedIntegration;
+
+      const head = exists
+        ? await gitOk(deps, cwd, ["rev-parse", "HEAD"])
+        : null;
+
+      const started = fold.records.findLast(
+        (record) =>
+          record.kind === "integrate" && record.data["phase"] === "started"
+      );
+
+      const pending =
+        started !== undefined &&
+        !integrationEnded(fold, textValue(started.data["task"]), started.seq);
+
+      const conflict = pending
+        ? (fold.records.findLast(
+            (record) =>
+              record.kind === "integrate" &&
+              record.data["phase"] === "conflict" &&
+              record.seq > started.seq
+          )?.data ?? null)
+        : null;
+
+      const delivered = fold.records.findLast(
+        (record) =>
+          record.kind === "integrate" && record.data["phase"] === "delivered"
+      );
+
+      integration = {
+        source: delivered?.data["source"] ?? null,
+        to: null,
+        path: opened.data["path"],
+        branch: opened.data["branch"],
+        head,
+        state: exists ? "present" : "missing",
+        pendingConflict: conflict,
+        undelivered:
+          head !== null &&
+          head !== (delivered?.data["source"] ?? opened.data["base"]),
+        closed: fold.records.some(
+          (record) =>
+            record.kind === "integrate" &&
+            record.data["phase"] === "closed" &&
+            record.seq > opened.seq
+        ),
+      };
+
+      if (exists && plan) {
+        const activePlan = plan;
+
+        loadCriteria = async () => {
+          try {
+            const tree = {
+              headTree: await headTree(deps, cwd),
+              testedTree: await testedTree(deps, session, cwd),
+            };
+
+            const cleanup = cleanupBinding(fold);
+            const all = checks(activePlan);
+
+            const evidenceStatuses = criterionStatuses(
+              fold,
+              all,
+              tree,
+              cleanup
+            );
+
+            const kept = eligibility(
+              fold,
+              all.filter(
+                (check) => cleanup?.removed.includes(check.criterion) !== true
+              ),
+              tree
+            );
+
+            const criteria = all
+              .map(
+                (check) =>
+                  evidenceStatuses.find(
+                    (row) =>
+                      row.criterion === check.criterion &&
+                      cleanup?.removed.includes(check.criterion) === true
+                  ) ??
+                  present(
+                    kept.find((row) => row.criterion === check.criterion),
+                    "the criterion eligibility"
+                  )
+              )
+              .filter((row) => row.state !== "verified")
+              .map((row) => row.criterion);
+
+            return { criteria, criterionStatuses: evidenceStatuses };
+          } catch {
+            return {
+              criteria: checks(activePlan).map((c) => c.criterion),
+              criterionStatuses: [],
+            };
+          }
+        };
+      }
+    } else {
+      integrationPathRejected = true;
+
+      const unavailableIntegration = {
+        state: "unavailable",
+        reason: checkedIntegration.reason,
+      };
+
+      integration = unavailableIntegration;
+
+      loadCriteria = () => ({
+        criteria: unavailableIntegration,
+        criterionStatuses: [],
+      });
+    }
+  }
+
+  return {
+    plan,
+    sections: { writers, integration },
+    writerPathRejected: rejectedWriterReason !== undefined,
+    integrationPathRejected,
+    loadCriteria,
+  };
+};
 
 // oxlint-disable-next-line eslint/complexity -- status assembly branches per ledger-record kind, review directory entry, and admission outcome.
 export const statusReport = async (
@@ -340,174 +725,17 @@ export const statusReport = async (
 
     return left.round - right.round;
   });
-  let sections: StatusSections | undefined;
-  const opened = integrationRecord(fold);
 
-  if (opened || fold.records.some((record) => record.kind === "writer")) {
-    let plan: ParsedPlan | undefined;
-    let reason = "No bound plan";
+  const derived = await deriveStatusSections(
+    session,
+    repositoryRoot,
+    deps,
+    fold
+  );
 
-    if (typeof bound["plan"] === "string" && bound["plan"] !== "") {
-      try {
-        const planPath = path.resolve(repositoryRoot, textValue(bound["plan"]));
-        const parsed = parsePlan(fs.readFileSync(planPath, "utf-8"));
-
-        if (parsed.ok) {
-          ({ plan } = parsed);
-        } else {
-          reason = JSON.stringify(parsed.defects);
-        }
-      } catch (error) {
-        reason = `Bound plan unreadable: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
-      }
-    }
-
-    const unavailable = { state: "unavailable", reason };
-
-    const observations = new Map<
-      string,
-      { exists: boolean; dirty: boolean; head: string }
-    >();
-
-    for (const record of (plan ? fold.records : []).filter(
-      (candidate) =>
-        candidate.kind === "writer" && candidate.data["phase"] === "launched"
-    )) {
-      const relative = textValue(record.data["path"]);
-
-      if (observations.has(relative)) {
-        continue;
-      }
-
-      const cwd = path.resolve(session, relative);
-      const exists = fs.existsSync(cwd);
-      observations.set(relative, {
-        exists,
-        dirty: exists
-          ? // oxlint-disable-next-line eslint/no-await-in-loop -- iterations share mutable orchestration state and control flow; sequential execution is by design.
-            !!(await gitOk(deps, cwd, ["status", "--porcelain"]))
-          : false,
-        // oxlint-disable-next-line eslint/no-await-in-loop -- iterations share mutable orchestration state and control flow; sequential execution is by design.
-        head: exists ? await gitOk(deps, cwd, ["rev-parse", "HEAD"]) : "",
-      });
-    }
-
-    const writers = plan
-      ? writerStates(
-          fold,
-          plan.tasks.map((task) => task.id),
-          (relative) =>
-            present(observations.get(relative), "the observed writer worktree")
-        )
-      : unavailable;
-
-    let integration: IntegrationView | null = null;
-    let evidenceStatuses: CriterionStatus[] = [];
-
-    let criteria: string[] | typeof unavailable = plan
-      ? checks(plan).map((check) => check.criterion)
-      : unavailable;
-
-    if (opened) {
-      const cwd = path.resolve(session, textValue(opened.data["path"]));
-      const exists = fs.existsSync(cwd);
-
-      const head = exists
-        ? await gitOk(deps, cwd, ["rev-parse", "HEAD"])
-        : null;
-
-      const started = fold.records.findLast(
-        (record) =>
-          record.kind === "integrate" && record.data["phase"] === "started"
-      );
-
-      const pending =
-        started !== undefined &&
-        !integrationEnded(fold, textValue(started.data["task"]), started.seq);
-
-      const conflict = pending
-        ? (fold.records.findLast(
-            (record) =>
-              record.kind === "integrate" &&
-              record.data["phase"] === "conflict" &&
-              record.seq > started.seq
-          )?.data ?? null)
-        : null;
-
-      const delivered = fold.records.findLast(
-        (record) =>
-          record.kind === "integrate" && record.data["phase"] === "delivered"
-      );
-
-      integration = {
-        source: delivered?.data["source"] ?? null,
-        to: null,
-        path: opened.data["path"],
-        branch: opened.data["branch"],
-        head,
-        state: exists ? "present" : "missing",
-        pendingConflict: conflict,
-        undelivered:
-          head !== null &&
-          head !== (delivered?.data["source"] ?? opened.data["base"]),
-        closed: fold.records.some(
-          (record) =>
-            record.kind === "integrate" &&
-            record.data["phase"] === "closed" &&
-            record.seq > opened.seq
-        ),
-      };
-
-      if (exists && plan) {
-        try {
-          const tree = {
-            headTree: await headTree(deps, cwd),
-            testedTree: await testedTree(deps, session, cwd),
-          };
-
-          const cleanup = cleanupBinding(fold);
-          const all = checks(plan);
-
-          evidenceStatuses = criterionStatuses(fold, all, tree, cleanup);
-
-          const kept = eligibility(
-            fold,
-            all.filter(
-              (check) => cleanup?.removed.includes(check.criterion) !== true
-            ),
-            tree
-          );
-
-          criteria = all
-            .map(
-              (check) =>
-                evidenceStatuses.find(
-                  (row) =>
-                    row.criterion === check.criterion &&
-                    cleanup?.removed.includes(check.criterion) === true
-                ) ??
-                present(
-                  kept.find((row) => row.criterion === check.criterion),
-                  "the criterion eligibility"
-                )
-            )
-            .filter((row) => row.state !== "verified")
-            .map((row) => row.criterion);
-        } catch {
-          criteria = checks(plan).map((c) => c.criterion);
-        }
-      }
-    }
-
-    sections = {
-      writers,
-      integration,
-      criteria,
-      criterionStatuses: evidenceStatuses,
-    };
-  }
+  const sections: StatusSections | undefined = derived.sections
+    ? { ...derived.sections, ...(await derived.loadCriteria()) }
+    : undefined;
 
   return {
     level,
@@ -539,19 +767,45 @@ export const statusReport = async (
   };
 };
 
+export const RESUME_ROUTES = {
+  // pre-integration
+  "plan-pending": { next: "continue", action: "plan" },
+  "approval-pending": { next: "inspect", action: "approval" },
+  "baseline-pending": { next: "continue", action: "check run" },
+  // open integration, no review round (task reasons append " <task>")
+  "integration-conflict": { next: "inspect", action: "worktree continue" },
+  "integration-abandoned": { next: "inspect", action: "worktree create" },
+  "task-check-pending": { next: "inspect", action: "check run --task" },
+  "candidate-ready": { next: "continue", action: "worktree land" },
+  "worktree-missing": { next: "continue", action: "worktree create" },
+  "writer-open": { next: "inspect", action: "writer" },
+  "task-ready": { next: "continue", action: "worktree create" },
+  "checks-pending": { next: "continue", action: "check run" },
+  "verification-pending": { next: "continue", action: "brief verifier" },
+  "cleanup-pending": { next: "continue", action: "test-cleanup" },
+  "review-pending": { next: "review", action: "review run" },
+  // integration ended
+  "delivery-pending": { next: "continue", action: "worktree deliver" },
+  delivered: { next: "continue", action: "report complete" },
+  closed: { next: "inspect", action: "worktree cleanup" },
+  // existing reasons: next unchanged
+  "state-unreadable": { next: "inspect", action: "status show" },
+  "gate-blocked": { next: "inspect", action: "status show" },
+  "native-pending": { next: "inspect", action: "review run" },
+  "arguments-unavailable": { next: "inspect", action: "arguments" },
+  "findings-pending": { next: "adjudicate", action: "adjudicate" },
+  "review-settled": { next: "continue", action: "re-check" },
+  "round-pending": { next: "review", action: "review run" },
+  "target-moved": { next: "review", action: "review run" },
+  "review-required": { next: "review", action: "review run" },
+} as const;
+
+export type ResumeReason = keyof typeof RESUME_ROUTES;
+
 interface ResumeView {
   next: "inspect" | "adjudicate" | "continue" | "review";
-  reason:
-    | "state-unreadable"
-    | "gate-blocked"
-    | "outside-review"
-    | "native-pending"
-    | "arguments-unavailable"
-    | "findings-pending"
-    | "review-settled"
-    | "round-pending"
-    | "target-moved"
-    | "review-required";
+  reason: ResumeReason;
+  action: string;
   evidence?: string;
   round?: string;
   cleanup?: "checkpoint" | "unbound";
@@ -666,6 +920,124 @@ const isSlotOutcome = (value: unknown): value is SlotOutcome =>
 
 const isFanoutState = (value: unknown): value is FanoutState => isRecord(value);
 
+const keptAutomatedChecks = (fold: Fold, plan: ParsedPlan) => {
+  const removed = new Set(cleanupBinding(fold)?.removed);
+
+  return checks(plan).filter(
+    (check) => check.evidenceClass !== "review" && !removed.has(check.criterion)
+  );
+};
+
+// oxlint-disable-next-line eslint/complexity -- task phase precedence scans seven ordered tiers across plan tasks.
+const taskPhaseReason = (
+  fold: Fold,
+  plan: ParsedPlan,
+  writers: ReturnType<typeof writerStates>,
+  integration: IntegrationView
+): { reason: ResumeReason; task: string } | "state-unreadable" | undefined => {
+  const latestByTask = new Map<string, (typeof writers)[number]>();
+
+  for (const row of writers) {
+    latestByTask.set(row.task, row);
+  }
+
+  if (
+    plan.tasks.every(
+      (task) => latestByTask.get(task.id)?.state === "integrated"
+    )
+  ) {
+    return undefined;
+  }
+
+  const conflictTask = isRecord(integration.pendingConflict)
+    ? textValue(integration.pendingConflict["task"])
+    : "";
+
+  for (const task of plan.tasks) {
+    if (conflictTask === task.id) {
+      return { reason: "integration-conflict", task: task.id };
+    }
+  }
+
+  for (const task of plan.tasks) {
+    if (latestByTask.get(task.id)?.state === "integration-abandoned") {
+      return { reason: "integration-abandoned", task: task.id };
+    }
+  }
+
+  const checkById = new Map(
+    keptAutomatedChecks(fold, plan).map((check) => [check.criterion, check])
+  );
+
+  for (const task of plan.tasks) {
+    if (latestByTask.get(task.id)?.state !== "integrated") {
+      continue;
+    }
+
+    const latestDone = fold.records.findLast(
+      (record) =>
+        record.kind === "integrate" &&
+        record.data["phase"] === "done" &&
+        record.data["task"] === task.id
+    );
+
+    if (!latestDone) {
+      return "state-unreadable";
+    }
+
+    const taskChecks = taskCriteria(plan, task.id).flatMap((id) => {
+      const check = checkById.get(id);
+
+      return check ? [check] : [];
+    });
+
+    const missingEvidence = taskChecks.some((check) => {
+      const row = strictEvidence(fold, check);
+
+      return !row || row.seq <= latestDone.seq;
+    });
+
+    if (missingEvidence) {
+      return { reason: "task-check-pending", task: task.id };
+    }
+  }
+
+  for (const task of plan.tasks) {
+    if (latestByTask.get(task.id)?.state === "candidate-unintegrated") {
+      return { reason: "candidate-ready", task: task.id };
+    }
+  }
+
+  for (const task of plan.tasks) {
+    if (latestByTask.get(task.id)?.state === "missing-worktree") {
+      return { reason: "worktree-missing", task: task.id };
+    }
+  }
+
+  for (const task of plan.tasks) {
+    const state = latestByTask.get(task.id)?.state;
+
+    if (state === "no-progress" || state === "ready-to-submit") {
+      return { reason: "writer-open", task: task.id };
+    }
+  }
+
+  for (const task of plan.tasks) {
+    const state = latestByTask.get(task.id)?.state;
+
+    if (
+      (state === "unlaunched" || state === "launch-abandoned") &&
+      task.prerequisites.every(
+        (prereq) => latestByTask.get(prereq)?.state === "integrated"
+      )
+    ) {
+      return { reason: "task-ready", task: task.id };
+    }
+  }
+
+  return "state-unreadable";
+};
+
 // oxlint-disable-next-line eslint/complexity -- resume branches per fold tear, integration open state, and checkpoint ancestry.
 export const resumeStatus = async (ctx: HandlerContext) => {
   const { session, manifest, deps } = ctx;
@@ -673,56 +1045,119 @@ export const resumeStatus = async (ctx: HandlerContext) => {
   let postFold: Fold | undefined;
 
   const result = (
-    next: ResumeView["next"],
-    reason: ResumeView["reason"],
-    fields: Pick<ResumeView, "round" | "evidence"> = {},
-    recoverySelection?: RecoverySelection
-  ) => ({
-    value: { next, reason, ...fields, ...(cleanup && { cleanup }) },
-    ...(recoverySelection && { recoverySelection }),
-    ...(postFold && { postFold }),
-  });
+    reason: ResumeReason,
+    options: Pick<ResumeView, "round" | "evidence"> & {
+      task?: string;
+      recoverySelection?: RecoverySelection | undefined;
+    } = {}
+  ) => {
+    const route = RESUME_ROUTES[reason];
+    const { task, recoverySelection, ...fields } = options;
+
+    const action =
+      task !== undefined && task !== ""
+        ? `${route.action} ${task}`
+        : route.action;
+
+    return {
+      value: {
+        next: route.next,
+        reason,
+        action,
+        ...fields,
+        ...(cleanup && { cleanup }),
+      },
+      ...(recoverySelection !== undefined && { recoverySelection }),
+      ...(postFold && { postFold }),
+    };
+  };
 
   try {
-    // A missing ledger cannot support recovery, even though an empty fold is useful to other callers.
-    containedSessionPath(session, "ledger.jsonl");
+    // An absent ledger folds empty; a present ledger must remain contained and a regular file.
+    existingRecoveryPath(session, "ledger.jsonl");
     const fold = foldLedger(session);
 
     postFold = fold;
 
     if (fold.torn) {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
 
     const opened = integrationRecord(fold);
 
     if (!opened) {
-      return result("inspect", "outside-review");
+      const bind = latest(fold, "bind");
+
+      if (typeof bind?.data["plan"] !== "string" || bind.data["plan"] === "") {
+        return result("plan-pending");
+      }
+
+      const current = currentHashes(manifest.repositoryRoot, bind);
+
+      return result(
+        gate(fold, current).allowed ? "baseline-pending" : "approval-pending"
+      );
     }
 
     cleanup = "unbound";
 
-    const delivered = fold.records.some(
-      (row) =>
-        row.seq > opened.seq &&
-        row.kind === "integrate" &&
-        (row.data["phase"] === "closed" || row.data["phase"] === "delivered")
+    const postOpenIntegrate = fold.records.filter(
+      (row) => row.seq > opened.seq && row.kind === "integrate"
     );
 
-    if (delivered) {
-      return result("inspect", "outside-review");
+    if (postOpenIntegrate.some((row) => row.data["phase"] === "closed")) {
+      return result("closed");
     }
 
-    const cwd = containedSessionPath(session, textValue(opened.data["path"]));
-    const head = await gitOk(deps, cwd, ["rev-parse", "HEAD"]);
+    if (
+      postOpenIntegrate.some(
+        (row) =>
+          row.data["phase"] === "delivered" || row.data["phase"] === "committed"
+      )
+    ) {
+      return result("delivered");
+    }
+
+    if (
+      postOpenIntegrate.some((row) => row.data["phase"] === "deliver-started")
+    ) {
+      return result("delivery-pending");
+    }
+
+    const derived = await deriveStatusSections(
+      session,
+      manifest.repositoryRoot,
+      deps,
+      fold
+    );
+
+    const integrationView = derived.sections?.integration;
+
+    if (
+      derived.integrationPathRejected ||
+      derived.writerPathRejected ||
+      !integrationView ||
+      !("head" in integrationView) ||
+      integrationView.state !== "present"
+    ) {
+      return result("state-unreadable");
+    }
+
+    const { head } = integrationView;
     const base: unknown = opened.data["base"];
 
     if (!gitObjectId(head) || !gitObjectId(base)) {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
+
+    const cwd = path.resolve(session, textValue(opened.data["path"]));
 
     if (await hasCleanupCheckpoint(session, fold, deps, cwd, head)) {
       cleanup = "checkpoint";
+    }
+
+    if (!derived.plan) {
+      return result("state-unreadable");
     }
 
     const reviewDir = reviewDirectory(session, REVIEW);
@@ -748,10 +1183,52 @@ export const resumeStatus = async (ctx: HandlerContext) => {
         latest(fold, "bind")
       );
 
-      return result(
-        "inspect",
-        gate(fold, current).allowed ? "outside-review" : "gate-blocked"
+      if (!gate(fold, current).allowed) {
+        return result("gate-blocked");
+      }
+
+      if (!Array.isArray(derived.sections?.writers)) {
+        return result("state-unreadable");
+      }
+
+      const taskOutcome = taskPhaseReason(
+        fold,
+        derived.plan,
+        derived.sections.writers,
+        integrationView
       );
+
+      if (taskOutcome === "state-unreadable") {
+        return result("state-unreadable");
+      }
+
+      if (taskOutcome) {
+        return result(taskOutcome.reason, { task: taskOutcome.task });
+      }
+
+      const { criteria } = await derived.loadCriteria();
+
+      if (!Array.isArray(criteria)) {
+        return result("state-unreadable");
+      }
+
+      const keptAutomated = new Set(
+        keptAutomatedChecks(fold, derived.plan).map((check) => check.criterion)
+      );
+
+      if (criteria.some((criterion) => keptAutomated.has(criterion))) {
+        return result("checks-pending");
+      }
+
+      if (!currentRuntimeVerification(fold, opened.seq)) {
+        return result("verification-pending");
+      }
+
+      if (cleanup !== "checkpoint") {
+        return result("cleanup-pending");
+      }
+
+      return result("review-pending");
     }
 
     const roundDir = reviewRoundDirectory(reviewDir, last);
@@ -759,13 +1236,13 @@ export const resumeStatus = async (ctx: HandlerContext) => {
     const saved = readOptional(session, round, isSavedRound);
 
     if (!saved || !Number.isSafeInteger(last) || saved.round !== last) {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
 
     const legacy = !Object.hasOwn(saved, "pins");
 
     if (!legacy && saved.pins !== null && typeof saved.pins !== "string") {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
 
     parsePinsFlag(saved.pins);
@@ -787,14 +1264,14 @@ export const resumeStatus = async (ctx: HandlerContext) => {
       !gate(fold, current).allowed ||
       !levelGate(fold, saved.level).allowed
     ) {
-      return result("inspect", "gate-blocked");
+      return result("gate-blocked");
     }
 
     const applies = applicableReviewIds(manifest, fold).get(REVIEW);
     const { budget } = admission(session, fold, REVIEW, saved.cap, applies);
 
     if (budget.coverage?.state === "unreadable") {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
 
     const rejections = loadRejections(session, fold, [REVIEW]);
@@ -803,7 +1280,7 @@ export const resumeStatus = async (ctx: HandlerContext) => {
       rejections.some((state) => state.state === "escalated") ||
       budget.state === "escalation-open"
     ) {
-      return result("inspect", "gate-blocked");
+      return result("gate-blocked");
     }
 
     const target = { base, head };
@@ -818,7 +1295,7 @@ export const resumeStatus = async (ctx: HandlerContext) => {
     );
 
     if (JSON.stringify(capture.target) !== JSON.stringify(target)) {
-      return result("inspect", "state-unreadable");
+      return result("state-unreadable");
     }
 
     const prior = numbers
@@ -891,7 +1368,7 @@ export const resumeStatus = async (ctx: HandlerContext) => {
           const slot = readOptional(session, pointer, isSlotOutcome);
 
           if (!slot || slot.slot !== name.slice(0, -5)) {
-            return result("inspect", "state-unreadable");
+            return result("state-unreadable");
           }
 
           if (slot.state !== "native" || slot.cliFallback) {
@@ -938,24 +1415,23 @@ export const resumeStatus = async (ctx: HandlerContext) => {
               path.posix.basename(reply)
             )
           ) {
-            return result("inspect", "state-unreadable");
+            return result("state-unreadable");
           }
 
           containedSessionPath(session, parent);
           existingRecoveryPath(session, reply);
 
-          return result(
-            "inspect",
-            "native-pending",
-            { round, evidence: pointer },
-            legacy ? undefined : selection()
-          );
+          return result("native-pending", {
+            round,
+            evidence: pointer,
+            recoverySelection: legacy ? undefined : selection(),
+          });
         }
       }
     }
 
     if ((!findings || moved) && legacy && budget.state === "allowed") {
-      return result("inspect", "arguments-unavailable", { round });
+      return result("arguments-unavailable", { round });
     }
 
     const published = findings
@@ -988,16 +1464,14 @@ export const resumeStatus = async (ctx: HandlerContext) => {
     );
 
     if (pending) {
-      return result("adjudicate", "findings-pending", {
-        evidence: pending.pointer,
-      });
+      return result("findings-pending", { evidence: pending.pointer });
     }
 
     if (findings) {
       try {
         await reviewIdentity(ctx, fold, cwd, head, base);
 
-        return result("continue", "review-settled");
+        return result("review-settled");
       } catch (error) {
         if (
           !(error instanceof ToolError && error.reason === "review-required")
@@ -1008,11 +1482,11 @@ export const resumeStatus = async (ctx: HandlerContext) => {
     }
 
     if (budget.state !== "allowed") {
-      return result("inspect", "gate-blocked");
+      return result("gate-blocked");
     }
 
     if (legacy) {
-      return result("inspect", "arguments-unavailable", { round });
+      return result("arguments-unavailable", { round });
     }
 
     let finding: ResumeView["reason"];
@@ -1025,7 +1499,7 @@ export const resumeStatus = async (ctx: HandlerContext) => {
       finding = "review-required";
     }
 
-    return result("review", finding, { round }, selection());
+    return result(finding, { round, recoverySelection: selection() });
   } catch (error) {
     if (
       error instanceof ToolError &&
@@ -1033,9 +1507,9 @@ export const resumeStatus = async (ctx: HandlerContext) => {
         error.reason
       )
     ) {
-      return result("inspect", "gate-blocked");
+      return result("gate-blocked");
     }
 
-    return result("inspect", "state-unreadable");
+    return result("state-unreadable");
   }
 };

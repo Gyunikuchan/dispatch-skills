@@ -1358,19 +1358,19 @@ test("usage line lists every accepted path-bytes form", async () => {
 
 // SECTION: Reading against the one-home consolidation (consolidated reading baseline)
 
-// NOTE: I04 churn controls grow reading by the new text only: fixer step 4 in review-rules.md (+283 B) reaches design, plan, review and implement; the quality-bar `Pins:` bullet (+267 B) reaches review and plan; plan.md's ownership sentence became a link (-118 B). Growth per verb: design +283, review +550, plan +432, implement +283 (editable: +250, +280, +162, +250). Ask and verify are unchanged.
+// NOTE: I05 replaces `outside-review` in `implement.md`'s recovery table with phase-reason rows (inventory row 1) and trims recovery-table wording (+705 B net in `implement.md`; lines outside `## Interruption recovery` stay untouched per REQ-5), raising `design` (unconditional link) and `implement` by 705 B each vs I04 (`81,104` -> `81,809` and `76,720` -> `77,425`); `ask` (`30,031`) and `verify` (`29,907`) were already at those measured figures at `8054ac44` (removing the 6 B cushion left in I04's pin); `review` and `plan` are unchanged. Every verb stays below `BASELINE` (REQ-2 acceptance 2).
 const CONSOLIDATED_READING: Record<PathName, Figures> = {
   ask: {
-    distinct: 30_037,
-    workload: 30_037,
-    editableDistinct: 29_274,
-    editableWorkload: 29_274,
+    distinct: 30_031,
+    workload: 30_031,
+    editableDistinct: 29_268,
+    editableWorkload: 29_268,
   },
   design: {
-    distinct: 81_104,
-    workload: 81_104,
-    editableDistinct: 68_229,
-    editableWorkload: 68_229,
+    distinct: 81_809,
+    workload: 81_809,
+    editableDistinct: 68_934,
+    editableWorkload: 68_934,
   },
   review: {
     distinct: 52_775,
@@ -1379,10 +1379,10 @@ const CONSOLIDATED_READING: Record<PathName, Figures> = {
     editableWorkload: 32_470,
   },
   verify: {
-    distinct: 29_913,
-    workload: 29_913,
-    editableDistinct: 26_307,
-    editableWorkload: 26_307,
+    distinct: 29_907,
+    workload: 29_907,
+    editableDistinct: 26_301,
+    editableWorkload: 26_301,
   },
   plan: {
     distinct: 72_495,
@@ -1391,10 +1391,10 @@ const CONSOLIDATED_READING: Record<PathName, Figures> = {
     editableWorkload: 55_007,
   },
   implement: {
-    distinct: 76_720,
-    workload: 76_720,
-    editableDistinct: 59_808,
-    editableWorkload: 59_808,
+    distinct: 77_425,
+    workload: 77_425,
+    editableDistinct: 60_513,
+    editableWorkload: 60_513,
   },
 };
 

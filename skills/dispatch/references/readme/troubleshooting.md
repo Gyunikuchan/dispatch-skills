@@ -30,10 +30,10 @@ Ask your host agent to inspect the saved run before resuming it. A compatible dr
 
 ```text
 node scripts/dispatch.ts session reactivate --session-dir <session> --host <platform>
-node scripts/dispatch.ts status show --session <session>
+node scripts/dispatch.ts status show --session <session> --resume
 ```
 
-Read the returned status result, reconcile retained writers and integration state, then resume the next unfinished tool operation. If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
+Read the returned `reason`, `action` and indicated evidence, reconcile retained writers and integration state, then follow the named `action` (or inspect detailed `status show` when `reason` requires it). If Dispatch cannot confirm whether an interrupted action completed, your host must resolve that uncertainty before retrying. Follow the recovery guidance it provides.
 
 ## Run a configuration check
 

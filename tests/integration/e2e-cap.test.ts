@@ -29,7 +29,7 @@ test("tests/e2e/ stays within the cap and exceeding it fails with the rule and t
   const files = e2eFiles();
   assert.equal(
     files.filter((file) => file.path.startsWith("tests/e2e/")).length,
-    18
+    19
   );
   assert.deepEqual(checkE2eCap(files), []);
 
